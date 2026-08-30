@@ -59,7 +59,6 @@ from animation.core.plant_awareness import (
     SURFACE_MODIFIERS,
     PlantModifierState,
 )
-from animation.core.preview_assets import load_catalog, merge_catalogs
 from drivers.frame_codec import (
     FRAME_ENCODING_NAME,
     decode_frame_data,
@@ -95,7 +94,6 @@ from ipc.scene_contract import (
     scene_preview_identity,
     validate_bounded_browser_json,
 )
-from web.preview_worker import RuntimePreviewWorker
 from web.activation_token_store import (
     ActivationTokenConflict,
     ActivationTokenExpired,
@@ -199,24 +197,6 @@ class AnimationWebInterface:
             else self.project_root / "run_state" / "activation_tokens.sqlite3"
         )
         self._activation_token_store: Optional[ActivationTokenStore] = None
-        self.generated_preview_dir = (
-            self.project_root / "web" / "static" / "generated" / "animation-previews"
-        )
-        self.runtime_preview_dir = self.project_root / "run_state" / "animation_previews"
-        if self.local_mode:
-            self.generated_preview_dir = (
-                self.project_root / "run_state" / "mac_animation_previews"
-            )
-        loader = getattr(self.preview_manager, 'plugin_loader', None)
-        self.runtime_preview_worker = None
-        if (not self.local_mode and loader is not None
-                and os.environ.get("LEDGRID_DISABLE_PREVIEW_WORKER") != "1"):
-            self.runtime_preview_worker = RuntimePreviewWorker(
-                self.project_root,
-                strips=self.preview_manager.controller.strip_count,
-                leds_per_strip=self.preview_manager.controller.leds_per_strip,
-            )
-
         # Create Flask app
         self.app = Flask(__name__)
         self.app.secret_key = 'led-grid-secret-key-change-in-production'
@@ -262,7 +242,6 @@ class AnimationWebInterface:
                 for item in animations
                 if isinstance(item.get('plugin_name'), str)
             }
-            component_previews = {}
             component_presets = {}
             for component in component_catalog:
                 component_id = component.get('plugin_id')
@@ -275,15 +254,9 @@ class AnimationWebInterface:
                 if component_id in ambiguous_component_ids:
                     # Preview catalogs and preset paths predate provider-qualified
                     # identities. Never decorate the wrong provider by guessing.
-                    component_previews[component_key] = None
                     component_presets[component_key] = []
                     continue
                 animation = animation_by_id.get(component_id)
-                component_previews[component_key] = (
-                    animation.get('preview')
-                    if animation is not None
-                    else self._preview_metadata(component_id)
-                )
                 component_presets[component_key] = (
                     animation.get('presets', [])
                     if animation is not None
@@ -305,7 +278,6 @@ class AnimationWebInterface:
                         and isinstance(item.get('provider'), str)
                     )
                 },
-                component_previews=component_previews,
                 component_presets=component_presets,
                 ambiguous_component_ids=ambiguous_component_ids,
                 receiver_hybrid_enabled=(
@@ -1323,8 +1295,6 @@ class AnimationWebInterface:
                         runtime_path.unlink()
                     except OSError:
                         return jsonify({'error': 'Failed to delete preset'}), 500
-                    if provider == 'python' and self.runtime_preview_worker is not None:
-                        self.runtime_preview_worker.delete(component_id, preset_id)
                     return jsonify({
                         'success': True,
                         'component_key': component_key,
@@ -1473,20 +1443,6 @@ class AnimationWebInterface:
                 return jsonify({'error': 'Failed to delete scene preset'}), 500
             return jsonify({'success': True})
 
-        @self.app.route('/preview-assets/runtime/<path:filename>')
-        def runtime_preview_asset(filename: str):
-            """Serve protected Pi-generated previews with immutable caching."""
-            return send_from_directory(
-                self.runtime_preview_dir, filename, max_age=31536000, conditional=True
-            )
-
-        @self.app.route('/preview-assets/generated/<path:filename>')
-        def generated_preview_asset(filename: str):
-            """Serve content-addressed deploy previews with immutable caching."""
-            return send_from_directory(
-                self.generated_preview_dir, filename, max_age=31536000, conditional=True
-            )
-        
         @self.app.route('/api/animations/<animation_name>')
         def api_get_animation(animation_name):
             """API: Get detailed info about specific animation"""
@@ -1555,15 +1511,6 @@ class AnimationWebInterface:
             self._write_animation_preset(
                 animation_name, preset_id, preset_payload, provider='python'
             )
-            if self.runtime_preview_worker is not None:
-                fallback = self._preview_metadata(animation_name) or {}
-                preset_path = self._animation_preset_path(
-                    animation_name, preset_id, provider='python'
-                )
-                if preset_path is not None:
-                    self.runtime_preview_worker.queue(
-                        animation_name, preset_id, preset_path, fallback
-                    )
             return jsonify({'success': True, 'preset': self._animation_preset_summary(preset_payload)})
 
         @self.app.route('/api/animations/<animation_name>/presets/<preset_id>/apply', methods=['POST'])
@@ -1585,8 +1532,6 @@ class AnimationWebInterface:
                 path.unlink()
             except OSError:
                 return jsonify({'error': 'Failed to delete preset'}), 500
-            if self.runtime_preview_worker is not None:
-                self.runtime_preview_worker.delete(animation_name, preset_id)
             return jsonify({'success': True})
         
         @self.app.route('/api/start/<animation_name>', methods=['POST'])
@@ -2237,7 +2182,6 @@ class AnimationWebInterface:
             plugin_name = item.get('plugin_name', '')
             item.setdefault('emoji', '✨')
             item.setdefault('is_test', False)
-            item['preview'] = self._preview_metadata(plugin_name)
             presets = self._list_animation_presets(plugin_name)
             for preset in presets:
                 preset['emoji'] = self._preset_emoji(preset, item['emoji'])
@@ -2306,33 +2250,6 @@ class AnimationWebInterface:
         vibe_id = state.get('id', state.get('vibe_id'))
         profile = get_vibe_profile(vibe_id)
         return profile.to_dict()
-
-    def _preview_catalog(self) -> Dict[str, Any]:
-        """Merge deploy-generated previews with target-owned runtime previews."""
-        if self.local_mode:
-            return load_catalog(self.generated_preview_dir / "catalog.json")
-        return merge_catalogs(
-            load_catalog(self.generated_preview_dir / "catalog.json"),
-            load_catalog(self.runtime_preview_dir / "catalog.json"),
-        )
-
-    def _preview_metadata(
-        self, animation_name: str, preset_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
-        catalog = self._preview_catalog()
-        animation_preview = catalog.get('animations', {}).get(animation_name)
-        if preset_id is None:
-            return dict(animation_preview) if isinstance(animation_preview, dict) else None
-        preset_preview = (
-            catalog.get('presets', {}).get(animation_name, {}).get(preset_id)
-        )
-        if isinstance(preset_preview, dict):
-            return dict(preset_preview)
-        if isinstance(animation_preview, dict):
-            fallback = dict(animation_preview)
-            fallback['status'] = 'pending'
-            return fallback
-        return None
 
     def _sorted_animations(self) -> List[Dict[str, Any]]:
         """Return animation metadata alphabetized by its display name."""
@@ -2829,16 +2746,12 @@ class AnimationWebInterface:
 
     @staticmethod
     def _studio_next_preview(
-        provider: str,
-        descriptor_preview: Any,
-        asset_preview: Any,
+        provider: str, descriptor_preview: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Combine safe preview metadata while preserving explicit provenance."""
+        """Expose renderer contract provenance without published image assets."""
         metadata: Dict[str, Any] = {}
         if isinstance(descriptor_preview, dict):
             metadata.update(descriptor_preview)
-        if isinstance(asset_preview, dict):
-            metadata.update(asset_preview)
         if not metadata:
             return None
         metadata['live_state_mutated'] = False
@@ -2907,7 +2820,6 @@ class AnimationWebInterface:
             component_key = f'{provider}:{plugin_id}'
             collision = plugin_id in collisions
             descriptor_preview = component.get('preview')
-            asset_preview = None if collision else self._preview_metadata(plugin_id)
             component['key'] = component_key
             component['provider_collision'] = collision
             component['preview_contract'] = (
@@ -2917,7 +2829,7 @@ class AnimationWebInterface:
                 None
                 if collision
                 else self._studio_next_preview(
-                    provider, descriptor_preview, asset_preview
+                    provider, descriptor_preview
                 )
             )
             component['action'] = self._studio_next_composer_eligibility(
@@ -2937,9 +2849,7 @@ class AnimationWebInterface:
                     'provider': provider,
                     'plugin_id': plugin_id,
                     'preview': self._studio_next_preview(
-                        provider,
-                        descriptor_preview,
-                        preset.get('preview'),
+                        provider, descriptor_preview,
                     ),
                     'action': dict(component['action']),
                 })
@@ -3070,7 +2980,7 @@ class AnimationWebInterface:
                     'supported': False,
                     'reason': (
                         'This component does not expose a verified browser-Wasm '
-                        'entrypoint. Its generated preview remains available as a fallback.'
+                        'entrypoint for local rendering.'
                     ),
                 }
 
@@ -3169,11 +3079,6 @@ class AnimationWebInterface:
                         else []
                     )),
                 },
-                'preview': self._studio_next_preview(
-                    provider,
-                    raw.get('preview'),
-                    None if plugin_id in collisions else self._preview_metadata(plugin_id),
-                ),
             }
             components.append(decorate_browser_component(
                 component,
@@ -4443,10 +4348,6 @@ class AnimationWebInterface:
             'palette': payload.get('palette'),
             'swatches': self._preset_swatches(payload),
         }
-        animation_name = payload.get('animation')
-        preset_id = payload.get('preset_id')
-        if isinstance(animation_name, str) and isinstance(preset_id, str):
-            summary['preview'] = self._preview_metadata(animation_name, preset_id)
         return summary
 
     def _component_preset_ownership(

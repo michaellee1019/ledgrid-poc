@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "f9f02fe4368e6dfb2f49a2e9d8e8aee329d137e7edee8baddb0cfe01d7c60e7d",
+    "catalog_digest": "f8aa6b8f31c4d7a7d0b4488b924fe1f9542268cdb4ad7039b120da6798de28f4",
     "kind": "bundled",
     "version": 1
   },
@@ -229,7 +229,6 @@
           "plugin_id": "pinball",
           "preset_fingerprint": "6c8f68850336415980de83ac582d5edbab707a37e0e9aed3a790b0c6eda213cf",
           "preset_id": "midnight-attract",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -260,7 +259,6 @@
           "plugin_id": "pinball",
           "preset_fingerprint": "b7ddc6022724cb300b0125aecb54d76b2faf540a866707be4b9496e27662c59c",
           "preset_id": "multiball-mayhem",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -291,7 +289,6 @@
           "plugin_id": "pinball",
           "preset_fingerprint": "3e3a76b7e9105e8ac5db14c3467370afd21b14c17ba46a8d6c6516c0fb31aa40",
           "preset_id": "neon-casino",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -322,7 +319,6 @@
           "plugin_id": "pinball",
           "preset_fingerprint": "8ec5de985f541b0f42b0019aa0ed73c368a919be1b9a44e12ef2a756910f3fed",
           "preset_id": "slow-motion-replay",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -353,7 +349,6 @@
           "plugin_id": "pinball",
           "preset_fingerprint": "2e5816f5e81f73a93a7071d5aaa551500a1ec06cd85d9138fb9bc2ad30c1ef03",
           "preset_id": "tournament-table",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -364,23 +359,6 @@
           "version": 2
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.5,
-          1.5,
-          3,
-          5,
-          8,
-          12,
-          18
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -645,7 +623,6 @@
           "plugin_id": "ascii_drop",
           "preset_fingerprint": "4d5c3697ff92b422f52b07ec4ba42ad9167aeaa9212027e20109d3fbd7e783b6",
           "preset_id": "amber-terminal",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FF9119",
@@ -695,7 +672,6 @@
           "plugin_id": "ascii_drop",
           "preset_fingerprint": "f053fa55494feff928dd1f51269c17ad131257ff902d9b2d9f3940265ce830f9",
           "preset_id": "cyan-datastream",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0FE1FF",
@@ -745,7 +721,6 @@
           "plugin_id": "ascii_drop",
           "preset_fingerprint": "f18486c95d22c866af945d894c549c653415dbd22341cb989c1d226bd7a30c4a",
           "preset_id": "love-letter",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FF3791",
@@ -795,7 +770,6 @@
           "plugin_id": "ascii_drop",
           "preset_fingerprint": "4489e9d13f4a4c5cbc99dacc7d6eeb28aa9e899065005f63ec6f30eedf31acc3",
           "preset_id": "matrix-rain",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#14FF5A",
@@ -845,7 +819,6 @@
           "plugin_id": "ascii_drop",
           "preset_fingerprint": "a2fff7de9822f7dbea4dfc1cc72ca97d8dd5ac7f4ebb957b384f8b58df1b9553",
           "preset_id": "maximum-overflow",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FFFFFF",
@@ -859,7 +832,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -1102,7 +1074,6 @@
           "plugin_id": "aurora_curtains",
           "preset_fingerprint": "c21a216e115a0f9feba8b166a044d2a4e99bf16a8a6dd437c5f9e5ca5a468a6a",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -1145,7 +1116,6 @@
           "plugin_id": "aurora_curtains",
           "preset_fingerprint": "67094d59f99e49876b75d6878f448ac3840324ad605d839b0689fc9a04ba5813",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -1199,7 +1169,6 @@
           "plugin_id": "aurora_curtains",
           "preset_fingerprint": "4caf08cf656a8f125f52b7015d46a318c5c2ba85dd2fcdc4a1d9510e7aa077a2",
           "preset_id": "solar-morning",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#03121D",
@@ -1249,7 +1218,6 @@
           "plugin_id": "aurora_curtains",
           "preset_fingerprint": "f3a02023ad74f22634649f46fe0f7d6364fb02e333752db15f63c89ab9355e4d",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -1260,7 +1228,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -1409,28 +1376,6 @@
         "vibe_color_policy": "preserve"
       },
       "presets": [],
-      "preview": {
-        "capture_seconds": [
-          0.0,
-          0.016667,
-          0.033334,
-          0.050001,
-          0.066668,
-          0.083335,
-          0.100002,
-          0.116669,
-          0.133336,
-          0.150003,
-          0.16667,
-          0.183337
-        ],
-        "framebuffer_readback": false,
-        "kind": "native_host_build",
-        "label": "Host simulation preview \u2014 not receiver framebuffer readback",
-        "live_state_mutated": false,
-        "provenance": "receiver_host_simulation",
-        "simulation_fps": 60
-      },
       "provider": "receiver_native",
       "provider_collision": false,
       "role": "background",
@@ -1705,7 +1650,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "502507823e738232be150b2e059056317c3388fe2bda477298621cacd48d9f0f",
           "preset_id": "barrel-temple-climb",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -1756,7 +1700,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "406e9111aa13811c69fab22053ff3c38050b56863ed277297692dc4921f09757",
           "preset_id": "championship-speedrun",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -1807,7 +1750,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "8b0e153c1793f5a03ed469b0f91e928a22c23ecd930a9e43a1bdd123a21d3693",
           "preset_id": "cinematic-no-hud",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -1858,7 +1800,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "a5f48359d8aaed3f4f149accab4766169da5d3011b3c522cc2c7ec511f79a2ee",
           "preset_id": "fern-gully-flutter",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -1909,7 +1850,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "aa0b05fc6e40bb6c6d5fcde641170c069af3374041378c833d33f44a43070f69",
           "preset_id": "impossible-valley-relay",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -1960,7 +1900,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "3aa7d54213480e58f3c8a773b2315b941414ecbe72c247fa5ead24b651d23c85",
           "preset_id": "neon-vine-night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -2011,7 +1950,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "2e5e19009f916a4722e230795489c58938fc6e43c51b99d594cf371d211239fe",
           "preset_id": "plant-uprising",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -2062,7 +2000,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "35f0b7a91a631d0fadd393931b0e78529356ea858b31fc40bc6768d51edbb687",
           "preset_id": "power-up-pandemonium",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -2113,7 +2050,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "090e58b72459cb3051be23c177bbde9f0ff656587ab80919c89e7b016d5b5642",
           "preset_id": "seven-realm-grand-prix",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -2164,7 +2100,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "c2646bd6d9d402aa9871285876bf8a3073c9944c1744506c26ede707b43ee6fc",
           "preset_id": "storybook-slow-motion",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -2215,7 +2150,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "ffa76e5d65c751205f66f74f40937fefe3b39121e18eb65d58a02fa9b0847971",
           "preset_id": "sunset-crystal-falls",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -2266,7 +2200,6 @@
           "plugin_id": "canopy_cup",
           "preset_fingerprint": "0aeef5a98fdc57fea11ac86cd82cd178bb2e93fdf81a48e132fa94b72a41331c",
           "preset_id": "webline-rooftops",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -2278,23 +2211,6 @@
           "version": 2
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          1,
-          3,
-          6,
-          10,
-          16,
-          24,
-          36
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -2583,7 +2499,6 @@
           "plugin_id": "cellular_tapestry",
           "preset_fingerprint": "5baf7dbfb6bc46bb98e06e1ba4efaaf87480b5a67699a0445af0065485bcb031",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#010208",
@@ -2639,7 +2554,6 @@
           "plugin_id": "cellular_tapestry",
           "preset_fingerprint": "832888ae272d96ea8b7a9d9f336099683d097a2e394101d45a632683688807df",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#08121E",
@@ -2695,7 +2609,6 @@
           "plugin_id": "cellular_tapestry",
           "preset_fingerprint": "9b2e24cffc05fe979a457646742a914895d35b0e2b75a89ddd0dbed96276c19f",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120523",
@@ -2711,7 +2624,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -2981,7 +2893,6 @@
           "plugin_id": "christmas_tree",
           "preset_fingerprint": "451642eae83c0e1b9b5b507b819640c0b040df21adbe398281f56d63579bffbc",
           "preset_id": "classic-christmas",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -3020,7 +2931,6 @@
           "plugin_id": "christmas_tree",
           "preset_fingerprint": "4bdabcad911be354ba3bb758fa9a3b180c9ad7e1ad1894cf04c69c1a872d30b8",
           "preset_id": "blizzard-lights",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -3059,7 +2969,6 @@
           "plugin_id": "christmas_tree",
           "preset_fingerprint": "1ec670645642cb63b08d3eb35dac037aaca43e34fbc538cdcc301e4265f0bfa9",
           "preset_id": "quiet-snowfall",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -3098,7 +3007,6 @@
           "plugin_id": "christmas_tree",
           "preset_fingerprint": "9fd00fd2e7476c2916934a44a3b3dd6299b4454a7d9ac17d62c75342ad9f6c96",
           "preset_id": "tiny-tree-party",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -3110,7 +3018,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -3396,7 +3303,6 @@
           "plugin_id": "circadian_window",
           "preset_fingerprint": "efefa94bf29e2527d5144ca4f784d4e778635ca991036f0cf69e48eb78656c52",
           "preset_id": "day-in-a-minute",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -3440,7 +3346,6 @@
           "plugin_id": "circadian_window",
           "preset_fingerprint": "17ed4fd5b9143d448653e7d0571e15dde7b8b2800a03c68c6159983f0ec36912",
           "preset_id": "midnight-window",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -3497,7 +3402,6 @@
           "plugin_id": "circadian_window",
           "preset_fingerprint": "e19d56fea441793ba69410bb231757df9103423e0a779ad8cea958c291e4815f",
           "preset_id": "pastel-noon",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#23183A",
@@ -3546,7 +3450,6 @@
           "plugin_id": "circadian_window",
           "preset_fingerprint": "23b499347400b0f3933444a05dbacf0b456f2a32f1b909158c0f07c27766e4f3",
           "preset_id": "quiet-real-time",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -3557,7 +3460,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -3848,7 +3750,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "e742e90b143829b357d1e15ef84f2f281493bf5ab4e933625444660899406a4b",
           "preset_id": "amber-afterglow",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040100",
@@ -3901,7 +3802,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "a120105d827a14729161f290fef946e001ca3829daae12a4b460d013c233d2f5",
           "preset_id": "aurora-hourglass",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#04000E",
@@ -3954,7 +3854,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "c255d00fc7f95702cce5a942091ea57676b55f41c4d361b74e80aee209b919ec",
           "preset_id": "aurora-orbits",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#05000F",
@@ -4007,7 +3906,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "44efffba5a86e0515c46229b9d4e2e175106d42dce94555da37a9a39e989e6be",
           "preset_id": "bedside-amber",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040100",
@@ -4060,7 +3958,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "8061ccc801c39b6852e1e3878e1ec8ca388c3f1897e79d2884e2f6ea6d9f4370",
           "preset_id": "binary-constellation",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#00050C",
@@ -4113,7 +4010,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "fbd85db64eb9b4ed111414870460e2a131c3c642756114bbeb8927b1fdc002de",
           "preset_id": "bioluminescent-tide",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000412",
@@ -4166,7 +4062,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "1d0389d40529d1ab89237fc92f544a5418739c9b49ecd9ba98c783eb2965bbad",
           "preset_id": "calendar-glance",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120D08",
@@ -4219,7 +4114,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "9c42e5d0489d2b948fa4e0a6bdabc26a20a8e35c2b5f074bb837212d70a23398",
           "preset_id": "chrono-scan",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#020302",
@@ -4272,7 +4166,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "7ad874b776dfba36f7aa7a08a6e3d79dc6c06168fa71339d698f7c0f8332fdb3",
           "preset_id": "classic-wall-clock",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#00050C",
@@ -4325,7 +4218,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "29d5abc09352ef02aa57573a3c4a5dddf7b452121cae8ef567c97ca2a1e25943",
           "preset_id": "daypart-horizon",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120D08",
@@ -4378,7 +4270,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "cade69907de50c83856035b050837e36e2cd2b6da145f970d56d2c8793762212",
           "preset_id": "forest-night-almanac",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000704",
@@ -4431,7 +4322,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "6ff3ef7eb7aa7275d38712d7dd530364713429dc48e81abc0484e17b6433e771",
           "preset_id": "last-light-horizon",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0A010A",
@@ -4484,7 +4374,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "0b7531ed6c372df9c834f567e19ec2a575777fdabf126bed672ca66520e355ba",
           "preset_id": "lunar-binary-constellation",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#00050C",
@@ -4537,7 +4426,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "4dcc85742a438747fb4adc6c437218505d6442b35978fa75cbaae10f3af62122",
           "preset_id": "midnight-planetarium",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000412",
@@ -4590,7 +4478,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "5d766c3eb9e2db837ff6fd976ebbeb96d350b3d67e6cc53246bf61be259f3704",
           "preset_id": "night-shift",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#04000E",
@@ -4643,7 +4530,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "cc0c32a88fd662f8b93fe9c19fae67ffac4dadcdada0767e8fe1b34a2e6c0680",
           "preset_id": "office-24-hour",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000000",
@@ -4696,7 +4582,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "11f480331f1e100c240f6c3171e45ce930eafb39de459b3889d8ca9893b56dab",
           "preset_id": "precision-seconds",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#020302",
@@ -4749,7 +4634,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "18d509a6207a74bb3f57817787dac6d8988968abf103af0ccd7b1a9e4fb2caec",
           "preset_id": "remote-team-plus-six",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000412",
@@ -4802,7 +4686,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "3e6ba7478db36b8f5c02f8a126d87104063586983c26c7f0b9e9d4a5e7f59e86",
           "preset_id": "remote-team-minus-eight",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000704",
@@ -4855,7 +4738,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "8b40cfbc8405effd07317aab252bba26a8b924a4977df226826e1e4c830d8801",
           "preset_id": "temporal-monoliths",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0A010A",
@@ -4908,7 +4790,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "0602bf12e4bf54678dfd540540046b652f133cdd53d9fbefafefb8c9358f3888",
           "preset_id": "three-quiet-signals",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000704",
@@ -4961,7 +4842,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "cf47ae6705808fab624d56393f3c7293d2c8d745ea58680e8e28a7ca17501b80",
           "preset_id": "tidal-orrery",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000412",
@@ -5014,7 +4894,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "19b6f26767fefced11712c9b483d8ec16f1194f5974caf5a131f31eea3cb091f",
           "preset_id": "violet-drift-grid",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#04000E",
@@ -5067,7 +4946,6 @@
           "plugin_id": "clock",
           "preset_fingerprint": "cb58ed0b587a2f69b9e8f1acde6ef69154eab081b49af673265c977caa2431cc",
           "preset_id": "violet-sandstorm",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#04000E",
@@ -5084,7 +4962,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "full_scene",
@@ -5353,7 +5230,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "6f3992d8b37d33f7964e2ee4c73984253b3f391db2a3440de5254ff574f63cc5",
           "preset_id": "amber-afterglow",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040100",
@@ -5402,7 +5278,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "7526e7547bd9d7a8cddc3b9973f9097ed562e808ef2afe0bc51f4688fd4d72fc",
           "preset_id": "aurora-hourglass",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#04000E",
@@ -5451,7 +5326,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "ca9d5c11c7014266e6bf969b9c912c94f06691672d12312830f4d640160a4bc7",
           "preset_id": "aurora-orbits",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#05000F",
@@ -5500,7 +5374,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "e2c9c009e898572946887f76427cc25fc78903c833315bc0eb904791468dab79",
           "preset_id": "bedside-amber",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040100",
@@ -5549,7 +5422,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "38e45a8e817070157ee8e7665ad68eb60db5f5bf2cc17ffeec2cb639c30e46a7",
           "preset_id": "binary-constellation",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#00050C",
@@ -5598,7 +5470,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "7968d642324543514fd688de0187f727013aaf036d84e96d4b63d43abbce900c",
           "preset_id": "bioluminescent-tide",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000412",
@@ -5647,7 +5518,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "6b9b39454864a03e715041cbbb341e27bdcec89d3f34ef783fce9ad35a0a5e31",
           "preset_id": "calendar-glance",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120D08",
@@ -5696,7 +5566,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "236c8b97e12cc3d75cf83dbb99bbed3b1a81a99b6f526d31e4f28ff7a4148d60",
           "preset_id": "chrono-scan",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#020302",
@@ -5745,7 +5614,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "d90bd05c4d91b16e27b86c1f12a7e7928918cba7d1b81120c290a69364fa8e9e",
           "preset_id": "classic-wall-clock",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#00050C",
@@ -5794,7 +5662,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "e6e0437a625c200404efefcdbe9f4fe61fcfa858182a67e82ffb671e591c4682",
           "preset_id": "daypart-horizon",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120D08",
@@ -5843,7 +5710,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "fedbfe0f656484457b2b2655f69c13dc0ae11d7c9a51b687daeb7061df8c8202",
           "preset_id": "forest-night-almanac",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000704",
@@ -5892,7 +5758,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "1d5bef84da5d48664d19487a7ea3706bc1f0a7d9aa0e26d854e0bd4e1c143b68",
           "preset_id": "last-light-horizon",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0A010A",
@@ -5941,7 +5806,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "5bbcc10e06e600ae2e7fe98aa379bfe855dff1a921caadde951963f7c4f2fd0e",
           "preset_id": "lunar-binary-constellation",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#00050C",
@@ -5990,7 +5854,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "2d4ee8e4cbf61d225ab492460ea01ac56412b63b7c4f9ebf139bede0f020f3ad",
           "preset_id": "midnight-planetarium",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000412",
@@ -6039,7 +5902,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "9701d628d08fdd31c198a7061104bf1b75aeb9c25499b222c137327aeb38c960",
           "preset_id": "night-shift",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#04000E",
@@ -6088,7 +5950,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "664b66cae6e0677b4cf85782d3d902c71c86dcb65577d86d9ba79c43ad15baa2",
           "preset_id": "office-24-hour",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000000",
@@ -6137,7 +5998,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "9656d9063eac13445ffda7976dc39995e341f8733a90340c981b9087d56f6c09",
           "preset_id": "precision-seconds",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#020302",
@@ -6186,7 +6046,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "c6fc59282cb66ad4f55c62037c8a3d6223b7072602321931c641efa46abd27e8",
           "preset_id": "remote-team-plus-six",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000412",
@@ -6235,7 +6094,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "0252b069b09594a41969fad2c5d6947ad184f5583e1560a2b888be2f0da3a95f",
           "preset_id": "remote-team-minus-eight",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000704",
@@ -6284,7 +6142,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "0547146506fde54c9b27177b396335c823e62d7c825ccdb118caca5b47bdffb2",
           "preset_id": "temporal-monoliths",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0A010A",
@@ -6333,7 +6190,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "f82dae1eb3577a66fd44a6482537a433bcdb70b3cfde2bd0f36ea43c2815b68b",
           "preset_id": "three-quiet-signals",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000704",
@@ -6382,7 +6238,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "75301ec608d1a24889c5c674d7b843740e26e83f19d0c1598c911681dff7819c",
           "preset_id": "tidal-orrery",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000412",
@@ -6431,7 +6286,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "4af7145f2c2d1ac43cf99f12638b1fea96bb4eae02d4ac00cf8982714890353d",
           "preset_id": "violet-drift-grid",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#04000E",
@@ -6480,7 +6334,6 @@
           "plugin_id": "clock_overlay",
           "preset_fingerprint": "db6f6761be384a13213f2ae10788316ccf7657bbd3619961503f0805c9de2ea1",
           "preset_id": "violet-sandstorm",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#04000E",
@@ -6497,7 +6350,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "overlay",
@@ -6753,7 +6605,6 @@
           "plugin_id": "cloud_canyon",
           "preset_fingerprint": "5a9ef36afff1839aaea3c60ed2006d2e59076b7a60a5bc63819b4ab1eda05ca3",
           "preset_id": "daylight-canyon",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#1C3048",
@@ -6799,7 +6650,6 @@
           "plugin_id": "cloud_canyon",
           "preset_fingerprint": "401135442e2e0e5256d663e4155fc4eed5eb2898e8adffe614953e9297f25f58",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -6840,7 +6690,6 @@
           "plugin_id": "cloud_canyon",
           "preset_fingerprint": "1aea8bc96728ddf13e2ad224b863d07965f4ad3b701b29b7a1f766b51c067139",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -6883,7 +6732,6 @@
           "plugin_id": "cloud_canyon",
           "preset_fingerprint": "0f0dc8e8bdc16fefbe35c1847f5f2183527291b56d3ec9aed90628aebcb8d5d5",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -6894,7 +6742,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -7130,7 +6977,6 @@
           "plugin_id": "gradient",
           "preset_fingerprint": "6c07a17141d86e79c58b7158efd7bae38480864b76cf57d7996a26c491105056",
           "preset_id": "arctic-horizon",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#E1FAFF",
@@ -7169,7 +7015,6 @@
           "plugin_id": "gradient",
           "preset_fingerprint": "c348a56be6ec0820c2167ccc3ff0d6861af1cf6220cc1f1d240b36e3490de661",
           "preset_id": "ember-shift",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FFAA14",
@@ -7208,7 +7053,6 @@
           "plugin_id": "gradient",
           "preset_fingerprint": "bb2d7cf2aeb673be4f6a4cd047d7d222ddc4a643597e18be28c04f3487d821e0",
           "preset_id": "forest-dawn",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#042D14",
@@ -7247,7 +7091,6 @@
           "plugin_id": "gradient",
           "preset_fingerprint": "f52d1b895e02a5c08ff245bf37de02c892b72926db6db2c93dec46794199d13d",
           "preset_id": "hypercolor-scan",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#00FFF5",
@@ -7286,7 +7129,6 @@
           "plugin_id": "gradient",
           "preset_fingerprint": "ed5577075fb725742a6c96f548adf788d6eb9fd0630504944480b14a7c6f19be",
           "preset_id": "miami-sunset",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FF376E",
@@ -7300,7 +7142,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -7548,7 +7389,6 @@
           "plugin_id": "wave",
           "preset_fingerprint": "56a525f9bde688d0e05842ef3474f69a0b58bb025cfbdf45565f942114255e8f",
           "preset_id": "chill_raining_fish_tank",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#00000C",
@@ -7586,7 +7426,6 @@
           "plugin_id": "wave",
           "preset_fingerprint": "22c34a140362f5cc013af28c8c702c7ee8f08a6638f8ecffb6717acd6430546b",
           "preset_id": "emerald-breath",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#14FF6E",
@@ -7627,7 +7466,6 @@
           "plugin_id": "wave",
           "preset_fingerprint": "7d21662aab9a656f6340d87702e0fa6a30115489ce7e7e738354b6c4eb88dc22",
           "preset_id": "moonlit-tide",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#78B4FF",
@@ -7668,7 +7506,6 @@
           "plugin_id": "wave",
           "preset_fingerprint": "c58d78dc11dcafb76632604bfe24d6ff40f22658d7be676362387ff4b766dd73",
           "preset_id": "solar-radio",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FF5F05",
@@ -7709,7 +7546,6 @@
           "plugin_id": "wave",
           "preset_fingerprint": "cf6a60b6d5e6b8360861998fa7c7123f6bdc10c5eab1d0aaa02634dd7938b31a",
           "preset_id": "synthwave-ribbons",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FF14BE",
@@ -7750,7 +7586,6 @@
           "plugin_id": "wave",
           "preset_fingerprint": "fcd3726fb3955f19450e24368fbd85c7875384c48fce3d12696e5bf1913b1c5c",
           "preset_id": "ultraviolet-static",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#AA14FF",
@@ -7764,7 +7599,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -7899,16 +7733,6 @@
         "vibe_color_policy": "preserve"
       },
       "presets": [],
-      "preview": {
-        "framebuffer_readback": false,
-        "kind": "host_contract_renderer",
-        "label": "Host simulation preview \u2014 not receiver framebuffer readback",
-        "layout": "strip_major_global_coordinates",
-        "live_state_mutated": false,
-        "provenance": "receiver_host_simulation",
-        "renderer": "animation.core.receiver_static_component:render_compiled_rainbow_preview",
-        "time_domain": "receiver_scene_time_us"
-      },
       "provider": "receiver_native",
       "provider_collision": false,
       "role": "background",
@@ -8328,7 +8152,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "fc38bf2b1698a2257c300d5e3f0f829b53f6d5c38ee6499bb6ad3645331cac98",
           "preset_id": "arcade-afterlife",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8370,7 +8193,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "9b20842f03bdc9b2e26acf63a271ac15a5fa16c6f971b59c33f6f085fa3e3d2c",
           "preset_id": "aurora-garden",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8412,7 +8234,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "f74ce64d6f7747b39349f268dfd7d40f9db9760cb52a0511b9052cd7858e765b",
           "preset_id": "bioluminescent-tide",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8454,7 +8275,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "53cd98e1db42d0455db7289c32a44592f06b543c5da82ca11bbc1e2975afde17",
           "preset_id": "classic-green",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8500,7 +8320,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "434cb1b8badfa2436d3e745901f96543a01b61fce5986f7f9703f7738a6a60ac",
           "preset_id": "deep-space-acorn",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8542,7 +8361,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "83298a6d29bd253ce62478c215a5bc240c0311c63a16bf2d74ca87a14366a30e",
           "preset_id": "earth-cities",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8585,7 +8403,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "a633a8b159132fafe4a6834149f98604b2349d71a56ca804ace85bd8f3d1c989",
           "preset_id": "gosper-foundry",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8627,7 +8444,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "f299512e56cfb8c8fe5b220af586ee2f681b6786039d9590f3a94a9f8b195db6",
           "preset_id": "ice-crystal",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8666,7 +8482,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "85970c55e73455138af38567ccbe017dd1819196110446198ccf175c57e03d43",
           "preset_id": "maximum-chaos",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8705,7 +8520,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "de4f8629d84f6dfcb4f0620df28c4840636d48c102bd65c2540dbd2a769cc54b",
           "preset_id": "neon-glider-storm",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8748,7 +8562,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "917c3d29b755bcf18d863b86ce34a30cde52e464f1789ebc8d879788a69f5b0c",
           "preset_id": "oscillator-orchard",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8791,7 +8604,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "cb3802e04019674719e5248520cbcc4479e598d0fb24858fd46cca56bf571bb3",
           "preset_id": "pulsar-observatory",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8837,7 +8649,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "66f76c1c6307000fa901d7d25869606acbc997785a98db3e7d4ae50d7dba4d63",
           "preset_id": "r-pentomino-laboratory",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8879,7 +8690,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "b95f923df6f4bc36d79089037e0ddafac58b401585bd1a5790301648bdbd82cd",
           "preset_id": "solar-embers",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8921,7 +8731,6 @@
           "plugin_id": "conway_life",
           "preset_fingerprint": "9018d4dfb33118c2acab89d32c2d34db338acaf390dc09e9095c85f6ed3e6049",
           "preset_id": "synthwave-sunset",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -8929,23 +8738,6 @@
           "version": 1
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.25,
-          0.5,
-          1,
-          2,
-          4,
-          7,
-          10
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -9266,7 +9058,6 @@
           "plugin_id": "cyclic_reef",
           "preset_fingerprint": "cc06690ff2bd67cdb915cb6a97489d199b67b60ffeccd6cc3131ecd1bc9b80c6",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -9311,7 +9102,6 @@
           "plugin_id": "cyclic_reef",
           "preset_fingerprint": "0f758a9e63e76c8054416f1042e90f84c14aab220f119db4d868b66ab8e96bbf",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -9356,7 +9146,6 @@
           "plugin_id": "cyclic_reef",
           "preset_fingerprint": "517c43bdc0e3e22e459f9d48f56b7cf0c397b9f5a6eae8bdf2cd99c225d62267",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -9367,7 +9156,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -9637,7 +9425,6 @@
           "plugin_id": "desert_wind",
           "preset_fingerprint": "eba38a96acda3955bfc204ed5b6ab1e778e3a14bbeabb0beb4af815c44631464",
           "preset_id": "candlelit-dunes",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#1E0902",
@@ -9685,7 +9472,6 @@
           "plugin_id": "desert_wind",
           "preset_fingerprint": "2a0403c329861064e5c8aa9e090b5ceb2fbb016a926f8b41f2874517e9088748",
           "preset_id": "martian-saltation",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -9726,7 +9512,6 @@
           "plugin_id": "desert_wind",
           "preset_fingerprint": "9dcaa150529bd5df0fad2e71aeee44772f4537503bd278b5e2ce5ef31b2e346a",
           "preset_id": "quiet-ochre",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -9767,7 +9552,6 @@
           "plugin_id": "desert_wind",
           "preset_fingerprint": "bd1dceafbccc0daa7e5dad3a7a5e9283188e4bfdecf9e581fd7a505f9b827866",
           "preset_id": "violet-night-dunes",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -9778,7 +9562,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -10076,7 +9859,6 @@
           "plugin_id": "emoji",
           "preset_fingerprint": "0574886bd0447b126a199de305ac26f3efc9eb64a6121c856139ff226d3bec2f",
           "preset_id": "golden-smile",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#01040E",
@@ -10122,7 +9904,6 @@
           "plugin_id": "emoji",
           "preset_fingerprint": "6d8e3c61201d324a410da8fd9df9765f1b1c10a16eda2676eb881d84f2e2253a",
           "preset_id": "ice-heart",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000616",
@@ -10168,7 +9949,6 @@
           "plugin_id": "emoji",
           "preset_fingerprint": "aaafc0c8ae7232b8c4aae7c67e3d30377ba7f7f7398d906361f085c455051d6e",
           "preset_id": "neon-grin",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0A001C",
@@ -10214,7 +9994,6 @@
           "plugin_id": "emoji",
           "preset_fingerprint": "8726ccb1ddbac941014072cec4dca45a2976e4a2ad1f7caa482f37aaa766895e",
           "preset_id": "valentine-heart",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#080005",
@@ -10229,7 +10008,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -10551,7 +10329,6 @@
           "plugin_id": "firefly_synchrony",
           "preset_fingerprint": "2a8de34f0e3be306e43f3d8e5977ba52952ef78862bdab4a7d663b0a08211114",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -10597,7 +10374,6 @@
           "plugin_id": "firefly_synchrony",
           "preset_fingerprint": "45102fe7d91a52e25c6aa7369b448c9ff6659d2e1e9b4d511e9aaed07637d740",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -10658,7 +10434,6 @@
           "plugin_id": "firefly_synchrony",
           "preset_fingerprint": "4633923b5f141ca1a580266b0f9553b90aa6ba2a1561718634800f698576f196",
           "preset_id": "lantern-meadow",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#1E0902",
@@ -10709,7 +10484,6 @@
           "plugin_id": "firefly_synchrony",
           "preset_fingerprint": "756f14be3b2bdbf74a2f274a0e570a4cc40df7e2d2a884c34b5589f8810f2e76",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -10720,7 +10494,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -11087,7 +10860,6 @@
           "plugin_id": "fireworks",
           "preset_fingerprint": "cf0ff0d01a83265ea60ebced7acbf1efe2b9c61ae3d0a150383225f18735eba9",
           "preset_id": "golden-willows",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -11124,7 +10896,6 @@
           "plugin_id": "fireworks",
           "preset_fingerprint": "c1cf84161302dd4f5fccfc90d78c510ab74425de2f09ece514c1a4a5d5584599",
           "preset_id": "grand-finale",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -11163,7 +10934,6 @@
           "plugin_id": "fireworks",
           "preset_fingerprint": "810ff6fb8e74424030c1fd3646453f878d82cd026c9b3e450234ce3a92022366",
           "preset_id": "neon-crackle",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -11200,7 +10970,6 @@
           "plugin_id": "fireworks",
           "preset_fingerprint": "b6f63b4fbbffd18e2d1c6b2690ef7a1de49d7c17fbf2e8a190595bef4fb2c77c",
           "preset_id": "patriotic-salute",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -11240,7 +11009,6 @@
           "plugin_id": "fireworks",
           "preset_fingerprint": "0ca213c17ef563a2610859e41b5f30ca8a6228e373be4f09fb5e1b5303b6c0d6",
           "preset_id": "quiet-sparklers",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -11248,23 +11016,6 @@
           "version": 1
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.25,
-          0.5,
-          1,
-          1.5,
-          2.5,
-          4,
-          6
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -11537,7 +11288,6 @@
           "plugin_id": "flow_field_silk",
           "preset_fingerprint": "cc05cd4981349ef14405d80ce3837618f090fdaecded8a0af844adb694385588",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120523",
@@ -11591,7 +11341,6 @@
           "plugin_id": "flow_field_silk",
           "preset_fingerprint": "38b9b64aa3721459774513434a34fa728419ec0ea1db00c5bb2e2080a3b5960a",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#08121E",
@@ -11645,7 +11394,6 @@
           "plugin_id": "flow_field_silk",
           "preset_fingerprint": "067c3bc766eef58f15699a59dafac6705df8413ed6ad493e62773f2b76078fb3",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#010208",
@@ -11661,7 +11409,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -12017,7 +11764,6 @@
           "plugin_id": "fluid_tank",
           "preset_fingerprint": "589ad1a632a9e79126afb24e10a2157400df2161678444495d812861ae73d9a3",
           "preset_id": "bubble-column",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12061,7 +11807,6 @@
           "plugin_id": "fluid_tank",
           "preset_fingerprint": "552d24ff3d07a64a107ed497eff45dbcfec6ae83036c4a036fe01f354c15af9a",
           "preset_id": "caustic-laboratory",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12106,7 +11851,6 @@
           "plugin_id": "fluid_tank",
           "preset_fingerprint": "74d7624d3e1f8b4cc377dab99b7b893fc19c4537d4d3a62743f4a9449d5bdd8d",
           "preset_id": "flash-flood",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12150,7 +11894,6 @@
           "plugin_id": "fluid_tank",
           "preset_fingerprint": "ead5b29b2651a9cf6950e01c39323cd426722cc48c27a9099b464519094fc675",
           "preset_id": "quiet-aquarium",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12200,7 +11943,6 @@
           "plugin_id": "fluid_tank",
           "preset_fingerprint": "15fb3184ad58afe915def90c5ab3961469dca98022b5a412482024b53864fbb5",
           "preset_id": "she_cute",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [],
@@ -12241,7 +11983,6 @@
           "plugin_id": "fluid_tank",
           "preset_fingerprint": "0617108deb6cf74df0dc3d8bc2fc28ac3248f89193bd6ffe4573f4a53ce627a3",
           "preset_id": "storm-tank",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12252,23 +11993,6 @@
           "version": 2
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.5,
-          1.5,
-          3,
-          5,
-          8,
-          12,
-          18
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -12514,7 +12238,6 @@
           "plugin_id": "flame_burst",
           "preset_fingerprint": "4e7169a1979f92ab08da1211719c03307bf72d3ec95598b4033e35fe83e682df",
           "preset_id": "afterburner",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12550,7 +12273,6 @@
           "plugin_id": "flame_burst",
           "preset_fingerprint": "bceefe9980b9f39f18190700dd6fa43fad626cc4804d6fa541592c86350103e0",
           "preset_id": "campfire-bloom",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12586,7 +12308,6 @@
           "plugin_id": "flame_burst",
           "preset_fingerprint": "31c14353011d764dc7510aeee378994f4632fc0538697cef63d402fa6af936b1",
           "preset_id": "off-center-comet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12622,7 +12343,6 @@
           "plugin_id": "flame_burst",
           "preset_fingerprint": "fb163367947fb8c2abc4dafed953b83444ffe220675c9894056d2ae2a72a2fe0",
           "preset_id": "rapid-ignition",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12658,7 +12378,6 @@
           "plugin_id": "flame_burst",
           "preset_fingerprint": "39e73b8a0421b9ea54d6e21ab6d64b6021fd2e67184ce326e9c1266b483d495f",
           "preset_id": "solar-pulse",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -12669,7 +12388,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -12942,7 +12660,6 @@
           "plugin_id": "frostwork",
           "preset_fingerprint": "ddb7b3dae6a115c63ae590991e1b706c8af6db47bdb5ef5bb4ea6984a476e90d",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120523",
@@ -12996,7 +12713,6 @@
           "plugin_id": "frostwork",
           "preset_fingerprint": "0f36963385de24174e7c0e01d0214b9412f5dc56120dd5c8f3b02c4173afea1c",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#010208",
@@ -13056,7 +12772,6 @@
           "plugin_id": "frostwork",
           "preset_fingerprint": "36a230b40ebf441f7b51694ac55d203e2e414cba4b0f72922a274d5aac057a90",
           "preset_id": "pastel-daybreak",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#23183A",
@@ -13110,7 +12825,6 @@
           "plugin_id": "frostwork",
           "preset_fingerprint": "c3880554ee6d195545d6cbdcb072f6204bc4981c8b3e7641842782a2bfb3ef5f",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#06121E",
@@ -13126,7 +12840,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -13420,7 +13133,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "436791a8546684db5049b4725b9482b1f286971d1c06664d24bda4b06a1f30ff",
           "preset_id": "axolotl-bubble-column",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000917",
@@ -13469,7 +13181,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "04376d4d658b87d324a094a231e3f98e32b202aef724a3f2f45cef9ada986c66",
           "preset_id": "balloon-blobs",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#070719",
@@ -13518,7 +13229,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "ef004adf77122d453410301643e0ee7823a3c3729f289cdda1ab0ff4b4c8a2c7",
           "preset_id": "bumblebee-garden",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#070C14",
@@ -13567,7 +13277,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "be542da66862c0000603600ebce38656e760103a8525b868ec55720909ee4d41",
           "preset_id": "cactus-bloom-dance",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040910",
@@ -13616,7 +13325,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "5fcd272f7a3aca40434eba0a56368d0eaf85de00530d3ed4f416935636f7a43a",
           "preset_id": "campfire-ghost-stories",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#04050D",
@@ -13665,7 +13373,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "87bff70831ce4b385b78f42de4b2818d9e5e1c4728afbc50152ecab021d1d53c",
           "preset_id": "coral-fish-friends",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000818",
@@ -13714,7 +13421,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "ae02a687da5e164b6993ab481fb0ebf27c46d8420b693d1d4cd480960e0a67b3",
           "preset_id": "cotton-candy-clouds",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0C0820",
@@ -13763,7 +13469,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "406694f5c4844fe853b5ac8cb133f4b38dc33a5dbdebb220cc130e53a3d1fbf2",
           "preset_id": "cozy-shelf-naps",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0D070D",
@@ -13812,7 +13517,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "41077ba01dc502eb364a862cd8d09ba580552322d68dfa036287fd0734b44f03",
           "preset_id": "cozy-window-cats",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0B0612",
@@ -13861,7 +13565,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "1a8472e6442a182e6c21e303498bac42487dd395ff59e85d45c0715088cfed12",
           "preset_id": "cupcake-sprinkle-party",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0F0615",
@@ -13910,7 +13613,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "665f1bc340c10095dbe63e218a78d062e1cf9cb10ca0fe627a1f7c632c68f055",
           "preset_id": "curtain-cat-watch",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0A040F",
@@ -13959,7 +13661,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "5c7196c6aaab29820b642c7d96932508aeaac1bbc4d81f564407421b3c683343",
           "preset_id": "firefly-bottle",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#020A0C",
@@ -14008,7 +13709,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "4ea8c854809ac025fdb88e364e1264f08007728a06485cb472aba459e840cf32",
           "preset_id": "frog-pond-ripple",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#010A11",
@@ -14057,7 +13757,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "27bc7f39c60f6778ae846cfbba7e4220ff68a5e9f50685cf6ad67179c183769a",
           "preset_id": "grape-bounce",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#090512",
@@ -14106,7 +13805,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "1d862dc3bc70f13919fd31fdc86d2716ead3758f760b07c4b04ed27b5da33004",
           "preset_id": "happy-star-fall",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#030618",
@@ -14155,7 +13853,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "fdf413578891b3dda4f4e9ca6097f222ae0a30cbd8f73e984da3553f8692f3ee",
           "preset_id": "hydrangea-rain",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040817",
@@ -14204,7 +13901,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "b6777294a652355e54fa860a98c03117c20c62a06fa0e4f6e4d474577ad7dabb",
           "preset_id": "jellyfish-lanterns",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#010519",
@@ -14253,7 +13949,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "10f8bddc5e493e3951c2ea237c140399bf58e704f0377ce6f04e2e14be99e5b9",
           "preset_id": "jolly-slime-stack",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#050912",
@@ -14302,7 +13997,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "a954c0b184981d5c0658cae23950b24312c14a6c365f9ec13680e971db479e73",
           "preset_id": "koi-ribbon",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000912",
@@ -14351,7 +14045,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "62a11c2d09ba5c6018dd3e44ab34aae719a8f975b9a361cefb9daef69b6f851d",
           "preset_id": "lantern-tree",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#070512",
@@ -14400,7 +14093,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "2344963cc146ca1489042d71fc1288a4570124c89f6634d223345a0c4514cdff",
           "preset_id": "moon-bunny-meadow",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#050718",
@@ -14449,7 +14141,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "ca038c9d9aa0edc49799559f254c872dd7de87c1da2b493852ea1de99a05c7d0",
           "preset_id": "moonlit-ducks",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#020618",
@@ -14498,7 +14189,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "9c2ac8825c04936b9fe286957baf6852cccb666ebaaf32c466a9fa191fee565e",
           "preset_id": "mushroom-village",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040A0C",
@@ -14547,7 +14237,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "690aad3ab055d1a2b9d19737dd2c9e14bf923cfc0717f27f5c3490272b47c058",
           "preset_id": "peach-orchard",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0B0815",
@@ -14596,7 +14285,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "e1aa968e7572fef51745a697228d3267d7f55b4c9c0f457f193dc98705827f13",
           "preset_id": "penguin-ice-fishing",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040A1B",
@@ -14645,7 +14333,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "bb87d0845e4be282328feda289ccbf35e8762b50b48447bdf064d9ce77bb56b9",
           "preset_id": "planet-parade",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#010412",
@@ -14694,7 +14381,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "2be562e65726028f18785cefcb2d7bca1095035c24b73e497e603809fe436ec6",
           "preset_id": "pocket-rocket",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#020412",
@@ -14743,7 +14429,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "4b9b8a775309ef513639025a7bd917fe816b659ea107e7063f45597acf2f4385",
           "preset_id": "shy-ghost-parade",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#080514",
@@ -14792,7 +14477,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "56f050a92650a053a597fb53ac49e4e4400a4ca349e7ded7c5ee345e2f1dee6e",
           "preset_id": "sleepy-bat-cave",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#05030F",
@@ -14841,7 +14525,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "e1a74be2e820424c6ad85d31ec6e0b75164f3567d351110f36b673c0c7c7b998",
           "preset_id": "snails-after-rain",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#020E10",
@@ -14890,7 +14573,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "8822a7eac365a6596233c06d28ea015fa904256bd240a677624daca3dc7da280",
           "preset_id": "sunflower-hamsters",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040B0D",
@@ -14939,7 +14621,6 @@
           "plugin_id": "gif_animation",
           "preset_fingerprint": "5317f63e97de66496ef9c46ca850215dbc31f983155f361c39fa42d5f696eaf7",
           "preset_id": "tiny-robot-patrol",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#02070F",
@@ -14955,23 +14636,6 @@
           "version": 2
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.2,
-          0.4,
-          0.8,
-          1.2,
-          1.8,
-          2.5,
-          3.5
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -15265,7 +14929,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "634cc8576725b8e56713f32b05750a921620578f92395a5dc60ba7a53cfbb9ef",
           "preset_id": "bowl-bumpers",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15313,7 +14976,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "4c9d890b32f13806e7b1029430c3df2072f23bb3b28ca01e550fabf6c76fb630",
           "preset_id": "bowl-emitter",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15359,7 +15021,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "58713fa5dadf99ac7f7871d8f31ea95127d1e9fea6d262beb18ce442188617a6",
           "preset_id": "busy-bubbles",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15405,7 +15066,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "f36c0ac1980b135e76150604a890ef1da22b50e2d491e74bbdbaecd4709170c2",
           "preset_id": "classic-amber",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15451,7 +15111,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "daa2cb6647e3d0f1615f05493520247904fd383b8a19271f9f580512133d9115",
           "preset_id": "cotton-candy",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15497,7 +15156,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "1bdd0fab441e0501aea1e5f7908ae251d5b1b8113d09cc93406c7b7936100bb1",
           "preset_id": "foliage-refraction",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15543,7 +15201,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "33bc763b73c013d8b50c0c272872806be3770f5cdc11d0338cce996d27896368",
           "preset_id": "habitat-pools",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15593,7 +15250,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "df69ae78c4da066f3cca1fc6902e86176b68d734fa22881c2cec02a5b23c9a1a",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15639,7 +15295,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "7e776bf030fee939a49ec04ade819a70d88d6d1d3349a8fe6d6b5c3278a8de04",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15685,7 +15340,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "876c083c9b86d370ae5ec21fbda3517d72523cfc823c0db8c5bf46d126ed30fe",
           "preset_id": "ocean-blue",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15731,7 +15385,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "98a8e3da97a34e561cf33f0a47d98caa288be6a2f571a29b6d4099cea333abf6",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15777,7 +15430,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "130c69a886cbdd4a7a42b2a617087cbab6336e1fd84e20e440e60aa15ab50fa5",
           "preset_id": "ruby-vintage",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15823,7 +15475,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "c60c7b488baed8f0ca91665ceed862221072e086beaf8837b60c4df75f4f1b4c",
           "preset_id": "seven-bowl-portals",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15869,7 +15520,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "1f529638ad4c30428bc8b3cafae32ea9072ba69eaf4be399eb42ba2221a0ab3d",
           "preset_id": "slow-giants",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15917,7 +15567,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "4bb2b12b3f67403c70a9256bb44d71062ef38baf69c7cc87364781c15682963f",
           "preset_id": "solar-flare",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -15963,7 +15612,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "9c2f13d66c1a9e4e59cff8bce055bc709609ba5014a099fe63aae903bbde857c",
           "preset_id": "stormy-wax",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -16009,7 +15657,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "f8ceb0cb41ec82d1273e999586e40a9b63cbe59ad115d7259ea76747addc07f0",
           "preset_id": "toxic-lime",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -16055,7 +15702,6 @@
           "plugin_id": "lava_lamp",
           "preset_fingerprint": "a1f4fe074e77854931600ad18f9bc55ad252b36d10a230e5c19b5707869159fb",
           "preset_id": "violet-glass",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -16066,23 +15712,6 @@
           "version": 2
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.5,
-          1.5,
-          3,
-          5,
-          8,
-          12,
-          18
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 100
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -16442,7 +16071,6 @@
           "plugin_id": "living_ecosystem",
           "preset_fingerprint": "4588cc4bc164447d715cc49d038120494597851c01658bbee09d5b8fc033d96d",
           "preset_id": "autumn-mosaic",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#1F170A",
@@ -16504,7 +16132,6 @@
           "plugin_id": "living_ecosystem",
           "preset_fingerprint": "924e9a9d9bd5699562c8ea96fc10bcb7dfcc3b41acb5a60b8493ef318f2a40bf",
           "preset_id": "bioluminescent-exoplanet",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#02051C",
@@ -16565,7 +16192,6 @@
           "plugin_id": "living_ecosystem",
           "preset_fingerprint": "c0c2fa2d84230c418a9b547f78bddd8fea6f09c0379c080ac73a6beae2bfbc96",
           "preset_id": "boreal-night",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#071B19",
@@ -16626,7 +16252,6 @@
           "plugin_id": "living_ecosystem",
           "preset_fingerprint": "ed82e44a7f6a787d82109a2b89fc5b79edce3d92c453b6d294f6c9e27e96566c",
           "preset_id": "midnight-fireflies",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#040C1A",
@@ -16688,7 +16313,6 @@
           "plugin_id": "living_ecosystem",
           "preset_fingerprint": "21bfd068ee90fd7297e159824bb197455c0357e5eae9688df420e44199f3d5a2",
           "preset_id": "neon-microverse",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120D6B",
@@ -16750,7 +16374,6 @@
           "plugin_id": "living_ecosystem",
           "preset_fingerprint": "19dc7a3b74d669d7f783ec30d42d1e9e8170ec6f9c7f9e86327e818571674058",
           "preset_id": "golden-hour",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#2D1408",
@@ -16811,7 +16434,6 @@
           "plugin_id": "living_ecosystem",
           "preset_fingerprint": "fe907242e77c4cd3ee31d237e1339dca00bbf15bb5dbc7afff3145f88a99941b",
           "preset_id": "serengeti-migration",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#2D1408",
@@ -16873,7 +16495,6 @@
           "plugin_id": "living_ecosystem",
           "preset_fingerprint": "f38bda2c552d6ce72a2587706e366aa50f677a3127accbe391f06c486938e115",
           "preset_id": "synthetic-gene-lab",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0C001F",
@@ -16935,7 +16556,6 @@
           "plugin_id": "living_ecosystem",
           "preset_fingerprint": "610aacb82bb0999276f4450ab6294bb544f395f20d34d1f461a0ba9c17403470",
           "preset_id": "temperate-wetland",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0A2B16",
@@ -16951,7 +16571,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -17228,7 +16847,6 @@
           "plugin_id": "living_stained_glass",
           "preset_fingerprint": "55f0f8d3bc84f649ace8d65f2c9b5c9811c22b662a5d4c15f550b3bb2cb8cc4a",
           "preset_id": "aurora-transept",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#03121D",
@@ -17286,7 +16904,6 @@
           "plugin_id": "living_stained_glass",
           "preset_fingerprint": "a1bad08074aacf33b0bc36fde60e0452be5393c2ac56afceb72cb8fb22d6f24c",
           "preset_id": "candlelight-mosaic",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#1E0902",
@@ -17344,7 +16961,6 @@
           "plugin_id": "living_stained_glass",
           "preset_fingerprint": "f071bfb118cd62c6bf5b3024ef81617aea3831b450df055d8481dfa67a676116",
           "preset_id": "daylight-rose",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#1C3048",
@@ -17398,7 +17014,6 @@
           "plugin_id": "living_stained_glass",
           "preset_fingerprint": "5457f4d0be975feb5e22754e0f30948864af1ab80a07fceab790fb7e5e6c99b1",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#010208",
@@ -17456,7 +17071,6 @@
           "plugin_id": "living_stained_glass",
           "preset_fingerprint": "a8a9c391f6d320d419ce207fefd8cf331e9878b9e77c4de7d0e02f414a011a10",
           "preset_id": "pastel-chapel",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#23183A",
@@ -17510,7 +17124,6 @@
           "plugin_id": "living_stained_glass",
           "preset_fingerprint": "96eb2b5f423d177f7a78b02c80d573489cf2f1af04369769676972eddb13f07b",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120523",
@@ -17564,7 +17177,6 @@
           "plugin_id": "living_stained_glass",
           "preset_fingerprint": "776d89c43c96c736b4ff8b89f4aa5bf9f283439c82013cae7922c026356bbf7b",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#08121E",
@@ -17624,7 +17236,6 @@
           "plugin_id": "living_stained_glass",
           "preset_fingerprint": "880c635ccb9850fac7d35fb5317664d81b7c1c19112f1ef97b904a497b433fe2",
           "preset_id": "synthwave-basilica",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#12052D",
@@ -17640,7 +17251,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -17910,7 +17520,6 @@
           "plugin_id": "moonlit_fog_banks",
           "preset_fingerprint": "14baf26fe258d430170cce03300e085f83337add9a85744d6fdad9e38478dd75",
           "preset_id": "aurora-morning-fog",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#03121D",
@@ -17956,7 +17565,6 @@
           "plugin_id": "moonlit_fog_banks",
           "preset_fingerprint": "7429f0f8bc2b0f2d4fbd53568d97e5c524256c55e35ed1a504941163fb6d417a",
           "preset_id": "quiet-banks",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -17999,7 +17607,6 @@
           "plugin_id": "moonlit_fog_banks",
           "preset_fingerprint": "68ec4fe351bec53dfb11f8d5b4cdc65016af67ac4405dc534017fa6b60aa5e8d",
           "preset_id": "silver-halo",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18040,7 +17647,6 @@
           "plugin_id": "moonlit_fog_banks",
           "preset_fingerprint": "a5c0b8870841f22abdeac441a3f8bc6762edd160023fe0e5670332a7be56e110",
           "preset_id": "sleeping-ridge",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18051,7 +17657,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -18261,7 +17866,6 @@
           "plugin_id": "maze_chase",
           "preset_fingerprint": "0dfa56341f0e2da0deec2ca76d2f8b897dccc4cf2bba68d1d93c349c366bec8e",
           "preset_id": "classic-chase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18293,7 +17897,6 @@
           "plugin_id": "maze_chase",
           "preset_fingerprint": "ca6f38652930a18bdc79dc0194835a47eea4b9650c5271be0dbe21cce1003de1",
           "preset_id": "family-maze",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18325,7 +17928,6 @@
           "plugin_id": "maze_chase",
           "preset_fingerprint": "f2fa3de4e62c8b4dabff0502725bd0806754d50a07c17cb9f8d76f1df0d30a53",
           "preset_id": "hunter-vision",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18357,7 +17959,6 @@
           "plugin_id": "maze_chase",
           "preset_fingerprint": "162eddbc349aca503781fbb3b9e3222e3911bfa4af4394252a375e5a18016fd9",
           "preset_id": "midnight-pursuit",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18389,7 +17990,6 @@
           "plugin_id": "maze_chase",
           "preset_fingerprint": "e28ce125fdcced032e933859972399590945ea85be7e00d0c63d4ae86d932c93",
           "preset_id": "nightmare-tunnel",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18400,23 +18000,6 @@
           "version": 2
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.5,
-          1.5,
-          3,
-          5,
-          8,
-          12,
-          18
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -18675,7 +18258,6 @@
           "plugin_id": "night_train_windows",
           "preset_fingerprint": "aa26031f17a7371aabba97992bb766d78ad09926d6291970fd50469d129dc1b9",
           "preset_id": "ember-express",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18716,7 +18298,6 @@
           "plugin_id": "night_train_windows",
           "preset_fingerprint": "47b27e05772ddc5398159b99f37d0f956cddf6e5cef8d7a568cd5970a0adeac0",
           "preset_id": "moonlit-berth",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18757,7 +18338,6 @@
           "plugin_id": "night_train_windows",
           "preset_fingerprint": "862bae58f7828223ba92a69c33a70a528a678e8db021afb50a6c7abd31b4a2dc",
           "preset_id": "quiet-sleeper",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -18811,7 +18391,6 @@
           "plugin_id": "night_train_windows",
           "preset_fingerprint": "e3061739b76b91fea25506c5ded1674c6472054d2f8d71feaa174669a9f83ab1",
           "preset_id": "synthwave-commuter",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#12052D",
@@ -18827,7 +18406,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -19140,7 +18718,6 @@
           "plugin_id": "physarum_network",
           "preset_fingerprint": "58d03bc5117824c8d47b28a351308d20ba457e5bc72e847415eb51271680b504",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -19184,7 +18761,6 @@
           "plugin_id": "physarum_network",
           "preset_fingerprint": "2d488dcbb210f7449f4565d1484517fbc7d9f77967a5b5e0acb6abd1777da136",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -19228,7 +18804,6 @@
           "plugin_id": "physarum_network",
           "preset_fingerprint": "695c57ea401f2d1c27e9ebd82eea0ccf656f36c9ecde61885ec83ebfaf72d0b9",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -19288,7 +18863,6 @@
           "plugin_id": "physarum_network",
           "preset_fingerprint": "c2882e37c3222956c5ec4c7bf0fb56774b11ffba86d6d83fd34fe0caf632044d",
           "preset_id": "synthwave-mycelium",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#12052D",
@@ -19304,7 +18878,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -19563,7 +19136,6 @@
         "vibe_color_policy": "preserve"
       },
       "presets": [],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -19771,7 +19343,6 @@
           "plugin_id": "pixel_quest",
           "preset_fingerprint": "89139b220c8567a7281d0bfbf3bc0d596b693d886e8b58b786205059be4e246b",
           "preset_id": "cinematic-no-hud",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -19801,7 +19372,6 @@
           "plugin_id": "pixel_quest",
           "preset_fingerprint": "15ab5d375f125a291c9df5122c0d153e04fb49ebbae0d4c19d94d3e03dce4a8b",
           "preset_id": "heroic-adventure",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -19831,7 +19401,6 @@
           "plugin_id": "pixel_quest",
           "preset_fingerprint": "13a998be7ca43bd1d7aeb55e5431ab06467dcea201b136729ec404770c976201",
           "preset_id": "speedrun",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -19861,7 +19430,6 @@
           "plugin_id": "pixel_quest",
           "preset_fingerprint": "e9e541b2bb1911e0ca9f301fa0fb31b7ef193b6cdefd65983a382b4696773078",
           "preset_id": "scenic-journey",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -19872,23 +19440,6 @@
           "version": 2
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.5,
-          1.5,
-          3,
-          5,
-          8,
-          12,
-          18
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -20102,7 +19653,6 @@
         "vibe_color_policy": "preserve"
       },
       "presets": [],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -20529,7 +20079,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "beb7f1c613a7ad752aa05852db46bc0002728c7dc8f902ee59b3a17d63e89668",
           "preset_id": "arcade-overgrowth",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#3CFF5A",
@@ -20581,7 +20130,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "12a661b785531383166188274e031d7d39ecca25268c1943a9cd24623968aa38",
           "preset_id": "aurora-canopy",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#46FFA5",
@@ -20634,7 +20182,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "91c82e73c55e2a42a0ac9fd1297ae50f1459edcca4a02e0e25ed65f631970d48",
           "preset_id": "bioluminescent-reef",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#00FFD2",
@@ -20686,7 +20233,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "16fff3775675c37e34774c56845e6d9aa273306f9144695bf63d1803bb59a13d",
           "preset_id": "blue-hour-pinball",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#4BB9FF",
@@ -20739,7 +20285,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "1899a01f08915b7f12124cd8439ea2b7f1beb944fb42904884b57eef510c2ef3",
           "preset_id": "candy-roots",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#050008",
@@ -20791,7 +20336,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "ba01a3ed3c8436405dd6aaa1287158d1d0df1fbe03c3e12274d17ee6a39a949a",
           "preset_id": "cosmic-ivy",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#4BFF8C",
@@ -20843,7 +20387,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "27ff73ab6032e9d18bf83f931028fb8612023d23de1ed4f1a5afaabc5bad1217",
           "preset_id": "earthbound-garden",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#6EFF46",
@@ -20896,7 +20439,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "a5cf043ad6f83bcbbd01e2613bd0592f393bb2c39ebabc0c68b9e1e62c258622",
           "preset_id": "ember-veins",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#050100",
@@ -20949,7 +20491,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "86bb8731fa0219e4b9ce5b16bc52e2e3fac2d827bd8615f7a342f22fd2be5660",
           "preset_id": "hearth-vines",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FFAF2D",
@@ -21001,7 +20542,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "7472f06f369104b21915abdc1f185882e4044d60e9df679ae9735cdbfaca5c1d",
           "preset_id": "jackpot-jungle",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#7DFF14",
@@ -21054,7 +20594,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "98b660eb3d02880c9b60775522d9f83972ff6967f3d869fead363d7fa910eef1",
           "preset_id": "moonlit-moss",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#000105",
@@ -21106,7 +20645,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "4c6023efacfa4b0afd9d0e83955ef7d1d462f20fe1dec54b75374f2f24435ee9",
           "preset_id": "neon-pinball-vines",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#28FF55",
@@ -21158,7 +20696,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "69f448b09dd2ca737db46a9602450d0a52ea392dc8b2930fc89a9dff22112c35",
           "preset_id": "prismatic-multiball",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#14FFEB",
@@ -21210,7 +20747,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "652a2c941a12c3724182de88b5faf07e5eb835f99b847830ee5f2d58204d84ce",
           "preset_id": "slow-table-garden",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#9BFFB9",
@@ -21262,7 +20798,6 @@
           "plugin_id": "plant_glow",
           "preset_fingerprint": "79978ba3dc12be1152346f2661ebe053f58a6afa59817839f1b5e8695f0f0e1f",
           "preset_id": "twilight-orchids",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FF46C3",
@@ -21277,7 +20812,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -21603,7 +21137,6 @@
         "vibe_color_policy": "preserve"
       },
       "presets": [],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -21895,7 +21428,6 @@
           "plugin_id": "quasicrystal_bloom",
           "preset_fingerprint": "14eec15acdd4af7fd74b4870d577461892aecc492892741f564ffb82df3724a8",
           "preset_id": "daylight-prism",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#1C3048",
@@ -21950,7 +21482,6 @@
           "plugin_id": "quasicrystal_bloom",
           "preset_fingerprint": "cb5b59141af13c2c02c2c307302a38d4f81ef2acb57b4e2d0d5296ceaa78d64e",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#010208",
@@ -22005,7 +21536,6 @@
           "plugin_id": "quasicrystal_bloom",
           "preset_fingerprint": "844831ae8e2d1499434526f685eced778e7b24e49527f27391ff56044359fdf4",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#08121E",
@@ -22060,7 +21590,6 @@
           "plugin_id": "quasicrystal_bloom",
           "preset_fingerprint": "43a18f051362e7deda2da50fa9a512f5a795014401fa0baeb8774467d7ee1036",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120523",
@@ -22076,7 +21605,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -22321,7 +21849,6 @@
           "plugin_id": "rain_on_glass",
           "preset_fingerprint": "080a424935cd2cd1daca1a14f6a6034299e96ee098d4d5f3f81029151342bdf0",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -22362,7 +21889,6 @@
           "plugin_id": "rain_on_glass",
           "preset_fingerprint": "cfb3737c868cca1c49a4f938ea697d6bd0410453212111206e25d8a21b96644b",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -22416,7 +21942,6 @@
           "plugin_id": "rain_on_glass",
           "preset_fingerprint": "c460bc67fb3ea1f0efe12ed716c4c25535fcd0a8970379081fd617ac9fb6607b",
           "preset_id": "pastel-sunshower",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#23183A",
@@ -22462,7 +21987,6 @@
           "plugin_id": "rain_on_glass",
           "preset_fingerprint": "2e592547bde27edce7651a97ad7b6384c7e6bc3048f3782e865ba1a0b2ce42fe",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -22474,7 +21998,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -22670,7 +22193,6 @@
           "plugin_id": "rainbow",
           "preset_fingerprint": "a9128d8d04949b239ff9ae3f6f7e87c1d15e505896a33f9c3e73fca7edcaf6a8",
           "preset_id": "classic-spectrum",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -22702,7 +22224,6 @@
           "plugin_id": "rainbow",
           "preset_fingerprint": "8b9c8180c90464eab9a346945a951a86cbc6fec2ff22c266fb53741d97c74c48",
           "preset_id": "hyperspectrum",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -22734,7 +22255,6 @@
           "plugin_id": "rainbow",
           "preset_fingerprint": "0921cd05edbf3bf6610b88d43e8e20745576df08740f69f58ca0ecd2441a3de4",
           "preset_id": "pastel-drift",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -22766,7 +22286,6 @@
           "plugin_id": "rainbow",
           "preset_fingerprint": "ba79319df9fedafb8207aebe97ede34b9397785f99575d02ff40255016b5f81d",
           "preset_id": "reverse-prism",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -22777,7 +22296,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -23120,7 +22638,6 @@
           "plugin_id": "reaction_diffusion_garden",
           "preset_fingerprint": "b4a5539d3024384acc95a069ecc692ea554fa20673b48815ca614eb037dc4f82",
           "preset_id": "aurora-conservatory",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#03121D",
@@ -23169,7 +22686,6 @@
           "plugin_id": "reaction_diffusion_garden",
           "preset_fingerprint": "3cc783b699ddff8c39b14d7ddf048ba6f0ac901bb243ce4316ff7046b8f88b2f",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -23213,7 +22729,6 @@
           "plugin_id": "reaction_diffusion_garden",
           "preset_fingerprint": "b2d6cacd36e14386dc2ffbdf0b97ec449cdf6e2d726292141c803f60ee48ad20",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -23257,7 +22772,6 @@
           "plugin_id": "reaction_diffusion_garden",
           "preset_fingerprint": "36e6e3e019567ab73b0179230a812a47fb64d78645d68b27af3bc642989f4648",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -23268,7 +22782,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -23442,7 +22955,6 @@
         "vibe_color_policy": "preserve"
       },
       "presets": [],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -23777,7 +23289,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "129c2909428fa399de982a48683a4d6cdfcc82e2a7a711623602357b63e51736",
           "preset_id": "classic-orchard",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#071008",
@@ -23832,7 +23343,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "65a9f1d5d61ce57e14ebf555f11208fd9f4b61cf4293ba2f609fc596d14bdaac",
           "preset_id": "comet-garden",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#02020C",
@@ -23887,7 +23397,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "7e3a49c94b7ec8a96b36db169ce1ffb4789a32373bce137e961ad4625b7c5994",
           "preset_id": "electric-hive",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#050014",
@@ -23941,7 +23450,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "8ce840c341ce165a0ea85dc6a446a0a397b3bbbf96aa2100955f2479b7fb43e0",
           "preset_id": "fire-serpents",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#180000",
@@ -23994,7 +23502,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "e6ba5663d9d94da94aa9783bec8237b836fdfdb3c4d4e332a45b6f09d94f3719",
           "preset_id": "ice-labyrinth",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#020B18",
@@ -24049,7 +23556,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "b13907d9e5ace50c50b34df97a35c9bedbd9ac891368e7fd093ee3a1f4e80af9",
           "preset_id": "koi-at-midnight",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#030716",
@@ -24102,7 +23608,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "a0a76f0ef10a07f00671a60ed4f4950341a73de14b1e7dfe5c5f2b3444c9cced",
           "preset_id": "neon-duel",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#090018",
@@ -24156,7 +23661,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "322f0e034f6aec8f9863ddb569d9e1943a6fc5b1a22bacd17ad8ce752c0f26d4",
           "preset_id": "portal-bloom",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#161038",
@@ -24210,7 +23714,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "95ad0ce0f8f647248c0a073aedf459c93a76bfa4dfdb5e3c3744d6fad04a4572",
           "preset_id": "prism-switchbacks",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#111229",
@@ -24266,7 +23769,6 @@
           "plugin_id": "snake",
           "preset_fingerprint": "7225195044b0cbbcf9e4948aa041f23ebe0acb4d5ce659fecba3f2746bd45d07",
           "preset_id": "rainbow-river",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FF3040",
@@ -24282,23 +23784,6 @@
           "version": 2
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.5,
-          1.5,
-          3,
-          5,
-          8,
-          12,
-          18
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -24583,7 +24068,6 @@
           "plugin_id": "solid",
           "preset_fingerprint": "35b694150746b500f284a20cbee65af33afbe65d05a9353001d7a8bef263206a",
           "preset_id": "deep-ocean",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#0830B4"
@@ -24620,7 +24104,6 @@
           "plugin_id": "solid",
           "preset_fingerprint": "07fbb4f9bfa1b69c3c61c8a6defd5f01bccda5a7948cc096e4021bb6549ae04d",
           "preset_id": "forest-breath",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#12D254"
@@ -24657,7 +24140,6 @@
           "plugin_id": "solid",
           "preset_fingerprint": "dc31008e5b75019adb05c117b88783db5552f8286d7980376b6b2a5fc26a8f2a",
           "preset_id": "rose-quartz",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FF5284"
@@ -24694,7 +24176,6 @@
           "plugin_id": "solid",
           "preset_fingerprint": "c2477d618215e238b778ba5cb87c117fc8411092e45b73e20b3caca1f928ec06",
           "preset_id": "ultraviolet-pulse",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#8212FF"
@@ -24731,7 +24212,6 @@
           "plugin_id": "solid",
           "preset_fingerprint": "6e580296c67cad14df09d7ec83e37da792331644627611bac9f8115d310e4f67",
           "preset_id": "warm-linen",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#FFB86C"
@@ -24744,7 +24224,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -24992,7 +24471,6 @@
           "plugin_id": "sparkle",
           "preset_fingerprint": "96732276eb0280bcd05b79902dd8ce545db06181c861e58fe27144a480b258d8",
           "preset_id": "candlelight",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#180901",
@@ -25031,7 +24509,6 @@
           "plugin_id": "sparkle",
           "preset_fingerprint": "bbfedc87f9f1c2c2b2787e64e460d5b6d63e5a70b42c090bba47a4a0d456d7e4",
           "preset_id": "confetti-storm",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#120018",
@@ -25070,7 +24547,6 @@
           "plugin_id": "sparkle",
           "preset_fingerprint": "395966ef022d71e9688c4760450beb6058a9e8d272490f23de000507a110f95f",
           "preset_id": "diamond-dust",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#08121C",
@@ -25109,7 +24585,6 @@
           "plugin_id": "sparkle",
           "preset_fingerprint": "a8ab44730e240b7f33bd0c9698f11f14e101eb502392d5b3be0fcfcaf8121457",
           "preset_id": "emerald-fireflies",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#001008",
@@ -25148,7 +24623,6 @@
           "plugin_id": "sparkle",
           "preset_fingerprint": "010be7ea9e450a6b33ca51d5f7c16f9de6ac4686c41cbfd844903d6a7665e7a8",
           "preset_id": "starlight",
-          "preview": null,
           "provider": "python",
           "swatches": [
             "#010312",
@@ -25162,7 +24636,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -25344,7 +24817,6 @@
         "vibe_color_policy": "preserve"
       },
       "presets": [],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -25608,7 +25080,6 @@
         "vibe_color_policy": "preserve"
       },
       "presets": [],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -25855,7 +25326,6 @@
           "plugin_id": "tetris",
           "preset_fingerprint": "8fc15ae6826864438ea66f8dd5de3db405c4c1b21d2ddcd7de6520f799be9da4",
           "preset_id": "avalanche-factory",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -25890,7 +25360,6 @@
           "plugin_id": "tetris",
           "preset_fingerprint": "b768d2e848a6395d0a523970d66e8774c0ababc3538a41a40cf0c12c7a8fc42e",
           "preset_id": "classic-quartet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -25925,7 +25394,6 @@
           "plugin_id": "tetris",
           "preset_fingerprint": "41f0bd4717f334b153883d79f417b9fd9bc022dad445c36549af3e195b1dcf6f",
           "preset_id": "cooperative-swarm",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -25960,7 +25428,6 @@
           "plugin_id": "tetris",
           "preset_fingerprint": "e52a2c6f877d0e6fc93ae2e4f80f715e60a0f76ecac87fba60f965ed0d56a710",
           "preset_id": "impossible-shift",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -25995,7 +25462,6 @@
           "plugin_id": "tetris",
           "preset_fingerprint": "eb4efbff5c948e64130a926d56bccd58806dde2d6c856169b6b4065e42718885",
           "preset_id": "solo-zen",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -26006,23 +25472,6 @@
           "version": 2
         }
       ],
-      "preview": {
-        "capture_seconds": [
-          0,
-          0.5,
-          1.5,
-          3,
-          5,
-          8,
-          12,
-          18
-        ],
-        "framebuffer_readback": false,
-        "label": "Isolated host preview \u2014 never changes the physical wall",
-        "live_state_mutated": false,
-        "provenance": "isolated_host_preview",
-        "simulation_fps": 30
-      },
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -26265,7 +25714,6 @@
           "plugin_id": "tidal_bioluminescence",
           "preset_fingerprint": "d65209cd96ccca23abeef8abff608836e2d452f2bcc6d75396c28f217c255210",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -26306,7 +25754,6 @@
           "plugin_id": "tidal_bioluminescence",
           "preset_fingerprint": "bae1c9b5046c13f0885ca21ca33e3a16f17992e0bf6f8c7d1ffc55ac2e88b29a",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -26349,7 +25796,6 @@
           "plugin_id": "tidal_bioluminescence",
           "preset_fingerprint": "8565ca988638e95b9e6b4ae313f016550c62819f33ce05633ca839e1284348d4",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -26360,7 +25806,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -26603,7 +26048,6 @@
           "plugin_id": "waterfall_veil",
           "preset_fingerprint": "a7050d4f412be7afcc1561f63e6c1ee6ac30acfda673d11d9dbd98c5e1edc5dd",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -26644,7 +26088,6 @@
           "plugin_id": "waterfall_veil",
           "preset_fingerprint": "1ae313595a9fb9b086168c251e68ca3422754fabb62dfe91948811f3f542e3e0",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -26687,7 +26130,6 @@
           "plugin_id": "waterfall_veil",
           "preset_fingerprint": "11fe904bab647cb68ced65ae29eed28f0a96ca355a18fe738fcbb647a8245339",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -26698,7 +26140,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -27019,7 +26460,6 @@
           "plugin_id": "wind_in_the_reeds",
           "preset_fingerprint": "67110fdf9506ec13ba91f40f7be3ff64ce74c0b77032c0e4102d0bbfb83737ca",
           "preset_id": "showcase",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27063,7 +26503,6 @@
           "plugin_id": "wind_in_the_reeds",
           "preset_fingerprint": "2f42045a3a4bfd44711f50bd1d18feac4c4c64b49b0d6e42d8937218d63c3b2d",
           "preset_id": "quiet",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27109,7 +26548,6 @@
           "plugin_id": "wind_in_the_reeds",
           "preset_fingerprint": "ff8b92aee8c4625d09142dbdb6c9a7d0cf02c6ce06ede48764fa06c6eb6fc509",
           "preset_id": "night",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27120,7 +26558,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",
@@ -27365,7 +26802,6 @@
           "plugin_id": "world_flags",
           "preset_fingerprint": "04c6501a7eabf3cf78ce015aab6028273c7ddfceb7b6930e20e6d319055e954d",
           "preset_id": "brazil-festival",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27402,7 +26838,6 @@
           "plugin_id": "world_flags",
           "preset_fingerprint": "ec1f96645979d78e052e2f0cfe8013ec0132223eb0b01af2543bbed456f6ae3d",
           "preset_id": "grand-banners",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27439,7 +26874,6 @@
           "plugin_id": "world_flags",
           "preset_fingerprint": "d2f177bc51c1c8fb3b352e8fc6267b140b04acd6668ba49ea1b0942106517865",
           "preset_id": "japan-rising-sun",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27476,7 +26910,6 @@
           "plugin_id": "world_flags",
           "preset_fingerprint": "82446debd3d91c12493117ea41816069b0f217e9b57b96f858f851b10dff1af2",
           "preset_id": "mini-banner-rush",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27513,7 +26946,6 @@
           "plugin_id": "world_flags",
           "preset_fingerprint": "238b60044055f1ed4ae555b939f02bb788dff2385764de874171e11bb29893e0",
           "preset_id": "reverse-parade",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27550,7 +26982,6 @@
           "plugin_id": "world_flags",
           "preset_fingerprint": "734dfbadcfc886febb67556315c4e58c6ae83e8b83edd29981acb19ec69860dc",
           "preset_id": "stars-and-stripes",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27587,7 +27018,6 @@
           "plugin_id": "world_flags",
           "preset_fingerprint": "7739dd26179628458e24ff8b2768c2c9bd3ebc8917fdb463890c727cb92cf70d",
           "preset_id": "ukraine-solidarity",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27624,7 +27054,6 @@
           "plugin_id": "world_flags",
           "preset_fingerprint": "7734ab4aa81a895076e1a31a03cbcd9eead50dd3fe3e214cb6645f3e2104a801",
           "preset_id": "world-parade",
-          "preview": null,
           "provider": "python",
           "swatches": [],
           "tags": [
@@ -27635,7 +27064,6 @@
           "version": 2
         }
       ],
-      "preview": null,
       "provider": "python",
       "provider_collision": false,
       "role": "background",

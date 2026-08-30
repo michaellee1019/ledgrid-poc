@@ -10,16 +10,13 @@ latencies describe only the machine that ran the command.
 from __future__ import annotations
 
 import argparse
-import contextlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import io
 import json
 from pathlib import Path
 import platform
 import statistics
 import sys
-import tempfile
 import time
 from typing import Any, Callable, Iterable
 
@@ -29,10 +26,15 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from animation.core.base import RenderedFrame
-from animation.core.preview_assets import FIXED_CLOCK, PreviewRenderer, preview_profile
-from animation.plugins.clock import ClockAnimation
-from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
+from animation.core.base import RenderedFrame  # noqa: E402
+from tools.deterministic_rendering import (  # noqa: E402
+    FIXED_CLOCK,
+    capture_frames,
+    make_deterministic,
+    preview_profile,
+)
+from animation.plugins.clock import ClockAnimation  # noqa: E402
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT  # noqa: E402
 
 
 BASELINE_VERSION = 1
@@ -253,26 +255,29 @@ def characterize_previews(
     strips: int = DEFAULT_STRIP_COUNT,
     leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
 ) -> dict[str, Any]:
-    """Render actual default and animated Clock preview artifacts temporarily."""
+    """Characterize deterministic Clock captures without publishing images."""
+    manifest = {"preview": {"capture_seconds": [0, 0.5, 1, 2, 3.5, 5.5, 8, 12], "simulation_fps": 30}}
+    captures, simulation_fps = preview_profile(manifest)
 
-    with tempfile.TemporaryDirectory(prefix="clock-baseline-preview-") as temporary:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            renderer = PreviewRenderer(
-                ROOT, Path(temporary), "/clock-baseline",
-                strips=strips, leds_per_strip=leds_per_strip,
-            )
-            manifest = renderer.loader.plugin_manifests["clock"]
-            captures, simulation_fps = preview_profile(manifest)
-            default_entry = renderer.render("clock")
-            animated_entry = renderer.render("clock", config=dict(SCENARIOS[1].config))
+    def capture(config: dict[str, Any], key: str) -> list[np.ndarray]:
+        controller = BenchmarkController(strips, leds_per_strip)
+        animation = ClockAnimation(controller, dict(config))
+        make_deterministic(animation, config, key)
+        return capture_frames(
+            animation, captures=captures, simulation_fps=simulation_fps,
+        )
 
-    def stable_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    default_frames = capture({}, "clock/default")
+    animated_frames = capture(dict(SCENARIOS[1].config), "clock/animated")
+
+    def stable_entry(frames: list[np.ndarray]) -> dict[str, Any]:
+        static = all(np.array_equal(frame, frames[0]) for frame in frames[1:])
+        authored_frames = 1 if static else len(frames)
         return {
-            "status": entry["status"],
-            "static": entry["static"],
-            "authored_frames": entry["frame_count"],
-            "frame_duration_ms": entry["duration_ms"],
-            "encoded_loop_duration_ms": entry["frame_count"] * entry["duration_ms"],
+            "static": static,
+            "authored_frames": authored_frames,
+            "frame_duration_ms": 500,
+            "encoded_loop_duration_ms": authored_frames * 500,
         }
 
     return {
@@ -280,9 +285,9 @@ def characterize_previews(
         "capture_seconds": list(captures),
         "simulation_fps": simulation_fps,
         "image_layout": "width=strips, height=leds_per_strip; physical LED 0 is image bottom",
-        "format": "lossless WebP poster plus infinite-loop lossless WebP",
-        "default": stable_entry(default_entry),
-        "animated": stable_entry(animated_entry),
+        "format": "in-memory deterministic frame capture",
+        "default": stable_entry(default_frames),
+        "animated": stable_entry(animated_frames),
     }
 
 

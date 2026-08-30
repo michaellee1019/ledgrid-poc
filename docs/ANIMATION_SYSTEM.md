@@ -157,9 +157,8 @@ Curated native presets use the ordinary plugin-owned preset envelope:
 ```
 
 Preset discovery resolves the component package directory independently from a
-Python implementation. The component and preset APIs may expose the descriptor,
-curated presets, and generated host-preview metadata. Generated previews are
-authoring artifacts, explicitly not receiver framebuffer readback. Python
+Python implementation. The component and preset APIs expose the descriptor and
+curated presets; interactive rendering happens locally in Composer. Python
 animation APIs continue to return “not found” for the native ID.
 
 Phase 3D established deterministic planning, host/target build, validation,
@@ -513,8 +512,9 @@ visibility:
   bundled so plant-aware curated presets do not silently lose their geometry;
 - verified receiver-native components use a separate Emscripten build of the
   same repository C++ source and ABI-v2 callbacks used by the host preview;
-- components without a verified adapter retain generated poster/loop assets and
-  state explicitly that interactive browser rendering is unavailable.
+- components without a verified adapter state explicitly that interactive
+  browser rendering is unavailable; no server-rendered fallback asset is
+  published.
 
 Both workers return canonical strip-major RGB bytes. The UI alone maps logical
 LED zero to the bottom of the 33 x 138 display. Browser previews remain authored

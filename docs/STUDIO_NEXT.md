@@ -25,13 +25,13 @@ Studio Next currently provides:
 - Status polling every two seconds. One client store owns live state; selection, previews, scene drafts, and room drafts never update it optimistically.
 - **Now** intent filters: Settle, Welcome, Focus, and Play, plus an unfiltered catalog entry.
 - **Looks** search and filters across complete names, descriptions, tags, provider, role, IDs, and server execution state. Counts reflect the live catalog (currently 53 components and 293 presets; these are not hard-coded).
-- A large exact 32:138 isolated preview using the server catalog's poster/loop assets, provider/readiness/provenance details, an explicit empty-to-three compare set with no automatic eviction, and an accessible compare dialog/sheet. Missing assets are labeled generated placeholders rather than presented as the animation.
+- A large exact 32:138 isolated renderer preview with provider/readiness/provenance details, an explicit empty-to-three compare set with no automatic eviction, and an accessible compare dialog/sheet. No server poster or loop asset is published.
 - Provider-qualified Look discovery, isolated preview, and comparison. Physical activation is a **Check & activate in Composer** handoff; Studio Next has no direct Look execution path.
 - A fixed Scene draft editor: exactly one ready, loaded Host Python background and an optional `clock_overlay`. It serializes only `clip_to_wall`, `hold`, or `clear_after_lease` with a valid lease. Validation, a backend-rendered isolated frame preview, **Save layout only**, and the Composer activation handoff are distinct.
 - Independent Room drafts for Vibe, representative plant behavior, output brightness, target FPS, and operator speed. Application is a visible serial plan, never described as atomic. A failure or observation timeout stops remaining calls and leaves per-property receipts.
 - State-first Health copy, four receiver sections, evidence source/age/policy, and receiver refresh as **Accepted → newer observation**. Because status does not echo the refresh request, the client says correlation is unavailable.
 - Desktop navigation and a 390 px task hierarchy with a compact Live bar, 48 px Stop and receipt targets, five-item bottom navigation, one active workspace (`hidden` and `inert` for the rest), wrapping names, and review/compare sheets.
-- Existing-tool links for Painter and direct interaction.
+- Existing-tool links for direct interaction.
 
 ## Safety model
 

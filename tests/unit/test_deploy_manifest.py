@@ -121,8 +121,8 @@ class DeployManifestTests(unittest.TestCase):
         )
 
     def test_full_manifest_includes_new_application_modules_but_not_root_miscellany(self):
-        self._write("web/preview_worker.py")
-        self._write("animation/core/preview_assets.py")
+        self._write("web/activation_token_store.py")
+        self._write("animation/core/plant_awareness.py")
         self._write("pyproject.toml")
         self._write("requirements-pi.lock")
         self._write("scratch-secret.txt")
@@ -130,10 +130,10 @@ class DeployManifestTests(unittest.TestCase):
         self.assertEqual(
             tracked_paths(self.root, "full"),
             [
-                PurePosixPath("animation/core/preview_assets.py"),
+                PurePosixPath("animation/core/plant_awareness.py"),
                 PurePosixPath("pyproject.toml"),
                 PurePosixPath("requirements-pi.lock"),
-                PurePosixPath("web/preview_worker.py"),
+                PurePosixPath("web/activation_token_store.py"),
             ],
         )
 
@@ -363,11 +363,9 @@ class DeployManifestTests(unittest.TestCase):
         self.assertIn("deployment_manifest fast", sync_script)
         self.assertIn("deployment_manifest full", sync_script)
         fast_contract = sync_script[sync_script.index("sync_fast_deployment"):]
-        self.assertIn("generate_preview_artifacts", fast_contract)
-        self.assertIn('--workers "${PREVIEW_WORKERS:-0}"', sync_script)
-        self.assertIn('"$PREVIEW_ARTIFACT_DIR"/', fast_contract)
-        self.assertIn("--delete", fast_contract)
-        self.assertIn("web/static/generated/animation-previews/", fast_contract)
+        self.assertNotIn("PREVIEW_ARTIFACT_DIR", fast_contract)
+        self.assertNotIn("generate_animation_previews.py", fast_contract)
+        self.assertNotIn("animation-previews", fast_contract)
 
     def test_full_sync_filter_preserves_target_owned_bytes_during_delete(self):
         source = self.root / "staged"

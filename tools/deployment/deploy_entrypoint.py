@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Executable workstation entrypoint for coordinator-owned deployments.
 
-The operator contract remains ``just``.  This module is the repository-specific
-adapter below that interface: it freezes the selected source, generates previews
-from that frozen tree, uploads only to a unique target-side ``.incoming`` path,
-and composes the generic coordinator with target leaf commands.
+The operator contract remains ``just``. This module freezes the selected source,
+uploads it only to a unique target-side ``.incoming`` path, and composes the
+generic coordinator with target leaf commands.
 
 The legacy shell scripts remain available through the explicit ``legacy``
 subcommand.  ``shadow`` is non-activating and can optionally stage immutable
@@ -359,26 +358,6 @@ class SnapshotEvidence:
         }
 
 
-def _preview_command(project_root: Path, snapshot_root: Path, output: Path) -> tuple[str, ...]:
-    return (
-        "uv",
-        "run",
-        "--frozen",
-        "--project",
-        os.fspath(project_root),
-        "--group",
-        "test",
-        "--group",
-        "calibration",
-        "python",
-        os.fspath(snapshot_root / "tools" / "generate_animation_previews.py"),
-        "--output",
-        os.fspath(output),
-        "--workers",
-        os.environ.get("PREVIEW_WORKERS", "0"),
-    )
-
-
 def _validate_source_policy(root: Path, plan: ManifestPlan, policy: str) -> Mapping[str, Any]:
     if policy not in {"clean", "dirty", "plan"}:
         raise ValueError(f"unknown source policy: {policy}")
@@ -401,15 +380,8 @@ def freeze_snapshot(
     scope: str,
     policy: str,
     destination: Path,
-    *,
-    generate_previews: bool = True,
-    command_runner: Optional[Callable[[Sequence[str]], Any]] = None,
 ) -> SnapshotEvidence:
-    """Freeze and account for one exact deployment input tree.
-
-    The source identity and selection are re-evaluated after preview generation
-    to reject source changes during a potentially long snapshot build.
-    """
+    """Freeze and account for one exact deployment input tree."""
     root = root.resolve()
     destination = destination.resolve()
     if destination.exists():
@@ -420,19 +392,6 @@ def freeze_snapshot(
     try:
         for relative in plan.selected:
             _copy_regular(root / relative.as_posix(), destination / relative.as_posix())
-
-        preview_root = destination / "web" / "static" / "generated" / "animation-previews"
-        if generate_previews:
-            runner = command_runner or (
-                lambda command: subprocess.run(
-                    command, check=True, cwd=root, capture_output=True, text=True,
-                )
-            )
-            # The original project supplies only the already-locked Python
-            # environment. The executable and every preview input are read
-            # from the frozen source tree, including for fast snapshots that
-            # intentionally omit dependency metadata.
-            runner(_preview_command(root, destination, preview_root))
 
         selected_after = manifest_plan(root, scope)
         identity_after = _validate_source_policy(root, selected_after, policy)
@@ -467,12 +426,6 @@ def freeze_snapshot(
             for relative in plan.selected
             if _is_native_build_path(relative)
         ]
-        if preview_root.is_dir():
-            app_files.extend(
-                path.relative_to(destination).as_posix()
-                for path in preview_root.rglob("*")
-                if path.is_file()
-            )
         app_files = sorted(set(app_files))
         support_files = sorted(set(support_files))
         native_build_files = sorted(set(native_build_files))
@@ -558,7 +511,6 @@ class DeploymentConfig:
     deploy_dir: str = DEFAULT_DEPLOY_DIR
     run_tests: bool = True
     verbose: bool = False
-    generate_previews: bool = True
     strips: int = 33
     leds_per_strip: int = 138
     receiver_count: int = 5
@@ -722,16 +674,11 @@ class CoordinatorDeployment:
         self._temporary = tempfile.TemporaryDirectory(prefix="ledgrid-deploy-")
         snapshot_path = Path(self._temporary.name) / "snapshot"
 
-        def preview_runner(command: Sequence[str]) -> Any:
-            return context.command(command, cwd=self.config.root)
-
         return freeze_snapshot(
             self.config.root,
             self.scope,
             self.config.policy,
             snapshot_path,
-            generate_previews=self.config.generate_previews,
-            command_runner=preview_runner,
         )
 
     def _stage(self, context: DeployContext) -> OperationResult:
@@ -1434,7 +1381,6 @@ def _context(config: DeploymentConfig) -> DeployContext:
         source_policy=config.policy,
         flags={
             "tests": config.run_tests,
-            "previews": config.generate_previews,
             "strips": config.strips,
             "leds_per_strip": config.leds_per_strip,
             "receiver_count": config.receiver_count,
@@ -1515,7 +1461,6 @@ def shadow_deployment(config: DeploymentConfig, *, target_stage: bool = False) -
             "full" if config.mode == "full" else "fast",
             config.policy,
             snapshot_path,
-            generate_previews=config.generate_previews,
         )
         result: dict[str, Any] = {
             "mode": config.mode,
@@ -1652,7 +1597,6 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY"))
     parser.add_argument("--deploy-dir", default=os.environ.get("DEPLOY_DIR", DEFAULT_DEPLOY_DIR))
     parser.add_argument("--skip-tests", action="store_true")
-    parser.add_argument("--skip-previews", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
         "--force-firmware",
@@ -1690,7 +1634,6 @@ def _add_rollback_options(parser: argparse.ArgumentParser) -> None:
         mode="python",
         policy="clean",
         skip_tests=True,
-        skip_previews=True,
         force_firmware=False,
     )
 
@@ -1704,7 +1647,6 @@ def _add_readonly_target_options(parser: argparse.ArgumentParser) -> None:
         mode="python",
         policy="plan",
         skip_tests=True,
-        skip_previews=True,
         verbose=False,
         strips=33,
         leds_per_strip=138,
@@ -1725,7 +1667,6 @@ def _config(args: argparse.Namespace) -> DeploymentConfig:
         deploy_dir=args.deploy_dir,
         run_tests=test_env and not args.skip_tests,
         verbose=args.verbose,
-        generate_previews=not args.skip_previews,
         strips=args.strips,
         leds_per_strip=args.leds_per_strip,
         receiver_count=args.receivers,

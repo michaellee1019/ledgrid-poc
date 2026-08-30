@@ -55,9 +55,6 @@ class AppReleaseTests(unittest.TestCase):
             "scripts/start_server.py": self.write_source(
                 "scripts/start_server.py", f"print({version!r})\n", executable=True,
             ),
-            "web/static/generated/animation-previews/catalog.json": self.write_source(
-                "previews/catalog.json", json.dumps({"version": version}),
-            ),
         }
 
     def test_stage_activate_and_rollback_preserve_all_target_owned_state(self):
@@ -104,10 +101,6 @@ class AppReleaseTests(unittest.TestCase):
         self.assertEqual(previous, first.id)
         self.assertEqual(self.manager.current_release_id(), second.id)
         self.assertFalse((second.path / "animation/removed.py").exists())
-        self.assertEqual(
-            json.loads((second.path / "web/static/generated/animation-previews/catalog.json").read_text()),
-            {"version": "two"},
-        )
         for relative, content in fixtures.items():
             self.assertEqual((self.target / relative).read_bytes(), content)
         for relative in (

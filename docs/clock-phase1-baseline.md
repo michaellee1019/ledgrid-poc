@@ -66,18 +66,18 @@ acceptance against actual foreground protocol measurements.
 The manifest has no custom Clock preview profile, so it inherits captures at
 `[0.0, 0.5, 1.0, 2.0, 3.5, 5.5, 8.0, 12.0]` and simulates intermediate steps at
 30 FPS. Preview wall time is fixed at
-`2026-01-15T10:19:00+00:00`. Output is lossless WebP poster plus infinite-loop lossless WebP;
-layout is `width=strips, height=leds_per_strip; physical LED 0 is image bottom`.
+`2026-01-15T10:19:00+00:00`. The qualification captures deterministic in-memory
+frames only; it publishes no WebP poster or loop. Layout is
+`width=strips, height=leds_per_strip; physical LED 0 is image bottom`.
 
-| Input | Static | Authored frames | Per-frame duration | Encoded loop duration |
+| Input | Static | Authored frames | Per-frame interval | Capture duration |
 | --- | --- | ---: | ---: | ---: |
 | default Clock | True | 1 | 500 ms | 500 ms |
 | animated stress Clock | False | 8 | 500 ms | 4000 ms |
 
-A fixed-time default Clock collapses to one static WebP because its gradient
-background and face do not change. The animated stress Clock retains the eight
-authored capture frames. The encoded loop presents every retained frame for 500
-ms; capture-time gaps are not represented as variable WebP durations.
+A fixed-time default Clock collapses to one static capture because its gradient
+background and face do not change. The animated stress Clock retains eight
+authored capture frames at a 500 ms qualification interval.
 
 ## Acceptance criteria
 

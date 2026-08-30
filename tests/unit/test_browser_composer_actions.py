@@ -504,13 +504,6 @@ class BrowserComposerActionTests(unittest.TestCase):
         )
 
     def test_provider_qualified_component_record_routes_are_user_only(self) -> None:
-        class _PreviewWorker:
-            def __init__(self) -> None:
-                self.deleted: list[tuple[str, str]] = []
-
-            def delete(self, animation_name: str, preset_id: str) -> None:
-                self.deleted.append((animation_name, preset_id))
-
         channel = _Channel()
         interface = AnimationWebInterface(
             channel,
@@ -550,13 +543,10 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertEqual(fetched.get_json()["preset"]["params"], {"speed": 0.7})
         self.assertEqual(fetched.get_json()["preset"]["ownership"], "user")
 
-        preview_worker = _PreviewWorker()
-        interface.runtime_preview_worker = preview_worker
         deleted_native = client.delete(
             "/api/v1/components/compiled_rainbow/presets/shared_look?provider=receiver_native"
         )
         self.assertEqual(deleted_native.status_code, 200)
-        self.assertEqual(preview_worker.deleted, [])
         self.assertEqual(
             client.get(
                 "/api/v1/components/compiled_rainbow/presets/shared_look?provider=python"
@@ -567,7 +557,6 @@ class BrowserComposerActionTests(unittest.TestCase):
             "/api/v1/components/compiled_rainbow/presets/shared_look?provider=python"
         )
         self.assertEqual(deleted_python.status_code, 200)
-        self.assertEqual(preview_worker.deleted, [("compiled_rainbow", "shared_look")])
 
         curated = self.root / "curated"
         curated.mkdir()

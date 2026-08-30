@@ -136,10 +136,6 @@ fetch-wall-data:
 # Compatibility alias; this now refreshes masks and presets together.
 fetch-presets: fetch-wall-data
 
-# Refresh the ignored, content-addressed dashboard preview catalog locally.
-generate-previews:
-	{{python_env}} python tools/generate_animation_previews.py --tracked-only
-
 # Rebuild the deterministic browser runtimes and their digest-pinned manifest.
 browser-composer-assets:
 	{{python_env}} python tools/build_browser_python_bundle.py
@@ -157,11 +153,8 @@ browser-qualification-setup:
 browser-qualification:
 	{{python_env}} python -m tools.browser_qualification.run
 
-# Run the Mac-only software dashboard with 30 FPS contact-strip loops.
+# Run the Mac-only software dashboard with no controller process or LED hardware.
 start-mac:
-	{{python_env}} python tools/generate_animation_previews.py --tracked-only \
-		--output run_state/mac_animation_previews \
-		--public-prefix /preview-assets/generated --capture-fps 30 --capture-duration 4
 	{{python_env}} python scripts/start_mac_dashboard.py \
 		--host "${HOST:-127.0.0.1}" --port "${PORT:-5000}"
 

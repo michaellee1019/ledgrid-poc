@@ -127,7 +127,6 @@ class _SnapshotFixture:
     ) -> Path:
         app = app or {
             "scripts/start_server.py": b"print('app')\n",
-            "web/static/generated/animation-previews/catalog.json": b"{}\n",
         }
         support = support or {
             "firmware/esp32/src/main.cpp": b"void setup() {}\n",
@@ -3908,7 +3907,6 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
             "full",
             "clean",
             snapshot,
-            generate_previews=False,
         )
 
         self.assertIn("scripts/start_server.py", evidence.app_files)
@@ -3962,7 +3960,6 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
             "full",
             "clean",
             first_snapshot,
-            generate_previews=False,
         )
         self.assertIn(
             f"animation/plugins/{plugin_id}/manifest.json", first.app_files
@@ -3997,7 +3994,6 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
             "full",
             "dirty",
             second_snapshot,
-            generate_previews=False,
         )
         second_app = deploy_target.stage_app(target, second_snapshot)
         second_support = deploy_target.stage_support(target, second_snapshot)
@@ -4013,63 +4009,6 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
             "source-only native changes must not select or restart the app release",
         )
 
-    def test_preview_generation_executes_frozen_snapshot_script_without_tracked_filter(self) -> None:
-        snapshot = self.base / "preview-snapshot"
-        commands: list[tuple[str, ...]] = []
-
-        def generate(command):
-            normalized = tuple(os.fspath(item) for item in command)
-            commands.append(normalized)
-            output = Path(normalized[normalized.index("--output") + 1])
-            output.mkdir(parents=True)
-            (output / "catalog.json").write_text("{}\n", encoding="utf-8")
-            return SimpleNamespace(returncode=0)
-
-        evidence = deploy_entrypoint.freeze_snapshot(
-            self.repo.root,
-            "full",
-            "clean",
-            snapshot,
-            generate_previews=True,
-            command_runner=generate,
-        )
-
-        self.assertEqual(len(commands), 1)
-        command = commands[0]
-        self.assertIn(
-            os.fspath(snapshot.resolve() / "tools/generate_animation_previews.py"),
-            command,
-        )
-        self.assertNotIn(
-            os.fspath(
-                self.repo.root.resolve() / "tools/generate_animation_previews.py"
-            ),
-            command,
-        )
-        self.assertNotIn("--tracked-only", command)
-        self.assertIn(
-            "web/static/generated/animation-previews/catalog.json",
-            evidence.app_files,
-        )
-
-    def test_freeze_fails_closed_and_removes_snapshot_if_source_changes_mid_build(self) -> None:
-        destination = self.base / "changed-snapshot"
-
-        def mutate_source(_command):
-            self.repo.write("scripts/start_server.py", b"print('changed')\n", executable=True)
-            return SimpleNamespace(returncode=0)
-
-        with self.assertRaisesRegex(RuntimeError, "source changed"):
-            deploy_entrypoint.freeze_snapshot(
-                self.repo.root,
-                "full",
-                "dirty",
-                destination,
-                generate_previews=True,
-                command_runner=mutate_source,
-            )
-        self.assertFalse(destination.exists())
-
     def test_plan_is_read_only_and_accounts_for_lane_split_and_exact_order(self) -> None:
         before = subprocess.run(
             ("git", "-C", self.repo.root, "status", "--porcelain=v1", "-z"),
@@ -4081,7 +4020,6 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
             mode="full",
             policy="clean",
             run_tests=False,
-            generate_previews=False,
             local_receipts=Path("receipts"),
         )
         plan = deploy_entrypoint.deployment_plan(config)
@@ -4150,7 +4088,6 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
             target="fake@wall",
             deploy_dir="fake-root",
             run_tests=False,
-            generate_previews=False,
             health_timeout=1.0,
             force_firmware=force_firmware,
         )
@@ -4402,7 +4339,6 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
             target="fake@wall",
             deploy_dir="fake-root",
             run_tests=False,
-            generate_previews=False,
             health_timeout=1.0,
         )
         rollback = deploy_entrypoint.CoordinatorRollback(
@@ -4552,7 +4488,6 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
                 target="fake@wall",
                 deploy_dir="fake-root",
                 run_tests=False,
-                generate_previews=False,
             )
             rollback = deploy_entrypoint.CoordinatorRollback(
                 config, context, target.requested
@@ -4657,7 +4592,6 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
                 target="fake@wall",
                 deploy_dir="fake-root",
                 run_tests=False,
-                generate_previews=False,
             )
             rollback = deploy_entrypoint.CoordinatorRollback(
                 config, context, target.requested
@@ -4943,7 +4877,6 @@ class EntrypointReceiptExitTests(unittest.TestCase):
                             "--policy",
                             "dirty",
                             "--skip-tests",
-                            "--skip-previews",
                         )
                     )
                 self.assertEqual(status, expected_status)

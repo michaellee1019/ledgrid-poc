@@ -112,8 +112,6 @@ class BrowserComposerTests(unittest.TestCase):
             self.channel, _PreviewManager(components), local_mode=True
         )
         self.interface.animation_presets_dir = self.root / "presets"
-        self.interface.generated_preview_dir = self.root / "previews"
-        self.interface.runtime_preview_dir = self.root / "runtime-previews"
         for plugin_id in (
             "rainbow", "aurora_curtains_native", "not_ported", "malformed",
         ):
@@ -163,7 +161,7 @@ class BrowserComposerTests(unittest.TestCase):
         self.assertEqual(
             native["browser_runtime"]["engine"], "receiver-native-cpp-wasm"
         )
-        self.assertFalse(native["preview"]["framebuffer_readback"])
+        self.assertNotIn("preview", native)
 
         self.assertTrue(by_key["python:not_ported"]["browser_runtime"]["supported"])
 

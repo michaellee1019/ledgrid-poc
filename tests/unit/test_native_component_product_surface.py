@@ -10,7 +10,6 @@ from pathlib import Path
 
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.plugin_loader import AnimationPluginLoader
-from animation.core.preview_assets import empty_catalog, write_catalog
 from animation.core.presentation_contracts import component_preset_fingerprint
 from web.app import AnimationWebInterface
 
@@ -113,8 +112,6 @@ class NativePilotWebProductTests(unittest.TestCase):
         self.interface = AnimationWebInterface(
             self.channel, self.manager, local_mode=True
         )
-        self.interface.generated_preview_dir = temporary_root / "generated"
-        self.interface.runtime_preview_dir = temporary_root / "runtime-previews"
         self.interface.animation_presets_dir = temporary_root / "runtime-presets"
         self.interface.scene_presets_dir = temporary_root / "scenes"
         self.interface.animation_presets_dir.mkdir()
@@ -124,48 +121,20 @@ class NativePilotWebProductTests(unittest.TestCase):
             PILOT_ID, provider="receiver_native"
         ))
         self.preset_ids = [path.stem for path in paths]
-        catalog = empty_catalog(33, 138)
-        catalog["animations"][PILOT_ID] = {
-            "status": "ready",
-            "digest": "1" * 64,
-            "poster_url": f"/preview-assets/generated/{PILOT_ID}-poster.webp",
-            "loop_url": f"/preview-assets/generated/{PILOT_ID}-loop.webp",
-            "frame_count": 12,
-            "duration_ms": 80,
-            "static": False,
-        }
-        catalog["presets"][PILOT_ID] = {
-            preset_id: {
-                "status": "ready",
-                "digest": str(index + 2) * 64,
-                "poster_url": (
-                    f"/preview-assets/generated/{PILOT_ID}-{preset_id}-poster.webp"
-                ),
-                "loop_url": (
-                    f"/preview-assets/generated/{PILOT_ID}-{preset_id}-loop.webp"
-                ),
-                "frame_count": 12,
-                "duration_ms": 80,
-                "static": False,
-            }
-            for index, preset_id in enumerate(self.preset_ids)
-        }
-        write_catalog(self.interface.generated_preview_dir / "catalog.json", catalog)
         self.client = self.interface.app.test_client()
 
     def tearDown(self) -> None:
         self.manager.stop_animation()
         self.temporary.cleanup()
 
-    def test_catalog_and_component_presets_expose_native_preview_metadata(self):
+    def test_catalog_and_component_presets_exclude_published_preview_contract(self):
         response = self.client.get(
             "/api/v1/components?provider=receiver_native&role=background"
         )
         self.assertEqual(response.status_code, 200)
         components = response.get_json()["components"]
         pilot = next(item for item in components if item["plugin_id"] == PILOT_ID)
-        self.assertEqual(pilot["preview"]["kind"], "native_host_build")
-        self.assertFalse(pilot["preview"]["framebuffer_readback"])
+        self.assertNotIn("preview", pilot)
         self.assertFalse(pilot["scene_compatibility"]["selectable"])
         self.assertEqual(pilot["scene_compatibility"]["slots"], [])
         self.assertIn(
@@ -179,15 +148,12 @@ class NativePilotWebProductTests(unittest.TestCase):
         self.assertEqual(presets.status_code, 200)
         payload = presets.get_json()
         self.assertEqual(payload["component_id"], PILOT_ID)
-        self.assertEqual(
-            {item["preset_id"] for item in payload["presets"]},
-            set(self.preset_ids),
-        )
         for preset in payload["presets"]:
             with self.subTest(preset=preset["preset_id"]):
                 self.assertEqual(preset["animation"], PILOT_ID)
-                self.assertEqual(preset["preview"]["status"], "ready")
-                self.assertIn(PILOT_ID, preset["preview"]["loop_url"])
+                self.assertNotIn("preview", preset)
+        self.assertEqual(self.client.get("/preview-assets/generated/missing.webp").status_code, 404)
+        self.assertEqual(self.client.get("/preview-assets/runtime/missing.webp").status_code, 404)
         self.assertEqual(self.channel.commands, [])
 
     def test_python_and_scene_execution_surfaces_reject_native_without_side_effects(self):

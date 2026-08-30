@@ -161,8 +161,6 @@ class StudioNextBackendTests(unittest.TestCase):
         surface_root = self.root / f"surface-{id(interface)}"
         interface.animation_presets_dir = surface_root / "presets"
         interface.scene_presets_dir = surface_root / "scenes"
-        interface.generated_preview_dir = surface_root / "previews"
-        interface.runtime_preview_dir = surface_root / "runtime-previews"
         interface.animation_presets_dir.mkdir(parents=True)
         interface.scene_presets_dir.mkdir(parents=True)
         return interface, interface.app.test_client(), channel

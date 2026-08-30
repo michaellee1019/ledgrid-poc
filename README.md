@@ -24,10 +24,7 @@ just start
 output runs as a separate controller process on the Raspberry Pi.
 
 For a Mac-only dashboard with no controller process or LED hardware, run
-`just start-mac`. It builds a separate 30 FPS contact-preview catalog and runs
-the full-size software renderer at the browser's display cadence on localhost.
-The first run takes longer while those local-only WebP loops are generated;
-content-addressed results are reused on later launches.
+`just start-mac`. It runs the full-size software renderer on localhost.
 
 ## Repository layout
 

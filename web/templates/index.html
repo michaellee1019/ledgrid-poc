@@ -103,11 +103,7 @@
             <article class="library-card animation-card" data-library-item data-library-id="animation:{{ animation.plugin_name }}" data-library-kind="animation" data-library-category="animation" data-search-text="{{ animation.name }} {{ animation.description }} animation" data-animation-card="{{ animation.plugin_name }}">
                 <button class="library-favorite" type="button" data-library-favorite data-library-id="animation:{{ animation.plugin_name }}" aria-pressed="false" aria-label="Add {{ animation.name }} to favorites" title="Add to favorites" onclick="toggleLibraryFavorite(event, this)"><i class="far fa-star" aria-hidden="true"></i></button>
                 <div class="library-card-visual">
-                    {% if animation.preview and animation.preview.poster_url and animation.preview.loop_url %}
-                    <img class="generated-preview library-preview" src="{{ animation.preview.poster_url }}" data-poster-src="{{ animation.preview.poster_url }}" data-loop-src="{{ animation.preview.loop_url }}" loading="lazy" decoding="async" width="33" height="138" alt="Pre-rendered preview of {{ animation.name }}" onerror="this.hidden=true">
-                    {% else %}
                     <span class="animation-icon" aria-hidden="true">{{ animation.emoji }}</span>
-                    {% endif %}
                 </div>
                 <div class="library-card-copy">
                     <div class="library-card-eyebrow">Animation{% if animation.presets %} · {{ animation.presets|length }} presets{% endif %}</div>
@@ -125,11 +121,7 @@
             <article class="library-card preset-library-card" data-library-item data-library-id="preset:{{ animation.plugin_name }}:{{ preset.preset_id }}" data-library-kind="preset" data-library-category="{{ (preset.category or 'Preset')|lower }}" data-search-text="{{ preset.name }} {{ preset.description or '' }} {{ preset.category or 'Preset' }} {{ animation.name }} preset" data-animation-parent="{{ animation.plugin_name }}">
                 <button class="library-favorite" type="button" data-library-favorite data-library-id="preset:{{ animation.plugin_name }}:{{ preset.preset_id }}" aria-pressed="false" aria-label="Add {{ preset.name }} to favorites" title="Add to favorites" onclick="toggleLibraryFavorite(event, this)"><i class="far fa-star" aria-hidden="true"></i></button>
                 <div class="library-card-visual">
-                    {% if preset.preview and preset.preview.poster_url and preset.preview.loop_url %}
-                    <img class="generated-preview library-preview" src="{{ preset.preview.poster_url }}" data-poster-src="{{ preset.preview.poster_url }}" data-loop-src="{{ preset.preview.loop_url }}" data-preview-status="{{ preset.preview.status }}" data-animation="{{ animation.plugin_name }}" data-preset-id="{{ preset.preset_id }}" loading="lazy" decoding="async" width="33" height="138" alt="Pre-rendered preview of {{ preset.name }}" onerror="this.hidden=true">
-                    {% else %}
                     <span class="animation-icon" aria-hidden="true">{{ preset.emoji }}</span>
-                    {% endif %}
                 </div>
                 <div class="library-card-copy">
                     <div class="library-card-eyebrow">{{ preset.category or 'Preset' }} · {{ animation.name }}</div>
@@ -190,7 +182,6 @@
                                     {% for component in component_catalog %}
                                     {% set compatibility = component.scene_compatibility %}
                                     {% set component_key = component.provider ~ ':' ~ component.plugin_id %}
-                                    {% set preview_asset = component_previews.get(component_key) %}
                                     {% set presets = component_presets.get(component_key, []) %}
                                     {% set identity_ambiguous = component.plugin_id in ambiguous_component_ids %}
                                     <article class="component-catalog-item" role="listitem"
@@ -231,15 +222,6 @@
                                         <div class="native-preview-provenance"
                                              data-preview-provenance="{{ component.preview.kind if component.preview else 'unavailable' }}"
                                              data-framebuffer-readback="false">
-                                            {% if preview_asset and preview_asset.poster_url and preview_asset.loop_url %}
-                                            <img class="generated-preview component-native-preview"
-                                                 src="{{ preview_asset.poster_url }}"
-                                                 data-poster-src="{{ preview_asset.poster_url }}"
-                                                 data-loop-src="{{ preview_asset.loop_url }}"
-                                                 loading="lazy" decoding="async" width="33" height="138"
-                                                 alt="Host-build preview of {{ component.name or component.plugin_id }}; not current wall output"
-                                                 onerror="this.hidden=true">
-                                            {% endif %}
                                             <div>
                                                 <strong>{{ 'Host-build preview' if component.preview and component.preview.kind == 'native_host_build' else 'Host contract preview' }}</strong>
                                                 <small>{% if identity_ambiguous %}Unavailable until preview assets are provider-qualified; no ID-only asset was guessed.{% else %}Generated on the host from the authored receiver contract; not current wall output or receiver framebuffer readback.{% endif %}</small>

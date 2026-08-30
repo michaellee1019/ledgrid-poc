@@ -25,7 +25,6 @@ config/plant_pixel_map.json
 compile_commands.json
 **/compile_commands.json
 /presets/animations/
-/web/static/generated/animation-previews/
 
 # Hardware review inputs are intentionally versioned with their audit package.
 !hardware/ledgrid-hat/**/reference/*.zip

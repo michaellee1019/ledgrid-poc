@@ -326,12 +326,7 @@
 
   function normalizePreview(source, component) {
     const preview = source?.preview || source?.preview_contract || component?.preview || component?.preview_contract || {};
-    const posterUrl = preview.poster_url || preview.posterUrl || preview.static_url || null;
-    const loopUrl = preview.loop_url || preview.loopUrl || preview.animated_url || null;
     return {
-      posterUrl,
-      loopUrl,
-      available: Boolean(posterUrl || loopUrl),
       framebufferReadback: preview.framebuffer_readback === true,
       label: preview.label || preview.preview_label || null
     };
@@ -829,10 +824,8 @@
   function previewProvenance(look) {
     if (!look) return 'Isolated preview · never changes the physical wall';
     if (look.provider === 'receiver_native') {
-      if (!look.preview.available) return 'Receiver preview unavailable · generated placeholder, not receiver framebuffer readback · wall unchanged';
       return 'Host simulation preview · not receiver framebuffer readback · wall unchanged';
     }
-    if (!look.preview.available) return 'Preview asset unavailable · generated placeholder · wall unchanged';
     return look.preview.label || 'Isolated host preview · never changes the physical wall';
   }
 
@@ -922,43 +915,18 @@
     reason.hidden = look.action.composerEligible;
     text(reason, look.action.composerEligible ? '' : look.action.reason);
     text('#lookPreviewSummary', previewSummary(look));
-    const source = state.previewPlaying && look.preview.loopUrl
-      ? look.preview.loopUrl
-      : look.preview.posterUrl || look.preview.loopUrl;
-    if (source) {
-      image.src = source;
-      image.alt = `Isolated preview of ${look.name}; ${previewProvenance(look)}`;
-      image.hidden = false;
-      canvas.hidden = true;
-      image.onerror = () => {
-        image.hidden = true;
-        canvas.hidden = false;
-        drawPreviewCanvas(canvas, look, state.previewTick);
-      };
-    } else {
-      image.hidden = true;
-      canvas.hidden = false;
-      drawPreviewCanvas(canvas, look, state.previewTick);
-    }
-    $('#playPreview').disabled = !look.preview.loopUrl;
-    text('#playPreview', !look.preview.loopUrl
-      ? 'Animated preview unavailable'
-      : state.previewPlaying ? 'Pause isolated preview' : 'Play isolated preview');
+    image.hidden = true;
+    canvas.hidden = false;
+    drawPreviewCanvas(canvas, look, state.previewTick);
+    $('#playPreview').disabled = true;
+    text('#playPreview', 'Published animation preview unavailable');
     const pinned = state.compareKeys.includes(look.key);
     $('#pinCompare').disabled = !pinned && state.compareKeys.length >= 3;
     text('#pinCompare', pinned ? 'Remove from compare' : (state.compareKeys.length >= 3 ? 'Compare set is full' : 'Add to compare'));
   }
 
   function togglePreview() {
-    const look = selectedLook();
-    if (!look?.preview.loopUrl) return;
-    state.previewPlaying = !state.previewPlaying;
-    renderLookDetail();
-    if (state.previewPlaying && REDUCED_MOTION.matches) {
-      announce('Animated preview started only after explicit activation because reduced motion is preferred.');
-      return;
-    }
-    announce(state.previewPlaying ? 'Animated isolated preview started.' : 'Isolated preview paused.');
+    return;
   }
 
   function toggleCompare(key) {
@@ -992,10 +960,7 @@
     grid.replaceChildren(...state.compareKeys.map((key) => {
       const look = state.looksByKey.get(key);
       if (!look) return element('article', {class: 'sn-compare-card'}, 'Catalog item unavailable.');
-      const source = look.preview.posterUrl || look.preview.loopUrl;
-      const media = source
-        ? element('img', {src: source, width: 33, height: 138, alt: ''})
-        : element('canvas', {width: 33, height: 138});
+      const media = element('canvas', {width: 33, height: 138});
       const frame = element('div', {class: 'sn-wall-frame', 'aria-hidden': 'true'}, media);
       if (media instanceof HTMLCanvasElement) drawPreviewCanvas(media, look);
       const button = element('button', {

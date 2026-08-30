@@ -27,11 +27,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from animation.core.base import RenderedFrame
-from animation.core.manager import PreviewLEDController
-from animation.core.plugin_loader import AnimationPluginLoader
-from animation.core.preview_assets import PreviewRenderer, preview_profile
-from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
+from animation.core.base import RenderedFrame  # noqa: E402
+from animation.core.manager import PreviewLEDController  # noqa: E402
+from animation.core.plugin_loader import AnimationPluginLoader  # noqa: E402
+from tools.deterministic_rendering import make_deterministic, preview_profile  # noqa: E402
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT  # noqa: E402
 
 
 SCHEMA = "ledgrid.browser-composer-contact-sheet"
@@ -136,7 +136,7 @@ def _render_preset(
         np.random.seed(constructor_seed & 0xFFFFFFFF)
         controller = PreviewLEDController(FRAME_WIDTH, FRAME_HEIGHT)
         animation = animation_class(controller, dict(params))
-        PreviewRenderer._make_deterministic(animation, params, comparison_key)
+        make_deterministic(animation, params, comparison_key)
 
         first = _canonical_pixels(animation, animation.generate_frame(0.0, 0)).copy()
         semantic_elapsed, simulation_fps, semantic_step = _semantic_target(

@@ -25,6 +25,16 @@ PROFILE_PATH = ROOT / "web/static" / BUNDLED_PROFILE_URL.removeprefix("/static/"
 COMPOSER_SOURCE = ROOT / "web/static/js/composer.js"
 
 
+def _exact_key_count(value: object, key: str) -> int:
+    if isinstance(value, dict):
+        return int(key in value) + sum(
+            _exact_key_count(item, key) for item in value.values()
+        )
+    if isinstance(value, list):
+        return sum(_exact_key_count(item, key) for item in value)
+    return 0
+
+
 class _NoWallChannel:
     def read_status(self) -> dict:
         raise AssertionError("opening Composer must not read live wall state")
@@ -61,6 +71,9 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
             "python:painter", {component["key"] for component in payload["components"]}
         )
         self.assertNotIn(b"painter", committed)
+        self.assertEqual(_exact_key_count(payload, "preview"), 0)
+        self.assertEqual(_exact_key_count(payload, "poster_url"), 0)
+        self.assertEqual(_exact_key_count(payload, "loop_url"), 0)
 
         previewable = [
             item for item in payload["components"]
