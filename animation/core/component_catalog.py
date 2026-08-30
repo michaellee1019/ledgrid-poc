@@ -874,39 +874,6 @@ def bind_python_implementation(
     return rebound
 
 
-def painter_descriptor() -> Dict[str, Any]:
-    """Return the catalog-only descriptor for the existing painter output mode."""
-    descriptor = _descriptor_dict(
-        plugin_id="painter",
-        name="Painter",
-        description="Direct manually-authored complete-frame output",
-        icon="🎨",
-        gallery="test",
-        provider="python",
-        role="full_scene",
-        entrypoint="compatibility:painter",
-        parameter_schema={},
-        defaults={},
-        cadence={
-            "mode": "event_driven",
-            "next_deadline_semantics": NEXT_DEADLINE_SEMANTICS,
-        },
-        timing_adapter=TimingAdapter.WALL_CLOCK.value,
-        vibe_color_policy="preserve",
-        vibe_capabilities=(),
-        preview={},
-    )
-    descriptor["compatibility"] = {
-        "legacy_manifest": True,
-        "classification": "painter",
-        "composable": False,
-        "implementation_loaded": True,
-        "parameter_metadata": "not_applicable",
-        "diagnostic": "Painter owns complete output and is isolated from composed scenes.",
-    }
-    return descriptor
-
-
 def filter_catalog(
     descriptors: Iterable[Mapping[str, Any]],
     *,

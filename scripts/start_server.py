@@ -52,7 +52,6 @@ from drivers.led_layout import (
     default_strip_count,
     device_count_for_strips,
 )
-from drivers.frame_codec import decode_frame_data
 from web.app import create_app
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from tools.deployment.preserve_deploy_settings import (
@@ -1261,26 +1260,6 @@ def _dispatch_legacy_command(manager: AnimationManager, action: str, data: dict)
             manager.current_animation.handle_input(direction)
         else:
             print(f"⚠️ D-pad input ignored (no handler): {direction}")
-    elif action == 'painter_set_frame':
-        frame_data = data.get('frame_data')
-        encoded = data.get('frame_data_encoded')
-        if isinstance(encoded, str) and encoded:
-            frame_data = decode_frame_data(encoded)
-        if isinstance(frame_data, list):
-            print(f"🖌️  Painter set frame ({len(frame_data)} pixels)")
-            manager.set_painter_frame(frame_data)
-        else:
-            print("⚠️ painter_set_frame ignored: missing frame payload")
-    elif action == 'painter_apply_updates':
-        updates = data.get('updates') or []
-        if isinstance(updates, list):
-            applied = manager.apply_painter_updates(updates)
-            print(f"🖌️  Painter updates: {len(updates)} ({'applied' if applied else 'no changes'})")
-        else:
-            print("⚠️ painter_apply_updates ignored: updates must be a list")
-    elif action == 'painter_clear':
-        print("🧽 Painter clear requested")
-        manager.clear_painter_frame()
     else:
         print(f"⚠️ Unknown action: {action}")
     return False
@@ -1293,8 +1272,7 @@ _LEGACY_CONTROLLER_MUTATIONS = frozenset({
     "restore_display_state", "stop", "update_params",
     "set_current_preset", "set_target_fps", "set_animation_speed_scale",
     "set_output_brightness", "set_device_state", "set_plant_aware",
-    "set_plant_modifiers", "set_vibe", "refresh_plugins", "painter_set_frame",
-    "painter_apply_updates", "painter_clear", "puncture_hole",
+    "set_plant_modifiers", "set_vibe", "refresh_plugins", "puncture_hole",
     "animation_interaction", "dpad",
 })
 
@@ -1357,7 +1335,6 @@ def run_web_mode(args):
     print(f"  URL: http://{args.host}:{args.port}")
     print(f"  Dashboard: http://{args.host}:{args.port}/")
     print(f"  Control:   http://{args.host}:{args.port}/control")
-    print(f"  Painter:   http://{args.host}:{args.port}/painter")
     print()
 
     web_interface.run(debug=args.debug)

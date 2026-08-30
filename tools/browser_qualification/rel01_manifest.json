@@ -184,8 +184,7 @@
     "POST /api/config/plant-aware",
     "POST /api/config/brightness",
     "POST /api/config/target-fps",
-    "POST /api/config/animation-speed",
-    "POST /api/painter/masks"
+    "POST /api/config/animation-speed"
   ],
   "excluded_claims": [
     "physical_iphone_safari",

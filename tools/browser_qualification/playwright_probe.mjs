@@ -373,7 +373,6 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
     const pathname = new URL(request.url()).pathname;
     if (request.method() === 'GET' && (
       pathname === '/api/status'
-      || pathname === '/api/painter/masks'
       || /^\/api\/v1\/installation-profiles\/[0-9a-f]{64}\/draft$/.test(pathname)
     )) wallReads.push(pathname);
   });

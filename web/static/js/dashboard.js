@@ -1528,7 +1528,7 @@
             notice.className = 'parameter-installation-notice';
             notice.innerHTML = '<i class="fas fa-shield-alt" aria-hidden="true"></i>'
                 + '<div><strong>Installation settings are protected here.</strong>'
-                + '<span>Mask files and structured plant configuration live in System or Painter, not everyday animation controls.</span></div>'
+                + '<span>Structured plant configuration lives in the managed installation profile, not everyday animation controls.</span></div>'
                 + '<button class="btn btn-sm btn-outline-secondary" type="button" onclick="showDashboardArea(\'system\', {focus: true})">Open System</button>';
             container.appendChild(notice);
         }

@@ -240,25 +240,19 @@ class ComponentCatalogTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "undeclared parameters"):
                 loader.validate_component_parameters("example", {"secret": True})
 
-    def test_stateful_and_painter_are_explicit_non_composable_full_scenes(self):
+    def test_stateful_full_scene_remains_non_composable_without_painter_adapter(self):
         with tempfile.TemporaryDirectory() as root:
             self._package(root, source=STATEFUL_SOURCE)
             loader = AnimationPluginLoader(root)
             loader.scan_plugins()
             self.assertIsNotNone(loader.load_plugin("example"))
             stateful = loader.get_component_descriptor("example")
-            painter = loader.get_component_descriptor("painter")
-
-        for descriptor, classification in (
-            (stateful, "stateful_animation"),
-            (painter, "painter"),
-        ):
-            with self.subTest(component=classification):
-                self.assertEqual(descriptor["role"], "full_scene")
-                self.assertFalse(descriptor["compatibility"]["composable"])
-                self.assertEqual(
-                    descriptor["compatibility"]["classification"], classification
-                )
+        self.assertEqual(stateful["role"], "full_scene")
+        self.assertFalse(stateful["compatibility"]["composable"])
+        self.assertEqual(
+            stateful["compatibility"]["classification"], "stateful_animation"
+        )
+        self.assertIsNone(loader.get_component_descriptor("painter"))
 
     def test_catalog_filters_are_deterministic_isolated_and_fail_closed(self):
         with tempfile.TemporaryDirectory() as root:
@@ -269,10 +263,7 @@ class ComponentCatalogTests(unittest.TestCase):
             self.assertEqual([item["plugin_id"] for item in overlays], ["example"])
             overlays[0]["role"] = "corrupted"
             self.assertEqual(loader.get_component_descriptor("example")["role"], "overlay")
-            self.assertEqual(
-                [item["plugin_id"] for item in loader.component_catalog(role="full_scene")],
-                ["painter"],
-            )
+            self.assertEqual(loader.component_catalog(role="full_scene"), [])
             with self.assertRaisesRegex(ValueError, "unsupported component provider"):
                 loader.component_catalog(provider="wasm")
             with self.assertRaisesRegex(ValueError, "unsupported component role"):

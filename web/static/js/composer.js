@@ -795,7 +795,7 @@
             // Output power is only the controller's live-output bit.
             power: typeof status?.global_settings?.output?.power === 'boolean'
                 ? status.global_settings.output.power
-                : Boolean(status.is_running || status.painter_active),
+                : Boolean(status.is_running),
             brightness: Math.max(0, Math.min(255, brightness)),
             targetFps: Math.max(1, Math.min(200, targetFps)),
             speedMultiplier: Math.max(.25, Math.min(3, speedScale / baseline)),

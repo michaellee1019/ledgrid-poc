@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import abort, Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.activation_qualification import (
@@ -53,7 +53,6 @@ from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.native_background_library import NativeBackgroundLibrary
 from animation.core.plant_awareness import (
     FIELD_MODIFIERS,
-    GLOBE_REGION_ORDER,
     LEGACY_PLANT_MASK_PATH_PARAMETERS,
     PLANT_MODIFIER_IDS,
     SURFACE_MODIFIERS,
@@ -99,21 +98,6 @@ from web.activation_token_store import (
     ActivationTokenExpired,
     ActivationTokenStore,
     canonical_digest,
-)
-
-PAINTER_MASK_TYPES = (
-    {
-        'id': 'foliage',
-        'label': 'Foliage',
-        'description': 'Leaves, vines, and other soft plant cover',
-        'color': [48, 220, 96],
-    },
-    {
-        'id': 'planter_bowls',
-        'label': 'Planter bowls',
-        'description': 'The seven solid rooting globes / planter bowls',
-        'color': [255, 72, 190],
-    },
 )
 
 # Browser execution is deliberately capability-gated. The generated Pyodide
@@ -171,7 +155,6 @@ class AnimationWebInterface:
             if project_root is not None
             else Path(__file__).resolve().parents[1]
         )
-        self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.animation_presets_dir = self.project_root / "presets" / "animations"
         self.scene_presets_dir = self.project_root / "presets" / "scenes"
         self.deployment_status_path = self.project_root / "run_state" / "deployment.json"
@@ -204,7 +187,6 @@ class AnimationWebInterface:
         # Flask's default key sorting would destroy it in the JSON response.
         self.app.json.sort_keys = False
 
-        self.painter_presets_dir.mkdir(parents=True, exist_ok=True)
         self.animation_presets_dir.mkdir(parents=True, exist_ok=True)
         self.scene_presets_dir.mkdir(parents=True, exist_ok=True)
 
@@ -518,15 +500,12 @@ class AnimationWebInterface:
             try:
                 controller_status = dict(self.control_channel.read_status() or {})
                 current_scene = controller_status.get('scene_state')
-                current_powered = bool(
-                    controller_status.get('is_running', False)
-                    or controller_status.get('painter_active', False)
-                )
+                current_powered = bool(controller_status.get('is_running', False))
                 if current_powered and not isinstance(current_scene, dict):
                     response = jsonify({
                         'error': (
                             'Guarded activation is unavailable while the wall is '
-                            'showing a legacy animation or Painter frame because '
+                            'showing a legacy animation because '
                             'that complete prior state cannot be restored exactly. '
                             'Stop live output before running Check.'
                         ),
@@ -1802,39 +1781,6 @@ class AnimationWebInterface:
             """API: Get current animation frame data"""
             return jsonify(self._status_payload(decode_frame=True))
 
-        @self.app.route('/api/painter/updates', methods=['POST'])
-        def api_painter_apply_updates():
-            """API: Apply sparse frame painter pixel updates."""
-            payload = request.get_json(silent=True) or {}
-            updates = payload.get('updates')
-            if not isinstance(updates, list) or not updates:
-                return jsonify({'error': 'updates must be a non-empty list'}), 400
-
-            self.control_channel.send_command('painter_apply_updates', updates=updates)
-            return jsonify({'success': True, 'queued_updates': len(updates)})
-
-        @self.app.route('/api/painter/frame', methods=['POST'])
-        def api_painter_set_frame():
-            """API: Replace the entire frame painter frame."""
-            payload = request.get_json(silent=True) or {}
-            led_info = self._normalize_led_info(payload.get('led_info'))
-            normalized_frame = self._extract_normalized_frame(payload, led_info=led_info)
-            if normalized_frame is None:
-                return jsonify({'error': 'Provide frame_data or frame_data_encoded'}), 400
-
-            self.control_channel.send_command(
-                'painter_set_frame',
-                frame_data_encoded=encode_frame_data(normalized_frame),
-                frame_data_length=len(normalized_frame),
-            )
-            return jsonify({'success': True, 'frame_data_length': len(normalized_frame)})
-
-        @self.app.route('/api/painter/clear', methods=['POST'])
-        def api_painter_clear():
-            """API: Clear the frame painter output to black."""
-            self.control_channel.send_command('painter_clear')
-            return jsonify({'success': True})
-
         @self.app.route(
             '/api/v1/installation-profiles/<digest>/draft',
             methods=['GET'],
@@ -1968,85 +1914,6 @@ class AnimationWebInterface:
             response.headers['X-Content-Type-Options'] = 'nosniff'
             return response
 
-        @self.app.route('/api/painter/masks', methods=['GET'])
-        def api_painter_get_masks():
-            """Read-only compatibility view backed by one managed profile draft."""
-            digest = request.args.get('profile_digest')
-            try:
-                return jsonify(self._load_painter_masks(digest))
-            except InstallationProfileNotFoundError as exc:
-                return jsonify({'error': str(exc)}), 404
-            except InstallationProfileAuthoringError as exc:
-                return jsonify({'error': str(exc)}), 400
-            except InstallationProfileLibraryError as exc:
-                return jsonify({'error': str(exc)}), 500
-
-        @self.app.route('/api/painter/masks', methods=['POST'])
-        def api_painter_save_masks():
-            """Fail closed: legacy mask files are no longer an update authority."""
-            response = jsonify({
-                'error': (
-                    'Direct mask saves are retired; use the revisioned managed '
-                    'installation-profile draft and publish workflow'
-                ),
-                'code': 'managed_profile_required',
-            })
-            response.status_code = 405
-            response.headers['Allow'] = 'GET'
-            return response
-
-        @self.app.route('/api/painter/presets')
-        def api_painter_list_presets():
-            """API: List available frame painter presets."""
-            return jsonify({'presets': self._list_painter_presets()})
-
-        @self.app.route('/api/painter/presets/<preset_id>')
-        def api_painter_get_preset(preset_id: str):
-            """API: Load a frame painter preset by id."""
-            preset = self._load_painter_preset(preset_id)
-            if not preset:
-                return jsonify({'error': 'Preset not found'}), 404
-            return jsonify(preset)
-
-        @self.app.route('/api/painter/presets', methods=['POST'])
-        def api_painter_save_preset():
-            """API: Save or overwrite a frame painter preset."""
-            payload = request.get_json(silent=True) or {}
-            raw_name = (payload.get('name') or '').strip()
-            if not raw_name:
-                return jsonify({'error': 'Preset name is required'}), 400
-
-            preset_id = self._sanitize_preset_id(raw_name)
-            if not preset_id:
-                return jsonify({'error': 'Preset name is invalid'}), 400
-
-            status = self._status_payload()
-            led_info = self._normalize_led_info(payload.get('led_info') or status.get('led_info'))
-            frame_data = self._extract_normalized_frame(payload, led_info=led_info)
-            if frame_data is None:
-                frame_data = self._extract_normalized_frame(status, led_info=led_info)
-            if frame_data is None:
-                frame_data = [[0, 0, 0] for _ in range(led_info['total_leds'])]
-
-            existing = self._load_painter_preset(preset_id)
-            now = time.time()
-            preset_payload = {
-                'preset_id': preset_id,
-                'name': raw_name,
-                'created_at': existing.get('created_at', now) if isinstance(existing, dict) else now,
-                'updated_at': now,
-                'led_info': led_info,
-                'frame_encoding': FRAME_ENCODING_NAME,
-                'frame_data_length': len(frame_data),
-                'frame_data_encoded': encode_frame_data(frame_data),
-            }
-            self._write_painter_preset(preset_id, preset_payload)
-
-            return jsonify({
-                'success': True,
-                'preset': self._preset_summary(preset_payload),
-            })
-
         @self.app.route('/api/preview/<animation_name>')
         def api_get_preview(animation_name):
             """API: Get preview frame data for a specific animation"""
@@ -2168,11 +2035,6 @@ class AnimationWebInterface:
             animations = self._sorted_animations()
             status = self._status_payload()
             return render_template('control.html', animations=animations, status=status)
-
-        @self.app.route('/painter')
-        def frame_painter_page():
-            """Retired Painter surface."""
-            abort(404)
 
     def _dashboard_animations(self) -> List[Dict[str, Any]]:
         """Decorate plugin metadata for the dashboard's show/test galleries."""
@@ -2891,12 +2753,7 @@ class AnimationWebInterface:
         parameter objects. Identities remain provider-qualified, and legacy
         preset storage is withheld when a plugin ID collides across providers.
         """
-        raw_components = [
-            component
-            for component in self._component_catalog()
-            if not isinstance(component.get('compatibility'), dict)
-            or component['compatibility'].get('classification') != 'painter'
-        ]
+        raw_components = self._component_catalog()
         providers_by_id: Dict[str, set] = {}
         for component in raw_components:
             plugin_id = component.get('plugin_id')
@@ -3981,7 +3838,6 @@ class AnimationWebInterface:
         print(f"🌐 Starting web interface at http://{self.host}:{self.port}")
         print(f"   Dashboard: http://{self.host}:{self.port}/")
         print(f"   Control:   http://{self.host}:{self.port}/control")
-        print(f"   Painter:   http://{self.host}:{self.port}/painter")
 
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
 
@@ -4019,68 +3875,11 @@ class AnimationWebInterface:
         }
 
     @staticmethod
-    def _coerce_byte(value: Any) -> int:
-        """Clamp any input to an 8-bit channel value."""
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            parsed = 0
-        return max(0, min(255, parsed))
-
-    def _normalize_frame_data(self, frame_data: Any, led_info: Optional[Dict[str, int]] = None) -> Optional[List[List[int]]]:
-        """Normalize incoming frame payloads to a fixed-length RGB list."""
-        if not isinstance(frame_data, list):
-            return None
-
-        layout = self._normalize_led_info(led_info)
-        total_leds = layout['total_leds']
-        normalized: List[List[int]] = []
-
-        for pixel in frame_data[:total_leds]:
-            if isinstance(pixel, (list, tuple)) and len(pixel) >= 3:
-                normalized.append([
-                    self._coerce_byte(pixel[0]),
-                    self._coerce_byte(pixel[1]),
-                    self._coerce_byte(pixel[2]),
-                ])
-            else:
-                normalized.append([0, 0, 0])
-
-        if len(normalized) < total_leds:
-            normalized.extend([[0, 0, 0] for _ in range(total_leds - len(normalized))])
-
-        return normalized
-
-    def _extract_normalized_frame(self, payload: Dict[str, Any], led_info: Optional[Dict[str, int]] = None) -> Optional[List[List[int]]]:
-        """Read either raw or encoded frame payloads and normalize the result."""
-        if not isinstance(payload, dict):
-            return None
-
-        frame_data = payload.get('frame_data')
-        normalized = self._normalize_frame_data(frame_data, led_info=led_info)
-        if normalized is not None:
-            return normalized
-
-        encoded = payload.get('frame_data_encoded')
-        if isinstance(encoded, str) and encoded:
-            decoded = decode_frame_data(encoded)
-            return self._normalize_frame_data(decoded, led_info=led_info)
-
-        return None
-
-    @staticmethod
     def _sanitize_preset_id(raw_name: str) -> str:
         """Convert user-provided preset names to a filesystem-safe id."""
         cleaned = re.sub(r'[^a-zA-Z0-9_-]+', '_', (raw_name or '').strip().lower())
         cleaned = re.sub(r'_+', '_', cleaned).strip('_')
         return cleaned[:64]
-
-    def _preset_path(self, preset_id: str) -> Optional[Path]:
-        """Resolve a preset id to a file path in the painter preset directory."""
-        safe_id = self._sanitize_preset_id(preset_id)
-        if not safe_id:
-            return None
-        return self.painter_presets_dir / f"{safe_id}.json"
 
     def _read_json_file(self, path: Path) -> Optional[Dict[str, Any]]:
         """Read a JSON object from disk."""
@@ -4090,67 +3889,6 @@ class AnimationWebInterface:
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             return None
         return payload if isinstance(payload, dict) else None
-
-    def _preset_summary(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Return a concise summary shape for preset list responses."""
-        return {
-            'preset_id': payload.get('preset_id'),
-            'name': payload.get('name'),
-            'updated_at': payload.get('updated_at'),
-            'created_at': payload.get('created_at'),
-            'led_info': self._normalize_led_info(payload.get('led_info')),
-            'frame_data_length': self._coerce_positive_int(payload.get('frame_data_length'), 0),
-        }
-
-    def _list_painter_presets(self) -> List[Dict[str, Any]]:
-        """Read and summarize all painter presets from disk."""
-        summaries: List[Dict[str, Any]] = []
-        for path in sorted(self.painter_presets_dir.glob('*.json')):
-            payload = self._read_json_file(path)
-            if not payload:
-                continue
-            payload.setdefault('preset_id', path.stem)
-            payload.setdefault('name', path.stem)
-            summaries.append(self._preset_summary(payload))
-        summaries.sort(
-            key=lambda preset: str(preset.get('name') or preset.get('preset_id') or '').casefold()
-        )
-        return summaries
-
-    def _load_painter_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
-        """Load and decode a painter preset for editing."""
-        path = self._preset_path(preset_id)
-        if path is None or not path.exists():
-            return None
-
-        payload = self._read_json_file(path)
-        if not payload:
-            return None
-
-        payload.setdefault('preset_id', path.stem)
-        payload.setdefault('name', path.stem)
-        led_info = self._normalize_led_info(payload.get('led_info'))
-        frame_data = self._extract_normalized_frame(payload, led_info=led_info)
-        if frame_data is None:
-            frame_data = [[0, 0, 0] for _ in range(led_info['total_leds'])]
-
-        return {
-            **payload,
-            'led_info': led_info,
-            'frame_data': frame_data,
-            'frame_data_length': len(frame_data),
-            'frame_encoding': FRAME_ENCODING_NAME,
-        }
-
-    def _write_painter_preset(self, preset_id: str, payload: Dict[str, Any]):
-        """Persist a painter preset atomically."""
-        path = self._preset_path(preset_id)
-        if path is None:
-            raise ValueError("Invalid preset id")
-
-        tmp_path = path.with_suffix('.json.tmp')
-        tmp_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
-        tmp_path.replace(path)
 
     def _installation_profile_authoring(self) -> InstallationProfileAuthoring:
         service = self.installation_profile_authoring
@@ -4169,55 +3907,6 @@ class AnimationWebInterface:
         if value.startswith('"') and value.endswith('"') and len(value) >= 2:
             value = value[1:-1]
         return value
-
-    def _selected_installation_profile_digest(self) -> str:
-        getter = getattr(
-            self.preview_manager, 'get_installation_profile_status', None
-        )
-        status = getter() if callable(getter) else {}
-        digest = status.get('selected_digest') if isinstance(status, dict) else None
-        if (
-            not isinstance(digest, str)
-            or digest == EMPTY_INSTALLATION_PROFILE_DIGEST
-        ):
-            raise InstallationProfileAuthoringError(
-                'No managed installation profile is selected'
-            )
-        return digest
-
-    def _load_painter_masks(
-        self, digest: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Adapt one managed draft to the retired painter's read-only shape."""
-        selected_digest = digest or self._selected_installation_profile_digest()
-        draft = self._installation_profile_authoring().load(selected_digest)
-        masks = draft['masks']
-        assert isinstance(masks, dict)
-        globe_regions = masks['globes']
-        assert isinstance(globe_regions, dict)
-        planter = sorted(
-            index
-            for name in GLOBE_REGION_ORDER
-            for index in globe_regions[name]
-        )
-        return {
-            'version': 1,
-            'profile_digest': selected_digest,
-            'revision': draft['revision'],
-            'read_only': True,
-            'draft_url': (
-                f'/api/v1/installation-profiles/{selected_digest}/draft'
-            ),
-            'publish_url': (
-                f'/api/v1/installation-profiles/{selected_digest}/publish'
-            ),
-            'led_info': draft['led_info'],
-            'mask_types': [dict(mask_type) for mask_type in PAINTER_MASK_TYPES],
-            'masks': {
-                'foliage': list(masks['foliage']),
-                'planter_bowls': planter,
-            },
-        }
 
     @staticmethod
     def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -4588,8 +4277,6 @@ class AnimationWebInterface:
         status.setdefault('brightness', None)
         status.setdefault('is_running', False)
         status.setdefault('mode', 'animation' if status.get('is_running') else 'idle')
-        status.setdefault('painter_active', status.get('mode') == 'painter')
-        status.setdefault('painter_updated_at', None)
         status.setdefault('frame_count', 0)
         status.setdefault('target_fps', 0)
         status.setdefault('animation_speed_scale', DEFAULT_ANIMATION_SPEED_SCALE)
@@ -4658,8 +4345,6 @@ class AnimationWebInterface:
         return {
             'is_running': False,
             'mode': 'idle',
-            'painter_active': False,
-            'painter_updated_at': None,
             'current_animation': None,
             'current_preset': None,
             'brightness': None,

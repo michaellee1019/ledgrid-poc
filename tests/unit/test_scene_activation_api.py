@@ -592,18 +592,12 @@ class SceneActivationApiTests(unittest.TestCase):
             rejected["qualification"]["blockers"],
         )
 
-    def test_check_rejects_unrestorable_live_legacy_and_painter_before_token(self) -> None:
+    def test_check_rejects_unrestorable_live_legacy_before_token(self) -> None:
         token_path = Path(self.temporary.name) / "tokens.sqlite3"
         for label, live_fields in (
             ("legacy animation", {
                 "is_running": True,
-                "painter_active": False,
                 "current_animation": "gradient",
-            }),
-            ("Painter", {
-                "is_running": False,
-                "painter_active": True,
-                "current_animation": None,
             }),
         ):
             with self.subTest(label=label):

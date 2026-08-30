@@ -340,7 +340,7 @@ def _status_activation_identity_or_none(value: Any) -> dict[str, Any] | None:
 
         return dict(normalize_activation_identity(value))
     except (TypeError, ValueError):
-        # Idle, painter, and legacy animation states have a controller identity
+        # Idle and legacy animation states have a controller identity
         # for CAS, but are not scene-activation identities.
         return None
 
@@ -466,7 +466,6 @@ class ControllerActivationCoordinator:
                 return dict(result)
         return {
             "is_running": bool(getattr(self.manager, "is_running", False)),
-            "painter_active": bool(getattr(self.manager, "painter_active", False)),
             "brightness": getattr(self.manager, "output_brightness", 255),
             "animation_speed_scale": getattr(
                 self.manager, "animation_speed_scale", 1.0
@@ -548,10 +547,7 @@ class ControllerActivationCoordinator:
             "vibe": vibe,
             "plant_modifiers": modifiers,
             "output": {
-                "power": bool(
-                    status.get("is_running", False)
-                    or status.get("painter_active", False)
-                ),
+                "power": bool(status.get("is_running", False)),
                 "brightness": brightness,
                 "animation_speed_scale": status.get(
                     "animation_speed_scale", 1.0
@@ -1465,7 +1461,7 @@ class ControllerActivationCoordinator:
         globals_state = self._current_global_settings(status)
         if globals_state["output"]["power"] and scene is None:
             raise ControllerActivationValidationError(
-                "current painter or legacy animation state cannot be restored exactly"
+                "current legacy animation state cannot be restored exactly"
             )
         profile = self._current_profile_digest(
             status, boundary="snapshot"
@@ -2140,10 +2136,7 @@ class ControllerActivationCoordinator:
 
         with self._execution_lock:
             before_status = self._manager_status()
-            before_power = bool(
-                before_status.get("is_running", False)
-                or before_status.get("painter_active", False)
-            )
+            before_power = bool(before_status.get("is_running", False))
             before = self._derive_active_identity()
             completed = False
             try:
@@ -2152,10 +2145,7 @@ class ControllerActivationCoordinator:
             finally:
                 after_status = self._manager_status()
                 after_live_scene = self._live_scene(after_status)
-                after_power = bool(
-                    after_status.get("is_running", False)
-                    or after_status.get("painter_active", False)
-                )
+                after_power = bool(after_status.get("is_running", False))
                 if after_live_scene is not None:
                     self._selected_scene = after_live_scene
                 elif after_power or before_power != after_power:

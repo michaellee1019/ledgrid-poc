@@ -2,7 +2,7 @@
  *
  * Composer owns shared page state and rendering.  This module owns every
  * user-facing profile command so the canonical 33 x 138 editor has one
- * explicit integration surface rather than a second Painter-like mode.
+ * explicit integration surface rather than a second direct-frame mode.
  */
 (function installComposerProfiles(global) {
     'use strict';

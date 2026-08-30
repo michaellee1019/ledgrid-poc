@@ -7,7 +7,6 @@ from typing import Any, Dict
 import uuid
 
 from animation.core.manager import AnimationManager
-from drivers.frame_codec import decode_frame_data
 from ipc.runtime_control import (
     ControllerActivationError,
     controller_activation_coordinator,
@@ -280,15 +279,6 @@ class LocalControlChannel:
             current = manager.current_animation
             if current is not None and hasattr(current, "handle_input"):
                 current.handle_input(data.get("direction"))
-        elif action == "painter_set_frame":
-            frame = data.get("frame_data")
-            if frame is None:
-                frame = decode_frame_data(data.get("frame_data_encoded") or "")
-            manager.set_painter_frame(frame)
-        elif action == "painter_apply_updates":
-            manager.apply_painter_updates(data.get("updates") or [])
-        elif action == "painter_clear":
-            manager.clear_painter_frame()
         else:
             raise ValueError(f"unknown local dashboard action: {action}")
         return {"command_id": time.time(), "action": action, "data": data}

@@ -87,7 +87,7 @@ class GuardedUiLegacyDebtTests(unittest.TestCase):
             compact,
         )
 
-    def test_fail_closed_aliases_preserve_stop_and_read_only_mask_boundaries(self) -> None:
+    def test_fail_closed_aliases_preserve_stop_without_painter_routes(self) -> None:
         for alias in (
             "'/api/v1/studio-next/take-look'",
             "'/api/v1/studio-next/take-scene'",
@@ -97,10 +97,7 @@ class GuardedUiLegacyDebtTests(unittest.TestCase):
                 self.assertIn(alias, self.web_app)
         self.assertGreaterEqual(self.web_app.count("_guarded_scene_error("), 6)
         self.assertIn("@self.app.route('/api/stop', methods=['POST'])", self.web_app)
-        self.assertIn("@self.app.route('/api/painter/masks', methods=['GET'])", self.web_app)
-        self.assertIn("@self.app.route('/api/painter/masks', methods=['POST'])", self.web_app)
-        self.assertIn("response.status_code = 405", self.web_app)
-        self.assertIn("response.headers['Allow'] = 'GET'", self.web_app)
+        self.assertNotIn("/api/painter", self.web_app)
 
 
 if __name__ == "__main__":

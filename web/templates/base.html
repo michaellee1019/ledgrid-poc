@@ -16,7 +16,6 @@
         }
         .status-running { background-color: #28a745; }
         .status-stopped { background-color: #dc3545; }
-        .status-painter { background-color: #0d6efd; }
         
         .animation-card {
             transition: transform 0.2s;
@@ -173,15 +172,14 @@
     </nav>
 
     {% if status is defined %}
-    {% set global_painter_active = status.mode == 'painter' or status.painter_active %}
-    {% set global_live_active = status.is_running or global_painter_active %}
+    {% set global_live_active = status.is_running %}
     <div class="container global-live-shell">
         <section class="global-live-bar" aria-label="Live wall status">
             <div class="global-live-copy" role="status" aria-live="polite" aria-atomic="true">
-                <span class="status-indicator {{ 'status-running' if status.is_running else ('status-painter' if global_painter_active else 'status-stopped') }}" id="globalLiveIndicator" aria-hidden="true"></span>
+                <span class="status-indicator {{ 'status-running' if status.is_running else 'status-stopped' }}" id="globalLiveIndicator" aria-hidden="true"></span>
                 <span>
                     <small>Live wall</small>
-                    <strong class="status-text" id="globalLiveLabel">{{ status.current_animation|replace('_', ' ')|title if status.is_running else ('Painter mirror' if global_painter_active else 'Stopped') }}</strong>
+                    <strong class="status-text" id="globalLiveLabel">{{ status.current_animation|replace('_', ' ')|title if status.is_running else 'Stopped' }}</strong>
                     <small id="globalLiveDetail">{{ 'Output active' if global_live_active else 'No content is being sent' }}</small>
                 </span>
             </div>
@@ -354,12 +352,11 @@
                 const statusDetail = document.getElementById('globalLiveDetail');
                 const stopButton = document.getElementById('globalStopLiveButton');
                 const fpsDisplay = document.querySelector('.fps-display');
-                const isPainter = status.mode === 'painter' || status.painter_active;
-                const isLive = Boolean(status.is_running || isPainter);
+                const isLive = Boolean(status.is_running);
                 
                 if (indicator) {
                     indicator.className = 'status-indicator ' + 
-                        (status.is_running ? 'status-running' : (isPainter ? 'status-painter' : 'status-stopped'));
+                        (status.is_running ? 'status-running' : 'status-stopped');
                 }
                 
                 if (statusText) {
@@ -367,8 +364,6 @@
                         statusText.textContent = String(status.current_animation || '')
                             .replace(/_/g, ' ')
                             .replace(/\b\w/g, character => character.toUpperCase());
-                    } else if (isPainter) {
-                        statusText.textContent = 'Painter mode';
                     } else {
                         statusText.textContent = 'Stopped';
                     }
@@ -380,7 +375,7 @@
                         : (preset && typeof preset.name === 'string' ? preset.name : null);
                     statusDetail.textContent = status.is_running
                         ? (presetLabel ? `Preset: ${presetLabel}` : 'Output active')
-                        : (isPainter ? 'Painter is mirroring to the wall' : 'No content is being sent');
+                        : 'No content is being sent';
                 }
                 if (stopButton) stopButton.disabled = !isLive;
                 

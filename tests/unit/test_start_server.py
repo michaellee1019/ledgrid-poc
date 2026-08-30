@@ -113,9 +113,6 @@ class _Manager:
         self.calls.append(("refresh_receiver_status", request_id))
         return {"request_id": request_id, "passed": True}
 
-    def clear_painter_frame(self):
-        self.calls.append(("clear",))
-
     def list_components(self):
         return [
             {"plugin_id": "solid", "provider": "python", "role": "background"},
@@ -510,10 +507,9 @@ class StartServerTests(unittest.TestCase):
         self.assertFalse(handle_command(manager, "set_plant_modifiers", {"plant_modifiers": []}))
         self.assertFalse(handle_command(manager, "set_vibe", {"vibe": None}))
         self.assertFalse(handle_command(manager, "stop", {}))
-        self.assertFalse(handle_command(manager, "painter_clear", {}))
         self.assertFalse(handle_command(manager, "unknown", {}))
 
-        self.assertEqual(manager.calls[-2:], [("stop",), ("clear",)])
+        self.assertEqual(manager.calls[-1:], [("stop",)])
 
     def test_receiver_status_refresh_is_read_only_and_controller_owned(self):
         manager = _Manager()

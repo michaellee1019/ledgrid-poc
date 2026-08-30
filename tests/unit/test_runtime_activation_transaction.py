@@ -262,7 +262,6 @@ class _FakeManager:
         }
         return {
             "is_running": self.is_running,
-            "painter_active": False,
             "scene_state": deepcopy(self.scene),
             "current_animation": (
                 self.scene["background"]["plugin_id"]
@@ -877,7 +876,7 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         self.assertEqual(coordinator.state_revision, 0)
         normalize_scene_activation_status(status)
 
-    def test_legacy_or_painter_state_without_scene_fails_before_mutation(self) -> None:
+    def test_legacy_state_without_scene_fails_before_mutation(self) -> None:
         manager = _FakeManager(
             self.catalog, self.initial_scene, self.initial_globals
         )

@@ -19,7 +19,6 @@ from .base import AnimationBase
 from .component_catalog import (
     bind_python_implementation,
     filter_catalog,
-    painter_descriptor,
     scanned_descriptor,
     validate_and_normalize_manifest,
     validate_parameter_overrides,
@@ -543,16 +542,14 @@ class AnimationPluginLoader:
         """Return one normalized provider/role-filterable component catalog."""
         if not self._scan_completed:
             self.scan_components()
-        descriptors = list(self.component_descriptors.values())
-        descriptors.append(painter_descriptor())
-        return filter_catalog(descriptors, provider=provider, role=role)
+        return filter_catalog(
+            self.component_descriptors.values(), provider=provider, role=role
+        )
 
     def get_component_descriptor(self, plugin_id: str) -> Optional[Dict[str, Any]]:
-        """Return an isolated JSON descriptor for a plugin or painter mode."""
+        """Return an isolated JSON descriptor for a scanned component."""
         if not self._scan_completed:
             self.scan_components()
-        if plugin_id == "painter":
-            return painter_descriptor()
         descriptor = self.component_descriptors.get(plugin_id)
         if descriptor is None:
             return None

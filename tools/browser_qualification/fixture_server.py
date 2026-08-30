@@ -165,7 +165,6 @@ def create_fixture_server(
             "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
             "vibe": {"state": vibe},
             "is_running": False,
-            "painter_active": False,
             "current_animation": None,
         }
     )
@@ -183,7 +182,6 @@ def create_fixture_server(
     )
     interface.animation_presets_dir = state_dir / "presets" / "animations"
     interface.scene_presets_dir = state_dir / "presets" / "scenes"
-    interface.painter_presets_dir = state_dir / "presets" / "painter"
     interface.deployment_status_path = state_dir / "deployment.json"
     network_outage_blocks: list[dict[str, Any]] = []
 

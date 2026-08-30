@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
-import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -191,7 +190,7 @@ class InstallationProfileAuthoringApiTests(unittest.TestCase):
         )
         self.assertEqual(conditional.status_code, 304)
 
-    def test_stale_publish_and_legacy_post_cannot_mutate_any_authority(self) -> None:
+    def test_stale_publish_cannot_mutate_any_authority(self) -> None:
         loaded = self.client.get(self.base + "/draft")
         initial = loaded.get_json()
         updated = self.client.put(
@@ -219,26 +218,6 @@ class InstallationProfileAuthoringApiTests(unittest.TestCase):
         )
         self.assertEqual(draft_path.read_bytes(), draft_before)
 
-        config = self.root / "config"
-        config.mkdir()
-        legacy_foliage = config / "plant_pixel_map_32x138.json"
-        legacy_globes = config / "plant_globe_map_32x138.json"
-        legacy_foliage.write_text(json.dumps({"sentinel": "foliage"}))
-        legacy_globes.write_text(json.dumps({"sentinel": "globes"}))
-        legacy_before = (legacy_foliage.read_bytes(), legacy_globes.read_bytes())
-
-        compatibility = self.client.get("/api/painter/masks")
-        self.assertEqual(compatibility.status_code, 200)
-        self.assertTrue(compatibility.get_json()["read_only"])
-        retired = self.client.post(
-            "/api/painter/masks",
-            json={"masks": {"foliage": [], "planter_bowls": []}},
-        )
-        self.assertEqual(retired.status_code, 405)
-        self.assertEqual(
-            (legacy_foliage.read_bytes(), legacy_globes.read_bytes()),
-            legacy_before,
-        )
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(self.channel.commands, [])
 

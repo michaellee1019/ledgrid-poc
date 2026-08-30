@@ -323,11 +323,9 @@ def build_composer_operations_status(
     global_output = dict(global_output) if isinstance(global_output, Mapping) else {}
     observed_power = global_output.get("power")
     if not isinstance(observed_power, bool):
-        observed_power = (
-            bool(raw.get("is_running") or raw.get("painter_active"))
-            if isinstance(raw.get("is_running"), bool)
-            else None
-        )
+        observed_power = raw.get("is_running")
+        if not isinstance(observed_power, bool):
+            observed_power = None
 
     latest = raw.get("latest_activation")
     latest = dict(latest) if isinstance(latest, Mapping) else None

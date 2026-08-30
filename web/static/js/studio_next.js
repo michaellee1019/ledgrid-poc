@@ -700,7 +700,7 @@
       });
       announce('Stop request accepted; awaiting observation.');
       const outcome = await observeAfter(preflight, (snapshot) => {
-        if (!snapshot.isRunning && !['scene', 'animation', 'painter'].includes(snapshot.mode)) return true;
+        if (!snapshot.isRunning && !['scene', 'animation'].includes(snapshot.mode)) return true;
         if (snapshot.isRunning) return 'conflict';
         return false;
       });

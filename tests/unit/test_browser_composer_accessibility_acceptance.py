@@ -252,19 +252,14 @@ class BrowserComposerAccessibilityAcceptanceTests(unittest.TestCase):
         self.assertIn("refreshOperationsStatus", self.script)
         self.assertIn("stopObservationIsCurrent", self.script)
 
-    def test_legacy_http_aliases_are_retained_only_as_fail_closed_boundaries(self) -> None:
+    def test_legacy_http_aliases_and_painter_routes_are_absent(self) -> None:
         start_alias = self.web_app.split(
             "@self.app.route('/api/start/<animation_name>'", 1,
         )[1].split("@self.app.route('/api/stop'", 1)[0]
         self.assertIn("_guarded_scene_error", start_alias)
         self.assertNotIn("send_command", start_alias)
 
-        mask_alias = self.web_app.split(
-            "@self.app.route('/api/painter/masks', methods=['POST'])", 1,
-        )[1].split("@self.app.route('/api/painter/presets')", 1)[0]
-        self.assertIn("status_code = 405", mask_alias)
-        self.assertIn("response.headers['Allow'] = 'GET'", mask_alias)
-        self.assertNotIn("write_text", mask_alias)
+        self.assertNotIn("/api/painter", self.web_app)
 
 
 if __name__ == "__main__":

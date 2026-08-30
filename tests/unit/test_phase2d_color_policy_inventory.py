@@ -168,19 +168,19 @@ class Phase2DColorPolicyInventoryTests(unittest.TestCase):
             receiver_static,
         ])
 
-        # Python packages plus catalog-only Painter, the repository-native
-        # pilot, and the separately supplied compiled receiver builtin.
-        self.assertEqual(inventory["component_count"], len(self.plugin_ids) + 3)
+        # Python packages plus the repository-native pilot and the separately
+        # supplied compiled receiver builtin.
+        self.assertEqual(inventory["component_count"], len(self.plugin_ids) + 2)
         self.assertEqual(
             inventory["counts"],
-            {"grade": 10, "preserve": 11, "semantic": 32},
+            {"grade": 10, "preserve": 10, "semantic": 32},
         )
         identities = {
             (item["provider"], item["plugin_id"])
             for item in inventory["components"]
         }
         self.assertEqual(len(identities), inventory["component_count"])
-        self.assertIn(("python", "painter"), identities)
+        self.assertNotIn(("python", "painter"), identities)
         self.assertIn(("receiver_native", "aurora_curtains_native"), identities)
         self.assertIn(("receiver_native", "compiled_rainbow"), identities)
         self.assertTrue(all(item["color_policy"] for item in inventory["components"]))
@@ -215,9 +215,7 @@ class Phase2DColorPolicyInventoryTests(unittest.TestCase):
                     manifest["vibe"]["capabilities"],
                 )
 
-        painter = self.loader.get_component_descriptor("painter")
-        self.assertEqual(painter["vibe_color_policy"], "preserve")
-        self.assertEqual(painter["vibe_capabilities"], [])
+        self.assertIsNone(self.loader.get_component_descriptor("painter"))
 
     def test_classification_only_manifests_cannot_activate_vibe_behavior(self):
         classification_only = set(self.plugin_ids).difference(VIBE_ENABLED_IDS)
