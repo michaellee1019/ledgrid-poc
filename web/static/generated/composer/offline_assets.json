@@ -30,8 +30,8 @@
       "url": "/static/generated/composer/aurora_curtains_native.wasm"
     },
     {
-      "bytes": 867842,
-      "sha256": "d14b8674e56549c78ecde1630b708f1c4a8f26b038d3560346c7790d22d9f16b",
+      "bytes": 864749,
+      "sha256": "e7d855fb08f421658ec26b1fa64bb9c0ff6a6b29be027a6b3b8b610a1458a79f",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {

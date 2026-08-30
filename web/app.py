@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import abort, Flask, jsonify, render_template, request, send_from_directory
 
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.activation_qualification import (
@@ -121,9 +121,8 @@ PAINTER_MASK_TYPES = (
 # Browser execution is deliberately capability-gated. The generated Pyodide
 # asset contains the authoritative Python animation-plugin package, so every
 # animation component with a valid Python module:Class entrypoint can use the
-# universal worker. Separate compatibility tools such as Painter are cataloged
-# for product continuity but are not animation runtimes. Receiver-native
-# execution remains explicitly capability-bound to separately built Wasm peers.
+# universal worker. Receiver-native execution remains explicitly
+# capability-bound to separately built Wasm peers.
 BROWSER_NATIVE_COMPONENT_ASSETS = {
     'aurora_curtains_native': 'aurora_curtains_native.wasm',
     'compiled_rainbow': 'compiled_rainbow.wasm',
@@ -2227,9 +2226,8 @@ class AnimationWebInterface:
 
         @self.app.route('/painter')
         def frame_painter_page():
-            """Frame painter page."""
-            status = self._status_payload()
-            return render_template('painter.html', status=status)
+            """Retired Painter surface."""
+            abort(404)
 
     def _dashboard_animations(self) -> List[Dict[str, Any]]:
         """Decorate plugin metadata for the dashboard's show/test galleries."""
@@ -2983,7 +2981,12 @@ class AnimationWebInterface:
         parameter objects. Identities remain provider-qualified, and legacy
         preset storage is withheld when a plugin ID collides across providers.
         """
-        raw_components = self._component_catalog()
+        raw_components = [
+            component
+            for component in self._component_catalog()
+            if not isinstance(component.get('compatibility'), dict)
+            or component['compatibility'].get('classification') != 'painter'
+        ]
         providers_by_id: Dict[str, set] = {}
         for component in raw_components:
             plugin_id = component.get('plugin_id')
@@ -3037,25 +3040,7 @@ class AnimationWebInterface:
                 r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*',
                 entrypoint,
             ))
-            compatibility = (
-                raw.get('compatibility')
-                if isinstance(raw.get('compatibility'), dict)
-                else {}
-            )
-            is_compatibility_tool = (
-                compatibility.get('classification') == 'painter'
-            )
-
-            if provider == 'python' and is_compatibility_tool:
-                runtime = {
-                    'kind': 'python',
-                    'supported': False,
-                    'reason': (
-                        'Painter is a separate compatibility editor, not a '
-                        'bundled Python animation runtime.'
-                    ),
-                }
-            elif provider == 'python' and python_entrypoint_ready:
+            if provider == 'python' and python_entrypoint_ready:
                 runtime = {
                     'kind': 'python',
                     'supported': True,
@@ -3295,10 +3280,6 @@ class AnimationWebInterface:
                     'brightness_url': '/api/config/brightness',
                     'target_fps_url': '/api/config/target-fps',
                     'operator_speed_url': '/api/config/animation-speed',
-                    # Retained only as a read-only adapter for older Painter
-                    # clients; it resolves the managed selected draft and is
-                    # never a legacy-file authority.
-                    'masks_url': '/api/painter/masks',
                     'installation_profile_draft_url': profile_draft_url,
                     'installation_profile_publish_url': profile_publish_url,
                     'installation_profile_artifact_url': profile_artifact_url,

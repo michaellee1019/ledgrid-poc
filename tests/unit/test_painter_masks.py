@@ -178,31 +178,12 @@ class PainterMaskTests(unittest.TestCase):
         self.assertEqual(action, "painter_set_frame")
         self.assertEqual(decode_frame_data(command["frame_data_encoded"]), frame)
 
-    def test_compatibility_ui_has_no_dead_mask_writer_and_links_to_composer(self):
-        html = self.client.get("/painter").get_data(as_text=True)
-        script = (ROOT / "web" / "static" / "js" / "painter.js").read_text(
-            encoding="utf-8"
-        )
+    def test_retired_surface_is_cleanly_absent_while_the_adapter_remains(self):
+        response = self.client.get("/painter")
 
-        self.assertIn("Plant Mask Painter", html)
-        self.assertIn('id="undoBtn"', html)
-        self.assertIn('id="manageProfileBtn"', html)
-        self.assertIn('href="/composer"', html)
-        self.assertNotIn('id="saveMasksBtn"', html)
-        self.assertIn('data-tool="foliage"', html)
-        self.assertIn('data-tool="planter_bowls"', html)
-        self.assertNotIn('type="color"', html)
-        self.assertNotIn("cursor: none", html)
-        self.assertIn("fetch('/api/painter/masks'", script)
-        self.assertNotIn(
-            "fetch('/api/painter/masks', {\n                    method: 'POST'",
-            script,
-        )
-        self.assertNotIn("Saving both mask files", script)
-        self.assertIn("fetch('/api/painter/frame'", script)
-        self.assertNotIn("fetch('/api/frame'", script)
-        self.assertIn("this.cellHeight = this.cellWidth", script)
-        self.assertNotIn("this.cellWidth * 0.56", script)
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse((ROOT / "web/templates/painter.html").exists())
+        self.assertFalse((ROOT / "web/static/js/painter.js").exists())
 
 
 if __name__ == "__main__":

@@ -15,13 +15,14 @@ class CurrentUxContractTests(unittest.TestCase):
         cls.dashboard_js = (ROOT / "web/static/js/dashboard.js").read_text(encoding="utf-8")
         cls.dashboard_css = (ROOT / "web/static/css/dashboard.css").read_text(encoding="utf-8")
         cls.control = (ROOT / "web/templates/control.html").read_text(encoding="utf-8")
-        cls.painter = (ROOT / "web/templates/painter.html").read_text(encoding="utf-8")
 
     def test_shared_navigation_is_task_oriented_and_responsive(self):
         self.assertIn('id="studioNavigation"', self.base)
         self.assertIn('aria-label="Toggle navigation"', self.base)
-        for label in ("Studio", "Painter", "Advanced"):
+        for label in ("Studio", "Advanced"):
             self.assertIn(f"> {label}\n", self.base)
+        self.assertNotIn("frame_painter_page", self.base)
+        self.assertNotIn('href="/painter"', self.base)
 
     def test_every_workspace_inherits_one_server_reconciled_live_bar(self):
         self.assertIn('id="globalLiveLabel"', self.base)
@@ -82,8 +83,6 @@ class CurrentUxContractTests(unittest.TestCase):
         self.assertNotIn("[object Object]", self.control)
 
     def test_live_action_language_is_consistent(self):
-        self.assertIn("Mirror to wall", self.painter)
-        self.assertIn("Stop / Return to draft", self.painter)
         self.assertNotIn("Start live", self.dashboard)
         self.assertNotIn("Take selected look live", self.dashboard)
         self.assertNotIn("function startAnimation", self.base)
@@ -138,8 +137,6 @@ class CurrentUxContractTests(unittest.TestCase):
         self.assertIn("plantModifier-${id}-value", self.dashboard_js)
         self.assertIn("This animation does not support plant behavior controls.", self.dashboard_js)
         self.assertIn('id="sceneOverlayOpacityValue"', self.dashboard)
-        self.assertIn('class="form-label small fw-semibold mb-1" for="painterPresetSelect"', self.painter)
-        self.assertIn('class="form-label small fw-semibold mb-1" for="painterPresetName"', self.painter)
 
     def test_durable_ux_decisions_are_mapped_to_current_acceptance(self):
         contract = (ROOT / "docs" / "CURRENT_UX_ACCEPTANCE.md").read_text(

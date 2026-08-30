@@ -56,6 +56,11 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
             payload["capabilities"]["server_actions"]
             ["installation_profile_artifact_url"]
         )
+        self.assertNotIn("masks_url", payload["capabilities"]["server_actions"])
+        self.assertNotIn(
+            "python:painter", {component["key"] for component in payload["components"]}
+        )
+        self.assertNotIn(b"painter", committed)
 
         previewable = [
             item for item in payload["components"]

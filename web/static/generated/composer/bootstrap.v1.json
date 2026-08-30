@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "e29438a22125d1a461b4249ae0bcda10182bc203e5a7a55740a2371f5ea22c69",
+    "catalog_digest": "f9f02fe4368e6dfb2f49a2e9d8e8aee329d137e7edee8baddb0cfe01d7c60e7d",
     "kind": "bundled",
     "version": 1
   },
@@ -24,7 +24,6 @@
       "installation_profile_publish_url": null,
       "live_edit_available": true,
       "live_edit_component_url_template": "/api/v1/scene/components/{target}",
-      "masks_url": "/api/painter/masks",
       "online_required": true,
       "operations_status_url": "/api/v1/composer/operations/status",
       "operator_speed_url": "/api/config/animation-speed",
@@ -18838,98 +18837,6 @@
         "slots": [
           "background"
         ]
-      }
-    },
-    {
-      "availability": {},
-      "browser_capabilities": {
-        "activation_ready": false,
-        "interactions": {
-          "component_id": "painter",
-          "live_wall": {
-            "available": false,
-            "reason": "Local preview controls never send commands to the wall."
-          },
-          "local_preview": {
-            "directions": [],
-            "point": {
-              "kind": null,
-              "label": null,
-              "supported": false
-            }
-          },
-          "provider": "python",
-          "schema": "ledgrid.composer-interaction-capabilities",
-          "schema_version": 1
-        },
-        "managed_identity": {
-          "component_digest": "aeda796eb704df97be169c0a1ef098dd4a210062b1f50ac0fe69d6caa6f0f3d8",
-          "component_id": "painter",
-          "parameter_schema_version": 1,
-          "provider": "python",
-          "runtime_digest": null
-        },
-        "previewable": false,
-        "reason": "Painter is a separate compatibility editor, not a bundled Python animation runtime.",
-        "saveable": false
-      },
-      "browser_runtime": {
-        "digest": null,
-        "kind": "python",
-        "reason": "Painter is a separate compatibility editor, not a bundled Python animation runtime.",
-        "supported": false
-      },
-      "build": {},
-      "class_name": "painter",
-      "compatibility": {
-        "classification": "painter",
-        "composable": false,
-        "diagnostic": "Painter owns complete output and is isolated from composed scenes.",
-        "implementation_loaded": true,
-        "legacy_manifest": true,
-        "parameter_metadata": "not_applicable"
-      },
-      "component_digest": "aeda796eb704df97be169c0a1ef098dd4a210062b1f50ac0fe69d6caa6f0f3d8",
-      "defaults": {},
-      "description": "Direct manually-authored complete-frame output",
-      "icon": "\ud83c\udfa8",
-      "interaction_capabilities": {
-        "component_id": "painter",
-        "live_wall": {
-          "available": false,
-          "reason": "Local preview controls never send commands to the wall."
-        },
-        "local_preview": {
-          "directions": [],
-          "point": {
-            "kind": null,
-            "label": null,
-            "supported": false
-          }
-        },
-        "provider": "python",
-        "schema": "ledgrid.composer-interaction-capabilities",
-        "schema_version": 1
-      },
-      "key": "python:painter",
-      "name": "Painter",
-      "parameter_schema": {},
-      "parameter_schema_version": 1,
-      "plugin_id": "painter",
-      "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
-      },
-      "presets": [],
-      "preview": null,
-      "provider": "python",
-      "provider_collision": false,
-      "role": "full_scene",
-      "scene_compatibility": {
-        "diagnostic": "Painter owns complete output and is isolated from composed scenes.",
-        "selectable": false,
-        "slots": []
       }
     },
     {

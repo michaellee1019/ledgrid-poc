@@ -164,9 +164,6 @@
                     <a class="nav-link{{ ' active' if request.endpoint == 'browser_composer' else '' }}" href="{{ url_for('browser_composer') }}"{% if request.endpoint == 'browser_composer' %} aria-current="page"{% endif %}>
                         <i class="fas fa-wand-magic-sparkles me-1" aria-hidden="true"></i> Composer
                     </a>
-                    <a class="nav-link{{ ' active' if request.endpoint == 'frame_painter_page' else '' }}" href="{{ url_for('frame_painter_page') }}"{% if request.endpoint == 'frame_painter_page' %} aria-current="page"{% endif %}>
-                        <i class="fas fa-paintbrush me-1" aria-hidden="true"></i> Painter
-                    </a>
                     <a class="nav-link{{ ' active' if request.endpoint == 'control_page' else '' }}" href="{{ url_for('control_page') }}"{% if request.endpoint == 'control_page' %} aria-current="page"{% endif %}>
                         <i class="fas fa-gauge-high me-1" aria-hidden="true"></i> Advanced
                     </a>

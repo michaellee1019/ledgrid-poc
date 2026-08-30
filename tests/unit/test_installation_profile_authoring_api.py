@@ -108,6 +108,7 @@ class InstallationProfileAuthoringApiTests(unittest.TestCase):
         self.assertEqual(
             actions["installation_profile_artifact_url"], self.base + "/artifact"
         )
+        self.assertNotIn("masks_url", actions)
         self.assertEqual(self.channel.commands, [])
 
     def test_get_and_put_require_etag_and_stale_put_has_zero_mutation(self) -> None:

@@ -11,8 +11,6 @@ ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / "web" / "templates" / "composer.html"
 STYLES = ROOT / "web" / "static" / "css" / "composer.css"
 SCRIPT = ROOT / "web" / "static" / "js" / "composer.js"
-PAINTER_TEMPLATE = ROOT / "web" / "templates" / "painter.html"
-PAINTER_SCRIPT = ROOT / "web" / "static" / "js" / "painter.js"
 WEB_APP = ROOT / "web" / "app.py"
 
 # These are the explicit portable layout contracts from the production plan.
@@ -75,8 +73,6 @@ class BrowserComposerAccessibilityAcceptanceTests(unittest.TestCase):
         cls.html = TEMPLATE.read_text(encoding="utf-8")
         cls.css = STYLES.read_text(encoding="utf-8")
         cls.script = SCRIPT.read_text(encoding="utf-8")
-        cls.painter_html = PAINTER_TEMPLATE.read_text(encoding="utf-8")
-        cls.painter_script = PAINTER_SCRIPT.read_text(encoding="utf-8")
         cls.web_app = WEB_APP.read_text(encoding="utf-8")
         cls.elements = _Elements()
         cls.elements.feed(cls.html)
@@ -232,14 +228,8 @@ class BrowserComposerAccessibilityAcceptanceTests(unittest.TestCase):
         self.assertIn("globalActions().installation_profile_publish_url", self.script)
         self.assertIn("headers: {'If-Match':", self.script)
 
-        self.assertNotIn("saveMasksBtn", self.painter_script)
-        self.assertNotIn("async save()", self.painter_script)
-        self.assertNotRegex(
-            self.painter_script,
-            r"fetch\('/api/painter/masks'.*?method:\s*'POST'",
-        )
-        self.assertNotIn("saves both mask files", self.painter_html)
-        self.assertIn("Manage profile in Composer", self.painter_html)
+        self.assertFalse((ROOT / "web/templates/painter.html").exists())
+        self.assertFalse((ROOT / "web/static/js/painter.js").exists())
 
     def test_persistent_operations_bar_keeps_stop_and_diagnostics_accessible(self) -> None:
         tag, attrs = self.elements.by_id("operationsBar")

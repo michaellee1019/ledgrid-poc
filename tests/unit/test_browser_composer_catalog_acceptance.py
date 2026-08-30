@@ -131,11 +131,13 @@ class BrowserComposerCatalogAcceptanceTests(unittest.TestCase):
                             self.assertTrue(asset.is_file(), asset)
                             self.assertEqual(asset.read_bytes()[:4], b"\0asm")
 
-    def test_all_bundled_python_animations_remain_supported_but_painter_is_honest(self) -> None:
+    def test_browser_catalog_excludes_the_retired_painter_descriptor(self) -> None:
         payload = self._bootstrap(AnimationPipelineFeatureFlags())
         by_key = {component["key"]: component for component in payload["components"]}
 
         for plugin_id in self.python_roles:
+            if plugin_id == "painter":
+                continue
             with self.subTest(component=plugin_id):
                 component = by_key[f"python:{plugin_id}"]
                 self.assertTrue(component["browser_runtime"]["supported"])
@@ -144,11 +146,7 @@ class BrowserComposerCatalogAcceptanceTests(unittest.TestCase):
                     "python-pyodide-wasm",
                 )
 
-        painter = by_key["python:painter"]
-        self.assertEqual(painter["role"], "full_scene")
-        self.assertFalse(painter["scene_compatibility"]["selectable"])
-        self.assertFalse(painter["browser_runtime"]["supported"])
-        self.assertIn("separate compatibility editor", painter["browser_runtime"]["reason"])
+        self.assertNotIn("python:painter", by_key)
 
     def test_every_python_browser_payload_uses_managed_profile_geometry_only(self) -> None:
         payload = self._bootstrap(AnimationPipelineFeatureFlags())

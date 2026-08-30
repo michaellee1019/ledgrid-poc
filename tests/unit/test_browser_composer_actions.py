@@ -193,7 +193,7 @@ class BrowserComposerActionTests(unittest.TestCase):
             "/api/v1/composer/operations/status",
         )
         self.assertEqual(actions["vibe_url"], "/api/v1/vibe")
-        self.assertEqual(actions["masks_url"], "/api/painter/masks")
+        self.assertNotIn("masks_url", actions)
         self.assertEqual(
             payload["components"][0]["presentation"]["timing_adapter"],
             "legacy_speed_param",
