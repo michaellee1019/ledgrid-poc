@@ -85,7 +85,27 @@
             <button type="button" data-filter="python" aria-pressed="false">Python</button>
             <button type="button" data-filter="native" aria-pressed="false">C++</button>
           </div>
+          <div class="catalog-filters catalog-filters--saved" role="group" aria-label="Discovery item type">
+            <button type="button" data-catalog-kind="all" aria-pressed="true">All looks</button>
+            <button type="button" data-catalog-kind="renderer" aria-pressed="false">Renderers</button>
+            <button type="button" data-catalog-kind="preset" aria-pressed="false">Starting points</button>
+          </div>
+          <label class="catalog-category-filter" for="catalogCategoryFilter">
+            <span>Category</span>
+            <select id="catalogCategoryFilter">
+              <option value="all">All categories</option>
+            </select>
+          </label>
+          <div class="catalog-filters catalog-filters--saved" role="group" aria-label="Saved discovery items">
+            <button type="button" data-catalog-saved="all" aria-pressed="true">All</button>
+            <button type="button" data-catalog-saved="favorites" aria-pressed="false">Favorites</button>
+            <button type="button" data-catalog-saved="recent" aria-pressed="false">Recent</button>
+          </div>
+          <p class="catalog-result-summary" id="catalogResultSummary" role="status" aria-live="polite">Loading looks…</p>
           <div class="component-list" id="componentList" role="listbox" aria-label="Animation renderers" aria-busy="true"></div>
+          <div class="catalog-more" id="catalogMore" hidden>
+            <button class="quiet-button" id="catalogShowMoreButton" type="button">Show more</button>
+          </div>
         </div>
       </details>
     </aside>

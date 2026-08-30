@@ -7,6 +7,7 @@
     const STORAGE_PREFIX = 'ledgrid.browser-composer.v1';
     const LIBRARY_FAVORITES_STORAGE_KEY = 'ledgrid.browser-composer.library.favorites.v1';
     const LIBRARY_RECENTS_STORAGE_KEY = 'ledgrid.browser-composer.library.recents.v1';
+    const CATALOG_INITIAL_RESULT_LIMIT = ComposerState.LIBRARY_DISCOVERY_BATCH_SIZE || 24;
     const BUNDLED_BOOTSTRAP_URL = '/static/generated/composer/bootstrap.v1.json';
     const SAMPLE_FRAMES = 48;
     const LIVE_EDIT_MIN_INTERVAL_MS = 40;
@@ -72,6 +73,10 @@
         history: [],
         historyIndex: -1,
         catalogFilter: 'all',
+        catalogKind: 'all',
+        catalogSavedView: 'all',
+        catalogCategory: 'all',
+        catalogVisibleLimit: CATALOG_INITIAL_RESULT_LIMIT,
         query: '',
         checkerGeneration: 0,
         draftGeneration: 0,
@@ -381,6 +386,7 @@
         }
         renderSavedLibraryList('favoriteList', 'favoriteLibrarySection', state.library.favorites, 'Favorite');
         renderSavedLibraryList('recentList', 'recentLibrarySection', state.library.recents, 'Recent selection');
+        if (state.bootstrap) renderCatalog();
     }
 
     function rememberLibrarySelection() {
@@ -1754,18 +1760,58 @@
         return kind === 'native' ? 'native' : 'python';
     }
 
-    function matchesCatalog(component) {
-        const filterMatches = state.catalogFilter === 'all' || runtimeKind(component) === state.catalogFilter;
-        const presetMetadata = (component.presets || []).flatMap((preset) => [
-            preset.name,
-            preset.description,
-            preset.category,
-            preset.preset_id,
-            ...(Array.isArray(preset.tags) ? preset.tags : []),
-        ]);
-        const haystack = [component.name, component.description, component.plugin_id, component.provider, component.role, ...presetMetadata]
-            .filter(Boolean).join(' ').toLowerCase();
-        return component.role === 'background' && filterMatches && haystack.includes(state.query.toLowerCase());
+    function catalogEntries() {
+        return ComposerState.libraryDiscoveryEntries?.(state.bootstrap?.components || []) || [];
+    }
+
+    function filteredCatalogEntries() {
+        return ComposerState.filterLibraryDiscoveryEntries?.(catalogEntries(), {
+            query: state.query,
+            runtime: state.catalogFilter,
+            kind: state.catalogKind,
+            category: state.catalogCategory,
+            saved: state.catalogSavedView,
+            favorites: state.library.favorites,
+            recents: state.library.recents,
+        }) || [];
+    }
+
+    function renderCatalogCategories(entries) {
+        const select = $('catalogCategoryFilter');
+        if (!select || !ComposerState.libraryDiscoveryCategories) return;
+        const categories = ComposerState.libraryDiscoveryCategories(entries);
+        const selected = state.catalogCategory;
+        select.replaceChildren(new Option('All categories', 'all'));
+        categories.forEach((category) => select.appendChild(new Option(category, category)));
+        state.catalogCategory = categories.includes(selected) ? selected : 'all';
+        select.value = state.catalogCategory;
+    }
+
+    function resetCatalogFilters({focus = false} = {}) {
+        state.catalogFilter = 'all';
+        state.catalogKind = 'all';
+        state.catalogSavedView = 'all';
+        state.catalogCategory = 'all';
+        state.catalogVisibleLimit = CATALOG_INITIAL_RESULT_LIMIT;
+        state.query = '';
+        $('componentSearch').value = '';
+        $('catalogCategoryFilter').value = 'all';
+        document.querySelectorAll('[data-filter]').forEach((item) => item.setAttribute('aria-pressed', String(item.dataset.filter === 'all')));
+        document.querySelectorAll('[data-catalog-kind]').forEach((item) => item.setAttribute('aria-pressed', String(item.dataset.catalogKind === 'all')));
+        document.querySelectorAll('[data-catalog-saved]').forEach((item) => item.setAttribute('aria-pressed', String(item.dataset.catalogSaved === 'all')));
+        renderCatalog();
+        if (focus) $('componentSearch').focus();
+    }
+
+    async function selectCatalogEntry(entry) {
+        if (!entry?.previewable) return;
+        // Selecting is the only point at which a discovery result starts a
+        // local renderer. Rendering a large catalog never instantiates the
+        // individual previews or sends a wall request.
+        await selectComponent(entry.component, entry.kind === 'preset'
+            ? {focusEditor: true, skipLibraryRecent: true}
+            : {focusEditor: true});
+        if (entry.kind === 'preset') applyPreset(entry.preset, entry.presetIndex);
     }
 
     function enableRovingFocus(host, selector, {vertical = true} = {}) {
@@ -1793,40 +1839,54 @@
     function renderCatalog() {
         const host = $('componentList');
         host.replaceChildren();
-        const visible = state.bootstrap.components.filter(matchesCatalog);
-        $('catalogCount').textContent = String(visible.length);
+        const entries = catalogEntries();
+        renderCatalogCategories(entries);
+        const matched = filteredCatalogEntries();
+        const visible = matched.slice(0, state.catalogVisibleLimit);
+        $('catalogCount').textContent = matched.length > visible.length
+            ? `${visible.length}/${matched.length}` : String(matched.length);
         host.setAttribute('aria-busy', 'false');
-        if (!visible.length) {
+        const resultSummary = $('catalogResultSummary');
+        if (resultSummary) resultSummary.textContent = matched.length > visible.length
+            ? `Showing ${visible.length} of ${matched.length} looks`
+            : `${matched.length} ${matched.length === 1 ? 'look' : 'looks'}`;
+        const more = $('catalogMore');
+        const moreButton = $('catalogShowMoreButton');
+        if (more) more.hidden = matched.length <= visible.length;
+        if (moreButton && matched.length > visible.length) {
+            const remaining = matched.length - visible.length;
+            moreButton.textContent = `Show ${Math.min(CATALOG_INITIAL_RESULT_LIMIT, remaining)} more · ${remaining} remaining`;
+        }
+        if (!matched.length) {
             const empty = document.createElement('p');
             empty.className = 'catalog-empty';
-            empty.textContent = state.component && !matchesCatalog(state.component)
-                ? `Editing ${state.component.name || humanize(state.component.plugin_id)}, hidden by filters.`
+            empty.textContent = state.component && !filteredCatalogEntries().some((entry) => entry.component.key === state.component.key)
+                ? `Editing ${state.component.name || humanize(state.component.plugin_id)}, hidden by discovery filters.`
                 : 'No animations or starting points match that search.';
             host.appendChild(empty);
             const clear = document.createElement('button');
             clear.type = 'button';
             clear.className = 'text-button';
             clear.textContent = 'Clear filters';
-            clear.addEventListener('click', () => {
-                state.catalogFilter = 'all';
-                state.query = '';
-                $('componentSearch').value = '';
-                document.querySelectorAll('[data-filter]').forEach((item) => item.setAttribute('aria-pressed', String(item.dataset.filter === 'all')));
-                renderCatalog();
-            });
+            clear.addEventListener('click', () => resetCatalogFilters({focus: true}));
             host.appendChild(clear);
             return;
         }
-        visible.forEach((component) => {
+        visible.forEach((entry) => {
+            const {component} = entry;
             const runtime = component.browser_runtime || {};
             const capability = componentCapability(component);
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'component-card';
+            button.className = `component-card catalog-entry catalog-entry-${entry.kind}`;
             button.setAttribute('role', 'option');
-            button.setAttribute('aria-selected', String(component.key === state.component?.key));
-            button.disabled = !capability.previewable;
+            const selected = entry.kind === 'preset'
+                ? component.key === state.component?.key && state.selectedPreset === presetIdentity(entry.preset, entry.presetIndex)
+                : component.key === state.component?.key && !state.selectedPreset;
+            button.setAttribute('aria-selected', String(selected));
+            button.disabled = !entry.previewable;
             button.dataset.activationReady = String(capability.activationReady);
+            button.dataset.discoveryKind = entry.kind;
             if (!capability.previewable) button.title = capability.reason || runtime.reason || 'Browser rendering is unavailable.';
             else if (!capability.activationReady) button.title = capability.reason || 'Preview and save only; activation is unavailable.';
 
@@ -1837,17 +1897,17 @@
             const copy = document.createElement('span');
             copy.className = 'component-copy';
             const name = document.createElement('strong');
-            name.textContent = component.name || humanize(component.plugin_id);
+            name.textContent = entry.name;
             const meta = document.createElement('small');
             meta.textContent = capability.previewable
-                ? `${component.role ? humanize(component.role) + ' · ' : ''}${runtime.kind === 'native' ? 'C++ → Wasm' : 'Python → Pyodide'} · ${capability.activationReady ? 'Activation-ready' : 'Preview only'}`
+                ? `${entry.kind === 'preset' ? `${component.name || humanize(component.plugin_id)} · ` : ''}${entry.category ? `${entry.category} · ` : ''}${runtime.kind === 'native' ? 'C++ → Wasm' : 'Python → Pyodide'} · ${capability.activationReady ? 'Activation-ready' : 'Preview only'}`
                 : (runtime.reason || 'Browser runtime unavailable');
             copy.append(name, meta);
             const chip = document.createElement('span');
             chip.className = `runtime-chip${capability.previewable ? '' : ' unsupported'}`;
-            chip.textContent = capability.previewable ? (runtime.kind === 'native' ? 'Wasm' : 'Py') : 'Server';
+            chip.textContent = entry.kind === 'preset' ? 'Look' : (capability.previewable ? (runtime.kind === 'native' ? 'Wasm' : 'Py') : 'Server');
             button.append(icon, copy, chip);
-            button.addEventListener('click', () => selectComponent(component, {focusEditor: true}));
+            button.addEventListener('click', () => { void selectCatalogEntry(entry); });
             host.appendChild(button);
         });
         enableRovingFocus(host, '.component-card');
@@ -4599,15 +4659,39 @@
         });
         $('componentSearch').addEventListener('input', (event) => {
             state.query = event.target.value;
+            state.catalogVisibleLimit = CATALOG_INITIAL_RESULT_LIMIT;
             if (state.query.trim()) $('animationCatalogDisclosure').open = true;
             renderCatalog();
         });
         $('toggleLibraryFavoriteButton').addEventListener('click', toggleCurrentLibraryFavorite);
         document.querySelectorAll('[data-filter]').forEach((button) => button.addEventListener('click', () => {
             state.catalogFilter = button.dataset.filter;
+            state.catalogVisibleLimit = CATALOG_INITIAL_RESULT_LIMIT;
             document.querySelectorAll('[data-filter]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
             renderCatalog();
         }));
+        document.querySelectorAll('[data-catalog-kind]').forEach((button) => button.addEventListener('click', () => {
+            state.catalogKind = button.dataset.catalogKind;
+            state.catalogVisibleLimit = CATALOG_INITIAL_RESULT_LIMIT;
+            document.querySelectorAll('[data-catalog-kind]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+            renderCatalog();
+        }));
+        document.querySelectorAll('[data-catalog-saved]').forEach((button) => button.addEventListener('click', () => {
+            state.catalogSavedView = button.dataset.catalogSaved;
+            state.catalogVisibleLimit = CATALOG_INITIAL_RESULT_LIMIT;
+            document.querySelectorAll('[data-catalog-saved]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+            renderCatalog();
+        }));
+        $('catalogCategoryFilter').addEventListener('change', (event) => {
+            state.catalogCategory = event.target.value;
+            state.catalogVisibleLimit = CATALOG_INITIAL_RESULT_LIMIT;
+            renderCatalog();
+        });
+        $('catalogShowMoreButton').addEventListener('click', () => {
+            state.catalogVisibleLimit += CATALOG_INITIAL_RESULT_LIMIT;
+            renderCatalog();
+            $('componentList').querySelector('.component-card:last-child')?.focus();
+        });
         document.querySelectorAll('[data-compare]').forEach((button) => button.addEventListener('click', () => setCompare(button.dataset.compare)));
         $('installationForegroundToggle').addEventListener('change', (event) => setInstallationForegroundEnabled(event.target.checked));
         $('playButton').addEventListener('click', () => { state.playing = !state.playing; state.lastAnimationTime = performance.now(); syncPlayButton(); requestRender(); });

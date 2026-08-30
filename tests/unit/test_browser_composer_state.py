@@ -216,6 +216,51 @@ console.log(JSON.stringify({
             "provider": "receiver_native", "plugin": "same", "presetIndex": 0,
         })
 
+    def test_library_discovery_unifies_renderer_and_preset_queries_without_id_collisions(self) -> None:
+        result = _run_state_script("""
+const components = [
+  {
+    provider: 'python', plugin_id: 'aurora', key: 'python:aurora', role: 'background',
+    name: 'Aurora', description: 'Slow northern light folds', tags: ['light'],
+    browser_runtime: {kind: 'python', supported: true},
+    presets: [{key: 'night', name: 'Polar Night', category: 'Night', tags: ['dim']}],
+  },
+  {
+    provider: 'receiver_native', plugin_id: 'aurora', key: 'receiver_native:aurora', role: 'background',
+    name: 'Aurora Native', description: 'Receiver-native aurora',
+    browser_runtime: {kind: 'native', supported: true},
+    presets: [{key: 'showcase', name: 'Solar Wind', category: 'Showcase', tags: ['bright']}],
+  },
+  {provider: 'python', plugin_id: 'clock', role: 'overlay', name: 'Clock', browser_runtime: {supported: true}},
+];
+const entries = state.libraryDiscoveryEntries(components);
+const favorite = {provider: 'receiver_native', component: 'aurora', preset: 'showcase'};
+const recent = {provider: 'python', component: 'aurora', preset: 'night'};
+console.log(JSON.stringify({
+  limit: state.LIBRARY_DISCOVERY_BATCH_SIZE,
+  kinds: entries.map((entry) => entry.kind),
+  categories: state.libraryDiscoveryCategories(entries),
+  query: state.filterLibraryDiscoveryEntries(entries, {query: 'dim'}).map((entry) => entry.key),
+  native: state.filterLibraryDiscoveryEntries(entries, {runtime: 'native'}).map((entry) => entry.key),
+  favorites: state.filterLibraryDiscoveryEntries(entries, {saved: 'favorites', favorites: [favorite]}).map((entry) => entry.key),
+  recent: state.filterLibraryDiscoveryEntries(entries, {saved: 'recent', recents: [recent, favorite]}).map((entry) => entry.key),
+}));
+""")
+
+        self.assertEqual(result["limit"], 24)
+        self.assertEqual(result["kinds"], ["renderer", "renderer", "preset", "preset"])
+        self.assertEqual(result["categories"], ["Night", "Showcase"])
+        self.assertEqual(result["query"], ['["python","aurora","night"]'])
+        self.assertEqual(result["native"], [
+            '["receiver_native","aurora",""]',
+            '["receiver_native","aurora","showcase"]',
+        ])
+        self.assertEqual(result["favorites"], ['["receiver_native","aurora","showcase"]'])
+        self.assertEqual(result["recent"], [
+            '["python","aurora","night"]',
+            '["receiver_native","aurora","showcase"]',
+        ])
+
     def test_activation_accepts_current_cautions_but_rejects_failures_and_stale_checks(self) -> None:
         result = _run_state_script("""
 const component = {key: 'host_python:solid', browser_runtime: {digest: 'runtime-1'}};
@@ -431,6 +476,11 @@ console.log(JSON.stringify({
             "skipLibraryRecent: true",
             "toggleLibraryFavoriteButton",
             "renderLocalLibrary()",
+            "function selectCatalogEntry(entry)",
+            "CATALOG_INITIAL_RESULT_LIMIT",
+            "catalogShowMoreButton",
+            "data-catalog-kind",
+            "data-catalog-saved",
         ):
             self.assertIn(marker, source)
         self.assertIn("syncComposerUrl({mode: urlMode})", source)

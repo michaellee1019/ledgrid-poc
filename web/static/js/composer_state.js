@@ -120,6 +120,7 @@
 
     const LIBRARY_RECENTS_LIMIT = 12;
     const LIBRARY_FAVORITES_LIMIT = 128;
+    const LIBRARY_DISCOVERY_BATCH_SIZE = 24;
 
     /**
      * A library entry is deliberately only a catalog identity.  It never
@@ -195,6 +196,113 @@
             String(item?.key || item?.preset_id || item?.id || `preset-${index}`) === normalized.preset
         ));
         return Object.freeze({component, presetIndex: presetIndex == null || presetIndex < 0 ? null : presetIndex});
+    }
+
+    function normalizedSearchText(value) {
+        return String(value || '').trim().toLocaleLowerCase();
+    }
+
+    function libraryDiscoveryEntries(components) {
+        if (!Array.isArray(components)) return [];
+        const entries = [];
+        components.forEach((component) => {
+            if (!component || component.role !== 'background') return;
+            const selection = normalizeLibrarySelection({
+                provider: component.provider,
+                component: component.plugin_id,
+            });
+            if (!selection) return;
+            const capability = component?.browser_capabilities || {};
+            const previewable = capability.previewable ?? Boolean(component?.browser_runtime?.supported);
+            const componentTags = Array.isArray(component.tags) ? component.tags : [];
+            const base = {
+                component,
+                selection,
+                provider: selection.provider,
+                runtimeKind: component?.browser_runtime?.kind === 'native' ? 'native' : 'python',
+                previewable: Boolean(previewable),
+            };
+            const createEntry = ({preset = null, presetIndex = null} = {}) => {
+                const identity = preset == null ? selection : normalizeLibrarySelection({
+                    ...selection,
+                    preset: String(preset?.key || preset?.preset_id || preset?.id || `preset-${presetIndex}`),
+                });
+                if (!identity) return null;
+                const category = String(preset?.category || component.category || '').trim();
+                const tags = [...new Set([...componentTags, ...(Array.isArray(preset?.tags) ? preset.tags : [])]
+                    .map((tag) => String(tag).trim()).filter(Boolean))];
+                const name = String(preset?.name || component.name || component.plugin_id || '').trim();
+                const description = String(preset?.description || component.description || '').trim();
+                const searchText = normalizedSearchText([
+                    name, description, component.name, component.description,
+                    component.provider, component.plugin_id, component.key, component.role,
+                    category, ...tags,
+                ].filter(Boolean).join(' '));
+                return Object.freeze({
+                    ...base,
+                    kind: preset == null ? 'renderer' : 'preset',
+                    preset,
+                    presetIndex,
+                    selection: identity,
+                    key: librarySelectionKey(identity),
+                    name,
+                    description,
+                    category,
+                    tags: Object.freeze(tags),
+                    searchText,
+                });
+            };
+            const renderer = createEntry();
+            if (renderer) entries.push(renderer);
+            (component.presets || []).forEach((preset, presetIndex) => {
+                const entry = createEntry({preset, presetIndex});
+                if (entry) entries.push(entry);
+            });
+        });
+        return entries.sort((left, right) => (
+            left.name.localeCompare(right.name)
+            || left.kind.localeCompare(right.kind)
+            || left.provider.localeCompare(right.provider)
+            || left.key.localeCompare(right.key)
+        ));
+    }
+
+    function libraryDiscoveryCategories(entries) {
+        if (!Array.isArray(entries)) return [];
+        return [...new Set(entries.map((entry) => String(entry?.category || '').trim()).filter(Boolean))]
+            .sort((left, right) => left.localeCompare(right));
+    }
+
+    function filterLibraryDiscoveryEntries(entries, filters = {}) {
+        if (!Array.isArray(entries)) return [];
+        const query = normalizedSearchText(filters.query);
+        const runtime = filters.runtime || 'all';
+        const kind = filters.kind || 'all';
+        const category = filters.category || 'all';
+        const saved = filters.saved || 'all';
+        const favoriteKeys = new Set(uniqueLibrarySelections(filters.favorites, {limit: LIBRARY_FAVORITES_LIMIT, sort: false})
+            .map(librarySelectionKey).filter(Boolean));
+        const recentKeys = new Set(uniqueLibrarySelections(filters.recents, {limit: LIBRARY_RECENTS_LIMIT, sort: false})
+            .map(librarySelectionKey).filter(Boolean));
+        const visible = entries.filter((entry) => (
+            entry
+            && (!query || entry.searchText.includes(query))
+            && (runtime === 'all' || entry.runtimeKind === runtime)
+            && (kind === 'all' || entry.kind === kind)
+            && (category === 'all' || entry.category === category)
+            && (saved === 'all'
+                || (saved === 'favorites' && favoriteKeys.has(entry.key))
+                || (saved === 'recent' && recentKeys.has(entry.key)))
+        ));
+        if (saved === 'recent') {
+            return visible.sort((left, right) => recentKeys.has(left.key) && recentKeys.has(right.key)
+                ? uniqueLibrarySelections(filters.recents, {limit: LIBRARY_RECENTS_LIMIT})
+                    .map(librarySelectionKey).indexOf(left.key)
+                    - uniqueLibrarySelections(filters.recents, {limit: LIBRARY_RECENTS_LIMIT})
+                        .map(librarySelectionKey).indexOf(right.key)
+                : 0);
+        }
+        return visible;
     }
 
     function capability(component) {
@@ -341,7 +449,11 @@
         formatNumber,
         localInstallationProfile,
         LIBRARY_FAVORITES_LIMIT,
+        LIBRARY_DISCOVERY_BATCH_SIZE,
         LIBRARY_RECENTS_LIMIT,
+        filterLibraryDiscoveryEntries,
+        libraryDiscoveryCategories,
+        libraryDiscoveryEntries,
         librarySelectionKey,
         normalizeNumber,
         normalizeLibrarySelection,
