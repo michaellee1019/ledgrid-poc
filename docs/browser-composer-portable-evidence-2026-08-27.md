@@ -1,18 +1,14 @@
-# Browser composer portable evidence — 2026-08-27
+# Composer browser evidence boundary — 2026-08-27
 
-## Scope and environment
+This file preserves the boundary of earlier portable evidence; it is not a
+current command or release recipe. Composer is the sole browser product. The
+current route and source contract are [web/README.md](../web/README.md) and
+[CURRENT_UX_ACCEPTANCE.md](CURRENT_UX_ACCEPTANCE.md).
 
-- Branch: `codex/browser-preset-composer`
-- Implementation commits: `377849a` through `08fb459`
-- Worktree: isolated from the user's existing checkout
-- Host: Apple Silicon (`arm64`), macOS 26.6.2 (25G83)
-- Interactive browser: Codex in-app browser
-- Responsive viewports: 390×844 and 430×932 CSS pixels
-- Geometry: 33 strips × 138 LEDs = 4,554 pixels
-- Physical wall: not contacted or observed; no physical qualification was authorized
-
-This is portable browser evidence only. It is not iPhone Safari, installed-iPhone,
-controller, receiver, camera, or physical-wall acceptance.
+Physical iPhone Safari, installed standalone mode, VoiceOver, Firefox, and
+mobile-WebKit safeguards remain post-squash evidence work. They are not
+established by source inspection or a local preview, and this file intentionally
+supplies no portable runner or full-matrix entrypoint.
 
 ## Implemented contract and safety boundary
 
@@ -43,7 +39,7 @@ controller, receiver, camera, or physical-wall acceptance.
 - The offline manifest, Python bundle, and native Wasm artifacts rebuild
   deterministically with no unexpected working-tree changes.
 
-## Interactive browser results
+## Historical observations
 
 ### Responsive and accessibility-oriented checks
 
@@ -84,7 +80,7 @@ controller, receiver, camera, or physical-wall acceptance.
 - Cancel closed the review. The preview-only server log contained no scene `PUT`
   and no browser warnings or errors were recorded.
 
-## Automated validation
+## Historical validation record
 
 - Deterministic asset build: passed; Python bundle 2,473,025 bytes with SHA-256
   `3433b0217f6ade688cd9faf9be9ec21553222c31220e373cfe4fa5d437d8b435`.
@@ -96,11 +92,12 @@ controller, receiver, camera, or physical-wall acceptance.
 - Host animation render benchmark: every measured plugin remained below the
   configured 4.0 ms p95 ceiling; the highest observed p95 was 1.5700 ms.
 
-## Gates intentionally left open
+## Retained evidence boundaries
 
 - Named physical iPhone Safari and installed-standalone performance, VoiceOver,
   background/foreground, and offline evidence.
-- Firefox, standalone Chromium, and automated WebKit matrix journeys.
+- Firefox and mobile-WebKit investigation when an engine-specific defect is in
+  scope.
 - Five-person first-use study.
 - Fifty-switch/100-Clock-toggle retained-memory run and worker-kill browser journey.
 - Full offline journey across three Python and both native renderers.

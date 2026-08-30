@@ -1,6 +1,7 @@
 # Composer Web Layer
 
-Purpose: Flask UI and REST API for controlling animations.
+Purpose: Flask serves Composer, the sole browser product, and its bounded REST
+surface. There are no alternate browser control surfaces.
 
 Key files:
 - app.py: Flask app setup and route registration
@@ -37,8 +38,8 @@ Browser entry points:
   provider-qualified renderer catalog, geometry, and bundled profile identity
 - `GET /api/v1/composer/bootstrap?catalog_only=1` — optional read-only server
   capability and component-identity refresh without observing live wall state
-- `GET /api/v1/composer/bootstrap` — compatibility/full server bootstrap that
-  may include the selected managed profile for explicit server workflows
+- `GET /api/v1/composer/bootstrap` — full server bootstrap that may include the
+  selected managed profile for an explicit server workflow
 - `GET /api/v1/composer/connectivity` — uncached server reachability probe
 - `POST /api/v1/composer/presets/validate` — read-only component or composed-scene
   JSON validation
@@ -65,7 +66,8 @@ Browser entry points:
 - `GET|DELETE /api/v1/scene-presets/<preset_id>` — inspect or delete a scene preset
 - `POST /api/v1/scene-presets/<preset_id>/apply` — rejected with 428; load the
   draft and use Composer Check
-- POST /api/stop
+- `POST /api/stop` — request a stop; returned and observed status remains the
+  authority for output state
 - `GET /api/v1/composer/settings/observed` — bounded revision-qualified
   settings observation for Composer reconciliation
 - `GET /api/v1/composer/operations/status` — bounded operational health

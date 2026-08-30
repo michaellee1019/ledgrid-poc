@@ -1,10 +1,15 @@
-# REL-01 portable browser qualification
+# REL-01 retained device-evidence safeguards
 
-This lane retains machine-readable Chromium, Firefox, and WebKit evidence for
-the portable Composer contract. It cannot qualify physical iPhone Safari, iOS
-installed standalone mode, VoiceOver, physical wall output,
-controller/receiver performance, or electrical safety. Those results belong in
-separate evidence records and remain required before REL-01 can be closed.
+REL-01 is not a routine browser matrix for source changes. Composer is the sole
+browser product; its current route and source contract are documented in
+[web/README.md](../web/README.md) and
+[CURRENT_UX_ACCEPTANCE.md](CURRENT_UX_ACCEPTANCE.md).
+
+The repository retains its browser-qualification tooling for post-squash device
+evidence and for an engine-specific regression. It cannot qualify physical
+iPhone Safari, installed standalone mode, VoiceOver, physical wall output,
+controller/receiver performance, or electrical safety without separate,
+operator-observed evidence.
 
 ## Acceptance contract
 
@@ -92,21 +97,9 @@ Native build output is content-addressed under the ignored
 `run_state/browser_qualification_native_builds` directory; authoritative library
 state remains inside the selected fixture state directory.
 
-The committed browser tooling has an npm lockfile. From a fresh worktree, install
-the locked package and all three supported engines once:
-
-```bash
-just browser-qualification-setup
-```
-
-Then run the complete no-wall matrix:
-
-```bash
-just browser-qualification
-```
-
-The runner starts its own fixture on an OS-assigned loopback port, shuts it down
-on success, failure, or interruption, and writes an ignored run directory under
+The retained runner starts its own fixture on an OS-assigned loopback port,
+shuts it down on success, failure, or interruption, and writes an ignored run
+directory under
 `run_state/browser_qualification/evidence/`. Its `index.json` names the retained
 evidence JSON, fixture state, Playwright traces, and videos. Each run has a UUID
 in its directory name, so simultaneous worktrees and local runs do not collide.
@@ -120,22 +113,12 @@ reach a usable origin while the outage gate was active.
 This desktop WebKit fixture result is not physical iPhone Safari, installed iOS
 standalone, or a claim about full-device network behavior.
 
-## Running and retaining evidence
+## Retained tooling
 
-For a previously started fixture, the evidence module resolves the local locked
-tooling package directly; no absolute module path or environment variable is
-needed:
-
-```bash
-uv run --frozen python -m tools.browser_qualification.evidence \
-  --base-url http://127.0.0.1:8765 \
-  --output run_state/browser_qualification/evidence/manual-rel01.json
-```
-
-The command exits successfully only when all three real engines execute every
-required portable assertion from a clean commit. It always writes JSON,
-including launch, runtime, or journey failures, so an unavailable engine can
-never be mistaken for a pass. The output location is operator-selected and the
+The helper modules resolve their local locked tooling directly and always retain
+failure records. They have no routine Justfile entrypoint. Use a focused engine
+check only when changed behavior requires it; do not infer a physical-device
+result from a desktop engine. The output location is operator-selected and the
 record is not committed automatically.
 
 `manifest_sha256` is the SHA-256 of canonical JSON (sorted keys with compact
@@ -221,8 +204,8 @@ them:
 
 A passing retained record sets `external_evidence_satisfied: true` but always
 keeps `release_gate_satisfied: false`; this tool never claims the overall
-release passed. REL-01 may be closed only by a separate release decision that
-also verifies the clean portable Chromium/Firefox/WebKit record.
+release passed. REL-01 closure requires a separate release decision and the
+evidence boundaries applicable to that release.
 The current no-wall fixture remains loopback-only. Safari Web Inspector and
 `rvictl` do not forward a physical device to that origin; a separately reviewed,
 secure device-local tunnel is therefore a prerequisite for a physical run and

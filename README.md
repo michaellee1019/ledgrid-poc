@@ -23,7 +23,7 @@ just start
 `just start` runs the web/preview process at <http://127.0.0.1:5000>. Hardware
 output runs as a separate controller process on the Raspberry Pi.
 
-For a Mac-only dashboard with no controller process or LED hardware, run
+For a Mac-only Composer session with no controller process or LED hardware, run
 `just start-mac`. It runs the full-size software renderer on localhost.
 
 ## Repository layout
@@ -107,6 +107,7 @@ Before merging or deploying a change:
 - [Metrics](docs/METRICS.md)
 - [GIF asset pipeline](docs/GIF_PIPELINE.md)
 - [Plant-wall calibration](docs/PLANT_WALL_CALIBRATION.md)
+- [Current Composer contract](docs/CURRENT_UX_ACCEPTANCE.md)
 - [Unified delivery and animation roadmap](docs/plan-revamped-animation-pipeline.md)
 
 Repository documentation describes the current supported system. Use Git

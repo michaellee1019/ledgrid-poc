@@ -1,8 +1,9 @@
-# REL-01 supplementary mobile and keyboard observations — 2026-08-27
+# REL-01 supplementary evidence boundary — 2026-08-27
 
-These observations supplement the portable browser matrix. They do not turn a
-simulator, desktop WebKit, or macOS accessibility process into physical iPhone
-Safari, installed-standalone, or iPhone VoiceOver evidence.
+These are historical observations, not a current multi-engine command or a
+release recipe. A simulator, desktop WebKit, or macOS accessibility process is
+not physical iPhone Safari, installed standalone mode, or iPhone VoiceOver
+evidence.
 
 ## Physical iPhone status
 
@@ -15,7 +16,7 @@ The operator explicitly waived the physical iPhone Safari,
 installed-standalone, and VoiceOver gate for this run. Each is recorded as
 `OPERATOR_WAIVED`, not `PASS`, and receives no qualification credit.
 
-## Simulator observations
+## Historical simulator observations
 
 An iPhone 17 Pro Max Simulator running iOS 26.4.1
 (`CC7E466D-DC5A-45AD-B1C6-2B7DB12765BB`) loaded the real Composer in Safari.
@@ -35,15 +36,11 @@ macOS VoiceOver did not make the simulator's web content appear in the Mac
 accessibility tree, so that attempt is recorded as `NOT_EQUIVALENT`, receives no
 qualification credit, and is not represented as an iPhone VoiceOver journey.
 
-## Focused keyboard observations
+## Historical keyboard observations
 
-The new `keyboard_only_desktop` journey passed all 11 assertions independently
-in Chromium 151.0.7922.34, Firefox 153.0, and WebKit 26.5 with Playwright 1.62.1.
-It proved forward/backward dialog wrapping, Escape cancellation, exact focus
-restoration to **Activate**, and zero wall mutation in addition to the complete
-keyboard authoring flow. These focused records were captured while the
-implementation worktree was dirty, so the clean full matrix remains the only
-authoritative portable release record.
+The retained keyboard observations do not replace a physical-device run. Firefox
+and mobile-WebKit are reserved for an engine-specific regression investigation;
+they are not current documentation validation.
 
 - `run_state/browser_qualification/evidence/rel01-keyboard-chromium.json`
   — SHA-256 `cded18cc16a2cacd7032e2bb1c5dbf31ade2555b10b337298a2f17c755faa747`
@@ -55,10 +52,5 @@ authoritative portable release record.
 The companion machine-readable summary is retained at
 `run_state/browser_qualification/evidence/rel01-supplementary-evidence-2026-08-27.json`.
 
-The complete updated working-tree matrix is retained at
-`run_state/browser_qualification/evidence/rel01-browser-evidence-v17-working-tree.json`
-(SHA-256 `3be8a25c66f35b0e053c84003e38340036502dcda5c25e14bf38d6a7a75b776c`).
-All 24 engine journeys and all 231 assertions passed, with zero wall mutation
-attempts and no wall consumer. Its aggregate is correctly `FAIL` only because
-the evidence was captured from a dirty implementation worktree; it is a
-functional result, not a clean-revision release record.
+The retained tooling is a post-squash safeguard. It has no routine Justfile
+entrypoint and does not change wall output.

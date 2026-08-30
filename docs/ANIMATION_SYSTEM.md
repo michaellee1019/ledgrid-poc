@@ -56,8 +56,10 @@ Discovery first scans manifest JSON into versioned descriptors without importing
 plugin implementations. The Python adapter then binds the allowlisted class,
 classifies stateful implementations, and adds the validated parameter schema and
 actual no-config defaults. The unified catalog is filterable by provider and
-role. Painter, stateful animations, and legacy Clock remain catalog-visible
-`full_scene` compatibility components with an explicit non-composable diagnostic.
+role. Stateful animations and legacy Clock remain catalog-visible `full_scene`
+compatibility components with an explicit non-composable diagnostic. Composer
+is their only browser surface; catalog visibility never supplies an executable
+browser route.
 
 Root `presets/animations/<plugin_id>/` is a user-writable runtime overlay.
 Do not place curated source presets there.
@@ -255,8 +257,9 @@ Removing, disabling, moving, replacing, or updating the overlay does not restart
 the background. Complete scene replacement, targeted component updates, status,
 and preview use the same provider, role, composability, and parameter validation.
 Existing single-animation starts translate to a background-only compatibility
-scene; legacy APIs, presets, painter, and full-scene stateful animations retain
-their existing product paths.
+scene at the persistence boundary. Compatibility data never restores a browser
+route or a second browser product; Composer owns catalog, draft, Check, and
+guarded activation workflows.
 
 Composition uses canonical strip-major coordinates, integer strip/LED
 translation with clipping, and fixed-point premultiplied source-over. The
@@ -360,17 +363,14 @@ Legacy parameter mappings are ephemeral render inputs and may target only
 declared schema parameters; they never rewrite an authored preset. `neutral`
 must not declare a mapping and remains byte-compatible.
 
-The Phase 2D inventory contains 51 Python packages: 31 direct semantic
-renderers, 10 intentional framework-grade compatibility components, and 10
-preserve components. With the semantic repository-native pilot plus the
-preserve Painter and compiled-receiver peers, the generated inventory is 54
-components: 32 semantic, 10 grade, and 12 preserve. No palette legacy mappings
-remain. The grade holdouts retain authored full-spectrum, lineage, seasonal, or
-game-state colors whose replacement with a small global role set would make
-their controls and presets dishonest. They claim no vibe capability and remain
-presentation no-ops until a future renderer-specific semantic design is proven.
+The generated catalog is the inventory authority; do not copy its component
+counts into product documentation. The grade holdouts retain authored
+full-spectrum, lineage, seasonal, or game-state colors whose replacement with a
+small global role set would make their controls and presets dishonest. They
+claim no vibe capability and remain presentation no-ops until a future
+renderer-specific semantic design is proven.
 
-The dashboard presents these descriptors in one provider-qualified catalog.
+Composer presents these descriptors in one provider-qualified catalog.
 Provider, role, scene compatibility, and preview provenance are separate facts:
 a receiver-native source may be visible as **Catalog / build only** without
 becoming scene-selectable. Host-build previews are explicitly labeled as host

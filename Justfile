@@ -140,16 +140,6 @@ fetch-presets: fetch-wall-data
 browser-composer-assets:
 	{{python_env}} python tools/build_browser_composer_assets.py
 
-# Install the exact browser runner and engines committed beside the qualification.
-browser-qualification-setup:
-	cd tools/browser_qualification && npm ci
-	cd tools/browser_qualification && npm run install-browsers
-
-# Start an isolated no-wall fixture, use an OS-assigned loopback port, and retain
-# a manifest-indexed local evidence run under ignored run_state/.
-browser-qualification:
-	{{python_env}} python -m tools.browser_qualification.run
-
 # Run the Mac-only software dashboard with no controller process or LED hardware.
 start-mac:
 	{{python_env}} python scripts/start_mac_dashboard.py \
