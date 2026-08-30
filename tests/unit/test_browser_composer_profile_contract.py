@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSER = ROOT / "web/static/js/composer.js"
+PROFILE_MODULE = ROOT / "web/static/js/composer-profiles.js"
 RUNTIME = ROOT / "web/static/js/composer_runtime.js"
 PYTHON_WORKER = ROOT / "web/static/js/composer_python_worker.js"
 NATIVE_WORKER = ROOT / "web/static/js/composer_native_worker.js"
@@ -30,6 +31,7 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.composer = COMPOSER.read_text(encoding="utf-8")
+        cls.profile_module = PROFILE_MODULE.read_text(encoding="utf-8")
         cls.runtime = RUNTIME.read_text(encoding="utf-8")
         cls.python_worker = PYTHON_WORKER.read_text(encoding="utf-8")
         cls.native_worker = NATIVE_WORKER.read_text(encoding="utf-8")
@@ -65,6 +67,18 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
         self.assertIn("stageProfileCandidate", self.composer)
         self.assertIn("desiredDigest = candidate.digest", self.composer)
         self.assertIn("does not select the profile on the wall", self.template.lower())
+
+    def test_profile_commands_are_bound_by_the_dedicated_module(self) -> None:
+        self.assertIn("composer-profiles.js", self.template)
+        self.assertLess(
+            self.template.index("composer-profiles.js"),
+            self.template.index("browser_composer_application"),
+        )
+        self.assertIn("window.ComposerProfiles?.install", self.composer)
+        self.assertIn("profileEditor.bind()", self.composer)
+        for command in ("openEditor", "undo", "save", "publish", "review", "stage"):
+            self.assertIn(command, self.profile_module)
+        self.assertIn("canonical 33 x 138", self.profile_module)
 
     def test_profile_draft_is_local_restart_state_and_invalidates_check(self) -> None:
         self.assertIn(".profile-draft.${digest}", self.composer)

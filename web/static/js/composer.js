@@ -4829,34 +4829,32 @@
             $('wallReviewDialog').close();
             applyGlobalChanges();
         });
-        $('editMasksButton').addEventListener('click', openMaskEditor);
-        $('closeMaskEditorButton').addEventListener('click', () => $('maskEditorDialog').close());
-        $('doneMaskEditorButton').addEventListener('click', () => $('maskEditorDialog').close());
-        $('undoMaskButton').addEventListener('click', undoMaskStroke);
-        $('revertMasksButton').addEventListener('click', revertMasks);
-        $('saveMasksButton').addEventListener('click', saveMasks);
-        $('publishProfileButton').addEventListener('click', publishProfileDraft);
-        $('reviewProfileCandidateButton').addEventListener('click', reviewProfileCandidate);
-        $('confirmProfileCandidateButton').addEventListener('click', (event) => {
-            event.preventDefault();
-            $('profileCandidateDialog').close();
-            stageProfileCandidate();
+        const profileEditor = window.ComposerProfiles?.install({
+            $,
+            openEditor: openMaskEditor,
+            closeEditor: () => $('maskEditorDialog').close(),
+            undo: undoMaskStroke,
+            revert: revertMasks,
+            save: saveMasks,
+            publish: publishProfileDraft,
+            review: reviewProfileCandidate,
+            stage: stageProfileCandidate,
+            setZoom: (value) => {
+                state.masks.zoom = Math.round(safeNumber(value, 6));
+                renderMaskCanvas();
+            },
+            setTool: (tool) => {
+                state.masks.tool = tool;
+                updateMaskControls();
+            },
+            beginStroke: beginMaskStroke,
+            continueStroke: continueMaskStroke,
+            endStroke: endMaskStroke,
+            handleKeydown: handleMaskCanvasKeydown,
+            renderCanvas: renderMaskCanvas,
         });
-        $('maskZoom').addEventListener('input', (event) => {
-            state.masks.zoom = Math.round(safeNumber(event.target.value, 6));
-            renderMaskCanvas();
-        });
-        document.querySelectorAll('[data-mask-tool]').forEach((button) => button.addEventListener('click', () => {
-            state.masks.tool = button.dataset.maskTool;
-            updateMaskControls();
-        }));
-        $('maskCanvas').addEventListener('pointerdown', beginMaskStroke);
-        $('maskCanvas').addEventListener('pointermove', continueMaskStroke);
-        $('maskCanvas').addEventListener('pointerup', endMaskStroke);
-        $('maskCanvas').addEventListener('pointercancel', endMaskStroke);
-        $('maskCanvas').addEventListener('keydown', handleMaskCanvasKeydown);
-        $('maskCanvas').addEventListener('focus', renderMaskCanvas);
-        $('maskCanvas').addEventListener('blur', renderMaskCanvas);
+        if (!profileEditor) throw new Error('Managed installation-profile editor failed to load.');
+        profileEditor.bind();
         document.querySelectorAll('[data-mobile-target]').forEach((button) => button.addEventListener('click', () => selectMobileView(button.dataset.mobileTarget)));
         document.addEventListener('keydown', (event) => {
             const key = event.key.toLowerCase();
