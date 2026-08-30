@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
+from concurrent.futures import Future
 from pathlib import Path
 
 from animation.core.manager import AnimationManager
@@ -54,18 +55,33 @@ class _Controller:
     leds_per_strip = 138
     inline_show = True
 
-    def __init__(self, *, restore_fails=False, acknowledgements=range(5)):
+    def __init__(
+        self,
+        *,
+        restore_fails=False,
+        acknowledgements=range(5),
+        drained=None,
+        wrong_restore_id=False,
+    ):
         self.restore_fails = restore_fails
         self.acknowledgements = acknowledgements
+        self.drained = drained
+        self.wrong_restore_id = wrong_restore_id
         self.calls = []
         self.idle = []
 
     def present_trusted_full_frame(self, request_id, frame):
+        if self.drained is not None:
+            self.drained.assert_called_once()
         self.calls.append((request_id, frame))
         if request_id.endswith(":restore") and self.restore_fails:
             raise RuntimeError("restore disconnected")
         return {
-            "request_id": request_id,
+            "request_id": (
+                "wrong-restore-id"
+                if request_id.endswith(":restore") and self.wrong_restore_id
+                else request_id
+            ),
             "authority_digest": AUTHORITY,
             "acknowledged_receivers": [
                 {"logical_device": item} for item in self.acknowledgements
@@ -82,6 +98,11 @@ def _manager(controller):
     manager.frame_data_lock = threading.Lock()
     manager.current_frame_data = [(1, 2, 3)] * (33 * 138)
     manager._maintenance_lease_lock = threading.RLock()
+    manager._maintenance_transaction_lock = threading.Lock()
+    manager._maintenance_pause_condition = threading.Condition(threading.RLock())
+    manager._maintenance_pause_requested = False
+    manager._maintenance_pause_acknowledged = False
+    manager.animation_thread = None
     manager._presentation_io_lock = threading.Lock()
     manager._scene_mode = True
     manager._active_scene_state = object()
@@ -180,6 +201,82 @@ class MaintenanceLeaseTests(unittest.TestCase):
 
     def test_partial_acknowledgement_enters_visible_safe_idle(self):
         controller = _Controller(acknowledgements=range(4))
+        manager = _manager(controller)
+        with self.assertRaisesRegex(RuntimeError, "safe idle"):
+            manager.run_maintenance_transaction(
+                MaintenanceRequest.from_mapping(_command()), authority_digest=AUTHORITY,
+                sleep=lambda _seconds: None,
+            )
+        self.assertEqual(len(controller.idle), 1)
+
+    def test_render_boundary_drains_before_capture_and_parks_generation(self):
+        presentation_started = threading.Event()
+        presentation_release = threading.Event()
+        presentation_drained = threading.Event()
+        hold_entered = threading.Event()
+        hold_release = threading.Event()
+        render_boundary_ready = threading.Event()
+        permit_boundary = threading.Event()
+        render_entered = threading.Event()
+
+        def pending_presentation():
+            presentation_started.set()
+            self.assertTrue(presentation_release.wait(1))
+            presentation_drained.set()
+            return (0.0, 0.0)
+
+        future = Future()
+
+        def complete_presentation():
+            try:
+                future.set_result(pending_presentation())
+            except BaseException as exc:  # pragma: no cover - test plumbing
+                future.set_exception(exc)
+
+        controller = _Controller()
+        manager = _manager(controller)
+
+        def render_loop_boundary():
+            manager.animation_thread = threading.current_thread()
+            render_boundary_ready.set()
+            self.assertTrue(permit_boundary.wait(1))
+            manager._maintenance_pause_at_render_boundary(future)
+            render_entered.set()
+
+        presenter = threading.Thread(target=complete_presentation)
+        renderer = threading.Thread(target=render_loop_boundary)
+        presenter.start()
+        renderer.start()
+        self.assertTrue(presentation_started.wait(1))
+        self.assertTrue(render_boundary_ready.wait(1))
+
+        def hold(_seconds):
+            hold_entered.set()
+            self.assertTrue(hold_release.wait(1))
+
+        transaction = threading.Thread(
+            target=lambda: manager.run_maintenance_transaction(
+                MaintenanceRequest.from_mapping(_command()),
+                authority_digest=AUTHORITY,
+                sleep=hold,
+            )
+        )
+        transaction.start()
+        permit_boundary.set()
+        self.assertFalse(hold_entered.wait(0.05))
+        presentation_release.set()
+        self.assertTrue(hold_entered.wait(1))
+        self.assertTrue(presentation_drained.is_set())
+        self.assertFalse(render_entered.is_set())
+        hold_release.set()
+        transaction.join(1)
+        renderer.join(1)
+        presenter.join(1)
+        self.assertFalse(transaction.is_alive())
+        self.assertTrue(render_entered.is_set())
+
+    def test_restore_receipt_must_match_restore_request_and_full_roster(self):
+        controller = _Controller(wrong_restore_id=True)
         manager = _manager(controller)
         with self.assertRaisesRegex(RuntimeError, "safe idle"):
             manager.run_maintenance_transaction(
