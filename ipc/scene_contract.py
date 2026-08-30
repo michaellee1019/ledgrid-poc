@@ -273,15 +273,15 @@ def build_composer_operations_status(
     status: Any,
     *,
     now_ms: int,
-    raw_evidence_url: str = "/api/status",
+    raw_evidence_url: str = "/api/v1/composer/settings/observed",
     stale_after_ms: int = 10_000,
 ) -> dict[str, Any]:
     """Project controller status into Composer's bounded operations read model.
 
     This is intentionally a projection, not a second source of truth.  It
     carries a controller session/revision with every observation, summarizes
-    health without exposing raw controller internals, and names the original
-    status endpoint as the owner of any drill-down evidence.
+    health without exposing raw controller internals, and names the bounded
+    Composer settings observation as the owner of drill-down evidence.
     """
     if not isinstance(now_ms, int) or isinstance(now_ms, bool) or now_ms < 0:
         raise SceneValidationError("composer operations now_ms must be a non-negative integer")

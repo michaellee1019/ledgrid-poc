@@ -90,7 +90,6 @@ from ipc.scene_contract import (
     normalize_scene_activation_status,
     normalize_scene_payload,
     scene_activation_basis_digest,
-    scene_preview_identity,
     validate_bounded_browser_json,
 )
 from web.activation_token_store import (
@@ -305,6 +304,13 @@ class AnimationWebInterface:
             response.headers['Cache-Control'] = 'no-store'
             return response
 
+        @self.app.route('/api/v1/composer/settings/observed')
+        def api_browser_composer_observed_settings():
+            """Return the bounded controller observation used by Composer settings."""
+            response = jsonify(self._composer_settings_observation_payload())
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
         @self.app.route('/api/v1/composer/operations/telemetry')
         def api_browser_composer_operations_telemetry():
             """Versioned controller evidence for deployment and retained diagnostics.
@@ -313,7 +319,7 @@ class AnimationWebInterface:
             summary: deployment and receiver diagnostics need a stable,
             explicit roster and counter contract, while Composer only needs a
             bounded health projection.  Keeping that projection and this
-            telemetry document separate lets the old ``/api/status`` family be
+            telemetry document separate lets the old status family be
             retired without teaching non-browser callers to scrape UI data.
             """
             response = jsonify(self._operations_telemetry_payload())
@@ -450,12 +456,6 @@ class AnimationWebInterface:
                 'created': created,
                 **result,
             }), 201 if created else 200
-
-        @self.app.route('/api/animations')
-        def api_list_animations():
-            """API: Get list of available animations"""
-            animations = self._sorted_animations()
-            return jsonify(animations)
 
         @self.app.route('/api/v1/components')
         def api_list_components():
@@ -1162,58 +1162,6 @@ class AnimationWebInterface:
             response.headers['Cache-Control'] = 'no-store'
             return response, 202
 
-        @self.app.route('/api/v1/scene/preview', methods=['POST'])
-        def api_preview_scene():
-            payload = request.get_json(silent=True)
-            try:
-                body = payload if isinstance(payload, dict) else {}
-                scene = self._validated_scene_request(
-                    body.get('scene', body), browser_purpose='preview'
-                )
-                vibe = self._preview_vibe(body.get('vibe'))
-                status = self.control_channel.read_status() or {}
-                modifiers = PlantModifierState.from_payload(
-                    body.get('plant_modifiers', status.get('plant_modifiers', {}))
-                ).to_dict()
-                preview = self._scene_preview(scene, vibe, modifiers, body.get('elapsed', 0.0))
-            except (KeyError, TypeError, ValueError, SceneValidationError) as exc:
-                return jsonify({'error': str(exc)}), 400
-            preview['preview_identity'] = scene_preview_identity(
-                scene, vibe, modifiers, elapsed=float(body.get('elapsed', 0.0)),
-                provider_policy=self._scene_provider_policy(),
-            )
-            if scene['background']['provider'] == 'receiver_native':
-                managed = scene['background']['plugin_id'] != 'compiled_rainbow'
-                selected = dict(scene['background'].get('resolved_parameters') or {})
-                selected.update(scene['background'].get('parameter_overrides') or {})
-                descriptor = next((
-                    item for item in self._component_catalog()
-                    if item.get('provider') == 'receiver_native'
-                    and item.get('plugin_id') == scene['background']['plugin_id']
-                ), {})
-                preview.update({
-                    'preview': True,
-                    'preview_label': (
-                        'Signed build-time bundle preview (authored defaults) — not receiver framebuffer readback'
-                        if managed else
-                        'Host simulation preview — not receiver framebuffer readback'
-                    ),
-                    'preview_kind': (
-                        'build_time_bundle' if managed else 'host_simulation'
-                    ),
-                    'parameter_exact': (
-                        selected == dict(descriptor.get('defaults') or {})
-                        if managed else True
-                    ),
-                    'vibe_exact': not managed,
-                    'background_provider': 'receiver_native',
-                    'live_state_mutated': False,
-                    'framebuffer_readback': False,
-                })
-            preview['scene'] = scene
-            preview['plant_modifiers'] = modifiers
-            return jsonify(preview)
-
         @self.app.route('/api/v1/components/<component_id>/presets')
         def api_list_component_presets(component_id: str):
             matches = [
@@ -1320,44 +1268,6 @@ class AnimationWebInterface:
             response.headers['Cache-Control'] = 'no-store'
             return response
 
-        @self.app.route('/api/v1/presets/legacy/<component_id>/export')
-        def api_export_legacy_component_presets(component_id: str):
-            """Export withheld pre-provider records so they can be reimported."""
-            if not self._legacy_preset_is_ambiguous(component_id):
-                return jsonify({'error': 'No ambiguous legacy presets exist'}), 404
-            legacy_dir = self._legacy_animation_preset_dir(component_id)
-            records = []
-            if legacy_dir is not None and legacy_dir.is_dir():
-                for path in sorted(legacy_dir.glob('*.json')):
-                    payload = self._read_json_file(path)
-                    if payload is not None:
-                        records.append(payload)
-            return jsonify({
-                'schema': 'ledgrid.legacy-component-preset-export',
-                'schema_version': 1,
-                'component_id': component_id,
-                'records': records,
-                'recovery': self._legacy_preset_recovery(component_id),
-            })
-
-        @self.app.route('/api/v1/presets/legacy/<component_id>', methods=['DELETE'])
-        def api_discard_legacy_component_presets(component_id: str):
-            """Discard only explicitly selected ambiguous legacy records."""
-            if not self._legacy_preset_is_ambiguous(component_id):
-                return jsonify({'error': 'No ambiguous legacy presets exist'}), 404
-            legacy_dir = self._legacy_animation_preset_dir(component_id)
-            if legacy_dir is None or not legacy_dir.is_dir():
-                return jsonify({'success': True, 'discarded': 0})
-            discarded = 0
-            for path in legacy_dir.glob('*.json'):
-                path.unlink()
-                discarded += 1
-            try:
-                legacy_dir.rmdir()
-            except OSError:
-                pass
-            return jsonify({'success': True, 'discarded': discarded})
-
         @self.app.route('/api/v1/scene-presets')
         def api_list_scene_presets():
             return jsonify({
@@ -1441,104 +1351,6 @@ class AnimationWebInterface:
                 return jsonify({'error': 'Failed to delete scene preset'}), 500
             return jsonify({'success': True})
 
-        @self.app.route('/api/animations/<animation_name>')
-        def api_get_animation(animation_name):
-            """API: Get detailed info about specific animation"""
-            info = self.preview_manager.get_animation_info(animation_name)
-            if info:
-                return jsonify(info)
-            return jsonify({'error': 'Animation not found'}), 404
-
-        @self.app.route('/api/animations/<animation_name>/presets')
-        def api_list_animation_presets(animation_name: str):
-            """API: List presets for one animation, reading disk on every call."""
-            return jsonify({
-                'animation': animation_name,
-                'presets': self._list_animation_presets(animation_name),
-            })
-
-        @self.app.route('/api/animations/<animation_name>/presets/<preset_id>')
-        def api_get_animation_preset(animation_name: str, preset_id: str):
-            """API: Load an animation preset from disk."""
-            preset = self._load_animation_preset(animation_name, preset_id)
-            if not preset:
-                return jsonify({'error': 'Preset not found'}), 404
-            return jsonify(preset)
-
-        @self.app.route('/api/animations/<animation_name>/presets', methods=['POST'])
-        def api_save_animation_preset(animation_name: str):
-            """API: Save or overwrite a named set of animation parameters."""
-            if not self._animation_preset_dir(animation_name):
-                return jsonify({'error': 'Animation name is invalid'}), 400
-
-            payload = request.get_json(silent=True) or {}
-            raw_name = (payload.get('name') or '').strip()
-            params = payload.get('params')
-            if not raw_name:
-                return jsonify({'error': 'Preset name is required'}), 400
-            if not isinstance(params, dict):
-                return jsonify({'error': 'params must be a JSON object'}), 400
-            params = dict(params)
-            validation_error = self._validate_animation_params(animation_name, params)
-            if validation_error:
-                return jsonify({'error': validation_error}), 400
-
-            preset_id = self._sanitize_preset_id(raw_name)
-            if not preset_id:
-                return jsonify({'error': 'Preset name is invalid'}), 400
-
-            existing = self._load_animation_preset(
-                animation_name, preset_id, provider='python'
-            )
-            now = time.time()
-            preset_payload = {
-                'version': 2,
-                'preset_id': preset_id,
-                'name': raw_name,
-                'animation': animation_name,
-                'provider': 'python',
-                'params': params,
-                'created_at': existing.get('created_at', now) if existing else now,
-                'updated_at': now,
-            }
-            for field in ('category', 'description', 'tags', 'palette'):
-                if field in payload:
-                    preset_payload[field] = payload[field]
-                elif existing and field in existing:
-                    preset_payload[field] = existing[field]
-            self._write_animation_preset(
-                animation_name, preset_id, preset_payload, provider='python'
-            )
-            return jsonify({'success': True, 'preset': self._animation_preset_summary(preset_payload)})
-
-        @self.app.route('/api/animations/<animation_name>/presets/<preset_id>/apply', methods=['POST'])
-        def api_apply_animation_preset(animation_name: str, preset_id: str):
-            """Reject the former unguarded animation-preset execution alias."""
-            return self._guarded_scene_error(
-                'Animation presets require Composer Check and guarded activation.'
-            )
-
-        @self.app.route('/api/animations/<animation_name>/presets/<preset_id>', methods=['DELETE'])
-        def api_delete_animation_preset(animation_name: str, preset_id: str):
-            """API: Delete one animation preset."""
-            path = self._animation_preset_path(
-                animation_name, preset_id, provider='python'
-            )
-            if path is None or not path.is_file():
-                return jsonify({'error': 'Preset not found'}), 404
-            try:
-                path.unlink()
-            except OSError:
-                return jsonify({'error': 'Failed to delete preset'}), 500
-            return jsonify({'success': True})
-        
-        @self.app.route('/api/start/<animation_name>', methods=['POST'])
-        def api_start_animation(animation_name):
-            """Reject the former unguarded animation-start alias."""
-            return self._guarded_scene_error(
-                'Starting an animation requires Composer Check and guarded activation.'
-            )
-        
         @self.app.route('/api/stop', methods=['POST'])
         def api_stop_animation():
             """API: Stop current animation"""
@@ -1548,55 +1360,6 @@ class AnimationWebInterface:
                 'command_id': self._command_id(command),
             })
 
-        @self.app.route('/api/device/state', methods=['POST'])
-        def api_set_device_state():
-            """Apply operational power/brightness without bypassing activation."""
-            payload = request.get_json(silent=True)
-            if not isinstance(payload, dict) or not payload:
-                return jsonify({'error': 'request body must be a non-empty JSON object'}), 400
-
-            if 'animation' in payload or 'preset' in payload:
-                return self._guarded_scene_error(
-                    'Selecting an animation or preset requires Composer Check and '
-                    'guarded activation.'
-                )
-
-            supported = {'power', 'brightness'}
-            unknown = sorted(set(payload) - supported)
-            if unknown:
-                return jsonify({
-                    'error': f"unsupported device state fields: {', '.join(unknown)}"
-                }), 400
-
-            command_data: Dict[str, Any] = {}
-            if 'power' in payload:
-                if not isinstance(payload['power'], bool):
-                    return jsonify({'error': 'power must be boolean'}), 400
-                command_data['power'] = payload['power']
-
-            if 'brightness' in payload:
-                try:
-                    command_data['brightness'] = AnimationManager.validate_output_brightness(
-                        payload['brightness']
-                    )
-                except ValueError as exc:
-                    return jsonify({'error': str(exc)}), 400
-
-            command = self.control_channel.send_command(
-                'set_device_state', **command_data
-            )
-            return jsonify({
-                'success': True,
-                'state': payload,
-                'command_id': self._command_id(command),
-            })
-        
-        @self.app.route('/api/status')
-        def api_get_status():
-            """API: Get current status"""
-            return jsonify(self._status_payload())
-
-        @self.app.route('/api/config/vibe', methods=['GET'])
         @self.app.route('/api/v1/vibe', methods=['GET'])
         def api_get_vibe():
             """API: Read the selected global vibe and stable profile catalog."""
@@ -1606,7 +1369,6 @@ class AnimationWebInterface:
                 'profiles': self._vibe_profile_catalog(),
             })
 
-        @self.app.route('/api/config/vibe', methods=['POST'])
         @self.app.route('/api/v1/vibe', methods=['PUT', 'POST'])
         def api_set_vibe():
             """API: Validate and independently update the global vibe."""
@@ -1630,27 +1392,6 @@ class AnimationWebInterface:
                 'command_id': command.get('command_id') if isinstance(command, dict) else None,
             })
         
-        @self.app.route('/api/stats')
-        def api_get_stats():
-            """API: Runtime stats payload that mirrors /api/status"""
-            status = self._status_payload()
-            return jsonify(status)
-
-        @self.app.route('/api/metrics')
-        def api_get_metrics():
-            """API: Summarized performance metrics."""
-            status = self._status_payload()
-            return jsonify({
-                'animation': {
-                    'target_fps': status.get('target_fps', 0),
-                    'actual_fps': status.get('actual_fps', 0),
-                    'uptime': status.get('uptime', 0),
-                },
-                'performance': status.get('performance', {}),
-                'driver': status.get('driver_stats', {}),
-                'system': {},
-            })
-
         @self.app.route('/api/v1/receivers/status/refresh', methods=['POST'])
         def api_refresh_receiver_status():
             """Request a fresh controller-side SPI status drain on every receiver."""
@@ -1724,17 +1465,6 @@ class AnimationWebInterface:
                 'command_id': self._command_id(command),
             })
 
-        @self.app.route('/api/config/plant-aware', methods=['POST'])
-        def api_set_plant_aware():
-            payload = request.get_json(silent=True) or {}
-            enabled = payload.get('plant_aware')
-            if not isinstance(enabled, bool):
-                return jsonify({'error': 'plant_aware must be boolean'}), 400
-            if not self.local_mode and hasattr(self.preview_manager, 'set_plant_aware'):
-                self.preview_manager.set_plant_aware(enabled)
-            self.control_channel.send_command('set_plant_aware', plant_aware=enabled)
-            return jsonify({'success': True, 'plant_aware': enabled})
-
         @self.app.route('/api/config/plant-modifiers', methods=['POST'])
         def api_set_plant_modifiers():
             payload = request.get_json(silent=True) or {}
@@ -1753,52 +1483,6 @@ class AnimationWebInterface:
                 'plant_modifiers': serialized,
                 'command_id': self._command_id(command),
             })
-
-        @self.app.route('/api/hardware/stats')
-        def api_get_hardware_stats():
-            """API: Hardware stats for SPI devices."""
-            status = self._status_payload()
-            return jsonify(status.get('driver_stats', {}))
-
-        @self.app.route('/api/hole', methods=['POST'])
-        def api_trigger_hole():
-            """Punch a random hole or one at the supplied grid coordinate."""
-            payload = request.get_json(silent=True) or {}
-            data: Dict[str, float] = {}
-            for key in ('x', 'y', 'radius'):
-                value = payload.get(key)
-                if value is not None:
-                    if not isinstance(value, (int, float)):
-                        return jsonify({'error': f'{key} must be numeric'}), 400
-                    data[key] = float(value)
-            if ('x' in data) != ('y' in data):
-                return jsonify({'error': 'x and y must be provided together'}), 400
-            self.control_channel.send_command('puncture_hole', **data)
-            return jsonify({'success': True, 'positioned': 'x' in data})
-
-        @self.app.route('/api/interaction', methods=['POST'])
-        def api_animation_interaction():
-            """Send a logical-grid primary interaction to the live animation."""
-            payload = request.get_json(silent=True) or {}
-            try:
-                kind, x, y, strength = self._validated_interaction_payload(payload)
-                raw_status = self.control_channel.read_status() or {}
-                layout = self._sync_preview_layout_from_status(raw_status)
-                self._validate_interaction_bounds(x, y, layout)
-                supported = raw_status.get('interaction_types', [])
-                if kind not in supported:
-                    raise ValueError(f'interaction {kind!r} is not supported')
-            except ValueError as exc:
-                return jsonify({'error': str(exc)}), 400
-            self.control_channel.send_command(
-                'animation_interaction', kind=kind, x=x, y=y, strength=strength
-            )
-            return jsonify({'success': True, 'accepted': True})
-
-        @self.app.route('/api/frame')
-        def api_get_frame():
-            """API: Get current animation frame data"""
-            return jsonify(self._status_payload(decode_frame=True))
 
         @self.app.route(
             '/api/v1/installation-profiles/<digest>/draft',
@@ -1932,121 +1616,6 @@ class AnimationWebInterface:
             response.headers['X-Installation-Profile-Digest'] = resolved.content_digest
             response.headers['X-Content-Type-Options'] = 'nosniff'
             return response
-
-        @self.app.route('/api/preview/<animation_name>')
-        def api_get_preview(animation_name):
-            """API: Get preview frame data for a specific animation"""
-            try:
-                self._sync_preview_layout_from_status()
-                # Get a sample frame from the animation without starting it
-                vibe = self._preview_vibe(request.args.get('vibe'))
-                preview_data = self.preview_manager.get_animation_preview(
-                    animation_name, vibe=vibe
-                )
-                return jsonify(preview_data)
-            except (KeyError, TypeError, ValueError) as exc:
-                return jsonify({'error': str(exc)}), 400
-            except Exception as e:
-                return jsonify({
-                    'error': f'Failed to get preview for {animation_name}: {str(e)}',
-                    'frame_data': [],
-                    'led_info': self._fallback_led_info(),
-                    'is_running': False,
-                    'frame_count': 0,
-                    'timestamp': time.time()
-                }), 500
-
-        @self.app.route('/api/preview/<animation_name>/with_params', methods=['POST'])
-        def api_get_preview_with_params(animation_name):
-            """API: Get preview frame data for a specific animation with custom parameters"""
-            try:
-                self._sync_preview_layout_from_status()
-                payload = request.get_json(silent=True)
-                if payload is None:
-                    payload = {}
-                if not isinstance(payload, dict):
-                    raise ValueError('request body must be a JSON object')
-                if isinstance(payload.get('params'), dict):
-                    params = dict(payload['params'])
-                    requested_vibe = payload.get('vibe', request.args.get('vibe'))
-                else:
-                    # Preserve the legacy flat parameter payload. Vibe travels in
-                    # the query string so a plugin parameter cannot be stolen.
-                    params = payload
-                    requested_vibe = request.args.get('vibe')
-                vibe = self._preview_vibe(requested_vibe)
-                preview_data = self.preview_manager.get_animation_preview_with_params(
-                    animation_name, params, vibe=vibe
-                )
-                return jsonify(preview_data)
-            except (KeyError, TypeError, ValueError) as exc:
-                return jsonify({'error': str(exc)}), 400
-            except Exception as e:
-                return jsonify({
-                    'error': f'Failed to get preview for {animation_name}: {str(e)}',
-                    'frame_data': [],
-                    'led_info': self._fallback_led_info(),
-                    'is_running': False,
-                    'frame_count': 0,
-                    'timestamp': time.time()
-                }), 500
-
-        @self.app.route('/api/preview/<animation_name>/interaction', methods=['POST'])
-        def api_preview_interaction(animation_name):
-            """Apply an interaction only to the isolated preview session."""
-            payload = request.get_json(silent=True) or {}
-            try:
-                kind, x, y, strength = self._validated_interaction_payload(payload)
-                params = payload.get('params')
-                if params is not None and not isinstance(params, dict):
-                    raise ValueError('params must be an object')
-                layout = self._sync_preview_layout_from_status()
-                self._validate_interaction_bounds(x, y, layout)
-                accepted = self.preview_manager.dispatch_preview_interaction(
-                    animation_name, kind, x, y, strength, params=params
-                )
-            except ValueError as exc:
-                return jsonify({'error': str(exc)}), 400
-            return jsonify({'success': True, 'accepted': bool(accepted)})
-
-        @self.app.route('/api/parameters', methods=['POST'])
-        def api_update_parameters():
-            """API: Update animation parameters"""
-            params = request.get_json() or {}
-            self.control_channel.send_command('update_params', params=params)
-            return jsonify({'success': True})
-
-        def _handle_dpad(direction: str):
-            """API: Send a D-pad input to the running animation."""
-            direction = (direction or '').lower().replace('_', '-')
-            valid = {'up', 'down', 'left', 'right', 'rotate-left', 'rotate-right', 'drop'}
-            if direction not in valid:
-                return jsonify({'error': 'Invalid dpad direction'}), 400
-            self.control_channel.send_command('dpad', direction=direction)
-            return jsonify({'success': True, 'direction': direction})
-
-        @self.app.route('/dpad/<direction>', methods=['POST'])
-        def api_dpad(direction):
-            return _handle_dpad(direction)
-
-        @self.app.route('/api/dpad/<direction>', methods=['POST'])
-        def api_dpad_via_api(direction):
-            return _handle_dpad(direction)
-
-        @self.app.route('/api/reload/<animation_name>', methods=['POST'])
-        def api_reload_animation(animation_name):
-            """API: Reload specific animation plugin"""
-            success = self.preview_manager.reload_animation(animation_name)
-            if success:
-                self.control_channel.send_command('refresh_plugins', animation=animation_name)
-            return jsonify({'success': success})
-
-        @self.app.route('/api/refresh', methods=['POST'])
-        def api_refresh_plugins():
-            """API: Refresh all plugins"""
-            plugins = self.preview_manager.refresh_plugins()
-            self.control_channel.send_command('refresh_plugins')
-            return jsonify({'success': True, 'plugins': plugins})
 
     @staticmethod
     def _canonical_vibe_state(requested: Any) -> Dict[str, Any]:
@@ -2895,7 +2464,7 @@ class AnimationWebInterface:
                     'activation_status_url_template': (
                         '/api/v1/scene/activations/{activation_id}'
                     ),
-                    'status_url': '/api/status',
+                    'status_url': '/api/v1/composer/settings/observed',
                     'operations_status_url': '/api/v1/composer/operations/status',
                     'vibe_url': '/api/v1/vibe',
                     'plant_modifiers_url': '/api/config/plant-modifiers',
@@ -3818,11 +3387,9 @@ class AnimationWebInterface:
 
     @staticmethod
     def _legacy_preset_recovery(animation_name: str) -> Dict[str, str]:
-        """Stable user-facing migration paths for intentionally withheld data."""
-        quoted = animation_name.replace('/', '')
+        """Describe the explicit Composer-only treatment of withheld legacy data."""
         return {
-            'export_url': f'/api/v1/presets/legacy/{quoted}/export',
-            'discard_url': f'/api/v1/presets/legacy/{quoted}',
+            'state': 'withheld_after_api_cutover',
             'reimport_url': '/api/v1/composer/presets',
         }
 
@@ -4252,6 +3819,44 @@ class AnimationWebInterface:
                 'latest_activation': status.get('latest_activation'),
             },
             'receiver_native': receiver_hybrid,
+        }
+
+    def _composer_settings_observation_payload(self) -> Dict[str, Any]:
+        """Return only the live fields Composer reconciles before activation.
+
+        This is deliberately distinct from deployment telemetry and from the
+        retired, unbounded status document. The browser needs the exact
+        revision and setting projection that it will use in a guarded Check;
+        it does not need frames, counters, receiver diagnostics, or catalog
+        details.
+        """
+        status = self._status_payload()
+        raw_global_settings = status.get('global_settings')
+        global_settings = (
+            dict(raw_global_settings)
+            if isinstance(raw_global_settings, dict)
+            else {}
+        )
+        active_identity = status.get('active_identity')
+        return {
+            'schema': 'ledgrid.composer-settings-observation',
+            'schema_version': 1,
+            'observed_at': status.get('timestamp'),
+            'controller_session_id': status.get('controller_session_id'),
+            'controller_state_revision': status.get('controller_state_revision'),
+            'active_identity': (
+                dict(active_identity) if isinstance(active_identity, dict) else None
+            ),
+            'installation_profile_digest': status.get(
+                'installation_profile_digest'
+            ),
+            'global_settings': global_settings,
+            'is_running': bool(status.get('is_running', False)),
+            'brightness': status.get('brightness'),
+            'target_fps': status.get('target_fps'),
+            'animation_speed_scale': status.get('animation_speed_scale'),
+            'vibe': status.get('vibe'),
+            'plant_modifiers': status.get('plant_modifiers'),
         }
 
     def _deploy_timestamp(self) -> Optional[float]:

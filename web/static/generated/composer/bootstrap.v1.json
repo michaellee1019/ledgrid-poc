@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "f9c30afd7078463e3923961b407d85ee9c5fabc9b10a5518b657872e954d3562",
+    "catalog_digest": "33670a8ed7556723ea478fe9d80af7f5d2a888c8986998ababe30b82b64d49ad",
     "kind": "bundled",
     "version": 1
   },
@@ -45,7 +45,7 @@
       "plant_modifiers_url": "/api/config/plant-modifiers",
       "save_component_preset_url": "/api/v1/composer/presets",
       "save_scene_preset_url": "/api/v1/scene-presets",
-      "status_url": "/api/status",
+      "status_url": "/api/v1/composer/settings/observed",
       "target_fps_url": "/api/config/target-fps",
       "validate_import_url": "/api/v1/composer/presets/validate",
       "validate_scene_url": "/api/v1/scene/validate",

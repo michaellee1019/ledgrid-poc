@@ -244,6 +244,39 @@ class SceneActivationApiTests(unittest.TestCase):
         self.assertEqual(payload["receiver_native"], {"operational": True})
         self.assertNotIn("frame_data", payload["controller"])
 
+    def test_composer_settings_observation_is_bounded_and_revision_qualified(self):
+        status = self.channel.read_status()
+        status.update({
+            "updated_at": 1_000.0,
+            "is_running": True,
+            "global_settings": {"revision": 7, "output": {"power": True}},
+            "frame_data": [1, 2, 3],
+            "driver_stats": {"aggregate": {"num_devices": 5}},
+        })
+        self.channel.write_status(status)
+
+        response = self.client.get("/api/v1/composer/settings/observed")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        payload = response.get_json()
+        self.assertEqual(payload["schema"], "ledgrid.composer-settings-observation")
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(set(payload), {
+            "schema", "schema_version", "observed_at",
+            "controller_session_id", "controller_state_revision",
+            "active_identity", "installation_profile_digest", "global_settings",
+            "is_running", "brightness", "target_fps", "animation_speed_scale",
+            "vibe", "plant_modifiers",
+        })
+        self.assertEqual(payload["controller_session_id"], SESSION_ID)
+        self.assertEqual(payload["controller_state_revision"], 7)
+        self.assertEqual(payload["global_settings"], {
+            "revision": 7, "output": {"power": True},
+        })
+        self.assertNotIn("frame_data", payload)
+        self.assertNotIn("driver_stats", payload)
+
     def test_check_uses_controller_catalog_runtime_identity_not_web_projection(self):
         checked = self._check().get_json()
         authoritative = manager_controller_runtime_digests(
@@ -661,11 +694,8 @@ class SceneActivationApiTests(unittest.TestCase):
                 self.assertEqual(token_count, 0)
                 self.assertEqual(self.channel.list_activation_commands(), [])
 
-    def test_library_preset_save_is_read_only_and_does_not_invalidate_check(self) -> None:
+    def test_removed_library_preset_route_does_not_invalidate_check(self) -> None:
         checked = self._check().get_json()
-        self.interface.animation_presets_dir = (
-            Path(self.temporary.name) / "animation-presets"
-        )
         response = self.client.post(
             "/api/animations/gradient/presets",
             json={
@@ -676,7 +706,7 @@ class SceneActivationApiTests(unittest.TestCase):
                 },
             },
         )
-        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.status_code, 404, response.get_json())
         self.assertIsNone(self.channel.read_control())
         self.assertEqual(self.channel.list_activation_commands(), [])
 
@@ -1020,11 +1050,6 @@ class SceneActivationApiTests(unittest.TestCase):
                 "provider": "python", "plugin_id": "gradient", "preset_id": "default",
             }),
             ("post", "/api/v1/studio-next/take-scene", {"scene": self.scene}),
-            ("post", "/api/animations/gradient/presets/default/apply", {}),
-            ("post", "/api/start/gradient", {"speed": 0.5}),
-            ("post", "/api/device/state", {
-                "power": True, "animation": "gradient", "preset": "default",
-            }),
             ("put", "/api/v1/scene", {"scene": self.scene}),
             ("post", "/api/v1/scene", {"scene": self.scene}),
             ("patch", "/api/v1/scene/components/background", {"params": {}}),
@@ -1044,6 +1069,116 @@ class SceneActivationApiTests(unittest.TestCase):
                     )
                 self.assertEqual(self.channel.list_activation_commands(), [])
                 self.assertIsNone(self.channel.read_control())
+
+    def test_removed_legacy_route_families_are_not_registered(self) -> None:
+        removed = (
+            ("get", "/api/animations"),
+            ("get", "/api/animations/gradient"),
+            ("post", "/api/animations/gradient/presets"),
+            ("post", "/api/start/gradient"),
+            ("post", "/api/device/state"),
+            ("get", "/api/status"),
+            ("get", "/api/stats"),
+            ("get", "/api/metrics"),
+            ("get", "/api/hardware/stats"),
+            ("get", "/api/config/vibe"),
+            ("post", "/api/config/plant-aware"),
+            ("post", "/api/hole"),
+            ("post", "/api/interaction"),
+            ("get", "/api/frame"),
+            ("get", "/api/preview/gradient"),
+            ("post", "/api/preview/gradient/with_params"),
+            ("post", "/api/parameters"),
+            ("post", "/api/dpad/left"),
+            ("post", "/dpad/left"),
+            ("post", "/api/reload/gradient"),
+            ("post", "/api/refresh"),
+            ("post", "/api/v1/scene/preview"),
+            ("get", "/api/v1/presets/legacy/gradient/export"),
+        )
+        for method, path in removed:
+            with self.subTest(method=method, path=path):
+                response = getattr(self.client, method)(path, json={})
+                self.assertIn(response.status_code, {404, 410})
+                self.assertEqual(self.channel.list_activation_commands(), [])
+                self.assertIsNone(self.channel.read_control())
+
+    def test_route_caller_and_entrypoint_inventory_has_no_retired_surface(self) -> None:
+        """Keep the post-cutover route/caller scan reproducible and fail closed."""
+        retained_prefixes = (
+            "/api/v1/composer/",
+            "/api/v1/components",
+            "/api/v1/scene",
+            "/api/v1/receiver-native/recover",
+            "/api/v1/native-backgrounds",
+            "/api/v1/receivers/status/refresh",
+            "/api/v1/installation-profiles",
+            "/api/v1/vibe",
+            "/api/config/target-fps",
+            "/api/config/animation-speed",
+            "/api/config/brightness",
+            "/api/config/plant-modifiers",
+            "/api/stop",
+        )
+        registered = sorted(
+            rule.rule for rule in self.interface.app.url_map.iter_rules()
+            if rule.rule.startswith("/api/")
+        )
+        self.assertTrue(registered)
+        for route in registered:
+            with self.subTest(route=route):
+                self.assertTrue(route.startswith(retained_prefixes))
+
+        retired = (
+            "/api/animations",
+            "/api/start",
+            "/api/device/state",
+            "/api/status",
+            "/api/stats",
+            "/api/metrics",
+            "/api/hardware/stats",
+            "/api/config/vibe",
+            "/api/config/plant-aware",
+            "/api/hole",
+            "/api/interaction",
+            "/api/frame",
+            "/api/preview",
+            "/api/parameters",
+            "/api/dpad",
+            "/dpad/",
+            "/api/reload",
+            "/api/refresh",
+            "/api/v1/scene/preview",
+            "/api/v1/presets/legacy",
+        )
+        root = Path(__file__).resolve().parents[2]
+        entrypoints = [
+            root / "web" / "app.py",
+            root / "web" / "templates" / "composer.html",
+            root / "web" / "static" / "js" / "composer.js",
+            root / "web" / "static" / "generated" / "composer" / "bootstrap.v1.json",
+            root / "ipc" / "scene_contract.py",
+        ]
+        entrypoints.extend([
+            root / "tools" / "deployment" / "deploy.sh",
+            root / "tools" / "deployment" / "deploy_python.sh",
+            root / "tools" / "deployment" / "deploy_target.py",
+            root / "tools" / "deployment" / "native_background_entrypoint.py",
+            root / "tools" / "diagnostics" / "receiver_dispatch_order.py",
+            root / "tools" / "diagnostics" / "receiver_phase_lane_isolation.py",
+            root / "tools" / "diagnostics" / "remote_diagnostics.sh",
+            root / "tools" / "qualification" / "target_evidence.py",
+            root / "tools" / "benchmarks" / "guarded_wall_soak.py",
+            root / "tools" / "benchmarks" / "live_display_state.py",
+            root / "tools" / "benchmarks" / "output_rate_sweep.py",
+            root / "tools" / "benchmarks" / "receiver_acceptance.py",
+            root / "tools" / "benchmarks" / "receiver_native_physical_acceptance.py",
+        ])
+        for path in entrypoints:
+            source = path.read_text(encoding="utf-8")
+            for route in retired:
+                with self.subTest(entrypoint=path.relative_to(root), route=route):
+                    self.assertNotIn(route, source)
 
 
 if __name__ == "__main__":

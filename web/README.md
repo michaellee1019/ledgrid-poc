@@ -45,7 +45,6 @@ Browser entry points:
 - `POST /api/v1/composer/presets` — save a provider-qualified component preset
   without changing live playback
 - `GET /composer-service-worker.js` — root-scoped offline shell worker
-- GET /api/animations
 - `GET /api/v1/components` — unified descriptor catalog, filterable by provider
   and role
 
@@ -62,34 +61,16 @@ Browser entry points:
 - `PATCH /api/v1/scene/components/<target>` — rejected with 428 by default;
   Composer live edit may submit `live_edit: true` with an exact expected active
   component to stream validated parameter updates without replacing the scene
-- `POST /api/v1/scene/preview` — isolated scene preview using the selected vibe
-  and plant state
 - `GET|POST /api/v1/scene-presets` — list or save scene-only presets
 - `GET|DELETE /api/v1/scene-presets/<preset_id>` — inspect or delete a scene preset
 - `POST /api/v1/scene-presets/<preset_id>/apply` — rejected with 428; load the
   draft and use Composer Check
-- GET /api/animations/<animation_name>
-- `POST /api/start/<animation_name>` — rejected with 428; use Composer Check
 - POST /api/stop
-- `POST /api/device/state` — apply operational `power` and hardware
-  `brightness`; animation/preset takeover fields are rejected with 428
-- GET /api/status
-- GET /api/stats
-- GET /api/metrics
-- GET /api/hardware/stats
+- `GET /api/v1/composer/settings/observed` — bounded revision-qualified
+  settings observation for Composer reconciliation
+- `GET /api/v1/composer/operations/status` — bounded operational health
+- `GET /api/v1/composer/operations/telemetry` — deployment, receiver-diagnostic,
+  and qualification telemetry
 - `POST /api/config/brightness` — set the receiver-wide 0–255 output brightness
-- `POST /api/hole` — random hole with `{}`, or positioned hole with `{"x": 7.5, "y": 42, "radius": 1.5}`
-- `POST /api/interaction` — primary interaction for the live animation with `{"kind":"primary","x":7.5,"y":42,"strength":1}`
-- GET /api/frame
-- GET /api/preview/<animation_name>
-- POST /api/preview/<animation_name>/with_params
-- POST /api/preview/<animation_name>/interaction
-- POST /api/parameters
-- GET /api/animations/<animation_name>/presets
-- GET /api/animations/<animation_name>/presets/<preset_id>
-- POST /api/animations/<animation_name>/presets
-- `POST /api/animations/<animation_name>/presets/<preset_id>/apply` — rejected
-  with 428; load the preset as a draft and use Composer Check
-- DELETE /api/animations/<animation_name>/presets/<preset_id>
-- POST /api/reload/<animation_name>
-- POST /api/refresh
+- `POST /api/config/target-fps`, `/api/config/animation-speed`, and
+  `/api/config/plant-modifiers` — bounded Composer wall-setting updates

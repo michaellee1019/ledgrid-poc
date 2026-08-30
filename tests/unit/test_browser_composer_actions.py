@@ -187,7 +187,9 @@ class BrowserComposerActionTests(unittest.TestCase):
             {"attractor", "repulsor", "slow_zone"},
         )
         actions = payload["capabilities"]["server_actions"]
-        self.assertEqual(actions["status_url"], "/api/status")
+        self.assertEqual(
+            actions["status_url"], "/api/v1/composer/settings/observed"
+        )
         self.assertEqual(
             actions["operations_status_url"],
             "/api/v1/composer/operations/status",
@@ -499,8 +501,8 @@ class BrowserComposerActionTests(unittest.TestCase):
         ))
         self.assertEqual(
             client.get("/api/v1/presets/legacy/compiled_rainbow/export")
-            .get_json()["records"][0]["preset_id"],
-            "old",
+            .status_code,
+            404,
         )
 
     def test_provider_qualified_component_record_routes_are_user_only(self) -> None:

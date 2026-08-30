@@ -1179,7 +1179,9 @@
         state.globalSettings.loading = true;
         renderGlobalSettings();
         try {
-            const payload = await requestJson(globalActions().status_url || '/api/status');
+            const payload = await requestJson(
+                globalActions().status_url || '/api/v1/composer/settings/observed',
+            );
             const observed = normalizedGlobalSettings(payload);
             const priorObserved = clone(state.globalSettings.observed);
             const priorProfileDigest = state.installationProfile.selectedDigest;
