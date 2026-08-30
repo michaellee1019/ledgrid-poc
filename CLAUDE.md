@@ -57,29 +57,19 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 - If a required sync or push is blocked, stop and report the exact command and error.
 <!-- END BEADS INTEGRATION -->
 
-## Parallel Bead Delivery
+## Beads Autopilot
 
-These rules apply to the `ledgrid-poc-ib7` Composer completion and selective-reconstruction initiative. They are deliberately explicit so a Terra + High agent can dispatch bounded work without reconstructing the plan from the whole graph.
+These rules apply to the `ledgrid-poc-ib7` initiative. They replace the retired worktree-train protocol with a small continuous-delivery loop.
 
-### Choose work
+### The `start` contract
 
-Use only the curated queue:
+When the user's request is simply `start`, treat it as explicit authorization to run Beads autopilot for the current session. `resume` and `keep going` have the same meaning when the initiative is already clear.
 
-```bash
-bd ready --parent ledgrid-poc-ib7 --exclude-type=epic --label worktree-ready --unassigned
-```
+Autopilot may reconcile Beads, create local branches and worktrees, claim work, spawn subagents, make local commits, integrate completed work, close Beads, and continue to the next ready item without asking between ordinary local steps. It does not authorize git or Dolt pushes, the squash to `main`, physical-wall or receiver operations, destructive deployment, or a product decision outside the accepted epic.
 
-After identifying the earliest ready wave, add `--metadata-field wave=<wave>` to constrain dispatch to that group.
+### Lean startup
 
-Never dispatch implementation work from unfiltered `bd ready`. Before claiming, run `bd show <id>` and confirm that the leaf is estimated at 60-480 minutes and records its phase, wave, exact base SHA, owned paths, shared or generated paths, conflict domain, focused and adjacent tests, and visible proof. If any field is missing, leave the bead unclaimed and refine or split it. Claim atomically with `bd update <id> --claim`. Dispatch the earliest ready wave and start only mutually distinct conflict domains from that wave.
-
-A leaf labeled `control-plane` may update only Beads, worktree registration, or integration bookkeeping from the control checkout. Every code or documentation leaf uses an isolated worktree created with `bd worktree create`; Beads are shared automatically. Use one bead, branch, worktree, and assignee per worker. Keep at most three workers active so one coordinator remains available.
-
-The one-time bootstrap leaf `ledgrid-poc-ib7.19.1` is the only exception: it commits these contributor instructions from the control checkout, without `.beads/**`, before any isolated implementation worker starts. Once it closes, all later documentation changes follow the normal worktree rule.
-
-### Reconcile queue state
-
-The scheduler, live-agent registry, Beads lifecycle, merge slot, and git worktrees are separate state planes. Never infer one from another. At the start and end of every scheduled tick or manual dispatch, inspect all five explicitly:
+Run `bd prime`, then reconcile only the state that can cause duplicate or lost work:
 
 ```bash
 bd list --status=in_progress
@@ -88,24 +78,37 @@ bd worktree list
 git worktree list --porcelain
 ```
 
-Also inspect the live agent tree through the active Codex coordination tools. A bead is actively executing only when its `in_progress` record names a live worker and a matching isolated worktree. A completed worker may remain `in_progress` only while the coordinator is immediately validating or integrating its recorded tip. Any other mismatch is an orphaned claim: do not restart it, do not dispatch around it, and do not treat its worktree as proof of live work. Inspect its handoff, branch, and worktree; then either integrate completed work or append an interruption note and return the bead to `open` with its assignee cleared.
+Inspect the live agent tree too. Repair mismatches before claiming anything: integrate a completed handoff, preserve dirty work, or return an orphaned claim to `open` with a short interruption note. Do not create a planning phase merely to restate the backlog.
 
-The recurring queue dispatcher is only a wake-up mechanism, not execution authority. Keep it `PAUSED` while the initiative is quiesced. Each tick must finish reconciliation before claiming new work, must not overlap a prior reviewer or integration, and must fail closed when scheduler status, live agents, Beads, merge-slot, or worktree state disagree. Claim immediately before launching a worker, record the worker identity and worktree in the bead, and undo the claim if launch fails.
+Use `bd ready --json` and select an unassigned descendant of `ledgrid-poc-ib7`. Rank actual P0/P1 product leaves first: user-visible behavior, safety and operability, critical-path unblockers, then complexity deletion. Defer verification-only, documentation-only, inventory, and test-program work until its boundary is actually due. A leaf needs actionable acceptance, an identifiable ownership/conflict area, and focused validation; do not block delivery to perfect estimates, prose, wave metadata, or execution cards.
 
-When the user says stop, pause the dispatcher first so another tick cannot recreate work. Then interrupt workers, wait until the live-agent tree is empty, finish or abort any in-flight git operation safely, release the merge slot, and reconcile every `in_progress` bead. Preserve dirty or unmerged worktrees. A later request to resume starts with a fresh five-plane reconciliation; stale claims are never implicit permission to restart work.
+### Terra implementation workers
 
-### Isolate ownership
+Use up to two concurrent implementation workers so the coordinator retains one slot and a steward can use the fourth. Spawn each worker with model `gpt-5.6-terra` and reasoning effort `high`.
 
-Every leaf has exactly one conflict domain: `worktree-control`, `product-inventory`, `test-inventory`, `composer-shell`, `web-controller-api`, `browser-runtime-assets`, `scene-profile-contract`, `animation-kernel`, `plugin-pack:<family>`, `receiver-protocol-firmware`, `deploy-toolchain`, `docs-test-config`, or `browser-evidence`. Run at most one worker in the same exact conflict domain at a time. Distinct plugin-pack domains may run together only when they own disjoint plugin directories and neither changes a shared kernel or registry. Treat shared registries and generated outputs as single-owner paths. Never let two workers regenerate the Composer bootstrap, service worker, preset census, profile fixtures, GIF assets, or firmware manifests concurrently.
+Each worker gets one claimed Bead, one local `codex/` branch, one isolated worktree, the current integration base, and an explicit ownership area. Never run two workers in the same conflict domain or let two workers regenerate the same shared artifact. During source completion the coordinator owns `update-animation-pipeline`; reconstruction uses its recorded integration branch and never merges the donor wholesale.
 
-During source completion, `update-animation-pipeline` is coordinator-owned integration state. After the exact source freeze, selective reconstruction uses coordinator-owned `codex/ib7-reconstruction-integration` created from the recorded current-main SHA. Workers branch from the latest recorded integration SHA. Never merge the donor branch wholesale into reconstruction.
+A worker implements the smallest complete product increment, runs baseline validation, makes one logical commit, and records a concise Beads handoff with tip SHA, changed paths, checks, and any generated output. It adds `merge-ready` but does not merge or close its own implementation Bead.
 
-### Finish a worker leaf
+Baseline validation is changed-language syntax or lint, focused tests, and `git diff --check`. Add one adjacent regression only when a shared contract changed. Use one browser smoke only for a user-visible browser boundary. Full browser matrices, aggregate preflight, firmware matrices, and soak tests belong at release or hardware boundaries, not ordinary leaves.
 
-Run the bead's focused tests, its named adjacent regression, and `git diff --check`. Capture the user-visible proof named by the bead without committing timestamped evidence. An implementation leaf commits one logical change. A verification-only or control-plane leaf creates no empty commit and records the exact tested or updated SHA instead. Append a Beads handoff containing the base SHA, tip or tested SHA, changed paths, generated outputs, test commands and results, duration, and proof location. Implementation leaves add `merge-ready`; verification and control-plane leaves use their explicit gate acceptance. Do not close an implementation bead or merge it yourself. Never stage `.beads/**`, local run state, browser traces, screenshots, or qualification captures.
+### Sol portfolio steward
 
-### Integrate serially
+Use at most one portfolio steward at a time, with model `gpt-5.6-sol` and reasoning effort `xhigh` (Extra High). The steward is a bounded reviewer, not another implementation lane. It reads the epic, recent handoffs, ready and blocked queues, and current branch progress; it normally changes Beads only.
 
-The coordinator uses `bd merge-slot acquire --holder <name>` before integration and always releases it. Rebase the worker branch onto the current integration tip. Return semantic or shared-hot-file conflicts to the owning worker; do not improvise a conflict resolution in the queue. On the prospective integrated tip, rerun the focused test, adjacent regression, generated-output check when applicable, and the current visible-milestone gate. Integrate with a fast-forward merge, record the resulting SHA and proof in the bead, then close it. Remove only clean, merged worktrees with `bd worktree remove` and never use `--force` for routine cleanup. If that command rejects a clean worktree solely because its local commit is intentionally not pushed, leave it in place unless the user explicitly requested local cleanup. With that authority, first prove `git merge-base --is-ancestor <worker-tip> <integration-tip>`, record the result, then use non-forced `git worktree remove <exact-path>` and `git worktree prune`; preserve the branch unless branch deletion was also requested.
+Invoke the steward when any of these is true:
 
-Local worker commits and coordinator integrations are authorized for this initiative. Git pushes, Dolt pushes, physical wall operations, and the squash to `main` are not part of ordinary worker authority. The squash remains gated by `ledgrid-poc-ib7.14`; device erase/reflash remains post-squash work. Each visible milestone must leave the integration branch runnable and demonstrably better even though limited deployment downtime is acceptable at final cutover.
+- three product Beads have integrated since the last steward note;
+- no actionable P0/P1 product leaf is ready;
+- the same item has stalled, failed, or reopened twice;
+- claims, worktrees, dependencies, or priorities disagree;
+- a conflict domain is starved while lower-value validation or coordination work advances;
+- the coordinator cannot resolve the next product step from accepted decisions.
+
+The steward may repair dependencies and priorities, close or supersede stale coordination/test Beads, clarify acceptance from existing decisions, and split only the next one to three executable product leaves. It must not inflate the backlog, rewrite the product goal, perform implementation, or authorize pushes/hardware. It leaves one short comment on `ledgrid-poc-ib7`: progress against the big picture, the next critical path, and any stalled, starved, or orphaned work. Escalate to the user only when resolving ambiguity would change product intent or require new authority.
+
+### Continuous integration loop
+
+Wait for the first worker to finish, review the handoff, and acquire the Beads merge slot only for integration. Rebase onto the current integration tip, rerun the focused checks on the prospective tip, fast-forward merge, record the integrated SHA, close the Bead, release the slot, and remove only the clean merged worktree. Then immediately refill the free Terra slot from the ready queue.
+
+Continue until the user says `stop`, no meaningful local work can proceed, or a real permission/product decision is required. On stop, interrupt workers, wait for the live tree to empty, release the merge slot, reconcile every `in_progress` Bead, and preserve dirty or unmerged worktrees. Never stage `.beads/**`, traces, screenshots, or local run state.
