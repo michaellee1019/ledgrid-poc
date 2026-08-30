@@ -147,7 +147,9 @@ class BrowserPythonBundleTests(unittest.TestCase):
         authoritative_ids = loader.scan_plugins()
         discovered = discover_python_plugins(REPO_ROOT)
         self.assertEqual([item.plugin_id for item in discovered], authoritative_ids)
-        self.assertEqual(len(discovered), 51)
+        # The installation also ships one receiver-native plugin, which is
+        # intentionally excluded from the browser Python runtime bundle.
+        self.assertEqual(len(discovered), 50)
         self.assertEqual(
             {item["pluginId"]: item["className"] for item in manifest["plugins"]},
             dict(SUPPORTED_PLUGINS),
