@@ -753,6 +753,14 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertNotIn('id="activateDialog"', html)
         self.assertNotIn('id="wallReviewDialog"', html)
 
+        connectivity = javascript[javascript.index("async function checkConnectivity"):]
+        connectivity = connectivity[:connectivity.index("function showOfflineReadiness")]
+        self.assertIn("await refreshGlobalSettings({", connectivity)
+        self.assertLess(
+            connectivity.index("await refreshGlobalSettings({"),
+            connectivity.index("setServerOnline(payload.online === true"),
+        )
+
     def test_saved_preset_controls_use_provider_qualified_drafts_not_apply_shortcuts(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
         javascript = (ROOT / "web/static/js/composer.js").read_text(encoding="utf-8")

@@ -1779,6 +1779,14 @@
                     state.serverActivationCompatible = false;
                     state.serverCatalogReason = `Wall capabilities are unavailable: ${error.message}`;
                 }
+                const observed = await refreshGlobalSettings({
+                    quiet: true,
+                    preserveDraft: true,
+                });
+                if (!observed) {
+                    state.serverActivationCompatible = false;
+                    state.serverCatalogReason = 'Current wall settings are unavailable.';
+                }
             }
             setServerOnline(payload.online === true, {quiet});
             if (payload.online === true) await refreshSavedRecords({quiet: true});
