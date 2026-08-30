@@ -156,6 +156,11 @@
             clockPresetKey: '',
             fallbackKey: null,
         },
+        urlState: {
+            applying: false,
+            coalescing: false,
+            lastCanonicalUrl: null,
+        },
     };
 
     /**
@@ -222,6 +227,92 @@
 
     function clone(value) {
         return ComposerState.clone ? ComposerState.clone(value) : JSON.parse(JSON.stringify(value ?? null));
+    }
+
+    const COMPOSER_URL_VERSION = '1';
+    const COMPOSER_URL_KEYS = Object.freeze(['v', 'provider', 'component', 'preset', 'draft']);
+
+    function base64UrlEncode(value) {
+        const bytes = new TextEncoder().encode(JSON.stringify(value));
+        let binary = '';
+        bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+        return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '');
+    }
+
+    function base64UrlDecode(value) {
+        if (!/^[A-Za-z0-9_-]{1,8192}$/.test(value || '')) throw new Error('The Composer draft URL is malformed.');
+        const padded = value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - value.length % 4) % 4);
+        const binary = atob(padded);
+        const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+        return JSON.parse(new TextDecoder().decode(bytes));
+    }
+
+    function composerUrlDraft() {
+        return {
+            params: authoredParams(state.component, state.params),
+            name: $('presetName').value,
+            selectedPreset: state.selectedPreset,
+            layers: clone(state.layers),
+            revision: state.documentRevision,
+        };
+    }
+
+    function canonicalComposerUrl() {
+        const url = new URL(window.location.href);
+        COMPOSER_URL_KEYS.forEach((key) => url.searchParams.delete(key));
+        if (!state.component) return `${url.pathname}${url.search}${url.hash}`;
+        url.searchParams.set('v', COMPOSER_URL_VERSION);
+        url.searchParams.set('provider', state.component.provider);
+        url.searchParams.set('component', state.component.plugin_id);
+        if (state.selectedPreset) url.searchParams.set('preset', state.selectedPreset);
+        const draft = base64UrlEncode(composerUrlDraft());
+        if (draft.length <= 8192) url.searchParams.set('draft', draft);
+        return `${url.pathname}${url.search}${url.hash}`;
+    }
+
+    function syncComposerUrl({mode = 'push'} = {}) {
+        if (state.urlState.applying || !window.history?.replaceState) return;
+        const canonical = canonicalComposerUrl();
+        if (canonical === state.urlState.lastCanonicalUrl) return;
+        if (mode === 'coalesce') {
+            // Range inputs and text edits can emit dozens of events. Their
+            // final draft remains shareable, but they replace the current
+            // location instead of inserting a Back-stack entry per gesture.
+            mode = 'replace';
+            state.urlState.coalescing = true;
+        } else if (mode === 'push') {
+            state.urlState.coalescing = false;
+        }
+        if (mode === 'push') window.history.pushState({composer: true}, '', canonical);
+        else window.history.replaceState({composer: true}, '', canonical);
+        state.urlState.lastCanonicalUrl = canonical;
+    }
+
+    function reportUrlRestoreFailure(message) {
+        const canonical = canonicalComposerUrl();
+        window.history?.replaceState?.({composer: true}, '', canonical);
+        state.urlState.lastCanonicalUrl = canonical;
+        toast(`Link could not be fully restored: ${message}`, 'error');
+    }
+
+    function parsedComposerUrl() {
+        const query = new URL(window.location.href).searchParams;
+        const provider = query.get('provider');
+        const pluginId = query.get('component');
+        if (!provider && !pluginId && !query.get('draft')) return null;
+        if (query.get('v') !== COMPOSER_URL_VERSION || !provider || !pluginId) {
+            throw new Error('This Composer link has an unsupported renderer identity.');
+        }
+        const matches = (state.bootstrap?.components || []).filter((item) => (
+            item.provider === provider && item.plugin_id === pluginId && item.role === 'background'
+        ));
+        if (matches.length !== 1 || !componentCapability(matches[0]).previewable) {
+            throw new Error('That provider-qualified renderer is unavailable in this catalog.');
+        }
+        const draftValue = query.get('draft');
+        const draft = draftValue ? base64UrlDecode(draftValue) : {};
+        if (!draft || typeof draft !== 'object' || Array.isArray(draft)) throw new Error('The Composer draft must be an object.');
+        return {component: matches[0], preset: query.get('preset'), draft};
     }
 
     function humanizeMaskLayer(value) {
@@ -1470,9 +1561,64 @@
         const lastKey = localStorage.getItem(`${STORAGE_PREFIX}.last-component`);
         const preferred = state.bootstrap.components.find((item) => item.key === lastKey && item.role === 'background' && componentCapability(item).previewable)
             || state.bootstrap.components.find((item) => item.role === 'background' && componentCapability(item).previewable);
-        if (preferred) await selectComponent(preferred);
+        let requested = null;
+        let restoreError = null;
+        try {
+            requested = parsedComposerUrl();
+        } catch (error) {
+            restoreError = error;
+        }
+        if (requested) await applyUrlState(requested, {replace: true});
+        else if (preferred) await selectComponent(preferred, {urlMode: 'replace'});
         else showCatalogUnavailable('No components currently declare a supported browser runtime.');
+        if (restoreError) reportUrlRestoreFailure(restoreError.message);
         setComposerReady(true, `Bundled catalog ${state.bootstrap.artifact?.catalog_digest?.slice(0, 12) || 'ready'}`);
+    }
+
+    async function applyUrlState(requested, {replace = false} = {}) {
+        const {component, preset, draft} = requested;
+        state.urlState.applying = true;
+        try {
+            await selectComponent(component, {
+                force: true,
+                ignoreAutosave: true,
+                historyMode: 'preserve',
+                urlMode: 'none',
+                deferRuntime: true,
+            });
+            const requestedPreset = (component.presets || []).find((item, index) => (
+                presetIdentity(item, index) === (preset || draft.selectedPreset)
+            ));
+            const params = enforceInstallationParams(component, {
+                ...defaultParams(component),
+                ...(requestedPreset ? presetParams(requestedPreset) : {}),
+                ...(draft.params && typeof draft.params === 'object' && !Array.isArray(draft.params) ? draft.params : {}),
+            });
+            const problems = schemaCheck(component, params);
+            if (problems.length) throw new Error(`The draft parameters are invalid: ${problems[0]}.`);
+            state.params = clone(params);
+            state.originalParams = clone(params);
+            state.selectedPreset = requestedPreset ? presetIdentity(requestedPreset) : null;
+            state.layers = normalizedLayers(component, draft.layers);
+            state.documentRevision = Number.isInteger(draft.revision) ? draft.revision : state.documentRevision;
+            $('presetName').value = typeof draft.name === 'string' && draft.name.trim()
+                ? draft.name.slice(0, 160)
+                : `${component.name || humanize(component.plugin_id)} draft`;
+            state.lastSavedPreset = null;
+            renderParameterControls();
+            renderPresets();
+            renderLayers();
+            resetChecker({preserveDocumentRevision: true});
+            resetHistory();
+            await startRuntimes();
+            scheduleAutosave();
+            requestRender();
+        } finally {
+            state.urlState.applying = false;
+        }
+        const canonical = canonicalComposerUrl();
+        window.history?.replaceState?.({composer: true}, '', canonical);
+        state.urlState.lastCanonicalUrl = canonical;
     }
 
     function configureCanvas() {
@@ -1781,6 +1927,7 @@
         $('clockPresetSelect').value = '';
         resetChecker();
         scheduleAutosave();
+        syncComposerUrl({mode: 'coalesce'});
         requestRender();
     }
 
@@ -1811,6 +1958,7 @@
         if (state.component?.key && state.component.key !== component.key) {
             pauseLiveEdit(`Off · ${component.name || humanize(component.plugin_id)} is a draft. Activate it before using Live edit.`);
         }
+        const hadHistory = state.history.length > 0;
         state.component = component;
         updateServerComponentCompatibility();
         localStorage.setItem(`${STORAGE_PREFIX}.last-component`, component.key);
@@ -1842,6 +1990,8 @@
         if (!options.deferRuntime) await startRuntimes();
         scheduleAutosave();
         requestRender();
+        const urlMode = options.urlMode ?? (hadHistory ? 'push' : 'replace');
+        if (urlMode !== 'none') syncComposerUrl({mode: urlMode});
     }
 
     function applyPreset(preset, index) {
@@ -2281,6 +2431,7 @@
         renderPresets();
         resetChecker();
         scheduleAutosave();
+        syncComposerUrl({mode: 'coalesce'});
         requestRender();
         queueLiveEdit();
     }
@@ -2301,6 +2452,7 @@
         state.history = [snapshot()];
         state.historyIndex = 0;
         updateHistoryButtons();
+        syncComposerUrl({mode: 'replace'});
     }
 
     function commitHistory() {
@@ -2311,9 +2463,10 @@
         if (state.history.length > 60) state.history.shift();
         state.historyIndex = state.history.length - 1;
         updateHistoryButtons();
+        syncComposerUrl({mode: 'push'});
     }
 
-    async function restoreHistory(index) {
+    async function restoreHistory(index, {fromBrowser = false} = {}) {
         const entry = state.history[index];
         if (!entry) return;
         const component = state.bootstrap?.components.find((item) => item.key === entry.componentKey);
@@ -2350,6 +2503,7 @@
         }
         requestRender();
         queueLiveEdit({immediate: true});
+        if (!fromBrowser) syncComposerUrl({mode: 'push'});
     }
 
     function updateHistoryButtons() {
@@ -4354,6 +4508,7 @@
         $('presetName').addEventListener('input', () => {
             resetChecker();
             scheduleAutosave();
+            syncComposerUrl({mode: 'coalesce'});
         });
         $('presetName').addEventListener('change', commitHistory);
         $('importButton').addEventListener('click', () => $('importFile').click());
@@ -4390,6 +4545,7 @@
             state.lastSavedPreset = null;
             resetChecker();
             scheduleAutosave();
+            syncComposerUrl({mode: 'coalesce'});
             requestRender();
         });
         $('clockOpacity').addEventListener('change', commitHistory);
@@ -4536,6 +4692,22 @@
             refreshOfflineReadiness();
         });
         window.addEventListener('offline', () => setServerOnline(false));
+        window.addEventListener('popstate', async () => {
+            if (!state.bootstrap) return;
+            try {
+                const requested = parsedComposerUrl();
+                if (requested) await applyUrlState(requested);
+                else {
+                    const fallback = state.bootstrap.components.find((item) => (
+                        item.role === 'background' && componentCapability(item).previewable
+                    ));
+                    if (!fallback) throw new Error('No browser-ready renderer is available.');
+                    await applyUrlState({component: fallback, preset: null, draft: {} });
+                }
+            } catch (error) {
+                reportUrlRestoreFailure(error.message);
+            }
+        });
         ComposerModules.initialize();
         window.addEventListener('beforeunload', (event) => {
             if (!state.masks.dirty) return;
