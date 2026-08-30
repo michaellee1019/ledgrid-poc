@@ -576,7 +576,12 @@ self.addEventListener('fetch', (event) => {
     // capability refresh, status, save, validation, and activation are never cached.
     if (url.pathname.startsWith('/api/')) return;
 
-    if (event.request.mode === 'navigate' && url.pathname === '/composer') {
+    // The server redirects the legacy root entry point, while an installed
+    // Composer can answer that same navigation from its prior shell cache.
+    if (
+        event.request.mode === 'navigate'
+        && (url.pathname === '/' || url.pathname === '/composer')
+    ) {
         event.respondWith(networkFirst(event.request, '/composer'));
         return;
     }

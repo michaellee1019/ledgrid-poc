@@ -50,7 +50,8 @@ def main() -> None:
     )
     # A 60 Hz canvas would otherwise print one Werkzeug access line per frame.
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
-    print(f"🍎 Full-speed Mac dashboard: http://{args.host}:{args.port}")
+    print(f"🍎 Full-speed Mac Composer: http://{args.host}:{args.port}/composer")
+    print("   Root URL redirects to Composer")
     try:
         dashboard.run(debug=False)
     finally:

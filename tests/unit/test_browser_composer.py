@@ -137,6 +137,17 @@ class BrowserComposerTests(unittest.TestCase):
         self.assertEqual(self.channel.read_count, 0)
         self.assertEqual(self.channel.commands, [])
 
+    def test_root_redirects_to_composer_and_legacy_browser_routes_are_gone(self) -> None:
+        root = self.client.get("/", follow_redirects=False)
+
+        self.assertEqual(root.status_code, 302)
+        self.assertEqual(root.headers["Location"], "/composer")
+        composer = self.client.get("/", follow_redirects=True)
+        self.assertIn("composer.webmanifest", composer.get_data(as_text=True))
+        for path in ("/control", "/emoji", "/painter", "/studio-next"):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 404)
+
     def test_bootstrap_contains_full_presets_and_explicit_runtime_support(self) -> None:
         response = self.client.get("/api/v1/composer/bootstrap")
 

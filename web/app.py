@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, redirect, render_template, request, send_from_directory
 
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.activation_qualification import (
@@ -223,76 +223,8 @@ class AnimationWebInterface:
         
         @self.app.route('/')
         def index():
-            """Main dashboard"""
-            animations = self._dashboard_animations()
-            component_catalog = self._component_catalog()
-            component_id_counts: Dict[str, int] = {}
-            for component in component_catalog:
-                component_id = component.get('plugin_id')
-                if isinstance(component_id, str):
-                    component_id_counts[component_id] = (
-                        component_id_counts.get(component_id, 0) + 1
-                    )
-            ambiguous_component_ids = {
-                component_id
-                for component_id, count in component_id_counts.items()
-                if count > 1
-            }
-            animation_by_id = {
-                item.get('plugin_name'): item
-                for item in animations
-                if isinstance(item.get('plugin_name'), str)
-            }
-            component_presets = {}
-            for component in component_catalog:
-                component_id = component.get('plugin_id')
-                if not isinstance(component_id, str):
-                    continue
-                provider = component.get('provider')
-                if not isinstance(provider, str):
-                    continue
-                component_key = f'{provider}:{component_id}'
-                if component_id in ambiguous_component_ids:
-                    # Preview catalogs and preset paths predate provider-qualified
-                    # identities. Never decorate the wrong provider by guessing.
-                    component_presets[component_key] = []
-                    continue
-                animation = animation_by_id.get(component_id)
-                component_presets[component_key] = (
-                    animation.get('presets', [])
-                    if animation is not None
-                    else self._list_animation_presets(component_id, provider)
-                )
-            status = self._status_payload()
-            return render_template(
-                'index.html',
-                animations=[item for item in animations if not item['is_test']],
-                test_animations=[item for item in animations if item['is_test']],
-                status=status,
-                vibe_profiles=self._vibe_profile_catalog(),
-                component_catalog=component_catalog,
-                component_index={
-                    f"{item.get('provider')}:{item['plugin_id']}": item
-                    for item in component_catalog
-                    if (
-                        isinstance(item.get('plugin_id'), str)
-                        and isinstance(item.get('provider'), str)
-                    )
-                },
-                component_presets=component_presets,
-                ambiguous_component_ids=ambiguous_component_ids,
-                receiver_hybrid_enabled=(
-                    self._scene_provider_policy().compiled_rainbow_enabled
-                ),
-                scene_presets=self._list_scene_presets(),
-                speed_baseline=DEFAULT_ANIMATION_SPEED_SCALE,
-                local_mode=self.local_mode,
-            )
-
-        @self.app.route('/studio-next')
-        def studio_next():
-            """Studio Next shell; authoritative state is fetched after load."""
-            return render_template('studio_next.html', local_mode=self.local_mode)
+            """Redirect the legacy root entry point to the sole browser product."""
+            return redirect('/composer', code=302)
 
         @self.app.route('/composer')
         def browser_composer():
@@ -504,43 +436,6 @@ class AnimationWebInterface:
                 **result,
             }), 201 if created else 200
 
-        @self.app.route('/api/v1/studio-next/bootstrap')
-        def api_studio_next_bootstrap():
-            """One provider-safe, non-mutating read model for Studio Next."""
-            status = self._status_payload()
-            scene = self._current_scene_payload(status)
-            return jsonify({
-                'schema': 'ledgrid.studio-next-bootstrap',
-                'schema_version': 1,
-                'local_mode': self.local_mode,
-                'generated_at': time.time(),
-                'status': status,
-                'scene': {
-                    'schema': 'ledgrid.scene-api',
-                    'schema_version': 1,
-                    'scene': scene,
-                    'active': scene is not None,
-                    'preset_diagnostics': self._scene_preset_diagnostics(scene),
-                },
-                'vibe_profiles': self._vibe_profile_catalog(),
-                'scene_presets': self._list_scene_presets(),
-                'catalog': self._studio_next_catalog(),
-            })
-
-        @self.app.route('/api/v1/studio-next/take-look', methods=['POST'])
-        def api_studio_next_take_look():
-            """Reject the former unguarded single-look execution alias."""
-            return self._guarded_scene_error(
-                'Studio Looks require Composer Check and guarded activation.'
-            )
-
-        @self.app.route('/api/v1/studio-next/take-scene', methods=['POST'])
-        def api_studio_next_take_scene():
-            """Reject the former unguarded scene-start alias."""
-            return self._guarded_scene_error(
-                'Studio Next scenes require a server Check and guarded activation.'
-            )
-        
         @self.app.route('/api/animations')
         def api_list_animations():
             """API: Get list of available animations"""
@@ -2138,28 +2033,6 @@ class AnimationWebInterface:
             self.control_channel.send_command('refresh_plugins')
             return jsonify({'success': True, 'plugins': plugins})
 
-        @self.app.route('/control')
-        def control_page():
-            """Animation control page"""
-            animations = self._sorted_animations()
-            status = self._status_payload()
-            return render_template('control.html', animations=animations, status=status)
-
-    def _dashboard_animations(self) -> List[Dict[str, Any]]:
-        """Decorate plugin metadata for the dashboard's show/test galleries."""
-        catalog = []
-        for animation in self._sorted_animations():
-            item = dict(animation)
-            plugin_name = item.get('plugin_name', '')
-            item.setdefault('emoji', '✨')
-            item.setdefault('is_test', False)
-            presets = self._list_animation_presets(plugin_name)
-            for preset in presets:
-                preset['emoji'] = self._preset_emoji(preset, item['emoji'])
-            item['presets'] = presets
-            catalog.append(item)
-        return catalog
-
     @staticmethod
     def _canonical_vibe_state(requested: Any) -> Dict[str, Any]:
         """Resolve untrusted API input through the central versioned registry."""
@@ -2706,231 +2579,6 @@ class AnimationWebInterface:
             'check_url': '/api/v1/scene/checks',
             'activation_url': '/api/v1/scene',
         }), 428
-
-    def _studio_next_composer_eligibility(
-        self, component: Dict[str, Any], *, provider_collision: bool = False
-    ) -> Dict[str, Any]:
-        """Return read-only Composer handoff eligibility, never activation authority."""
-
-        def decision(code: str, reason: str, *, eligible: bool = False) -> Dict[str, Any]:
-            return {
-                # Retained for older Studio clients; it must never regain authority.
-                'take_look_enabled': False,
-                'composer_check_eligible': eligible,
-                'code': code,
-                'reason': reason,
-            }
-
-        if provider_collision:
-            return decision(
-                'provider_collision',
-                (
-                    'This plugin ID occurs under multiple providers. Legacy presets '
-                    'and previews cannot be assigned safely.'
-                ),
-            )
-        provider = component.get('provider')
-        if provider != 'python':
-            return decision(
-                'unsupported_provider',
-                'Composer Look handoff supports ready Host Python backgrounds only.',
-            )
-        if component.get('role') != 'background':
-            return decision(
-                'unsupported_role',
-                'Composer Look handoff requires a background component.',
-            )
-        if component.get('gallery') != 'show' or component.get('is_test') is True:
-            return decision(
-                'developer_only',
-                'Test and developer components are available through Tools only.',
-            )
-
-        readiness_values = {
-            str(component.get(field) or '').strip().casefold().replace('-', '_')
-            for field in ('status', 'availability', 'readiness')
-        }
-        forbidden_readiness = {
-            'build_only', 'unavailable', 'quarantined', 'disabled', 'error',
-        }
-        blocked = sorted(readiness_values & forbidden_readiness)
-        if blocked:
-            return decision(
-                blocked[0], f"Component readiness is {blocked[0].replace('_', ' ')}."
-            )
-
-        compatibility = component.get('compatibility')
-        if not isinstance(compatibility, dict):
-            compatibility = {}
-        if compatibility.get('composable') is not True:
-            return decision(
-                'not_composable',
-                str(
-                    compatibility.get('diagnostic')
-                    or 'The component is not composable as a background.'
-                ),
-            )
-        if compatibility.get('implementation_loaded') is not True:
-            return decision(
-                'build_only', 'The Host Python implementation is not loaded.'
-            )
-
-        getter = getattr(self.preview_manager, 'get_animation_info', None)
-        try:
-            loaded = getter(component.get('plugin_id')) if callable(getter) else None
-        except (KeyError, TypeError, ValueError):
-            loaded = None
-        if not loaded:
-            return decision(
-                'implementation_unavailable',
-                'The preview manager has not loaded this implementation.',
-            )
-        return decision(
-            'guarded_activation_required',
-            (
-                'Preview is ready. Taking it live requires Composer Check and '
-                'guarded activation.'
-            ),
-            eligible=True,
-        )
-
-    @staticmethod
-    def _studio_next_preview(
-        provider: str, descriptor_preview: Any,
-    ) -> Optional[Dict[str, Any]]:
-        """Expose renderer contract provenance without published image assets."""
-        metadata: Dict[str, Any] = {}
-        if isinstance(descriptor_preview, dict):
-            metadata.update(descriptor_preview)
-        if not metadata:
-            return None
-        metadata['live_state_mutated'] = False
-        metadata.setdefault('framebuffer_readback', False)
-        if provider == 'receiver_native':
-            metadata['provenance'] = 'receiver_host_simulation'
-            metadata['label'] = (
-                'Host simulation preview — not receiver framebuffer readback'
-            )
-        else:
-            metadata['provenance'] = 'isolated_host_preview'
-            metadata['label'] = (
-                'Isolated host preview — never changes the physical wall'
-            )
-        return metadata
-
-    def _studio_next_catalog(self) -> Dict[str, Any]:
-        """Build provider-qualified components and flattened preset records."""
-        raw_components = self._component_catalog()
-        providers_by_id: Dict[str, set] = {}
-        for component in raw_components:
-            plugin_id = component.get('plugin_id')
-            provider = component.get('provider')
-            if isinstance(plugin_id, str) and isinstance(provider, str):
-                providers_by_id.setdefault(plugin_id, set()).add(provider)
-        collisions = {
-            plugin_id: sorted(providers)
-            for plugin_id, providers in providers_by_id.items()
-            if len(providers) > 1
-        }
-
-        components: List[Dict[str, Any]] = []
-        presets: List[Dict[str, Any]] = []
-        withheld_presets = 0
-        diagnostics = []
-        for plugin_id, providers in sorted(collisions.items()):
-            legacy_dir = self._legacy_animation_preset_dir(plugin_id)
-            discovered = (
-                list(legacy_dir.glob('*.json'))
-                if legacy_dir is not None and legacy_dir.is_dir() else []
-            )
-            withheld_presets += len(discovered)
-            diagnostics.append({
-                'code': 'provider_collision',
-                'plugin_id': plugin_id,
-                'providers': providers,
-                'withheld_legacy_presets': len(discovered),
-                'message': (
-                    'Legacy preset and preview records are withheld because their '
-                    'provider cannot be determined safely.'
-                ),
-            })
-
-        for raw in sorted(
-            raw_components,
-            key=lambda item: (
-                str(item.get('name') or item.get('plugin_id') or '').casefold(),
-                str(item.get('provider') or ''),
-            ),
-        ):
-            component = json.loads(json.dumps(raw))
-            plugin_id = component.get('plugin_id')
-            provider = component.get('provider')
-            if not isinstance(plugin_id, str) or not isinstance(provider, str):
-                continue
-            component_key = f'{provider}:{plugin_id}'
-            collision = plugin_id in collisions
-            descriptor_preview = component.get('preview')
-            component['key'] = component_key
-            component['provider_collision'] = collision
-            component['preview_contract'] = (
-                descriptor_preview if isinstance(descriptor_preview, dict) else {}
-            )
-            component['preview'] = (
-                None
-                if collision
-                else self._studio_next_preview(
-                    provider, descriptor_preview
-                )
-            )
-            component['action'] = self._studio_next_composer_eligibility(
-                component, provider_collision=collision
-            )
-            component['preset_keys'] = []
-
-            for preset in self._list_animation_presets(plugin_id, provider):
-                preset_id = preset.get('preset_id')
-                if not isinstance(preset_id, str):
-                    continue
-                preset_key = f'{component_key}:{preset_id}'
-                item = dict(preset)
-                item.update({
-                    'key': preset_key,
-                    'component_key': component_key,
-                    'provider': provider,
-                    'plugin_id': plugin_id,
-                    'preview': self._studio_next_preview(
-                        provider, descriptor_preview,
-                    ),
-                    'action': dict(component['action']),
-                })
-                component['preset_keys'].append(preset_key)
-                presets.append(item)
-            components.append(component)
-
-        presets.sort(
-            key=lambda item: (
-                str(item.get('name') or item.get('preset_id') or '').casefold(),
-                str(item.get('key') or ''),
-            )
-        )
-        provider_totals: Dict[str, int] = {}
-        for component in components:
-            provider = str(component.get('provider') or 'unknown')
-            provider_totals[provider] = provider_totals.get(provider, 0) + 1
-        return {
-            'schema': 'ledgrid.studio-next-catalog',
-            'schema_version': 1,
-            'components': components,
-            'presets': presets,
-            'totals': {
-                'components': len(components),
-                'presets': len(presets),
-                'presets_withheld': withheld_presets,
-                'components_by_provider': provider_totals,
-                'provider_collisions': len(collisions),
-            },
-            'diagnostics': diagnostics,
-        }
 
     def _browser_composer_bootstrap(
         self, *, observe_installation_profile: bool = True
@@ -4033,8 +3681,8 @@ class AnimationWebInterface:
     def run(self, debug=False):
         """Start the web server"""
         print(f"🌐 Starting web interface at http://{self.host}:{self.port}")
-        print(f"   Dashboard: http://{self.host}:{self.port}/")
-        print(f"   Control:   http://{self.host}:{self.port}/control")
+        print(f"   Composer:  http://{self.host}:{self.port}/composer")
+        print("   Root URL redirects to Composer")
 
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
 

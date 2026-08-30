@@ -146,10 +146,7 @@ class BrowserComposerPWATests(unittest.TestCase):
 
     def test_navigation_and_static_bootstrap_have_explicit_offline_fallbacks(self) -> None:
         self.assertIn("event.request.mode === 'navigate'", self.worker)
-        self.assertRegex(
-            self.worker,
-            r"url\.pathname\s*===\s*['\"]/composer['\"]",
-        )
+        self.assertIn("url.pathname === '/' || url.pathname === '/composer'", self.worker)
         self.assertIn("networkFirst(event.request, '/composer')", self.worker)
         self.assertIn("const BUNDLED_BOOTSTRAP_URL", self.worker)
         self.assertIn("shell.match(BUNDLED_BOOTSTRAP_URL)", self.worker)

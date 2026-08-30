@@ -1,4 +1,4 @@
-# Web Layer
+# Composer Web Layer
 
 Purpose: Flask UI and REST API for controlling animations.
 
@@ -28,7 +28,9 @@ Notes:
   save, wall settings, server qualification, activation, observation,
   cancellation, and rollback remain server-gated and exact-digest-bound.
 
-API endpoints:
+Browser entry points:
+
+- `GET /` — redirects to the canonical Composer URL
 - `GET /composer` — installable browser-Wasm preset composer; opening it is
   private and non-mutating
 - `GET /static/generated/composer/bootstrap.v1.json` — generated offline-first
@@ -83,14 +85,6 @@ API endpoints:
 - POST /api/preview/<animation_name>/with_params
 - POST /api/preview/<animation_name>/interaction
 - POST /api/parameters
-- POST /api/painter/updates
-- POST /api/painter/frame
-- POST /api/painter/clear
-- `GET /api/painter/masks` — read-only compatibility view of the selected managed profile
-- `POST /api/painter/masks` — retired legacy writer; always returns 405
-- GET /api/painter/presets
-- GET /api/painter/presets/<preset_id>
-- POST /api/painter/presets
 - GET /api/animations/<animation_name>/presets
 - GET /api/animations/<animation_name>/presets/<preset_id>
 - POST /api/animations/<animation_name>/presets

@@ -1514,8 +1514,8 @@ def run_web_mode(args):
     print(f"  Control file: {args.control_file}")
     print(f"  Status file : {args.status_file}")
     print(f"  URL: http://{args.host}:{args.port}")
-    print(f"  Dashboard: http://{args.host}:{args.port}/")
-    print(f"  Control:   http://{args.host}:{args.port}/control")
+    print(f"  Composer:  http://{args.host}:{args.port}/composer")
+    print("  Root URL redirects to Composer")
     print()
 
     web_interface.run(debug=args.debug)
