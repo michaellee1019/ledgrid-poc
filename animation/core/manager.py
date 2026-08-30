@@ -81,11 +81,6 @@ from animation.core.presentation_contracts import (
     resolve_vibe,
 )
 
-
-# A controller transaction must not wait indefinitely for a renderer that has
-# crashed or stalled between frames.  This is intentionally short because it
-# protects the fail-safe path, not normal presentation throughput.
-MAINTENANCE_PAUSE_ACK_TIMEOUT_SECONDS = 2.0
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
 from ipc.scene_contract import SceneProviderPolicy
@@ -99,6 +94,11 @@ FRAME_SCHEDULER_HEADROOM_RATIO = 0.05
 FRAME_SCHEDULER_MAX_FPS = 200.0
 FRAME_DEADLINE_COARSE_WINDOW_SECONDS = 0.002
 FRAME_DEADLINE_SPIN_SECONDS = 0.0005
+
+# A controller transaction must not wait indefinitely for a renderer that has
+# crashed or stalled between frames.  This is intentionally short because it
+# protects the fail-safe path, not normal presentation throughput.
+MAINTENANCE_PAUSE_ACK_TIMEOUT_SECONDS = 2.0
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
