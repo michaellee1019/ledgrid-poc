@@ -5,8 +5,8 @@
   ],
   "localAssets": [
     {
-      "bytes": 240738,
-      "sha256": "5f6e9d7e2b857bd8b4168055643a7edeede80f1a2b38d11829a71fbeaea53626",
+      "bytes": 240893,
+      "sha256": "c72782138e110f7fff3292a1f3b5253420fa4bf69dae8b7963d36d9eb5f07e19",
       "url": "/composer-app.js"
     },
     {
@@ -21,7 +21,7 @@
     },
     {
       "bytes": 72639,
-      "sha256": "2a1df18078a5a844db6f977e907a79f074dc3898b0ece11cfa703c55ca33c14b",
+      "sha256": "29641178e2a8bcbf8f536b0a2bc098ad968a7d9b114d46083f221c4f0c36c5fe",
       "url": "/static/css/composer.css"
     },
     {

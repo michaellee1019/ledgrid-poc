@@ -53,7 +53,7 @@
         "service_worker_controls_composer",
         "renderer_catalog_cached",
         "static_preview_play_enabled",
-        "mobile_renderer_selection_opens_tune",
+        "mobile_renderer_selection_opens_edit",
         "offline_assets_prepared",
         "offline_strategy_declared",
         "offline_network_isolation_enforced",

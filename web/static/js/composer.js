@@ -1952,7 +1952,7 @@
     async function selectComponent(component, options = {}) {
         if (!componentCapability(component).previewable) return;
         if (state.component?.key === component.key && !options.force) {
-            if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
+            if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('edit');
             return;
         }
         if (state.component?.key && state.component.key !== component.key) {
@@ -1986,7 +1986,7 @@
         if (options.historyMode === 'preserve') updateHistoryButtons();
         else if (options.historyMode === 'commit' || (options.historyMode == null && state.history.length)) commitHistory();
         else resetHistory();
-        if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
+        if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('edit');
         if (!options.deferRuntime) await startRuntimes();
         scheduleAutosave();
         requestRender();
@@ -2010,7 +2010,7 @@
         commitHistory();
         restartRuntimesAtCurrentState();
         scheduleAutosave();
-        if (window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
+        if (window.matchMedia('(max-width: 760px)').matches) selectMobileView('edit');
         queueLiveEdit({immediate: true});
         toast(`Loaded ${$('presetName').value}.`);
     }
@@ -4446,9 +4446,10 @@
     }
 
     function selectMobileView(name) {
-        const target = ['check', 'layers', 'wall'].includes(name) ? 'tune' : name;
-        const pairedWorkspace = window.matchMedia('(max-width: 760px)').matches
-            && target !== 'library';
+        const isPhone = window.matchMedia('(max-width: 760px)').matches;
+        const requested = isPhone && ['stage', 'tune'].includes(name) ? 'edit' : name;
+        const target = isPhone && ['check', 'layers', 'wall'].includes(requested) ? 'edit' : requested;
+        const pairedWorkspace = isPhone && target !== 'library';
         $('composerWorkspace').classList.toggle('mobile-dual-pane', pairedWorkspace);
         document.querySelectorAll('.mobile-view').forEach((view) => {
             const active = pairedWorkspace
@@ -4457,13 +4458,13 @@
             view.classList.toggle('is-active', active);
         });
         document.querySelectorAll('[data-mobile-target]').forEach((button) => {
-            if (button.dataset.mobileTarget === name) button.setAttribute('aria-current', 'page');
+            if (button.dataset.mobileTarget === requested) button.setAttribute('aria-current', 'page');
             else button.removeAttribute('aria-current');
         });
         if (name === 'check') selectInspectorTab('checker');
         else if (name === 'layers') selectInspectorTab('layers');
         else if (name === 'wall') selectInspectorTab('wall');
-        else if (name === 'tune' || name === 'stage') selectInspectorTab('controls');
+        else if (target === 'edit' || name === 'tune' || name === 'stage') selectInspectorTab('controls');
         if (pairedWorkspace) document.querySelector('.inspector-pane').scrollTop = 0;
     }
 
@@ -4652,7 +4653,7 @@
                     $('playButton').click();
                 } else if (key === 't') {
                     event.preventDefault();
-                    selectMobileView('tune');
+                    selectMobileView('edit');
                     $('controlsTab').focus();
                 } else if (key === 'l') {
                     event.preventDefault();
@@ -4734,7 +4735,7 @@
 
     async function initialize() {
         bindEvents();
-        if (window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
+        if (window.matchMedia('(max-width: 760px)').matches) selectMobileView('edit');
         initializeMotionPreference();
         updateInstallStatus();
         setServerOnline(false, {checking: true, quiet: true});

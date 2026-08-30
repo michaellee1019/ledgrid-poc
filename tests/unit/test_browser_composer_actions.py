@@ -462,7 +462,7 @@ class BrowserComposerActionTests(unittest.TestCase):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn('data-mobile-target="layers"', html)
         self.assertIn('class="mobile-activate-bar"', html)
-        self.assertIn("grid-template-columns: repeat(6, 1fr)", css)
+        self.assertIn("grid-template-columns: repeat(5, 1fr)", css)
         self.assertIn(".server-action-buttons button, .local-action-buttons button, .mobile-tabs button { min-height: 44px; }", css)
         self.assertIn("return preset?.key || preset?.preset_id", javascript)
         self.assertIn("state.selectedPreset = record.key", javascript)

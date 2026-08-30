@@ -668,9 +668,9 @@ async function message(harness, data) {
         self.assertIn("renderInstances(requests)", runtime)
         self.assertIn("await runtime.renderInstances([", composer)
 
-    def test_selected_mobile_renderer_click_opens_tune(self) -> None:
+    def test_selected_mobile_renderer_click_opens_edit(self) -> None:
         composer = (ROOT / "web/static/js/composer.js").read_text(encoding="utf-8")
-        mobile_focus = "if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');"
+        mobile_focus = "if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('edit');"
         self.assertLess(composer.index(mobile_focus), composer.index("if (!options.deferRuntime) await startRuntimes();"))
 
     def test_offline_manifest_is_reproducible_and_pins_every_local_digest(self) -> None:

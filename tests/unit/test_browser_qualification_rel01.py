@@ -203,7 +203,7 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
         )
         self.assertIn(
-            "mobile_renderer_selection_opens_tune",
+            "mobile_renderer_selection_opens_edit",
             self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
         )
         self.assertIn(

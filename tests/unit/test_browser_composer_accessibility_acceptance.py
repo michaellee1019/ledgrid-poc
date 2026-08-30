@@ -183,7 +183,7 @@ class BrowserComposerAccessibilityAcceptanceTests(unittest.TestCase):
             self.css,
             r"html, body\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*hidden;",
         )
-        self.assertIn("repeat(6, 1fr)", self.all_mobile_css)
+        self.assertIn("repeat(5, 1fr)", self.all_mobile_css)
         self.assertRegex(
             self.all_mobile_css,
             r"\.mobile-tabs button\s*\{[^}]*min-width:\s*0;",

@@ -77,7 +77,7 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         self.assertEqual(tag, "details")
         self.assertNotIn("open", attrs)
 
-    def test_mobile_has_one_six_destination_navigation_surface(self) -> None:
+    def test_mobile_has_one_five_destination_navigation_surface(self) -> None:
         destinations = [
             attrs["data-mobile-target"]
             for tag, attrs in self.audit.elements
@@ -85,7 +85,7 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         ]
         self.assertEqual(
             destinations,
-            ["library", "stage", "tune", "layers", "wall", "check"],
+            ["library", "edit", "layers", "wall", "check"],
         )
         mobile_rule = re.search(
             r"@media \(max-width: 760px\) \{(?P<body>.*?)\n\}",
@@ -215,7 +215,10 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
     def test_phone_editing_keeps_preview_and_controls_side_by_side(self) -> None:
         self.assertIn("mobile-dual-pane", self.javascript)
         self.assertIn("['stage', 'tune'].includes(view.dataset.mobileView)", self.javascript)
-        self.assertIn("selectMobileView('tune')", self.javascript)
+        self.assertIn("selectMobileView('edit')", self.javascript)
+        self.assertIn("data-mobile-target=\"edit\"", self.html)
+        self.assertNotIn('data-mobile-target="stage"', self.html)
+        self.assertNotIn('data-mobile-target="tune"', self.html)
         self.assertRegex(
             self.final_mobile_css,
             r"\.composer-shell\.mobile-dual-pane\s*\{[^}]*grid-template-columns:\s*minmax\(112px,\s*34%\)\s+minmax\(0,\s*1fr\);",
@@ -229,12 +232,12 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
             self.final_mobile_css,
         )
 
-    def test_mobile_selection_opens_tune_and_keeps_apply_action_visible(self) -> None:
+    def test_mobile_selection_opens_edit_and_keeps_apply_action_visible(self) -> None:
         self.audit.by_id("mobileActivateButton")
         self.audit.by_id("mobileActivationStatus")
         self.assertIn("{focusEditor: true}", self.javascript)
         self.assertIn("options.focusEditor && window.matchMedia('(max-width: 760px)').matches", self.javascript)
-        self.assertIn("selectMobileView('tune')", self.javascript)
+        self.assertIn("selectMobileView('edit')", self.javascript)
         self.assertRegex(
             self.final_mobile_css,
             r"\.mobile-activate-bar\s*\{[^}]*position:\s*fixed;[^}]*bottom:\s*var\(--mobile-nav-height\);",

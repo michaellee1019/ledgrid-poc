@@ -434,9 +434,9 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
       preferredName: contract.background_name,
     });
     assertions.push(observation(
-      'mobile_renderer_selection_opens_tune',
+      'mobile_renderer_selection_opens_edit',
       await page.locator('#composerWorkspace').evaluate((element) => element.classList.contains('mobile-dual-pane'))
-        && await page.locator('[data-mobile-target="tune"]').getAttribute('aria-current') === 'page',
+        && await page.locator('[data-mobile-target="edit"]').getAttribute('aria-current') === 'page',
       'Selecting an animation on a phone opens the paired preview and controls workspace',
     ));
     assertions.push(observation(
