@@ -704,6 +704,14 @@
         return trusted;
     }
 
+    function managedProfileAuthoringActions(digest) {
+        if (!/^[0-9a-f]{64}$/.test(digest || '') || digest === EMPTY_PROFILE_DIGEST) return null;
+        const actions = Object.fromEntries(PROFILE_AUTHORING_ACTIONS.map(([name, kind]) => (
+            [name, managedProfileUrl(kind, digest)]
+        )));
+        return trustedProfileAuthoringActions(actions, digest);
+    }
+
     function preserveTrustedProfileAuthoringActions(actions, payload) {
         const profile = state.installationProfile;
         const observed = trustedProfileAuthoringActions(
@@ -726,12 +734,19 @@
 
     function initializeInstallationProfileState() {
         const localProfile = ComposerState.localInstallationProfile(state.bootstrap);
+        const authoringActions = trustedProfileAuthoringActions(
+            globalActions(),
+            localProfile?.digest,
+        ) || managedProfileAuthoringActions(localProfile?.digest);
         state.installationProfile.selectedDigest = localProfile?.digest || null;
         state.installationProfile.selectedArtifactUrl = localProfile?.artifactUrl || null;
         state.installationProfile.desiredDigest = localProfile?.digest || null;
         state.installationProfile.desiredArtifactUrl = localProfile?.artifactUrl || null;
-        state.installationProfile.authoringActions = null;
-        state.installationProfile.authoringDigest = null;
+        // The bundled descriptor is identity-checked before it reaches this
+        // point, so it can seed the canonical host authoring endpoints before
+        // the first catalog-only reconnect replaces its null action fields.
+        state.installationProfile.authoringActions = authoringActions;
+        state.installationProfile.authoringDigest = authoringActions ? localProfile.digest : null;
         state.installationProfile.candidate = null;
     }
 

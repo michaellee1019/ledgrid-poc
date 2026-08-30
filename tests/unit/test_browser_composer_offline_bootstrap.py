@@ -196,42 +196,100 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
             refresh_body.index("state.bootstrap.capabilities.server_actions = actions;"),
         )
 
-        helper_start = source.index("const PROFILE_AUTHORING_ACTIONS")
-        helper_end = source.index("function initializeInstallationProfileState", helper_start)
-        helpers = source[helper_start:helper_end]
+        profile_start = source.index("function globalActions()")
+        profile_end = source.index("function vibeProfiles", profile_start)
+        profile_logic = source[profile_start:profile_end]
+        refresh_logic = source[refresh_start:source.index("function setServerOnline", refresh_start)]
+        fetch_start = source.index("async function fetchProfileDraft")
+        fetch_logic = source[fetch_start:source.index("async function preloadMasks", fetch_start)]
+        save_start = source.index("async function saveMasks()")
+        save_logic = source[save_start:source.index("async function publishProfileDraft", save_start)]
         digest = "a" * 64
-        script = f"""
-const state = {{installationProfile: {{
-  selectedDigest: 'selected-profile-must-not-change',
-  authoringActions: null,
-  authoringDigest: null,
-}}}};
+        script = """
+const digest = __DIGEST__;
 const EMPTY_PROFILE_DIGEST = '0'.repeat(64);
-{helpers}
-const digest = {json.dumps(digest)};
-const observed = {{
-  installation_profile_draft_url: `/api/v1/installation-profiles/${{digest}}/draft`,
-  installation_profile_publish_url: `/api/v1/installation-profiles/${{digest}}/publish`,
-  installation_profile_artifact_url: `/api/v1/installation-profiles/${{digest}}/artifact`,
-}};
-preserveTrustedProfileAuthoringActions(observed, {{installation_profile: {{digest}}}});
-const catalogOnly = {{
+const state = {
+  bootstrap: {
+    installation_profile: {
+      digest,
+      artifact_url: `/static/generated/composer/installation_profile_${digest}.bin`,
+      authority: 'bundled',
+    },
+    capabilities: {server_actions: {
+      installation_profile_draft_url: null,
+      installation_profile_publish_url: null,
+      installation_profile_artifact_url: null,
+    }},
+    components: [],
+  },
+  installationProfile: {
+    selectedDigest: null,
+    selectedArtifactUrl: null,
+    desiredDigest: null,
+    desiredArtifactUrl: null,
+    authoringActions: null,
+    authoringDigest: null,
+    candidate: null,
+  },
+  serverOnline: true,
+  masks: {dirty: true, revision: 'draft-revision-1'},
+};
+const ComposerState = {localInstallationProfile: (bootstrap) => ({
+  digest: bootstrap.installation_profile.digest,
+  artifactUrl: bootstrap.installation_profile.artifact_url,
+})};
+const clone = (value) => JSON.parse(JSON.stringify(value));
+const calls = [];
+const catalogOnly = {
   installation_profile_draft_url: null,
   installation_profile_publish_url: null,
   installation_profile_artifact_url: null,
-}};
-preserveTrustedProfileAuthoringActions(catalogOnly, {{
-  installation_profile: {{digest: EMPTY_PROFILE_DIGEST}},
-}});
-preserveTrustedProfileAuthoringActions(catalogOnly, {{
-  installation_profile: {{digest: EMPTY_PROFILE_DIGEST}},
-}});
-console.log(JSON.stringify({{
-  actions: catalogOnly,
+};
+async function requestJson() {
+  return {capabilities: {server_actions: catalogOnly}, components: [], installation_profile: {digest: EMPTY_PROFILE_DIGEST}};
+}
+function assertBootstrap(payload) { return payload; }
+function mergeServerPresetCatalog() {}
+function updateServerComponentCompatibility() {}
+function resetChecker() {}
+function renderLayers() {}
+function restartRuntimesAtCurrentState() {}
+function $(id) { return {disabled: false, id}; }
+function updateMaskControls() {}
+function toast() {}
+function currentProfileDraftDocument() { return {revision: state.masks.revision}; }
+function loadMaskPayload() {}
+async function requestJsonResource(url, options = null) {
+  calls.push({url, options});
+  return {payload: {revision: state.masks.revision}, etag: `"${state.masks.revision}"`};
+}
+__PROFILE_LOGIC__
+__REFRESH_LOGIC__
+__FETCH_LOGIC__
+__SAVE_LOGIC__
+(async () => {
+  initializeInstallationProfileState();
+  // A prior observed status is allowed to mark the same bundled digest host
+  // authoritative. The production early return must not lose its endpoints.
+  state.bootstrap.installation_profile.authority = 'host';
+  await refreshServerBootstrap();
+  await refreshServerBootstrap();
+  updateSelectedInstallationProfile(digest);
+  await fetchProfileDraft();
+  await saveMasks();
+  console.log(JSON.stringify({
+  actions: state.bootstrap.capabilities.server_actions,
   authoringDigest: state.installationProfile.authoringDigest,
   selectedDigest: state.installationProfile.selectedDigest,
-}}));
+  calls,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
 """
+        script = (script.replace("__DIGEST__", json.dumps(digest))
+            .replace("__PROFILE_LOGIC__", profile_logic)
+            .replace("__REFRESH_LOGIC__", refresh_logic)
+            .replace("__FETCH_LOGIC__", fetch_logic)
+            .replace("__SAVE_LOGIC__", save_logic))
         completed = subprocess.run(
             [shutil.which("node") or "node", "-e", script],
             check=True,
@@ -240,7 +298,7 @@ console.log(JSON.stringify({{
         )
         result = json.loads(completed.stdout)
         self.assertEqual(result["authoringDigest"], digest)
-        self.assertEqual(result["selectedDigest"], "selected-profile-must-not-change")
+        self.assertEqual(result["selectedDigest"], digest)
         self.assertEqual(result["actions"], {
             "installation_profile_draft_url": (
                 f"/api/v1/installation-profiles/{digest}/draft"
@@ -252,15 +310,20 @@ console.log(JSON.stringify({{
                 f"/api/v1/installation-profiles/{digest}/artifact"
             ),
         })
-
-        save_start = source.index("async function saveMasks()")
-        save_body = source[save_start:source.index("async function publishProfileDraft", save_start)]
-        self.assertIn(
-            "requestJsonResource(globalActions().installation_profile_draft_url, {",
-            save_body,
-        )
-        self.assertIn("method: 'PUT'", save_body)
-        self.assertIn("'If-Match': `\"${submittedRevision}\"`", save_body)
+        self.assertEqual(result["calls"], [
+            {
+                "url": f"/api/v1/installation-profiles/{digest}/draft",
+                "options": None,
+            },
+            {
+                "url": f"/api/v1/installation-profiles/{digest}/draft",
+                "options": {
+                    "method": "PUT",
+                    "headers": {"If-Match": '"draft-revision-1"'},
+                    "body": '{"revision":"draft-revision-1"}',
+                },
+            },
+        ])
 
 
 if __name__ == "__main__":
