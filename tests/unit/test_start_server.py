@@ -291,6 +291,20 @@ class StartServerTests(unittest.TestCase):
 
     def test_controller_construction_keeps_finalized_wiring_domains_separate(self):
         captured = {}
+        authority = SimpleNamespace(
+            authority_digest="a" * 64,
+            identities=tuple(
+                SimpleNamespace(
+                    logical_device=index,
+                    spi_route=route,
+                    hardware_serial=f"02:00:00:00:00:{index:02x}",
+                    firmware_sha256=(f"{index + 1:x}" * 64),
+                )
+                for index, route in enumerate(
+                    ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
+                )
+            ),
+        )
 
         class CapturingMultiController:
             def __init__(self, **kwargs):
@@ -331,6 +345,10 @@ class StartServerTests(unittest.TestCase):
                     INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
                 ),
             ),
+            patch(
+                "scripts.start_server.receiver_identity_authority_for_startup",
+                return_value=authority,
+            ),
             patch("scripts.start_server.NativeBackgroundLibrary", return_value=object()),
             patch(
                 "scripts.start_server.AnimationManager",
@@ -362,6 +380,10 @@ class StartServerTests(unittest.TestCase):
         self.assertEqual(
             captured["reverse_native_strips_by_logical_receiver"],
             (False, False, True, True, False),
+        )
+        self.assertEqual(captured["receiver_identities"], authority.identities)
+        self.assertEqual(
+            captured["receiver_identity_authority_digest"], authority.authority_digest
         )
 
     def test_receiver_hybrid_feature_flags_are_all_off_unless_explicitly_enabled(self):

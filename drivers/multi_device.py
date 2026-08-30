@@ -42,6 +42,7 @@ from drivers.spi_controller import (
     SPI_SPEED,
 )
 from drivers.led_layout import (
+    DEFAULT_STRIP_COUNT,
     DEFAULT_LEDS_PER_STRIP,
     STRIPS_PER_DEVICE,
     WALL_PHYSICAL_LANE_ORDER,
@@ -51,6 +52,7 @@ from drivers.led_layout import (
     logical_strip_count,
     wall_device_map,
 )
+from tools.deployment.receiver_identity_authority import ReceiverIdentity
 
 LOCAL_BACKGROUND_REQUIRED_CAPABILITIES = (
     CAPABILITY_ALIGNED_ENVELOPE_V1
@@ -75,6 +77,9 @@ NATIVE_BACKGROUND_REQUIRED_CAPABILITIES = (
     | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
     | CAPABILITY_PRESENTATION_CONTEXT_V1
 )
+
+_TRUSTED_RECEIPT_RECEIVER_COUNT = 5
+_TRUSTED_RECEIPT_FRAME_PIXELS = DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP
 
 
 class MultiDeviceLEDController:
@@ -230,7 +235,9 @@ class MultiDeviceLEDController:
                  receiver_strip_counts: tuple[int, ...] | None = None,
                  receiver_global_strip_offsets: tuple[int, ...] | None = None,
                  receiver_spi_speeds_hz: tuple[int, ...] | None = None,
-                 fec_receiver_ids: tuple[int, ...] = ()):
+                 fec_receiver_ids: tuple[int, ...] = (),
+                 receiver_identities=None,
+                 receiver_identity_authority_digest=None):
         """
         Initialize multi-device LED controller
         
@@ -279,6 +286,12 @@ class MultiDeviceLEDController:
             raise TypeError("receiver_native_modules must be a boolean")
         if type(num_devices) is not int or not 1 <= num_devices <= 0xFF:
             raise ValueError("num_devices must be an integer from 1 through 255")
+        self._validate_receiver_identity_authority(
+            receiver_identities,
+            receiver_identity_authority_digest,
+            num_devices=num_devices,
+            device_map=device_map,
+        )
         if (
             type(fec_receiver_ids) is not tuple
             or any(type(value) is not int for value in fec_receiver_ids)
@@ -392,6 +405,8 @@ class MultiDeviceLEDController:
                 "the receiver's logical strip width"
             )
         self.num_devices = num_devices
+        self._receiver_identities = tuple(receiver_identities or ())
+        self._receiver_identity_authority_digest = receiver_identity_authority_digest
         self.fec_receiver_ids = fec_receiver_ids
         self.strips_per_device = strips_per_device
         self.receiver_strip_counts = receiver_strip_counts
@@ -517,6 +532,10 @@ class MultiDeviceLEDController:
                     "(bus, chip_select) pair per receiver"
                 )
             self.device_map = [tuple(entry) for entry in device_map]
+        if self.receiver_identities and tuple(self.device_map) != tuple(
+            identity.spi_route for identity in self.receiver_identities
+        ):
+            raise ValueError("receiver identity routes do not match device map")
         self._devices_by_bus = {}
         for device_id, (device_bus, _chip_select) in enumerate(self.device_map):
             self._devices_by_bus.setdefault(device_bus, []).append(device_id)
@@ -566,6 +585,18 @@ class MultiDeviceLEDController:
                     self.receiver_global_strip_offsets[device_index]
                 ),
                 fec_transport=device_index in self.fec_receiver_ids,
+                hardware_serial=(
+                    self.receiver_identities[device_index].hardware_serial
+                    if self.receiver_identities else None
+                ),
+                firmware_sha256=(
+                    self.receiver_identities[device_index].firmware_sha256
+                    if self.receiver_identities else None
+                ),
+                receiver_identity_authority_digest=(
+                    self.receiver_identity_authority_digest
+                    if self.receiver_identities else None
+                ),
             )
             self.devices.append(device)
 
@@ -576,6 +607,52 @@ class MultiDeviceLEDController:
         
         if self.debug:
             print(f"\n✓ All {num_devices} devices initialized\n")
+
+    @staticmethod
+    def _validate_receiver_identity_authority(
+        identities, authority_digest, *, num_devices, device_map
+    ):
+        """Accept only the frozen, ordered authority injected by startup."""
+        if identities is None and authority_digest is None:
+            return
+        if not isinstance(identities, tuple) or not isinstance(authority_digest, str):
+            raise TypeError("receiver identity authority must be an immutable complete binding")
+        if num_devices != _TRUSTED_RECEIPT_RECEIVER_COUNT or len(identities) != num_devices:
+            raise ValueError("receiver identity authority does not match receiver count")
+        if len(authority_digest) != 64 or any(
+            char not in "0123456789abcdef" for char in authority_digest
+        ):
+            raise ValueError("receiver identity authority digest is malformed")
+        routes = []
+        serials = []
+        firmware = []
+        for logical_device, identity in enumerate(identities):
+            if (
+                type(identity) is not ReceiverIdentity
+                or identity.logical_device != logical_device
+                or not isinstance(identity.spi_route, tuple)
+                or len(identity.spi_route) != 2
+                or not isinstance(getattr(identity, "hardware_serial", None), str)
+                or not isinstance(getattr(identity, "firmware_sha256", None), str)
+            ):
+                raise ValueError("receiver identity authority is incomplete or unordered")
+            routes.append(identity.spi_route)
+            serials.append(identity.hardware_serial)
+            firmware.append(identity.firmware_sha256)
+        if len(set(routes)) != len(routes) or len(set(serials)) != len(serials):
+            raise ValueError("receiver identity authority contains duplicate bindings")
+        if device_map is not None and tuple(tuple(route) for route in device_map) != tuple(routes):
+            raise ValueError("receiver identity routes do not match device map")
+        if any(len(value) != 64 for value in firmware):
+            raise ValueError("receiver identity firmware digests are malformed")
+
+    @property
+    def receiver_identities(self):
+        return self._receiver_identities
+
+    @property
+    def receiver_identity_authority_digest(self):
+        return self._receiver_identity_authority_digest
 
     def _initialize_receiver_identity_observability(self):
         """Best-effort topology provisioning without blocking legacy streaming."""
@@ -1889,6 +1966,119 @@ class MultiDeviceLEDController:
         sequence = getattr(self, "_logical_wall_frame_sequence", 0)
         self._logical_wall_frame_sequence = sequence + 1
         return sequence
+
+    @staticmethod
+    def _canonical_trusted_frame(frame):
+        """Accept exactly one 33x138 RGB frame; never pad or crop a receipt."""
+        if isinstance(frame, np.ndarray):
+            if frame.dtype != np.uint8 or frame.shape not in (
+                (DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, 3),
+                (_TRUSTED_RECEIPT_FRAME_PIXELS, 3),
+            ):
+                raise ValueError("trusted full frame must be 33x138 uint8 RGB")
+            flat = frame.reshape(_TRUSTED_RECEIPT_FRAME_PIXELS, 3)
+            return tuple(tuple(int(channel) for channel in pixel) for pixel in flat)
+        if not isinstance(frame, (list, tuple)) or len(frame) != _TRUSTED_RECEIPT_FRAME_PIXELS:
+            raise ValueError("trusted full frame must contain exactly 33x138 pixels")
+        normalized = []
+        for pixel in frame:
+            if (
+                not isinstance(pixel, (list, tuple))
+                or len(pixel) != 3
+                or any(type(channel) is not int or not 0 <= channel <= 255 for channel in pixel)
+            ):
+                raise ValueError("trusted full frame contains invalid RGB pixels")
+            normalized.append(tuple(pixel))
+        return tuple(normalized)
+
+    def _require_pinned_receipt_roster(self):
+        """Ensure a receipt remains bound to one immutable target authority."""
+        identities = getattr(self, "receiver_identities", ())
+        authority_digest = getattr(self, "receiver_identity_authority_digest", None)
+        if (
+            not isinstance(identities, tuple)
+            or len(identities) != _TRUSTED_RECEIPT_RECEIVER_COUNT
+            or self.num_devices != _TRUSTED_RECEIPT_RECEIVER_COUNT
+            or len(self.devices) != _TRUSTED_RECEIPT_RECEIVER_COUNT
+            or self.strip_count != DEFAULT_STRIP_COUNT
+            or self.leds_per_strip != DEFAULT_LEDS_PER_STRIP
+            or self.total_leds != _TRUSTED_RECEIPT_FRAME_PIXELS
+        ):
+            raise RuntimeError("trusted receipts require the canonical 33x138 receiver roster")
+        expected_routes = tuple(identity.spi_route for identity in identities)
+        if tuple(self.device_map) != expected_routes:
+            raise RuntimeError("receiver routes drifted from the pinned authority")
+        if not isinstance(authority_digest, str) or len(authority_digest) != 64:
+            raise RuntimeError("receiver identity authority digest is unavailable")
+        for logical_device, (identity, device) in enumerate(zip(identities, self.devices)):
+            if (
+                identity.logical_device != logical_device
+                or getattr(device, "hardware_serial", None) != identity.hardware_serial
+                or getattr(device, "firmware_sha256", None) != identity.firmware_sha256
+                or getattr(device, "receiver_identity_authority_digest", None)
+                != authority_digest
+            ):
+                raise RuntimeError("receiver identity drifted from the pinned authority")
+        return identities
+
+    def present_trusted_full_frame(self, request_id, frame):
+        """Return a receipt only after every authoritative receiver acks a frame.
+
+        This deliberately bypasses the normal best-effort streaming method.
+        A trusted caller receives no receipt for a partial write, stale status,
+        rejection, timeout, disconnection, or identity drift.
+        """
+        if not isinstance(request_id, str) or not request_id:
+            raise ValueError("request_id must be a non-empty string")
+        complete_frame = self._canonical_trusted_frame(frame)
+        frame_digest = hashlib.sha256(bytes(
+            channel for pixel in complete_frame for channel in pixel
+        )).hexdigest()
+        with self._controller_lock():
+            identities = self._require_pinned_receipt_roster()
+            wall_frame_sequence = self._claim_logical_wall_frame_sequence()
+            device_frames = self._split_frame(complete_frame)
+            acknowledgements = []
+            for logical_device, device in enumerate(self.devices):
+                try:
+                    acknowledgement = device.present_complete_frame(
+                        device_frames[logical_device],
+                        wall_frame_sequence=wall_frame_sequence,
+                        frame_digest=frame_digest,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"receiver {logical_device} did not acknowledge trusted frame"
+                    ) from exc
+                if (
+                    not isinstance(acknowledgement, dict)
+                    or acknowledgement.get("logical_device") != logical_device
+                    or acknowledgement.get("wall_frame_sequence") != wall_frame_sequence
+                    or acknowledgement.get("frame_digest") != frame_digest
+                    or not isinstance(acknowledgement.get("status"), dict)
+                    or acknowledgement["status"].get("receiver_logical_device")
+                    != logical_device
+                    or acknowledgement["status"].get("receiver_last_accepted_sequence")
+                    != wall_frame_sequence
+                ):
+                    raise RuntimeError(
+                        f"receiver {logical_device} returned a rejected or stale acknowledgement"
+                    )
+                acknowledgements.append({
+                    "logical_device": logical_device,
+                    "spi_route": list(identities[logical_device].spi_route),
+                    "hardware_serial": identities[logical_device].hardware_serial,
+                    "firmware_sha256": identities[logical_device].firmware_sha256,
+                })
+            self._require_pinned_receipt_roster()
+            self._logical_frames_sent += 1
+            return {
+                "request_id": request_id,
+                "frame_digest": frame_digest,
+                "wall_frame_sequence": wall_frame_sequence,
+                "authority_digest": self.receiver_identity_authority_digest,
+                "acknowledged_receivers": acknowledgements,
+            }
 
     def _send_to_device(
         self,

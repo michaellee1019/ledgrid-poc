@@ -62,6 +62,10 @@ from tools.deployment.preserve_deploy_settings import (
     receiver_native_modules_canary_enabled,
     save_status,
 )
+from tools.deployment.receiver_identity_authority import (
+    ReceiverIdentityAuthorityError,
+    load_receiver_identity_authority,
+)
 try:
     from tools.deployment.receiver_hybrid_config import (
         DEFAULT_PHYSICAL_LANE_ORDER,
@@ -323,6 +327,30 @@ def receiver_wiring_for_runtime(
         if configured_geometry_selected or finalized_authority_selected
         else IDENTITY_INSTALLATION_PROFILE_TOPOLOGY
     )
+
+
+def receiver_identity_authority_for_startup(
+    project_root: Path, *, logical_to_transport_routes
+):
+    """Load one frozen receiver roster before opening any SPI controller.
+
+    The target-owned authority has already checked the current hybrid topology
+    and firmware inventory.  Startup still compares its ordered routes with
+    the graph it is about to construct, so a configuration drift cannot be
+    hidden by controller enumeration.
+    """
+
+    try:
+        authority = load_receiver_identity_authority(project_root)
+    except ReceiverIdentityAuthorityError as exc:
+        raise RuntimeError("receiver identity authority is unavailable") from exc
+    expected_routes = tuple(tuple(route) for route in logical_to_transport_routes)
+    observed_routes = tuple(identity.spi_route for identity in authority.identities)
+    if observed_routes != expected_routes:
+        raise RuntimeError(
+            "receiver identity authority routes do not match controller topology"
+        )
+    return authority
 
 
 def controller_status_payload(
@@ -640,6 +668,12 @@ def run_controller_mode(args):
             receiver_hybrid_config,
             installation_profile_topology,
         )
+        receiver_authority = receiver_identity_authority_for_startup(
+            project_root,
+            logical_to_transport_routes=(
+                controller_topology.logical_to_transport_routes[:num_devices]
+            ),
+        )
         controller = LEDController(
             num_devices=num_devices,
             bus=args.bus,
@@ -670,6 +704,8 @@ def run_controller_mode(args):
                 .reverse_native_strips_by_logical_receiver[:num_devices]
             ),
             fec_receiver_ids=receiver_fec_ids_for_runtime(),
+            receiver_identities=receiver_authority.identities,
+            receiver_identity_authority_digest=receiver_authority.authority_digest,
         )
         controller = select_receiver_hybrid_controller(
             controller, receiver_hybrid_config

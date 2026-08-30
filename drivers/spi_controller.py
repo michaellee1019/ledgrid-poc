@@ -657,7 +657,9 @@ class LEDController:
                  strips=DEFAULT_NUM_STRIPS, leds_per_strip=DEFAULT_LED_PER_STRIP,
                  debug=False, logical_device_id=None,
                  reverse_native_strip_order=False,
-                 global_strip_offset=None, fec_transport=False):
+                 global_strip_offset=None, fec_transport=False,
+                 hardware_serial=None, firmware_sha256=None,
+                 receiver_identity_authority_digest=None):
         if type(reverse_native_strip_order) is not bool:
             raise TypeError("reverse_native_strip_order must be a boolean")
         if type(fec_transport) is not bool:
@@ -666,6 +668,11 @@ class LEDController:
         self.bus = bus
         self.device = device
         self.logical_device_id = self._optional_logical_device_id(logical_device_id)
+        self._set_receiver_identity_binding(
+            hardware_serial=hardware_serial,
+            firmware_sha256=firmware_sha256,
+            authority_digest=receiver_identity_authority_digest,
+        )
         self.reverse_native_strip_order = reverse_native_strip_order
         self.global_strip_offset = self._optional_global_strip_offset(
             global_strip_offset
@@ -905,6 +912,57 @@ class LEDController:
                 print("✓ SPI connection OK\n")
         except Exception as e:
             print(f"Warning: SPI test failed: {e}\n", file=sys.stderr)
+
+    @staticmethod
+    def _identity_digest(value, label):
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ValueError(f"{label} must be a lowercase SHA-256 digest")
+        return value
+
+    def _set_receiver_identity_binding(
+        self, *, hardware_serial, firmware_sha256, authority_digest
+    ):
+        """Freeze an injected identity; this controller never discovers it."""
+        supplied = (hardware_serial, firmware_sha256, authority_digest)
+        if all(value is None for value in supplied):
+            self._hardware_serial = None
+            self._firmware_sha256 = None
+            self._receiver_identity_authority_digest = None
+            return
+        if any(value is None for value in supplied):
+            raise ValueError("receiver identity binding must be complete")
+        if (
+            not isinstance(hardware_serial, str)
+            or len(hardware_serial.split(":")) != 6
+            or any(
+                len(part) != 2 or any(char not in "0123456789abcdef" for char in part)
+                for part in hardware_serial.split(":")
+            )
+        ):
+            raise ValueError("hardware_serial must be a canonical MAC address")
+        self._hardware_serial = hardware_serial
+        self._firmware_sha256 = self._identity_digest(
+            firmware_sha256, "firmware_sha256"
+        )
+        self._receiver_identity_authority_digest = self._identity_digest(
+            authority_digest, "receiver_identity_authority_digest"
+        )
+
+    @property
+    def hardware_serial(self):
+        return self._hardware_serial
+
+    @property
+    def firmware_sha256(self):
+        return self._firmware_sha256
+
+    @property
+    def receiver_identity_authority_digest(self):
+        return self._receiver_identity_authority_digest
     
     def _xfer(self, payload):
         try:
@@ -3496,6 +3554,34 @@ class LEDController:
                 self._frames_sent += 1
                 self._last_frame_duration = duration
                 self._total_frame_duration += duration
+
+    def present_complete_frame(self, colors, *, wall_frame_sequence, frame_digest):
+        """Write a frame then demand a causally post-write acknowledgement."""
+        frame_digest = self._identity_digest(frame_digest, "frame_digest")
+        if (
+            isinstance(wall_frame_sequence, bool)
+            or not isinstance(wall_frame_sequence, int)
+            or wall_frame_sequence < 0
+        ):
+            raise ValueError("wall_frame_sequence must be a non-negative integer")
+        before = int(self.get_stats().get("receiver_status_responses", 0) or 0)
+        self.set_all_pixels(colors, wall_frame_sequence=wall_frame_sequence)
+        status = self.query_fresh_receiver_status()
+        after = int(status.get("receiver_status_responses", 0) or 0)
+        if after <= before:
+            raise RuntimeError("complete-frame acknowledgement used a stale status")
+        if int(status.get("receiver_status_version", 0) or 0) < 3:
+            raise RuntimeError("complete-frame acknowledgement requires receiver status v3")
+        if status.get("receiver_logical_device") != self.logical_device_id:
+            raise RuntimeError("complete-frame acknowledgement has the wrong receiver")
+        if status.get("receiver_last_accepted_sequence") != wall_frame_sequence:
+            raise RuntimeError("receiver did not acknowledge the exact frame sequence")
+        return {
+            "logical_device": self.logical_device_id,
+            "wall_frame_sequence": wall_frame_sequence,
+            "frame_digest": frame_digest,
+            "status": dict(status),
+        }
     
     def close(self):
         """Close SPI connection"""
