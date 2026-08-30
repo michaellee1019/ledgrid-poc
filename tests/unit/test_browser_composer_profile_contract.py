@@ -97,20 +97,39 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
         self.assertEqual(self.composer.count("new ComposerRuntime("), 6)
         self.assertEqual(self.composer.count("composerRuntimeOptions("), 7)
 
-    def test_preview_presents_verified_physical_foreground_without_mutating_frames(self) -> None:
+    def test_preview_defaults_to_canonical_output_with_an_explicit_optional_foreground(self) -> None:
         compositor = (ROOT / "web/static/js/composer_compositor.js").read_text(
             encoding="utf-8"
         )
         self.assertIn("decodeInstallationProfile", compositor)
         self.assertIn("applyInstallationForeground", compositor)
         self.assertIn("installationProfileView", self.runtime)
-        self.assertIn(
-            "state.installationForeground = await draft.installationProfileView()",
-            self.composer,
-        )
+        self.assertIn("installationForegroundEnabled: false", self.composer)
+        self.assertNotIn("state.installationForeground = await draft.installationProfileView()", self.composer)
+        self.assertIn("setInstallationForegroundEnabled", self.composer)
+        self.assertIn("state.installationForegroundEnabled && state.installationForeground", self.composer)
         self.assertIn("applyInstallationForeground({", self.composer)
-        self.assertIn("calibrated foliage and globe foreground", self.composer)
-        self.assertIn("calibrated foliage and globe foreground", self.template)
+        self.assertIn("optional browser-presentation artifact", self.runtime)
+        self.assertIn("installationProfileViewPromise = null", self.runtime)
+        self.assertIn('id="installationForegroundToggle"', self.template)
+        self.assertIn('role="switch"', self.template)
+        self.assertIn("Simulate installed plant foreground", self.template)
+        self.assertIn("Output-accurate preview", self.template)
+
+    def test_foreground_switch_is_preview_only_and_has_a_nonblocking_fallback(self) -> None:
+        start = self.composer.index("async function setInstallationForegroundEnabled")
+        end = self.composer.index("\n    function showCatalogUnavailable", start)
+        switch = self.composer[start:end]
+        self.assertIn("await runtime.installationProfileView()", switch)
+        self.assertIn("preview remains output-accurate", switch)
+        self.assertNotIn("resetChecker", switch)
+        self.assertNotIn("commitHistory", switch)
+        self.assertNotIn("scheduleAutosave", switch)
+        self.assertNotIn("queueLiveEdit", switch)
+        self.assertIn("state.installationForegroundEnabled && state.installationForeground", self.composer)
+        self.assertIn("frameCanvas(originalFrame)", self.composer)
+        self.assertIn("frameCanvas(draftFrame)", self.composer)
+        self.assertIn("mobile-dual-pane .preview-foreground-control", (ROOT / "web/static/css/composer.css").read_text(encoding="utf-8"))
 
     def test_both_workers_verify_embedded_lgip_content_digest(self) -> None:
         for worker in (self.python_worker, self.native_worker):

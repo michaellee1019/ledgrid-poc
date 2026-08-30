@@ -91,7 +91,7 @@
         <div class="wall-room" id="wallRoom">
           <div class="wall-aura" aria-hidden="true"></div>
           <div class="wall-bezel">
-            <canvas id="previewCanvas" width="33" height="138" aria-label="Local animation preview with calibrated foliage and globe foreground"></canvas>
+            <canvas id="previewCanvas" width="33" height="138" aria-label="Local animation preview of the renderer output"></canvas>
             <div class="preview-placeholder" id="previewPlaceholder"><span aria-hidden="true">✦</span><strong>Your wall, simulated here</strong><small>Choose a supported renderer to begin.</small></div>
           </div>
           <div class="floor-shadow" aria-hidden="true"></div>
@@ -107,6 +107,13 @@
             <summary aria-label="About Draft, Split, and Original">?</summary>
             <p id="comparisonHelp"><strong>Draft</strong> is your edited look. <strong>Original</strong> is the starting state. <strong>Split</strong> shows Original on the left and Draft on the right.</p>
           </details>
+        </div>
+        <div class="preview-foreground-control">
+          <label class="preview-foreground-toggle" for="installationForegroundToggle">
+            <input id="installationForegroundToggle" type="checkbox" role="switch" aria-describedby="installationForegroundStatus">
+            <span>Simulate installed plant foreground</span>
+          </label>
+          <span id="installationForegroundStatus" role="status" aria-live="polite">Output-accurate preview</span>
         </div>
         <p class="split-legend" id="splitLegend" aria-live="polite" hidden><span>Left · Original</span><span>Right · Draft</span></p>
       </div>

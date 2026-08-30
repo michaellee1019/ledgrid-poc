@@ -64,6 +64,8 @@
         compareGeneration: 0,
         frames: {draft: null, original: null, overlay: null, composed: null},
         installationForeground: null,
+        installationForegroundEnabled: false,
+        installationForegroundError: null,
         runtimeGeneration: 0,
         history: [],
         historyIndex: -1,
@@ -1869,8 +1871,57 @@
         $('componentDescription').textContent = component.description || 'Browser-rendered animation component.';
         const runtime = component.browser_runtime || {};
         $('provenanceTitle').textContent = runtime.kind === 'native' ? 'C++ compiled to WebAssembly' : 'Python running in Pyodide';
-        $('provenanceDetail').textContent = 'This authored renderer preview runs locally with the calibrated foliage and globe foreground. It is not camera feedback or framebuffer readback from the installed wall.';
+        renderInstallationForegroundControl();
         $('previewPlaceholder').hidden = true;
+    }
+
+    function renderInstallationForegroundControl() {
+        const toggle = $('installationForegroundToggle');
+        const status = $('installationForegroundStatus');
+        const enabled = state.installationForegroundEnabled && Boolean(state.installationForeground);
+        toggle.checked = enabled;
+        toggle.disabled = !state.runtimes.draft;
+        if (enabled) {
+            status.textContent = 'Simulated foreground · preview only';
+            $('provenanceDetail').textContent = 'This local renderer preview includes an optional simulated plant foreground. It is not camera feedback, framebuffer readback, authored plant modifiers, or live wall state.';
+        } else if (state.installationForegroundError) {
+            status.textContent = 'Output-accurate · foreground unavailable';
+            $('provenanceDetail').textContent = 'This is the output-accurate local renderer preview. The optional simulated plant foreground is unavailable, so it is not shown.';
+        } else {
+            status.textContent = 'Output-accurate preview';
+            $('provenanceDetail').textContent = 'This local renderer preview shows canonical output bytes. It is not camera feedback, framebuffer readback, authored plant modifiers, or live wall state.';
+        }
+    }
+
+    async function setInstallationForegroundEnabled(enabled) {
+        state.installationForegroundEnabled = Boolean(enabled);
+        state.installationForegroundError = null;
+        if (!enabled) {
+            renderInstallationForegroundControl();
+            requestRender();
+            return;
+        }
+        const runtime = state.runtimes.draft;
+        const generation = state.runtimeGeneration;
+        if (!runtime) {
+            state.installationForegroundEnabled = false;
+            state.installationForegroundError = 'The local renderer is not ready.';
+            renderInstallationForegroundControl();
+            return;
+        }
+        try {
+            const foreground = await runtime.installationProfileView();
+            if (generation !== state.runtimeGeneration || runtime !== state.runtimes.draft) return;
+            state.installationForeground = foreground;
+        } catch (error) {
+            if (generation !== state.runtimeGeneration || runtime !== state.runtimes.draft) return;
+            state.installationForeground = null;
+            state.installationForegroundEnabled = false;
+            state.installationForegroundError = error.message;
+            toast('The installed-plant simulation is unavailable; preview remains output-accurate.', 'error');
+        }
+        renderInstallationForegroundControl();
+        requestRender();
     }
 
     function showCatalogUnavailable(message) {
@@ -1904,7 +1955,9 @@
             const draft = new ComposerRuntime(state.component, geometry, composerRuntimeOptions());
             state.runtimes = {draft, original: null, overlay: null};
             await draft.init(state.params);
-            state.installationForeground = await draft.installationProfileView();
+            state.installationForeground = null;
+            state.installationForegroundError = null;
+            renderInstallationForegroundControl();
             if (state.compare !== 'draft') await ensureOriginalRuntime();
             if (generation !== state.runtimeGeneration) return;
             const engine = draft.engine || state.component.browser_runtime.kind;
@@ -1941,6 +1994,8 @@
         state.runtimes.original?.dispose();
         state.runtimes = {draft: null, original: null, overlay: null};
         state.installationForeground = null;
+        state.installationForegroundEnabled = false;
+        state.installationForegroundError = null;
         state.originalRuntimePromise = null;
         state.overlayRuntimePromise = null;
         state.overlayMode = null;
@@ -2446,7 +2501,7 @@
                 rgba[destination + 3] = 255;
             }
         }
-        const foreground = state.installationForeground;
+        const foreground = state.installationForegroundEnabled && state.installationForeground;
         const presented = foreground
             ? window.LEDGridComposerCompositor.applyInstallationForeground({
                 width: frame.width,
@@ -4274,6 +4329,7 @@
             renderCatalog();
         }));
         document.querySelectorAll('[data-compare]').forEach((button) => button.addEventListener('click', () => setCompare(button.dataset.compare)));
+        $('installationForegroundToggle').addEventListener('change', (event) => setInstallationForegroundEnabled(event.target.checked));
         $('playButton').addEventListener('click', () => { state.playing = !state.playing; state.lastAnimationTime = performance.now(); syncPlayButton(); requestRender(); });
         $('timeline').addEventListener('input', (event) => {
             state.elapsed = safeNumber(event.target.value);

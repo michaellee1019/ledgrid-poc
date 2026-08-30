@@ -848,6 +848,12 @@
                         );
                     }
                     return decode(artifact.bytes, this.installationProfile.digest);
+                }).catch((error) => {
+                    // This is an optional browser-presentation artifact.  A
+                    // failed decode/fetch must remain retryable and cannot
+                    // make the renderer itself unavailable.
+                    this.installationProfileViewPromise = null;
+                    throw error;
                 });
             }
             return this.installationProfileViewPromise;
