@@ -224,6 +224,9 @@ class BrowserComposerActionTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["schema"], "ledgrid.composer-operations-status")
         self.assertEqual(payload["observation"]["revision"]["state_revision"], 7)
+        self.assertEqual(payload["output_power"]["state"], "stale")
+        self.assertTrue(payload["output_power"]["observed"])
+        self.assertEqual(payload["output_power"]["revision"]["state_revision"], 7)
         self.assertEqual(payload["health"]["receivers"]["missing"], [1])
         self.assertEqual(payload["raw_evidence"]["owner"], "controller_status")
 

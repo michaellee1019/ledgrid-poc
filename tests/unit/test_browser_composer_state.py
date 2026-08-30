@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 STATE_SOURCE = ROOT / "web/static/js/composer_state.js"
 COMPOSER_SOURCE = ROOT / "web/static/js/composer.js"
+OPERATIONS_SOURCE = ROOT / "web/static/js/composer-operations.js"
 
 
 def _run_state_script(body: str) -> dict:
@@ -34,8 +35,64 @@ const state = globalThis.LEDGridComposerState;
     return json.loads(completed.stdout)
 
 
+def _run_operations_script(body: str) -> dict:
+    executable = shutil.which("node")
+    if executable is None:
+        raise unittest.SkipTest("node unavailable; composer operations tests need JavaScript")
+    script = f"""
+const fs = require('fs');
+const vm = require('vm');
+vm.runInThisContext(fs.readFileSync({json.dumps(str(OPERATIONS_SOURCE))}, 'utf8'));
+const operations = globalThis.LEDGridComposerOperations;
+{body}
+"""
+    completed = subprocess.run(
+        [executable, "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
+
+
 @unittest.skipUnless(shutil.which("node"), "node unavailable")
 class BrowserComposerStateTests(unittest.TestCase):
+    def test_output_power_presentation_states_are_revision_qualified(self) -> None:
+        result = _run_operations_script("""
+const common = {provider: 'a'.repeat(32), revision: 41};
+console.log(JSON.stringify({
+  on: operations.outputPowerState({...common, desired: true, observed: true}),
+  off: operations.outputPowerState({...common, desired: false, observed: false}),
+  pending: operations.outputPowerState({...common, desired: false, observed: true, pending: true}),
+  failed: operations.outputPowerState({...common, desired: false, observed: true, outcome: {state: 'failed', message: 'receiver rejected apply'}}),
+  stale: operations.outputPowerState({desired: true, observed: false}),
+}));
+""")
+
+        self.assertEqual(
+            {name: value["state"] for name, value in result.items()},
+            {
+                "on": "on", "off": "off", "pending": "pending",
+                "failed": "failed", "stale": "stale",
+            },
+        )
+        self.assertEqual(result["pending"]["desired"], False)
+        self.assertTrue(result["pending"]["observed"])
+        self.assertEqual(result["failed"]["message"], "receiver rejected apply")
+        self.assertEqual(result["on"]["revision"], 41)
+        self.assertIsNone(result["stale"]["revision"])
+
+    def test_terminal_power_activation_retains_failed_outcome_until_next_edit(self) -> None:
+        source = COMPOSER_SOURCE.read_text(encoding="utf-8")
+        terminal = source[source.index("['rolled_back', 'failed', 'timed_out']"):]
+        terminal = terminal[:terminal.index("} else {")]
+        self.assertIn("state.globalSettings.reconciliation = {", terminal)
+        self.assertIn("state: 'failed'", terminal)
+        self.assertLess(
+            terminal.index("state.globalSettings.reconciliation = {"),
+            terminal.index("state.globalSettings.powerActivation = null"),
+        )
+        self.assertIn("state.globalSettings.reconciliation = null", source)
     def test_numeric_normalization_clamps_rounds_and_uses_one_step_grid(self) -> None:
         result = _run_state_script("""
 console.log(JSON.stringify({

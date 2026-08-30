@@ -15,8 +15,8 @@ else:  # Direct script execution puts tools/ rather than the repository on sys.p
     from build_browser_python_bundle import PYODIDE_VERSION
 
 
-PREVIOUS_CACHE_VERSION = "v24"
-CACHE_VERSION = "v25"
+PREVIOUS_CACHE_VERSION = "v25"
+CACHE_VERSION = "v26"
 DEFAULT_OUTPUT = Path("web/static/generated/composer/offline_assets.json")
 LOCAL_ASSETS = {
     "/composer-service-worker.js": Path("web/static/js/composer_service_worker.js"),
@@ -50,6 +50,9 @@ LOCAL_ASSETS = {
     ),
     "/static/js/composer_interactions.js": Path(
         "web/static/js/composer_interactions.js"
+    ),
+    "/static/js/composer-operations.js": Path(
+        "web/static/js/composer-operations.js"
     ),
     "/static/js/composer_native_worker.js": Path(
         "web/static/js/composer_native_worker.js"

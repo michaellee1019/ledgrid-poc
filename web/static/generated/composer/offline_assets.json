@@ -1,17 +1,17 @@
 {
-  "cacheVersion": "v25",
+  "cacheVersion": "v26",
   "capturedAssets": [
     "/composer"
   ],
   "localAssets": [
     {
-      "bytes": 252288,
-      "sha256": "357f88627326ad8b74b6e9c7bb107845dd4a25bddb7a21cb556388396b916bbe",
+      "bytes": 259222,
+      "sha256": "834b559de29fe34a4b50ae84b7dcf5f11e29ac1ced199b45d2e2b5e5912410e3",
       "url": "/composer-app.js"
     },
     {
-      "bytes": 23820,
-      "sha256": "12ed0cec766789013749de9a5799933570a6e6601066464005f529fb9f78e015",
+      "bytes": 23861,
+      "sha256": "495e0b56cc3e942a44a56bb4786d613fc559baf7b57f593e52deda6fb77ae410",
       "url": "/composer-service-worker.js"
     },
     {
@@ -65,6 +65,11 @@
       "url": "/static/icons/composer.svg"
     },
     {
+      "bytes": 2370,
+      "sha256": "798e8dbca66d27099ee48e63f48a902c5e071e9119f1c8583af80567f69f475b",
+      "url": "/static/js/composer-operations.js"
+    },
+    {
       "bytes": 18470,
       "sha256": "2d8e36c4b7062339a978f0c9e4cffa1035e96eb574b6004d812fc5feef2b96ff",
       "url": "/static/js/composer_compositor.js"
@@ -100,7 +105,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "v24",
+  "previousCacheVersion": "v25",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",

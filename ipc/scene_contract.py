@@ -315,6 +315,20 @@ def build_composer_operations_status(
         else "unknown"
     )
 
+    global_settings = raw.get("global_settings")
+    global_settings = (
+        dict(global_settings) if isinstance(global_settings, Mapping) else {}
+    )
+    global_output = global_settings.get("output")
+    global_output = dict(global_output) if isinstance(global_output, Mapping) else {}
+    observed_power = global_output.get("power")
+    if not isinstance(observed_power, bool):
+        observed_power = (
+            bool(raw.get("is_running") or raw.get("painter_active"))
+            if isinstance(raw.get("is_running"), bool)
+            else None
+        )
+
     latest = raw.get("latest_activation")
     latest = dict(latest) if isinstance(latest, Mapping) else None
     desired = latest.get("normalized_identity") if latest else None
@@ -345,6 +359,30 @@ def build_composer_operations_status(
     else:
         reconciliation_state = "pending"
         reconciliation_reason = "An activation receipt exists but has not reached an active observation."
+
+    # Power is an activation global, never an independent legacy command.  A
+    # controller that publishes the complete globals supplies its own observed
+    # bit; older controller status remains safely readable through is_running.
+    # The state is deliberately bounded to the same provider/revision tuple as
+    # every other Composer observation.
+    if freshness != "fresh" or session_id is None or state_revision is None:
+        power_state = "stale"
+        power_reason = "Output power needs a fresh revision-qualified controller observation."
+    elif phase in {"failed", "timed_out", "rolled_back"}:
+        power_state = "failed"
+        power_reason = "The latest guarded activation did not leave a current output-power observation."
+    elif phase in {"queued", "preflighting", "applying", "observing"}:
+        power_state = "pending"
+        power_reason = "A guarded activation is waiting for the controller to acknowledge output power."
+    elif observed_power is True:
+        power_state = "on"
+        power_reason = "Output is on in the fresh controller observation."
+    elif observed_power is False:
+        power_state = "off"
+        power_reason = "Output is off in the fresh controller observation."
+    else:
+        power_state = "unknown"
+        power_reason = "The controller did not publish an output-power observation."
 
     receiver = raw.get("receiver_hybrid")
     if not isinstance(receiver, Mapping):
@@ -407,6 +445,15 @@ def build_composer_operations_status(
             "reason": reconciliation_reason,
             "desired_identity": desired,
             "receipt_phase": phase if isinstance(phase, str) else None,
+        },
+        "output_power": {
+            "state": power_state,
+            "observed": observed_power,
+            "revision": {
+                "session_id": session_id,
+                "state_revision": state_revision,
+            },
+            "reason": power_reason,
         },
         "health": {
             "state": overall,

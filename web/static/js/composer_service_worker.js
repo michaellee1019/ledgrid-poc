@@ -1,8 +1,8 @@
 'use strict';
 
 const CACHE_PREFIX = 'ledgrid-composer-shell-';
-const PREVIOUS_CACHE_VERSION = 'v24';
-const CACHE_VERSION = 'v25';
+const PREVIOUS_CACHE_VERSION = 'v25';
+const CACHE_VERSION = 'v26';
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`;
 const RUNTIME_CACHE_NAME = `${CACHE_NAME}-python-runtime`;
@@ -21,6 +21,7 @@ const SHELL_ASSETS = [
     '/static/css/composer.css',
     '/static/js/composer_compositor.js',
     '/static/js/composer_interactions.js',
+    '/static/js/composer-operations.js',
     '/static/js/composer_state.js',
     '/static/js/composer_runtime.js',
     '/static/js/composer_sha256.js',

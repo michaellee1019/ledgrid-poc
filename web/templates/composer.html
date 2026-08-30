@@ -286,6 +286,10 @@
 
         <section class="wall-control-section" aria-labelledby="playbackHeading">
           <div class="wall-section-heading"><h2 id="playbackHeading">Playback &amp; output</h2><span>Global</span></div>
+          <label class="live-edit-control" for="globalPower">
+            <span><strong>Output power</strong><small id="globalPowerStatus" role="status" aria-live="polite">Waiting for a controller observation.</small></span>
+            <span class="compact-switch"><span class="sr-only">Turn physical wall output on or off</span><input id="globalPower" type="checkbox" role="switch"></span>
+          </label>
           <label class="wall-range" for="globalBrightness"><span>Master brightness</span><output id="globalBrightnessValue" for="globalBrightness">—</output></label>
           <input id="globalBrightness" type="range" min="0" max="255" step="1" value="128">
           <label class="wall-range" for="globalSpeed"><span>Operator speed</span><output id="globalSpeedValue" for="globalSpeed">1.00×</output></label>
@@ -481,6 +485,7 @@
   <script src="{{ url_for('static', filename='js/composer_state.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/composer_runtime.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/composer-profiles.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/composer-operations.js') }}" defer></script>
   <script src="{{ url_for('browser_composer_application') }}" defer></script>
 </body>
 </html>

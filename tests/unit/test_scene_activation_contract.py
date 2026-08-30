@@ -201,6 +201,13 @@ class SceneActivationContractTests(unittest.TestCase):
         )
         self.assertEqual(global_settings_digest(self.settings), canonical_json_sha256(normalized))
 
+        powered_off = deepcopy(self.settings)
+        powered_off["output"]["power"] = False
+        self.assertFalse(normalize_global_settings_payload(powered_off)["output"]["power"])
+        self.assertNotEqual(
+            global_settings_digest(powered_off), global_settings_digest(self.settings)
+        )
+
         for path, replacement in (
             (("revision",), 9),
             (("vibe", "resolved_profile_digest"), "d" * 64),
@@ -602,6 +609,31 @@ class ComposerOperationsStatusContractTests(unittest.TestCase):
         self.assertEqual(result["observation"]["revision"]["session_id"], "2" * 32)
         self.assertEqual(result["reconciliation"]["state"], "reconnected")
         self.assertIn("session changed", result["reconciliation"]["reason"])
+
+    def test_output_power_is_revision_qualified_and_distinct_from_idle(self) -> None:
+        powered_off = build_composer_operations_status(self._status(
+            is_running=False,
+            global_settings={"output": {"power": False}},
+        ), now_ms=1_001_000)
+
+        self.assertEqual(powered_off["observation"]["state"], "idle")
+        self.assertEqual(powered_off["output_power"], {
+            "state": "off",
+            "observed": False,
+            "revision": {"session_id": SESSION_A, "state_revision": 41},
+            "reason": "Output is off in the fresh controller observation.",
+        })
+
+    def test_output_power_reports_pending_and_failed_activation_states(self) -> None:
+        pending = build_composer_operations_status(self._status(
+            latest_activation={"phase": "observing", "controller": {"session_id": SESSION_A}},
+        ), now_ms=1_001_000)
+        failed = build_composer_operations_status(self._status(
+            latest_activation={"phase": "failed", "controller": {"session_id": SESSION_A}},
+        ), now_ms=1_001_000)
+
+        self.assertEqual(pending["output_power"]["state"], "pending")
+        self.assertEqual(failed["output_power"]["state"], "failed")
 
     def test_fresh_mismatched_identity_is_explicitly_diverged(self) -> None:
         result = build_composer_operations_status(self._status(

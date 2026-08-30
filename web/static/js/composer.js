@@ -132,6 +132,7 @@
             pendingSince: 0,
             reconciliation: null,
             reconciliationTimer: null,
+            powerActivation: null,
         },
         installationProfile: {
             selectedDigest: null,
@@ -245,6 +246,7 @@
         runtime: {ComposerRuntime, ComposerState, window},
     });
     window.LEDGridComposerModules = ComposerModules;
+    const ComposerOperations = window.LEDGridComposerOperations || null;
 
     // A single existing lifecycle binding proves the seam without pulling a
     // feature domain out of the composition root ahead of its owning packet.
@@ -780,6 +782,11 @@
         const speedScale = safeNumber(status.animation_speed_scale, baseline);
         return {
             vibeId: statusVibeId(status),
+            // A stopped selected scene is intentionally still a selected scene.
+            // Output power is only the controller's live-output bit.
+            power: typeof status?.global_settings?.output?.power === 'boolean'
+                ? status.global_settings.output.power
+                : Boolean(status.is_running || status.painter_active),
             brightness: Math.max(0, Math.min(255, brightness)),
             targetFps: Math.max(1, Math.min(200, targetFps)),
             speedMultiplier: Math.max(.25, Math.min(3, speedScale / baseline)),
@@ -809,7 +816,7 @@
             },
             plant_modifiers: canonicalPlantModifiers(draft.plantModifiers),
             output: {
-                power: true,
+                power: draft.power,
                 brightness: draft.brightness,
                 animation_speed_scale: safeNumber(
                     state.bootstrap?.global_control_contract?.operator_speed_baseline,
@@ -900,6 +907,10 @@
             if (!stored || typeof stored !== 'object') return null;
             return {
                 vibeId: vibeProfiles().some((profile) => profile.vibe_id === stored.vibeId) ? stored.vibeId : 'neutral',
+                // Old Composer drafts had no power field.  Treat them as an
+                // offline-safe intent until the first controller observation,
+                // rather than recreating the former implicit power-on path.
+                power: typeof stored.power === 'boolean' ? stored.power : false,
                 brightness: Math.max(0, Math.min(255, Math.round(safeNumber(stored.brightness, 128)))),
                 targetFps: Math.max(1, Math.min(200, Math.round(safeNumber(stored.targetFps, 30)))),
                 speedMultiplier: Math.max(.25, Math.min(3, safeNumber(stored.speedMultiplier, 1))),
@@ -922,6 +933,7 @@
             brightness: 128,
             target_fps: 30,
             animation_speed_scale: state.bootstrap?.global_control_contract?.operator_speed_baseline,
+            power: false,
         });
         state.globalSettings.observed = bootstrapState;
         state.globalSettings.draft = loadStoredGlobalDraft() || clone(bootstrapState);
@@ -935,6 +947,7 @@
         const draft = state.globalSettings.draft;
         if (!observed || !draft) return [];
         const changes = [];
+        if (observed.power !== draft.power) changes.push({id: 'power', label: 'Output power', before: observed.power ? 'On' : 'Off', after: draft.power ? 'On' : 'Off'});
         if (observed.vibeId !== draft.vibeId) changes.push({id: 'vibe', label: 'Vibe', before: humanize(observed.vibeId), after: humanize(draft.vibeId)});
         if (!globalSettingsEqual(observed.plantModifiers, draft.plantModifiers)) {
             const describe = (plant) => plant.active.length ? plant.active.map(humanize).join(', ') : 'Off';
@@ -1023,6 +1036,7 @@
     function renderGlobalSettings() {
         const draft = state.globalSettings.draft;
         if (!draft) return;
+        $('globalPower').checked = draft.power;
         renderVibeOptions(draft);
         $('globalBrightness').value = String(draft.brightness);
         $('globalBrightnessValue').textContent = `${draft.brightness} / 255`;
@@ -1046,6 +1060,26 @@
         $('resetWallDraftButton').disabled = !changes.length || state.globalSettings.applying;
         $('reviewWallButton').disabled = !changes.length || !state.serverOnline || state.globalSettings.applying || state.globalSettings.pendingObservation;
         $('reviewWallButton').title = !state.serverOnline ? 'Reconnect to review wall-wide changes.' : 'Review every wall-wide command before applying.';
+        const controller = state.controllerObservation || {};
+        const pendingPower = Boolean(state.globalSettings.powerActivation)
+            || (state.globalSettings.pendingObservation && changes.some((change) => change.id === 'power'));
+        const powerState = ComposerOperations?.outputPowerState?.({
+            desired: draft.power,
+            observed: state.globalSettings.observed?.power,
+            pending: pendingPower,
+            outcome: state.globalSettings.powerActivation?.outcome
+                || state.globalSettings.reconciliation?.outcome,
+            provider: controller.sessionId,
+            revision: Number(controller.globalSettingsRevision),
+        });
+        if (powerState) {
+            const desiredLabel = powerState.desired == null
+                ? 'Desired unknown' : `Desired ${powerState.desired ? 'on' : 'off'}`;
+            const observedLabel = powerState.observed == null
+                ? 'Observed unknown' : `Observed ${powerState.observed ? 'on' : 'off'}`;
+            $('globalPowerStatus').textContent = `${desiredLabel} · ${observedLabel} · ${humanize(powerState.state)} · ${powerState.message}${powerState.revision == null ? '' : ` Controller revision ${powerState.revision}.`}`;
+            $('globalPower').setAttribute('aria-describedby', 'globalPowerStatus');
+        }
         updateServerActionButtons();
     }
 
@@ -1059,6 +1093,7 @@
         state.globalSettings.pendingObservation = false;
         state.globalSettings.pendingSince = 0;
         state.globalSettings.reconciliation = null;
+        state.globalSettings.powerActivation = null;
         clearGlobalSettingsReconciliationPolling();
         persistGlobalDraft();
         resetChecker({preserveDocumentRevision: true});
@@ -1130,6 +1165,11 @@
         const returnFocus = document.activeElement;
         const changes = globalChangeList();
         if (!changes.length || !state.serverOnline) return;
+        if (changes.some((change) => change.id === 'power')) {
+            $('serverActionStatus').textContent = 'Output power uses the same checked activation path as scene restoration.';
+            reviewActivation();
+            return;
+        }
         const summary = $('wallChangeSummary');
         summary.replaceChildren();
         changes.forEach((change) => {
@@ -1151,6 +1191,9 @@
         if (!state.serverOnline || !state.globalSettings.dirty || state.globalSettings.applying) return;
         const draft = clone(state.globalSettings.draft);
         const changes = new Set(globalChangeList().map((change) => change.id));
+        if (changes.has('power')) {
+            throw new Error('Output power requires the checked activation path.');
+        }
         const actions = globalActions();
         state.globalSettings.applying = true;
         renderGlobalSettings();
@@ -3573,7 +3616,14 @@
         setActionBusy('activate', true);
         $('serverActionStatus').textContent = 'Reading the current wall settings before issuing a server Check…';
         try {
-            const observed = await refreshGlobalSettings({quiet: true, preserveDraft: false});
+            // Preserve only a locally reviewed power intent. Other Wall
+            // drafts retain the established activation behavior of refreshing
+            // to the observed global state before the server Check.
+            const preservePowerIntent = state.globalSettings.draft?.power
+                !== state.globalSettings.observed?.power;
+            const observed = preservePowerIntent
+                ? await refreshGlobalSettings({quiet: true, preserveDraft: true})
+                : await refreshGlobalSettings({quiet: true, preserveDraft: false});
             if (!observed) throw new Error('Could not read the current wall settings.');
             $('serverActionStatus').textContent = 'Requesting a short-lived server Check for this exact scene and wall state…';
             await createServerCheck();
@@ -3657,6 +3707,52 @@
         const phase = status?.phase || 'queued';
         state.activation.phase = phase;
         state.activation.lastStatus = clone(status);
+        const powerActivation = state.globalSettings.powerActivation;
+        if (powerActivation) {
+            powerActivation.phase = phase;
+            if (phase === 'active' && activationIdentitiesMatch(status)) {
+                // The activation receipt is the controller acknowledgement for
+                // this exact checked power intent.  Keep the UI's observation
+                // revision in lockstep with that receipt until the next status
+                // refresh supplies the complete controller snapshot.
+                state.globalSettings.observed = {
+                    ...state.globalSettings.observed,
+                    power: powerActivation.desired,
+                };
+                const revision = Number(status.controller?.state_revision_after);
+                if (Number.isSafeInteger(revision) && revision >= 0) {
+                    state.controllerObservation = {
+                        ...state.controllerObservation,
+                        globalSettingsRevision: revision,
+                    };
+                }
+                state.globalSettings.powerActivation = null;
+                state.globalSettings.dirty = !globalSettingsEqual(
+                    state.globalSettings.draft, state.globalSettings.observed,
+                );
+                persistGlobalDraft();
+                renderGlobalSettings();
+            } else if (['rolled_back', 'failed', 'timed_out'].includes(phase)) {
+                // Keep a terminal, bounded outcome after the in-flight record
+                // is cleared. The differing observed bit leaves the desired
+                // draft dirty, while the next user edit deterministically
+                // replaces this outcome through updateGlobalDraft().
+                state.globalSettings.reconciliation = {
+                    outcome: {
+                        state: 'failed',
+                        message: status.error || 'The controller did not apply the requested output power.',
+                    },
+                };
+                state.globalSettings.powerActivation = null;
+                renderGlobalSettings();
+            } else {
+                powerActivation.outcome = {
+                    state: 'pending',
+                    message: 'Waiting for the checked controller acknowledgement of output power.',
+                };
+                renderGlobalSettings();
+            }
+        }
         updateActivationResourceButtons();
         const readable = humanize(phase);
         if (phase === 'active') {
@@ -3817,6 +3913,8 @@
             const blockReason = activationBlockReason();
             if (blockReason) throw new Error(blockReason);
             const scene = buildScene();
+            const powerChanged = state.globalSettings.draft?.power
+                !== state.globalSettings.observed?.power;
             const serverCheck = state.serverCheck;
             if (!serverCheck?.token) throw new Error('Request a fresh server Check before activation.');
             if (serverCheck.expiresAt && Date.now() >= serverCheck.expiresAt * 1000) {
@@ -3842,11 +3940,32 @@
             state.activation.pollStartedAt = Date.now();
             state.activation.lastStatus = null;
             state.serverCheck = null;
+            if (powerChanged) {
+                state.globalSettings.powerActivation = {
+                    desired: state.globalSettings.draft.power,
+                    phase: 'queued',
+                    outcome: {
+                        state: 'pending',
+                        message: 'The checked output-power command was accepted; waiting for controller acknowledgement.',
+                    },
+                };
+                renderGlobalSettings();
+            }
             $('serverActionStatus').textContent = `Pending · activation ${result.activation_id} is queued; the wall is not yet reported Active.`;
             toast('Activation queued; waiting for correlated controller observation.');
             pollActivationStatus();
         } catch (error) {
             if (error.code === 'offline') setServerOnline(false);
+            if (state.globalSettings.draft?.power !== state.globalSettings.observed?.power) {
+                state.globalSettings.powerActivation = null;
+                state.globalSettings.reconciliation = {
+                    outcome: {
+                        state: 'failed',
+                        message: `Output-power activation was not accepted: ${error.message}`,
+                    },
+                };
+                renderGlobalSettings();
+            }
             $('serverActionStatus').textContent = `Activation was not accepted: ${error.message}`;
             toast(error.message, 'error');
         } finally {
@@ -4806,6 +4925,9 @@
         $('runCheckerButton').addEventListener('click', runChecker);
         $('prepareOfflineButton')?.addEventListener('click', prepareOffline);
         $('refreshWallButton').addEventListener('click', () => refreshGlobalSettings({preserveDraft: true}));
+        $('globalPower').addEventListener('change', (event) => updateGlobalDraft((next) => {
+            next.power = Boolean(event.target.checked);
+        }));
         $('globalBrightness').addEventListener('input', (event) => updateGlobalDraft((next) => {
             next.brightness = Math.round(safeNumber(event.target.value, 128));
         }));

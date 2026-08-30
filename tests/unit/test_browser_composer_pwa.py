@@ -101,6 +101,7 @@ class BrowserComposerPWATests(unittest.TestCase):
             "/static/css/composer.css",
             "/static/js/composer_compositor.js",
             "/static/js/composer_interactions.js",
+            "/static/js/composer-operations.js",
             "/static/js/composer_state.js",
             "/static/js/composer_runtime.js",
             "/static/js/composer_sha256.js",
