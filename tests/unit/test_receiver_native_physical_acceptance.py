@@ -125,8 +125,26 @@ class _API:
                 "known_python_fallback": fallback,
             }
             return {"command_id": self.command_id}
-        if path == "/api/status":
-            return self.status()
+        if path == "/api/v1/composer/operations/telemetry":
+            status = self.status()
+            return {
+                "schema": "ledgrid.composer-operations-telemetry",
+                "schema_version": 1,
+                "controller": status,
+                "diagnostics": {
+                    "performance": status.get("performance"),
+                    "driver_stats": status.get("driver_stats"),
+                },
+                "calibration": {
+                    "installation_profile_digest": status.get("installation_profile_digest"),
+                    "plant_modifiers": status.get("plant_modifiers"),
+                },
+                "qualification": {
+                    key: status.get(key)
+                    for key in ("active_identity", "scene", "scene_state", "latest_activation")
+                },
+                "receiver_native": status.get("receiver_hybrid"),
+            }
         raise AssertionError((method, path, payload, timeout))
 
     def _native_driver(self):

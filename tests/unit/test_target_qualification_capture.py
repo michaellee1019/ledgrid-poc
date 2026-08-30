@@ -1148,12 +1148,28 @@ class TargetQualificationCaptureTests(unittest.TestCase):
         }
 
         def get_json(url: str):
-            if url.endswith("/api/status"):
-                return live_status()
+            if url.endswith("/api/v1/composer/operations/telemetry"):
+                status = live_status()
+                return {
+                    "schema": "ledgrid.composer-operations-telemetry",
+                    "schema_version": 1,
+                    "controller": status,
+                    "diagnostics": {
+                        "performance": metrics.get("performance"),
+                        "driver_stats": metrics.get("driver"),
+                    },
+                    "calibration": {
+                        "installation_profile_digest": status.get("installation_profile_digest"),
+                        "plant_modifiers": status.get("plant_modifiers"),
+                    },
+                    "qualification": {
+                        key: status.get(key)
+                        for key in ("active_identity", "scene", "scene_state", "latest_activation")
+                    },
+                    "receiver_native": status.get("receiver_hybrid"),
+                }
             if "/api/v1/scene/activations/" in url:
                 return deepcopy(receipt)
-            if url.endswith("/api/metrics"):
-                return deepcopy(metrics)
             raise AssertionError(f"unexpected URL {url}")
 
         with self.assertRaisesRegex(

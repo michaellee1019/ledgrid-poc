@@ -34,6 +34,7 @@ from animation.core.native_background_operation import (  # noqa: E402
 from tools.benchmarks.live_display_state import (  # noqa: E402
     canonical_scene_digest,
 )
+from tools.operations_telemetry import status_from_telemetry  # noqa: E402
 
 
 SCHEMA = "ledgrid.receiver-native-physical-acceptance"
@@ -1301,9 +1302,10 @@ def run_acceptance(
             )
         }
         soak_started = monotonic()
-        active = api.request(
-            "/api/status", timeout=min(config.timeout_seconds, 10.0)
-        )
+        active = status_from_telemetry(api.request(
+            "/api/v1/composer/operations/telemetry",
+            timeout=min(config.timeout_seconds, 10.0),
+        ))
         first_sample = normalize_sample(
             active, elapsed_seconds=0.0, sampled_at=wall_time()
         )
@@ -1331,7 +1333,10 @@ def run_acceptance(
             if remaining <= 1e-6:
                 break
             sleep(min(config.sample_interval_seconds, remaining))
-            raw = api.request("/api/status", timeout=min(config.timeout_seconds, 10.0))
+            raw = status_from_telemetry(api.request(
+                "/api/v1/composer/operations/telemetry",
+                timeout=min(config.timeout_seconds, 10.0),
+            ))
             sample = normalize_sample(
                 raw,
                 elapsed_seconds=max(0.0, monotonic() - soak_started),

@@ -873,7 +873,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         }).encode()
         with patch.object(deploy_target, "urlopen", return_value=response) as opener:
             request_id = deploy_target._request_receiver_status_refresh(
-                "http://127.0.0.1:5000/api/status"
+                "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
             )
 
         request = opener.call_args.args[0]
@@ -886,7 +886,9 @@ class TargetHealthIntegrationTests(unittest.TestCase):
     def test_receiver_status_refresh_rejects_an_unrelated_api_url(self) -> None:
         with (
             patch.object(deploy_target, "urlopen") as opener,
-            self.assertRaisesRegex(RuntimeError, "must end with /api/status"),
+            self.assertRaisesRegex(
+                RuntimeError, "must end with Composer operations telemetry"
+            ),
         ):
             deploy_target._request_receiver_status_refresh(
                 "http://127.0.0.1:5000/status"

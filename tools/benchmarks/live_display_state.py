@@ -14,6 +14,8 @@ import json
 import re
 from typing import Any, Callable, Mapping
 
+from tools.operations_telemetry import status_from_telemetry
+
 
 DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -58,9 +60,12 @@ def require_active_scene(
             "--expected-scene-digest must be the 64-character digest from the "
             "guarded Composer activation receipt"
         )
-    payload = get_json(f"{base_url}/api/status")
-    if not isinstance(payload, Mapping):
-        raise DisplayStateError("live status is unavailable or malformed")
+    try:
+        payload = status_from_telemetry(
+            get_json(f"{base_url}/api/v1/composer/operations/telemetry")
+        )
+    except ValueError as exc:
+        raise DisplayStateError("live operations telemetry is unavailable or malformed") from exc
     scene = payload.get("scene_state")
     if not isinstance(scene, Mapping):
         raise DisplayStateError(

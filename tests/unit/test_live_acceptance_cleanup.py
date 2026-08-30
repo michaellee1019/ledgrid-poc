@@ -41,17 +41,29 @@ class LiveDisplayIdentityTests(unittest.TestCase):
         observed = []
         identity = require_active_scene(
             "http://wall", DIGEST,
-            lambda url: observed.append(url) or {"scene_state": SCENE},
+            lambda url: observed.append(url) or {
+                "schema": "ledgrid.composer-operations-telemetry",
+                "schema_version": 1,
+                "controller": {}, "diagnostics": {}, "calibration": {},
+                "qualification": {"scene_state": SCENE},
+                "receiver_native": None,
+            },
             expected_plugin="rainbow", expected_provider="python",
         )
         self.assertEqual(identity.scene_digest, DIGEST)
         self.assertEqual(identity.scene_revision, 7)
-        self.assertEqual(observed, ["http://wall/api/status"])
+        self.assertEqual(observed, ["http://wall/api/v1/composer/operations/telemetry"])
 
         changed = {**SCENE, "background": {**SCENE["background"], "resolved_parameters": {"speed": 0.6}}}
         with self.assertRaisesRegex(DisplayStateError, "does not match"):
             require_active_scene(
-                "http://wall", DIGEST, lambda _url: {"scene_state": changed}
+                "http://wall", DIGEST, lambda _url: {
+                    "schema": "ledgrid.composer-operations-telemetry",
+                    "schema_version": 1,
+                    "controller": {}, "diagnostics": {}, "calibration": {},
+                    "qualification": {"scene_state": changed},
+                    "receiver_native": None,
+                }
             )
 
     def test_invalid_receipt_digest_rejects_before_status_request(self):
@@ -91,7 +103,12 @@ class RetiredMutationCommandTests(unittest.TestCase):
 
     def test_output_observer_identity_rejection_never_sleeps(self):
         sleep = Mock()
-        get_json = Mock(return_value={"scene_state": SCENE})
+        get_json = Mock(return_value={
+            "schema": "ledgrid.composer-operations-telemetry",
+            "schema_version": 1,
+            "controller": {}, "diagnostics": {}, "calibration": {},
+            "qualification": {"scene_state": SCENE}, "receiver_native": None,
+        })
         with patch.object(
             sys, "argv", [
                 "output_rate_sweep.py", "--seconds", "0.1",
@@ -110,7 +127,12 @@ class RetiredMutationCommandTests(unittest.TestCase):
     def test_receiver_observer_identity_rejection_makes_no_post_or_sleep(self):
         post = Mock()
         sleep = Mock()
-        get_json = Mock(return_value={"scene_state": SCENE})
+        get_json = Mock(return_value={
+            "schema": "ledgrid.composer-operations-telemetry",
+            "schema_version": 1,
+            "controller": {}, "diagnostics": {}, "calibration": {},
+            "qualification": {"scene_state": SCENE}, "receiver_native": None,
+        })
         with patch.object(
             sys, "argv", [
                 "receiver_acceptance.py", "--duration", "0.1", "--warmup", "0",

@@ -20,7 +20,7 @@ sync_fast_deployment
 
 restore_saved=0
 if ssh $SSH_OPTS "$PI_HOST" \
-    "curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/status >/dev/null"; then
+    "curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/v1/composer/operations/telemetry >/dev/null"; then
     echo "[INFO] Saving active settings as the before-deploy preset..."
     ssh $SSH_OPTS "$PI_HOST" \
         "cd ~/$DEPLOY_DIR && venv/bin/python tools/deployment/preserve_deploy_settings.py save"
@@ -43,7 +43,7 @@ ssh $SSH_OPTS "$PI_HOST" \
     "cd ~/$DEPLOY_DIR && venv/bin/python tools/deployment/preserve_deploy_settings.py record-deploy"
 
 echo "[INFO] Checking web server..."
-if ! ssh $SSH_OPTS "$PI_HOST" "for attempt in {1..120}; do curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/status >/dev/null && exit 0; sleep 0.25; done; exit 1"; then
+if ! ssh $SSH_OPTS "$PI_HOST" "for attempt in {1..120}; do curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/v1/composer/operations/telemetry >/dev/null && exit 0; sleep 0.25; done; exit 1"; then
     echo "[ERROR] Web server did not become healthy; collecting startup logs" >&2
     ssh $SSH_OPTS "$PI_HOST" \
         "sudo systemctl status ledgrid.service --no-pager -l || true; tail -80 ~/$DEPLOY_DIR/web.log 2>/dev/null || true; tail -80 ~/$DEPLOY_DIR/controller.log 2>/dev/null || true"

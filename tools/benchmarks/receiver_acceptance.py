@@ -11,8 +11,10 @@ from urllib import request
 
 if __package__:
     from tools.benchmarks.live_display_state import require_active_scene
+    from tools.operations_telemetry import metrics_from_telemetry
 else:  # Direct script execution from the documented Just recipes.
     from live_display_state import require_active_scene
+    from tools.operations_telemetry import metrics_from_telemetry
 
 
 CAPABILITY_STATIC_LOCAL_BACKGROUND = 1 << 0
@@ -489,7 +491,9 @@ def main():
         metrics = None
         refresh = None
         while time.monotonic() < deadline:
-            metrics = _get_json(f"{base_url}/api/metrics")
+            metrics = metrics_from_telemetry(
+                _get_json(f"{base_url}/api/v1/composer/operations/telemetry")
+            )
             aggregate = metrics.get("driver", {}).get("aggregate", {})
             refresh = aggregate.get("receiver_status_refresh")
             if isinstance(refresh, dict) and refresh.get("request_id") == request_id:
@@ -522,7 +526,9 @@ def main():
         samples = {device: [] for device in devices_to_check}
         sample_times = []
         while True:
-            metrics = _get_json(f"{base_url}/api/metrics")
+            metrics = metrics_from_telemetry(
+                _get_json(f"{base_url}/api/v1/composer/operations/telemetry")
+            )
             sampled_at = time.monotonic()
             observed_target = int(
                 metrics.get("animation", {}).get("target_fps", 0) or 0

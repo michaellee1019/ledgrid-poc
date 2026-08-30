@@ -323,11 +323,28 @@ class _API:
     def get(self, path: str, *, timeout: float):
         del timeout
         elapsed = self.clock.monotonic()
-        if path == "/api/status":
+        if path == "/api/v1/composer/operations/telemetry":
             result = _status(elapsed)
             if self.mutation is not None:
                 self.mutation(result, None, elapsed)
-            return result
+            return {
+                "schema": "ledgrid.composer-operations-telemetry",
+                "schema_version": 1,
+                "controller": result,
+                "diagnostics": {
+                    "performance": result.get("performance"),
+                    "driver_stats": result.get("driver_stats"),
+                },
+                "calibration": {
+                    "installation_profile_digest": result.get("installation_profile_digest"),
+                    "plant_modifiers": result.get("plant_modifiers"),
+                },
+                "qualification": {
+                    key: result.get(key)
+                    for key in ("active_identity", "scene", "scene_state", "latest_activation")
+                },
+                "receiver_native": result.get("receiver_hybrid"),
+            }
         if path == "/api/v1/scene/activations/activation-1":
             result = _activation()
             if self.mutation is not None:

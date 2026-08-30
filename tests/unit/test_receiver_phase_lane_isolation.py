@@ -461,8 +461,10 @@ class ReceiverPhaseLaneIsolationTests(unittest.TestCase):
 
     def test_post_service_observation_requires_exact_production_topology(self):
         devices = [_snapshot(index) for index in range(5)]
-        metrics = {
-            "driver": {
+        telemetry = {
+            "schema": "ledgrid.composer-operations-telemetry",
+            "schema_version": 1,
+            "diagnostics": {"driver_stats": {
                 "aggregate": {
                     "receiver_status_refresh": {
                         "request_id": "fresh-1",
@@ -471,13 +473,13 @@ class ReceiverPhaseLaneIsolationTests(unittest.TestCase):
                     }
                 },
                 "devices": devices,
-            }
+            }},
         }
 
         def response(url, **_kwargs):
             if url.endswith("/refresh"):
                 return {"accepted": True, "request_id": "fresh-1"}
-            return metrics
+            return telemetry
 
         with mock.patch(
             "tools.diagnostics.receiver_phase_lane_isolation._json_request",

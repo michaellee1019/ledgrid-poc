@@ -114,11 +114,5 @@ else
   echo \"run_state/status.json missing\"
 fi" || true
 
-section "api status (remote)"
-{ ssh ${SSH_OPTS} "${REMOTE}" "curl -sS -w '\nHTTP:%{http_code}\n' 'http://localhost:${PORT}/api/status' 2>&1" 2>&1 || true; } | python3 "${PARSE_SCRIPT}"
-
-section "api metrics (remote)"
-{ ssh ${SSH_OPTS} "${REMOTE}" "curl -sS -w '\nHTTP:%{http_code}\n' 'http://localhost:${PORT}/api/metrics' 2>&1" 2>&1 || true; } | python3 "${PARSE_SCRIPT}"
-
-section "api hardware stats (remote)"
-{ ssh ${SSH_OPTS} "${REMOTE}" "curl -sS -w '\nHTTP:%{http_code}\n' 'http://localhost:${PORT}/api/hardware/stats' 2>&1" 2>&1 || true; } | python3 "${PARSE_SCRIPT}"
+section "composer operations telemetry (remote)"
+{ ssh ${SSH_OPTS} "${REMOTE}" "curl -sS -w '\nHTTP:%{http_code}\n' 'http://localhost:${PORT}/api/v1/composer/operations/telemetry' 2>&1" 2>&1 || true; } | python3 "${PARSE_SCRIPT}"

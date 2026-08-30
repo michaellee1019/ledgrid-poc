@@ -33,6 +33,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools.benchmarks.live_display_state import canonical_scene_digest  # noqa: E402
+from tools.operations_telemetry import status_from_telemetry  # noqa: E402
 
 
 SCHEMA = "ledgrid.guarded-wall-soak"
@@ -1252,7 +1253,10 @@ def run_soak(
         expected_activation_identity: Mapping[str, Any] | None = None
         while True:
             elapsed = max(0.0, monotonic() - started)
-            status = api.get("/api/status", timeout=config.timeout_seconds)
+            status = status_from_telemetry(api.get(
+                "/api/v1/composer/operations/telemetry",
+                timeout=config.timeout_seconds,
+            ))
             activation = api.get(
                 f"/api/v1/scene/activations/{config.activation_id}",
                 timeout=config.timeout_seconds,

@@ -812,7 +812,12 @@ def _wait_native_command(
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        status = _api_json(target, "/api/status", timeout=min(timeout, 10.0))
+        telemetry = _api_json(
+            target,
+            "/api/v1/composer/operations/telemetry",
+            timeout=min(timeout, 10.0),
+        )
+        status = _native_operations_status(telemetry)
         if (
             status.get("last_command_id") == command_id
             and _native_command_status_error(
@@ -830,6 +835,36 @@ def _wait_native_command(
     raise NativeBackgroundWorkflowError(
         f"target did not prove native {expected_state} state before timeout"
     )
+
+
+def _native_operations_status(telemetry: Mapping[str, Any]) -> dict[str, Any]:
+    """Adapt the versioned operations document to native receipt validation."""
+    if (
+        telemetry.get("schema") != "ledgrid.composer-operations-telemetry"
+        or telemetry.get("schema_version") != 1
+    ):
+        raise NativeBackgroundWorkflowError(
+            "target does not expose the Composer operations telemetry contract"
+        )
+    controller = telemetry.get("controller")
+    diagnostics = telemetry.get("diagnostics")
+    qualification = telemetry.get("qualification")
+    if not all(isinstance(value, Mapping) for value in (
+        controller, diagnostics, qualification,
+    )):
+        raise NativeBackgroundWorkflowError(
+            "target operations telemetry is incomplete"
+        )
+    return {
+        **dict(controller),
+        **dict(qualification),
+        "driver_stats": diagnostics.get("driver_stats"),
+        "receiver_hybrid": telemetry.get("receiver_native"),
+        "installation_profile_digest": (
+            telemetry.get("calibration", {}).get("installation_profile_digest")
+            if isinstance(telemetry.get("calibration"), Mapping) else None
+        ),
+    }
 
 
 def _native_command_status_error(

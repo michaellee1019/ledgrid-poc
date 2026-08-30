@@ -11,8 +11,10 @@ from urllib import request
 
 if __package__:
     from tools.benchmarks.live_display_state import require_active_scene
+    from tools.operations_telemetry import metrics_from_telemetry
 else:  # Direct script execution from the documented Just recipe.
     from live_display_state import require_active_scene
+    from tools.operations_telemetry import metrics_from_telemetry
 
 
 def _get_json(url):
@@ -44,14 +46,18 @@ def main():
             base_url, args.expected_scene_digest, _get_json,
             expected_plugin=args.animation, expected_provider="python",
         )
-        first = _get_json(f"{base_url}/api/metrics")
+        first = metrics_from_telemetry(
+            _get_json(f"{base_url}/api/v1/composer/operations/telemetry")
+        )
         if _target_fps(first) != args.rate:
             raise RuntimeError(
                 f"pre-activated target FPS is {_target_fps(first)}, expected {args.rate}; "
                 "change it through the guarded operator surface before measuring"
             )
         time.sleep(args.seconds)
-        last = _get_json(f"{base_url}/api/metrics")
+        last = metrics_from_telemetry(
+            _get_json(f"{base_url}/api/v1/composer/operations/telemetry")
+        )
         require_active_scene(
             base_url, args.expected_scene_digest, _get_json,
             expected_plugin=args.animation, expected_provider="python",

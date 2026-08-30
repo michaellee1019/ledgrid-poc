@@ -505,6 +505,26 @@ class NativeRuntimeCommandTests(unittest.TestCase):
             })
         return result
 
+    @classmethod
+    def operations_telemetry(cls, *, state):
+        status = cls.native_status(state=state)
+        return {
+            "schema": "ledgrid.composer-operations-telemetry",
+            "schema_version": 1,
+            "controller": {"last_command_id": status["last_command_id"]},
+            "diagnostics": {"driver_stats": status.get("driver_stats")},
+            "calibration": {
+                "installation_profile_digest": status.get(
+                    "installation_profile_digest"
+                ),
+            },
+            "qualification": {
+                "scene": status.get("scene"),
+                "scene_state": status.get("scene_state"),
+            },
+            "receiver_native": status.get("receiver_hybrid"),
+        }
+
     def test_install_resolves_catalog_binding_and_waits_for_exact_ready_proof(self):
         observed = []
 
@@ -514,7 +534,7 @@ class NativeRuntimeCommandTests(unittest.TestCase):
                 return {"components": [self.native_descriptor()]}
             if path.endswith("/install"):
                 return {"command_id": 7}
-            return self.native_status(state="ready")
+            return self.operations_telemetry(state="ready")
 
         with mock.patch.object(native_entrypoint, "_api_json", side_effect=api):
             result = native_entrypoint.run_install(

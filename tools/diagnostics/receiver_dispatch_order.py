@@ -40,8 +40,9 @@ if TYPE_CHECKING:
 
 
 SERVICE = "ledgrid.service"
-STATUS_URL = "http://127.0.0.1:5000/api/status"
-DEVICE_STATE_URL = "http://127.0.0.1:5000/api/device/state"
+OPERATIONS_TELEMETRY_URL = (
+    "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
+)
 PRODUCTION_STAGGER_PHASES = 3
 FEC_RECEIVER_ID = 3
 DEFAULT_ORDERS = ((0, 1, 2, 3, 4), (0, 1, 3, 2, 4), (0, 1, 2, 3, 4))
@@ -169,29 +170,32 @@ def _json_request(
 
 
 def _wait_for_safe_idle(timeout: float = 30.0) -> Mapping[str, Any]:
+    """Require a current, non-mutating idle observation before direct SPI work."""
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            _json_request(
-                DEVICE_STATE_URL,
-                method="POST",
-                payload={"power": False, "brightness": 0},
-            )
-            status = _json_request(STATUS_URL)
+            telemetry = _json_request(OPERATIONS_TELEMETRY_URL)
             if (
-                status.get("mode") == "idle"
-                and status.get("is_running") is False
-                and status.get("current_animation") is None
-                and status.get("brightness") == 0
-                and status.get("frame_data_length") == 0
+                telemetry.get("schema")
+                != "ledgrid.composer-operations-telemetry"
+                or telemetry.get("schema_version") != 1
             ):
-                return status
+                raise DispatchDiagnosticError(
+                    "controller operations telemetry contract is unsupported"
+                )
+            controller = telemetry.get("controller")
+            if (
+                isinstance(controller, Mapping)
+                and controller.get("mode") == "idle"
+                and controller.get("is_running") is False
+            ):
+                return dict(controller)
         except Exception as exc:  # Service may still be starting.
             last_error = exc
         time.sleep(0.25)
     raise DispatchDiagnosticError(
-        f"controller did not return to black idle state: {last_error}"
+        f"controller did not report a current black idle observation: {last_error}"
     )
 
 
@@ -266,7 +270,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     cleanup_error: Exception | None = None
     try:
         if service_was_active:
-            _wait_for_safe_idle()
+            # This direct-SPI diagnostic owns a brightness-zero frame below;
+            # stop the service first instead of relying on the retired device
+            # state mutation endpoint.
             _service("stop")
         controller = _controller()
         controller.set_brightness(0)
@@ -327,7 +333,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if service_was_active:
             try:
                 _service("start")
-                _wait_for_safe_idle()
             except Exception as exc:
                 cleanup_error = cleanup_error or exc
         if cleanup_error is not None and sys.exc_info()[0] is None:

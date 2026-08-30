@@ -67,7 +67,9 @@ DIAGNOSTIC_STAGGER_PHASES = 1
 FEC_RECEIVER_ID = 3
 RECEIVER_COUNT = len(WALL_DEVICE_MAP)
 STATUS_SETTLE_TIMEOUT_SECONDS = 5.0
-METRICS_URL = "http://127.0.0.1:5000/api/metrics"
+OPERATIONS_TELEMETRY_URL = (
+    "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
+)
 RECEIVER_REFRESH_URL = "http://127.0.0.1:5000/api/v1/receivers/status/refresh"
 RESET_COUNTER_FIELD = "receiver_fec_terminal_counter_resets"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -920,8 +922,19 @@ def _post_service_production_observation(
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            metrics = _json_request(METRICS_URL)
-            driver = metrics.get("driver")
+            telemetry = _json_request(OPERATIONS_TELEMETRY_URL)
+            if (
+                telemetry.get("schema") != "ledgrid.composer-operations-telemetry"
+                or telemetry.get("schema_version") != 1
+            ):
+                raise DispatchDiagnosticError(
+                    "service operations telemetry contract is unsupported"
+                )
+            diagnostics = telemetry.get("diagnostics")
+            driver = (
+                diagnostics.get("driver_stats")
+                if isinstance(diagnostics, Mapping) else None
+            )
             aggregate = driver.get("aggregate") if isinstance(driver, Mapping) else None
             refresh = (
                 aggregate.get("receiver_status_refresh")

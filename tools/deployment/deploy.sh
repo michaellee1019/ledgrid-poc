@@ -182,7 +182,7 @@ start_system() {
 check_web_server() {
     log_info "Checking web server..."
     if ! ssh $SSH_OPTS "$PI_HOST" \
-        "for attempt in {1..120}; do curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/status >/dev/null && exit 0; sleep 0.25; done; exit 1"; then
+        "for attempt in {1..120}; do curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/v1/composer/operations/telemetry >/dev/null && exit 0; sleep 0.25; done; exit 1"; then
         log_error "Web server did not become healthy; collecting startup logs"
         ssh $SSH_OPTS "$PI_HOST" \
             "sudo systemctl status ledgrid.service --no-pager -l || true; sudo journalctl -u ledgrid.service -n 80 --no-pager || true; tail -80 ~/$DEPLOY_DIR/web.log 2>/dev/null || true; tail -80 ~/$DEPLOY_DIR/controller.log 2>/dev/null || true"

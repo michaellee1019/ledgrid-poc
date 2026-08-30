@@ -305,6 +305,21 @@ class AnimationWebInterface:
             response.headers['Cache-Control'] = 'no-store'
             return response
 
+        @self.app.route('/api/v1/composer/operations/telemetry')
+        def api_browser_composer_operations_telemetry():
+            """Versioned controller evidence for deployment and retained diagnostics.
+
+            This is deliberately separate from the browser-facing operations
+            summary: deployment and receiver diagnostics need a stable,
+            explicit roster and counter contract, while Composer only needs a
+            bounded health projection.  Keeping that projection and this
+            telemetry document separate lets the old ``/api/status`` family be
+            retired without teaching non-browser callers to scrape UI data.
+            """
+            response = jsonify(self._operations_telemetry_payload())
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
         @self.app.route('/api/v1/composer/maintenance', methods=['POST'])
         def api_browser_composer_maintenance():
             """Enqueue one reviewed maintenance request through controller IPC."""
@@ -4173,6 +4188,71 @@ class AnimationWebInterface:
             status['frame_data'] = []
 
         return status
+
+    def _operations_telemetry_payload(self) -> Dict[str, Any]:
+        """Return the explicit non-browser controller read contract.
+
+        Do not return the legacy status document wholesale.  Each retained
+        owner gets only its declared deployment, receiver-diagnostic,
+        calibration/profile, or guarded-qualification evidence here.
+        """
+        status = self._status_payload()
+        driver = status.get('driver_stats')
+        driver = dict(driver) if isinstance(driver, dict) else {}
+        receiver_hybrid = status.get('receiver_hybrid')
+        receiver_hybrid = (
+            dict(receiver_hybrid) if isinstance(receiver_hybrid, dict) else None
+        )
+
+        return {
+            'schema': 'ledgrid.composer-operations-telemetry',
+            'schema_version': 1,
+            'controller': {
+                'updated_at': status.get('timestamp'),
+                'release_id': status.get('release_id'),
+                'release_consistent': status.get('release_consistent'),
+                'controller_release_id': status.get('controller_release_id'),
+                'led_info': status.get('led_info'),
+                'mode': status.get('mode'),
+                'is_running': status.get('is_running'),
+                'current_animation': status.get('current_animation'),
+                'brightness': status.get('brightness'),
+                'target_fps': status.get('target_fps'),
+                'actual_fps': status.get('actual_fps'),
+                'pipeline_fps': status.get('pipeline_fps'),
+                'uptime': status.get('uptime'),
+                'last_command_id': status.get('last_command_id'),
+                'controller_session_id': status.get('controller_session_id'),
+                'controller_state_revision': status.get(
+                    'controller_state_revision'
+                ),
+                'current_identity_digest': status.get(
+                    'current_identity_digest'
+                ),
+            },
+            'deployment': {
+                'release_id': status.get('release_id'),
+                'release_consistent': status.get('release_consistent'),
+                'deploy_timestamp': status.get('deploy_timestamp'),
+            },
+            'diagnostics': {
+                'performance': status.get('performance'),
+                'driver_stats': driver,
+            },
+            'calibration': {
+                'installation_profile_digest': status.get(
+                    'installation_profile_digest'
+                ),
+                'plant_modifiers': status.get('plant_modifiers'),
+            },
+            'qualification': {
+                'active_identity': status.get('active_identity'),
+                'scene': status.get('scene'),
+                'scene_state': status.get('scene_state'),
+                'latest_activation': status.get('latest_activation'),
+            },
+            'receiver_native': receiver_hybrid,
+        }
 
     def _deploy_timestamp(self) -> Optional[float]:
         """Read the most recent successful fast-deploy timestamp from disk."""

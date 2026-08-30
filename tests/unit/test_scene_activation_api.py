@@ -205,6 +205,45 @@ class SceneActivationApiTests(unittest.TestCase):
             },
         }
 
+    def test_operations_telemetry_retains_only_non_browser_contract_sections(self):
+        status = self.channel.read_status()
+        status.update({
+            "updated_at": 1_000.0,
+            "mode": "idle",
+            "is_running": False,
+            "performance": {"avg_frame_ms": 2.5},
+            "driver_stats": {
+                "aggregate": {"num_devices": 5},
+                "devices": [{"receiver_logical_device": 0}],
+            },
+            "receiver_hybrid": {"operational": True},
+            "scene": {"provider_mode": "receiver_native"},
+            "scene_state": {"revision": 7},
+            "latest_activation": {"phase": "active"},
+        })
+        self.channel.write_status(status)
+
+        response = self.client.get("/api/v1/composer/operations/telemetry")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        payload = response.get_json()
+        self.assertEqual(payload["schema"], "ledgrid.composer-operations-telemetry")
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(set(payload), {
+            "schema", "schema_version", "controller", "deployment",
+            "diagnostics", "calibration", "qualification", "receiver_native",
+        })
+        self.assertEqual(payload["controller"]["release_id"], RELEASE_ID)
+        self.assertTrue(payload["controller"]["release_consistent"])
+        self.assertEqual(payload["diagnostics"]["driver_stats"]["aggregate"], {
+            "num_devices": 5,
+        })
+        self.assertEqual(payload["calibration"]["installation_profile_digest"], "0" * 64)
+        self.assertEqual(payload["qualification"]["scene_state"], {"revision": 7})
+        self.assertEqual(payload["receiver_native"], {"operational": True})
+        self.assertNotIn("frame_data", payload["controller"])
+
     def test_check_uses_controller_catalog_runtime_identity_not_web_projection(self):
         checked = self._check().get_json()
         authoritative = manager_controller_runtime_digests(
@@ -967,8 +1006,13 @@ class SceneActivationApiTests(unittest.TestCase):
         for method, path in aliases:
             with self.subTest(path=path):
                 response = getattr(self.client, method)(path, json={})
-                self.assertEqual(response.status_code, 428)
-                self.assertEqual(response.get_json()["code"], "guarded_activation_required")
+                if path.startswith("/api/v1/studio-next/"):
+                    self.assertEqual(response.status_code, 404)
+                else:
+                    self.assertEqual(response.status_code, 428)
+                    self.assertEqual(
+                        response.get_json()["code"], "guarded_activation_required"
+                    )
 
     def test_every_execution_alias_is_fail_closed_without_any_command(self) -> None:
         aliases = (
@@ -990,11 +1034,14 @@ class SceneActivationApiTests(unittest.TestCase):
         for method, path, body in aliases:
             with self.subTest(method=method, path=path):
                 response = getattr(self.client, method)(path, json=body)
-                self.assertEqual(response.status_code, 428, response.get_json())
-                self.assertIn(
-                    response.get_json()["code"],
-                    {"guarded_activation_required", "activation_precondition_required"},
-                )
+                if path.startswith("/api/v1/studio-next/"):
+                    self.assertEqual(response.status_code, 404)
+                else:
+                    self.assertEqual(response.status_code, 428, response.get_json())
+                    self.assertIn(
+                        response.get_json()["code"],
+                        {"guarded_activation_required", "activation_precondition_required"},
+                    )
                 self.assertEqual(self.channel.list_activation_commands(), [])
                 self.assertIsNone(self.channel.read_control())
 

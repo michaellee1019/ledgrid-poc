@@ -55,7 +55,7 @@ RELEASE_PATTERN = re.compile(r"[0-9a-f]{64}")
 DEFAULT_RECEIPT_DIR = PurePosixPath("run_state/deploy_receipts")
 DEFAULT_SYSTEMD_UNIT = "ledgrid.service"
 SYSTEMD_UNIT_ROOT = Path("/etc/systemd/system")
-DEFAULT_API_URL = "http://127.0.0.1:5000/api/status"
+DEFAULT_API_URL = "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
 STRICT_RECEIVER_HEALTH_POLL_SECONDS = 0.75
 PLATFORMIO_BUILD_CACHE = ".platformio-build-cache"
 CCACHE_DIRECTORY = ".ccache"
@@ -2523,17 +2523,32 @@ def _api_status(api_url: str, timeout: float = 2.0) -> Mapping[str, Any]:
     except (OSError, URLError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"cannot read controller API status: {exc}") from exc
     if not isinstance(payload, dict):
-        raise RuntimeError("controller API status is not an object")
-    return payload
+        raise RuntimeError("controller operations telemetry is not an object")
+    if (
+        payload.get("schema") != "ledgrid.composer-operations-telemetry"
+        or payload.get("schema_version") != 1
+    ):
+        raise RuntimeError("controller operations telemetry contract is unsupported")
+    controller = payload.get("controller")
+    diagnostics = payload.get("diagnostics")
+    if not isinstance(controller, dict) or not isinstance(diagnostics, dict):
+        raise RuntimeError("controller operations telemetry is incomplete")
+    # Keep the health validator independent from the HTTP document shape.  It
+    # receives the exact fields it historically validated, now supplied by the
+    # versioned operations owner rather than the legacy status route.
+    return {
+        **controller,
+        "driver_stats": diagnostics.get("driver_stats"),
+    }
 
 
 def _request_receiver_status_refresh(
     api_url: str, timeout: float = 2.0,
 ) -> str:
-    suffix = "/api/status"
+    suffix = "/api/v1/composer/operations/telemetry"
     if not api_url.endswith(suffix):
         raise RuntimeError(
-            "receiver health API URL must end with /api/status for explicit refresh"
+            "receiver health API URL must end with Composer operations telemetry for explicit refresh"
         )
     refresh_url = (
         api_url[:-len(suffix)] + "/api/v1/receivers/status/refresh"

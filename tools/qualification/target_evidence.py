@@ -36,6 +36,10 @@ from animation.core.activation_qualification import (  # noqa: E402
     normalize_target_qualification_evidence,
 )
 from tools.benchmarks.live_display_state import require_active_scene  # noqa: E402
+from tools.operations_telemetry import (  # noqa: E402
+    metrics_from_telemetry,
+    status_from_telemetry,
+)
 from tools.benchmarks.receiver_acceptance import (  # noqa: E402
     INSTALLED_LEDS_PER_STRIP,
     INSTALLED_RECEIVER_COUNT,
@@ -1266,7 +1270,12 @@ def _refresh_receiver_metrics(
         raise TargetEvidenceError("receiver status refresh was not accepted")
     deadline = monotonic() + 10.0
     while monotonic() < deadline:
-        metrics = get_json(f"{base}/api/metrics")
+        try:
+            metrics = metrics_from_telemetry(get_json(
+                f"{base}/api/v1/composer/operations/telemetry"
+            ))
+        except ValueError as exc:
+            raise TargetEvidenceError("operations telemetry is unavailable or malformed") from exc
         proof = (
             metrics.get("driver", {}).get("aggregate", {}).get(
                 "receiver_status_refresh"
@@ -1320,7 +1329,12 @@ def capture(
         global_settings_digest=global_settings_digest,
         profile_digest=profile_digest,
     )
-    initial_status = get_json(f"{base}/api/status")
+    try:
+        initial_status = status_from_telemetry(get_json(
+            f"{base}/api/v1/composer/operations/telemetry"
+        ))
+    except ValueError as exc:
+        raise TargetEvidenceError("operations telemetry is unavailable or malformed") from exc
     validate_live_status(
         initial_status,
         target_fps=target_fps,
@@ -1360,7 +1374,12 @@ def capture(
     capture_started_at = int(time.time() * 1000)
     started = monotonic()
     while True:
-        sample = get_json(f"{base}/api/metrics")
+        try:
+            sample = metrics_from_telemetry(get_json(
+                f"{base}/api/v1/composer/operations/telemetry"
+            ))
+        except ValueError as exc:
+            raise TargetEvidenceError("operations telemetry is unavailable or malformed") from exc
         if not isinstance(sample, Mapping):
             raise TargetEvidenceError("metrics sample is malformed")
         if sample.get("animation", {}).get("target_fps") != target_fps:
@@ -1395,7 +1414,12 @@ def capture(
         global_settings_digest=global_settings_digest,
         profile_digest=profile_digest,
     )
-    final_status = get_json(f"{base}/api/status")
+    try:
+        final_status = status_from_telemetry(get_json(
+            f"{base}/api/v1/composer/operations/telemetry"
+        ))
+    except ValueError as exc:
+        raise TargetEvidenceError("operations telemetry is unavailable or malformed") from exc
     validate_live_status(
         final_status,
         target_fps=target_fps,
