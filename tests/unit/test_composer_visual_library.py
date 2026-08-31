@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from animation.core.scene_runtime import CanonicalSceneRuntimeError
-from tests.unit.test_composer_looks import _PreviewManager, _WallChannel, _scene
+from tests.unit.test_composer_looks import _PreviewManager, _WallChannel
 from web.app import AnimationWebInterface
 from web.composer_library_state import ComposerLibraryState
 from web.scene_look_store import SceneLookStore
@@ -37,7 +37,7 @@ class ComposerVisualLibraryTests(unittest.TestCase):
         starter = self.client.get("/api/composer/starters/aurora_clock").get_json()["starter"]
         direct = self.client.post("/api/composer/preview", json={
             "origin": "composer",
-            "scene": {"schema": "ledgrid.scene.v1", "vibe": "quiet", "master_brightness": 1, "background": starter["background"], "overlays": starter["overlays"]},
+            "scene": starter["scene"],
             "preview": body["preview_time"],
         }).get_json()
         self.assertEqual(body["reference"], {"kind": "starter", "id": "aurora_clock"})
@@ -50,7 +50,8 @@ class ComposerVisualLibraryTests(unittest.TestCase):
         self.assertEqual((self.wall.commands, self.interface.composer_control.commands), ([], []))
 
     def test_saved_look_card_uses_its_current_canonical_basis_without_opening_it(self) -> None:
-        saved = self.client.post("/api/composer/looks", json={"name": "Night Garden", "draft": _scene()}).get_json()["look"]
+        scene = self.client.get("/api/composer/starters/aurora").get_json()["starter"]["scene"]
+        saved = self.client.post("/api/composer/looks", json={"name": "Night Garden", "scene": scene}).get_json()["look"]
         before = self.client.get("/api/composer/library").get_json()
         response = self.client.post("/api/composer/library/cards", json={"reference": {"kind": "look", "id": saved["id"]}})
         self.assertEqual(response.status_code, 200)
@@ -82,18 +83,21 @@ class ComposerVisualLibraryTests(unittest.TestCase):
         self.assertIsNone(self.interface.working_draft.get())
         self.assertEqual((self.wall.commands, self.interface.composer_control.commands), ([], []))
 
-    def test_client_declares_lazy_bounded_basis_keyed_card_loading(self) -> None:
+    def test_client_opens_current_built_ins_through_the_live_scene_boundary(self) -> None:
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        css = Path("web/static/css/composer_slice.css").read_text(encoding="utf-8")
-        self.assertIn("`${api}/library/cards`", script)
-        self.assertIn("IntersectionObserver", script)
-        self.assertIn("state.libraryCardInFlight < 2", script)
-        self.assertIn("libraryPreviewCache: new Map()", script)
-        self.assertIn("libraryCardByReference: new Map()", script)
-        self.assertIn("libraryPreviewGeneration", script)
-        self.assertIn("drawFrame(canvas, card.frame)", script)
-        self.assertIn(".library-card-preview", css)
-        self.assertNotIn("recordRecent(item);", script[script.index("async function fetchLibraryCard"):script.index("function renderLooks")])
+        self.assertIn("`${api}/starters/${item.id}`", script)
+        self.assertIn("await submit(starter.scene, {builtin: true})", script)
+        self.assertIn("const endpoint = builtin ? '/built-ins/open' : '/scene';", script)
+
+    def test_every_current_built_in_opens_without_stopping_live_output(self) -> None:
+        scene = self.client.get("/api/composer/starters/aurora").get_json()["starter"]["scene"]
+        self.client.post("/api/composer/scene", json={"origin": "composer", "scene": scene, "client_id": "starter-test", "client_sequence": 1})
+        self.client.post("/api/composer/go-live", json={"client_id": "starter-test"})
+        for sequence, starter in enumerate(self.client.get("/api/composer/starters").get_json()["starters"], start=2):
+            detail = self.client.get(f"/api/composer/starters/{starter['id']}").get_json()["starter"]
+            response = self.client.post("/api/composer/built-ins/open", json={"scene": detail["scene"], "client_id": "starter-test", "client_sequence": sequence})
+            self.assertEqual(response.status_code, 200, response.get_json())
+            self.assertTrue(response.get_json()["status"]["running"])
 
 
 if __name__ == "__main__":

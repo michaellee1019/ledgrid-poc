@@ -34,8 +34,8 @@ class ComposerOfflineShellTests(unittest.TestCase):
         worker.close()
 
     def test_worker_precaches_only_versioned_shell_assets_and_never_api_state(self) -> None:
-        self.assertIn("const CACHE_NAME = 'composer-shell-v1'", self.worker)
-        for asset in ('composer_preview_scheduler.js', 'composer_slice.js', 'composer_navigation.js', 'composer_state_explanation.js', 'composer_shell.js', 'manifest.webmanifest', 'icon.svg', 'offline.html'):
+        self.assertIn("const CACHE_NAME = 'composer-shell-v2'", self.worker)
+        for asset in ('composer_preview_scheduler.js', 'composer_slice.js', 'composer_shell.js', 'manifest.webmanifest', 'icon.svg', 'offline.html'):
             self.assertIn(asset, self.worker)
         self.assertIn("url.pathname.startsWith('/api/')", self.worker)
         self.assertIn("'Cache-Control':'no-store'", self.worker)
@@ -44,23 +44,24 @@ class ComposerOfflineShellTests(unittest.TestCase):
         self.assertNotIn('/api/composer', self.worker)
 
     def test_offline_shell_disables_mutations_and_requires_fresh_reconnect(self) -> None:
-        for selector in ('#saveLook', '#remixStarter', '#goLive', '#stopScene', '#overlayList button', '#lookList button', '#libraryList button', '#scenePreview'):
+        for selector in ('#saveScene', '#saveAsScene', '#liveAction', '#checkScene', '#libraryList button', '#scenePreview'):
             self.assertIn(selector, self.shell)
         self.assertIn("['click', 'pointerdown', 'keydown', 'input', 'change']", self.shell)
         self.assertIn("window.__composerShellUnavailable=true", self.shell)
         self.assertIn("composer-server-unavailable", self.shell)
         self.assertIn("window.location.reload()", self.shell)
-        self.assertIn("hasProtectedDraft()", self.shell)
+        self.assertIn("hasProtectedScene()", self.shell)
         self.assertIn("let activatingUpdate = false", self.shell)
         self.assertIn("activatingUpdate=true", self.shell)
         self.assertIn("if (activatingUpdate) window.location.reload()", self.shell)
-        self.assertIn("['#draftState', 'Unavailable offline.']", self.shell)
-        self.assertIn("Network is available. Reload Composer to reconnect", self.shell)
+        self.assertIn("['#saveState', 'Unavailable offline']", self.shell)
+        self.assertIn("Reload Composer to reconnect and fetch current local state.", self.shell)
         self.assertNotIn("Local Composer server is available", self.shell)
-        self.assertIn("navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v1', {scope:'/'})", self.shell)
-        self.assertIn("if (!window.__composerShellUnavailable)", self.slice)
-        self.assertIn("fetch(`${api}/status`)", self.slice)
-        self.assertIn("serverUnavailable", self.slice)
+        self.assertNotIn("window.addEventListener('offline', setOffline)", self.shell)
+        self.assertNotIn("navigator.onLine", self.shell)
+        self.assertIn("navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v2', {scope:'/'})", self.shell)
+        self.assertIn("fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`)", self.slice)
+        self.assertIn("window.dispatchEvent(new Event('composer-server-unavailable'))", self.slice)
 
 
 if __name__ == '__main__':

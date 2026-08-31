@@ -1,16 +1,14 @@
-const CACHE_NAME = 'composer-shell-v1';
+const CACHE_NAME = 'composer-shell-v2';
 const ROOT_SHELL = '/';
 const SHELL = [
   ROOT_SHELL,
-  '/static/css/composer_slice.css?v=composer-shell-v1',
-  '/static/js/composer_preview_scheduler.js?v=composer-shell-v1',
-  '/static/js/composer_slice.js?v=composer-shell-v1',
-  '/static/js/composer_navigation.js?v=composer-shell-v1',
-  '/static/js/composer_state_explanation.js?v=composer-shell-v1',
-  '/static/js/composer_shell.js?v=composer-shell-v1',
-  '/static/composer/manifest.webmanifest?v=composer-shell-v1',
-  '/static/composer/icon.svg?v=composer-shell-v1',
-  '/static/composer/offline.html?v=composer-shell-v1',
+  '/static/css/composer_slice.css?v=composer-shell-v2',
+  '/static/js/composer_preview_scheduler.js?v=composer-shell-v2',
+  '/static/js/composer_slice.js?v=composer-shell-v2',
+  '/static/js/composer_shell.js?v=composer-shell-v2',
+  '/static/composer/manifest.webmanifest?v=composer-shell-v2',
+  '/static/composer/icon.svg?v=composer-shell-v2',
+  '/static/composer/offline.html?v=composer-shell-v2',
 ];
 
 self.addEventListener('install', (event) => event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL))));

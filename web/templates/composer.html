@@ -12,90 +12,40 @@
 <body>
 <main class="composer" data-api-root="/api/composer">
   <section id="composerShell" class="composer-shell" hidden aria-live="polite"><p id="composerShellMessage"></p><button id="composerShellRetry" class="button secondary" type="button" hidden>Reload Composer</button><button id="composerShellUpdate" class="button secondary" type="button" hidden>Reload update</button></section>
-  <section id="recoveryCard" class="composer-card" hidden><p class="eyebrow">Working draft</p><p id="recoveryMessage">A saved local draft is available.</p><button id="restoreDraft" class="button secondary" type="button">Restore</button><button id="discardDraft" class="button text" type="button">Discard</button></section>
-  <header class="composer-heading">
-    <div><p class="eyebrow">Local Composer</p><h1>Build a scene</h1><p>Changes stay on this computer until you choose Go Live.</p></div>
-    <nav class="composer-nav" aria-label="Composer sections">
-      <a href="#build" data-composer-section="build">Build</a><a href="#preview" data-composer-section="preview">Preview</a><a href="#library" data-composer-section="library">Library</a><a href="#live" data-composer-section="live">Live</a><button id="copyComposerLink" class="button text" type="button">Copy link</button>
-    </nav>
-  </header>
-  <p id="composerNavigationMessage" class="navigation-message" role="status" aria-live="polite"></p>
-
-  <section id="stateExplanation" class="composer-card state-explanation" aria-labelledby="state-explanation-title">
-    <div class="section-title"><div><p class="eyebrow">Scene status</p><h2 id="state-explanation-title">What happens next</h2></div><span class="qualified">Local adapter only</span></div>
-    <p class="muted">This explains Composer and its local adapter only; it does not report wall or receiver health.</p>
-    <p id="stateExplanationStatement" class="state-explanation-statement" role="status" aria-live="polite">Checking the local Composer state…</p>
-    <button id="stateExplanationAction" class="button secondary" type="button" hidden></button>
-    <details id="stateExplanationDetails"><summary>Exact local details</summary><dl class="state-explanation-details"><div><dt>Draft reference</dt><dd id="stateExplanationDraft">Unavailable</dd></div><div><dt>Preview</dt><dd id="stateExplanationPreview">Unavailable</dd></div><div><dt>Desired</dt><dd id="stateExplanationDesired">Unavailable</dd></div><div><dt>Observed</dt><dd id="stateExplanationObserved">Unavailable</dd></div><div><dt>Last local message</dt><dd id="stateExplanationMessage">Unavailable</dd></div></dl></details>
-  </section>
-
-  <div class="composer-workspace">
-  <div class="composer-editor">
-  <section id="build" class="composer-card" aria-labelledby="background-title" tabindex="-1">
-    <div class="section-title"><div><p class="eyebrow">Build</p><h2 id="background-title">Aurora Curtains</h2></div><span class="qualified">Python · background · v1</span></div>
-    <p class="muted">A provider-qualified Scene v1 background.</p>
-    <div class="field-grid">
-      <label>Density <input id="curtainDensity" type="number" min="0" max="1" step="0.01" value="0.56"></label>
-      <label>Fold depth <input id="foldDepth" type="number" min="0" max="1" step="0.01" value="0.58"></label>
-      <label>Glow <input id="glowIntensity" type="number" min="0" max="1" step="0.01" value="0.62"></label>
-      <label>Scene mood <select id="vibe"><option value="quiet">Quiet</option><option value="neutral">Neutral</option><option value="vivid">Vivid</option></select></label>
-      <label>Palette <select id="previewPalette"><option value="mist">Mist</option><option value="neutral">Neutral</option><option value="spectrum">Spectrum</option><option value="ember">Ember</option></select></label>
-      <label>Pace <input id="wallPace" type="number" min="0" max="2" step="0.01" value="0.70"></label>
-      <label>Luminance <input id="sceneLuminance" type="number" min="0" max="2" step="0.01" value="0.82"></label>
-    </div>
-  </section>
-
-  <section id="library" class="composer-card" aria-labelledby="library-title" tabindex="-1">
-    <div class="section-title"><div><p class="eyebrow">Library</p><h2 id="library-title">Find a look</h2></div></div>
-    <p class="muted">Starting points and saved looks stay local until you explicitly choose Go Live.</p>
-    <label>Search by name <input id="librarySearch" type="search" placeholder="Search local looks"></label>
-    <div class="library-filters" role="group" aria-label="Library filter"><button class="button secondary active" data-library-filter="all" type="button">All</button><button class="button secondary" data-library-filter="starter" type="button">Starting points</button><button class="button secondary" data-library-filter="look" type="button">My looks</button><button class="button secondary" data-library-filter="favorites" type="button">Favorites</button><button class="button secondary" data-library-filter="recent" type="button">Recent</button></div>
-    <ol id="libraryList" class="overlay-list" aria-label="Local library results" aria-live="polite"></ol>
-    <p id="libraryEmpty" class="empty">No local looks match this view.</p>
-    <label>Remix name <input id="remixName" maxlength="80" placeholder="My remix"></label><button id="remixStarter" class="button secondary" type="button">Remix current starting point</button><p id="starterMessage" class="live-message" role="status" aria-live="polite"></p>
-  </section>
-
-  <section class="composer-card" aria-labelledby="overlays-title">
-    <div class="section-title"><div><p class="eyebrow">Overlays</p><h2 id="overlays-title">Layer order</h2></div><div class="overlay-picker"><label>Choose overlay <select id="overlayChoice" aria-label="Choose overlay" disabled></select></label><button id="addOverlay" class="button secondary" type="button" disabled>Add overlay</button></div></div>
-    <p class="muted">Choose Conway Life or Clock Overlay in either order. Each keeps its stable Scene v1 slot.</p>
-    <ol id="overlayList" class="overlay-list" aria-live="polite"></ol>
-    <p id="overlayEmpty" class="empty">No overlays yet.</p>
-  </section>
-
-  <section class="composer-card" aria-labelledby="looks-title">
-    <div class="section-title"><div><p class="eyebrow">Saved looks</p><h2 id="looks-title">Keep a draft</h2></div><button id="saveLook" class="button secondary" type="button">Save look</button></div>
-    <label class="look-name">Look name <input id="lookName" maxlength="80" placeholder="Evening garden"></label>
-    <p class="muted">Saved looks stay local. Opening one restores its draft and preview; it never goes live.</p>
-    <ol id="lookList" class="overlay-list" aria-live="polite"></ol>
-    <p id="lookEmpty" class="empty">No saved looks yet.</p>
-    <p id="lookMessage" class="live-message" role="status" aria-live="polite"></p>
-  </section>
-  </div>
-
-  <aside class="composer-rail" aria-label="Installed preview and live status">
-  <section id="preview" class="composer-card preview-card" aria-labelledby="preview-title" tabindex="-1">
-    <div class="section-title"><div><p class="eyebrow">Preview</p><h2 id="preview-title">Installed final scene</h2></div><strong id="previewIdentity">Rendering…</strong></div>
-    <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" tabindex="0" aria-label="Installed final Scene v2 preview; select a widget row, then drag or use arrow keys to move it"></canvas></div>
-    <p id="previewStatus" class="live-message" role="status" aria-live="polite">Rendering the installed final composition at component cadence.</p><p id="draftState" class="live-message" role="status" aria-live="polite">Changes are reflected here without changing output.</p>
-  </section>
-
-  <section id="live" class="composer-card live-card" aria-labelledby="live-title" tabindex="-1">
-    <div class="section-title"><div><p class="eyebrow">Go Live</p><h2 id="live-title">Scene handoff</h2></div><div><button id="stopScene" class="button text" type="button">Stop</button><button id="goLive" class="button primary" type="button">Go Live</button></div></div>
-    <p class="muted">Go Live checks this exact draft, then sends it only to the local Scene adapter. It does not contact the wall.</p>
-    <div class="identity-grid">
-      <div><span>Desired</span><strong id="desiredIdentity">Not checked</strong></div>
-      <div><span>Observed</span><strong id="observedIdentity">No acknowledgement</strong></div>
-      <div><span>State</span><strong id="reconcileState" data-state="pending">Pending</strong></div>
-    </div>
-    <p id="liveMessage" class="live-message" role="status" aria-live="polite">Draft is local.</p>
-  </section>
-  </aside>
+  <div class="desktop-workspace">
+    <aside class="library-pane" aria-labelledby="library-title">
+      <div class="pane-heading"><p class="eyebrow">Library</p><h1 id="library-title">Scenes</h1></div>
+      <label>Search scenes <input id="librarySearch" type="search" placeholder="Search scenes"></label>
+      <div class="library-filters" role="group" aria-label="Scene collection"><button class="button text active" data-library-filter="all" type="button">All</button><button class="button text" data-library-filter="starter" type="button">Built-ins</button><button class="button text" data-library-filter="look" type="button">Saved</button><button class="button text" data-library-filter="favorites" type="button">Favorites</button></div>
+      <ol id="libraryList" class="library-list" aria-live="polite"></ol><p id="libraryEmpty" class="empty">No scenes found.</p>
+    </aside>
+    <section class="preview-pane" aria-labelledby="preview-title">
+      <div class="pane-heading"><div><p class="eyebrow">Installed final</p><h2 id="preview-title">Preview</h2></div><strong id="previewIdentity">Rendering…</strong></div>
+      <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" tabindex="0" aria-label="Installed final Scene preview"></canvas></div>
+      <p id="previewStatus" class="status-line" role="status" aria-live="polite">Rendering the current scene.</p>
+    </section>
+    <section class="inspectors" aria-label="Scene inspectors">
+      <section class="inspector" aria-labelledby="background-title"><div class="pane-heading"><p class="eyebrow">Background</p><h2 id="background-title">Native Aurora</h2></div><div class="field-grid"><label>Ambient gain <input id="backgroundGain" type="number" min="0" max="2" step=".01" value=".62"></label></div></section>
+      <section class="inspector" aria-labelledby="animation-title"><div class="pane-heading"><p class="eyebrow">Animation</p><h2 id="animation-title">Motion layer</h2></div><label>Animation <select id="animationChoice"><option value="aurora_curtains">Aurora Curtains</option><option value="conway_life">Conway Life</option></select></label><div id="animationControls" class="field-grid"><label>Density <input id="curtainDensity" type="number" min="0" max="1" step=".01" value=".56"></label><label>Fold depth <input id="foldDepth" type="number" min="0" max="1" step=".01" value=".58"></label><label>Glow <input id="glowIntensity" type="number" min="0" max="1" step=".01" value=".62"></label><label>Seed <input id="lifeSeed" type="number" value="4201"></label><label>Rate <input id="lifeRate" type="number" min=".1" max="20" step=".1" value="5"></label></div></section>
+      <section class="inspector" aria-labelledby="widgets-title"><div class="pane-heading"><p class="eyebrow">Widgets</p><h2 id="widgets-title">Clock</h2></div><label class="switch"><input id="clockEnabled" type="checkbox"> Show time</label><div id="widgetWarning" class="warning" hidden role="status"></div><label>Vertical offset <input id="clockOffset" type="number" min="-137" max="137" value="-8"></label></section>
+      <section class="inspector" aria-labelledby="plants-title"><div class="pane-heading"><p class="eyebrow">Plants</p><h2 id="plants-title">Installation effects</h2></div><p class="muted">Plant-aware effects are preserved in the current scene when available.</p><p id="plantsStatus" class="status-line">No active plant effects.</p></section>
+      <section class="inspector" aria-labelledby="look-title"><div class="pane-heading"><p class="eyebrow">Look</p><h2 id="look-title">Finish</h2></div><div class="field-grid"><label>Palette <select id="previewPalette"><option value="mist">Mist</option><option value="neutral">Neutral</option><option value="spectrum">Spectrum</option><option value="ember">Ember</option></select></label><label>Pace <input id="wallPace" type="number" min="0" max="2" step=".01" value=".7"></label><label>Luminance <input id="sceneLuminance" type="number" min="0" max="2" step=".01" value=".82"></label></div></section>
+    </section>
+    <aside class="operations-pane" aria-labelledby="operations-title">
+      <div class="pane-heading"><div><p class="eyebrow">Operations</p><h2 id="operations-title">Current scene</h2></div><span id="saveState" class="state-chip">Loading</span></div>
+      <label>Name <input id="sceneName" maxlength="80" placeholder="Untitled scene"></label><p id="sceneIdentity" class="identity">No current scene</p>
+      <div class="operation-row"><button id="openScene" class="button secondary" type="button">Open</button><button id="saveScene" class="button secondary" type="button">Save</button><button id="saveAsScene" class="button secondary" type="button">Save As</button></div>
+      <div class="operation-row"><button id="undoScene" class="button text" type="button">Undo</button><button id="redoScene" class="button text" type="button">Redo</button></div>
+      <section class="connection" aria-labelledby="connection-title"><p class="eyebrow" id="connection-title">Connection &amp; observed output</p><strong id="connectionState">Checking…</strong><p id="observedIdentity" class="identity">No observed output</p></section>
+      <button id="liveAction" class="button primary wide" type="button">Go Live</button><button id="checkScene" class="button secondary wide" type="button">Check</button>
+      <details class="diagnostics"><summary>Diagnostics</summary><dl><div><dt>Desired</dt><dd id="desiredIdentity">Unavailable</dd></div><div><dt>Observed</dt><dd id="diagnosticObserved">Unavailable</dd></div><div><dt>Revision</dt><dd id="sceneRevision">Unavailable</dd></div><div><dt>Message</dt><dd id="operationMessage">Checking current scene…</dd></div></dl></details>
+    </aside>
   </div>
 </main>
+<dialog id="readinessDialog" aria-labelledby="readiness-title"><h2 id="readiness-title">Go Live needs attention</h2><p id="readinessMessage">Resolve these items, then try again.</p><ul id="readinessList"></ul><button class="button primary" data-dialog-close type="button">Close</button></dialog>
+<dialog id="checkDialog" aria-labelledby="check-title"><h2 id="check-title">Scene check</h2><p id="checkMessage"></p><dl id="checkDetails"></dl><button class="button primary" data-dialog-close type="button">Close</button></dialog>
 <script src="{{ url_for('static', filename='js/composer_shell.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_preview_scheduler.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_slice.js', v=shell_version) }}"></script>
-<script src="{{ url_for('static', filename='js/composer_state_explanation.js', v=shell_version) }}"></script>
-<script src="{{ url_for('static', filename='js/composer_navigation.js', v=shell_version) }}"></script>
 </body>
 </html>

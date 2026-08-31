@@ -36,7 +36,7 @@ from animation.core.scene_runtime import CanonicalSceneRuntimeError
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
-from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_composer_scene, normalize_scene_identity
+from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_composer_scene
 from web.composer_component_editor import editor_catalog
 from web.live_scene_state import LiveSceneBlocked, LiveSceneStale, LiveSceneState
 from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
@@ -46,7 +46,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, native_aurora_descriptor
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v1"
+COMPOSER_SHELL_VERSION = "composer-shell-v2"
 
 PAINTER_MASK_TYPES = (
     {
@@ -197,6 +197,30 @@ class AnimationWebInterface:
                 return jsonify({'draft': value})
             except (WorkingDraftError, SceneContractError, SceneLookStoreError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/recovery')
+        def api_composer_recovery():
+            try:
+                status = self._composer_status_payload(
+                    request.args.get('client_id'), include_current_scene=True,
+                )
+                current_scene = status.pop('current_scene')
+                if current_scene is not None:
+                    return jsonify({'recovery': {
+                        'scene': current_scene, 'basis': status['current'],
+                        'opened_look_id': self._composer_opened_look_id,
+                        'authoritative': True,
+                    }, 'status': status})
+                value = self.working_draft.get()
+                if value is None:
+                    return jsonify({'recovery': None, 'status': status})
+                canonical = self._composer_recovery_scene(value['scene'])
+                if canonical.identity.to_dict() != value['basis']:
+                    raise WorkingDraftError('Current scene recovery no longer matches its basis.')
+                self._composer_opened_look_id = value['opened_look_id']
+                return jsonify({'recovery': {**value, 'authoritative': False}, 'status': status})
+            except (WorkingDraftError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload(request.args.get('client_id'))}), 400
 
         @self.app.route('/api/composer/draft', methods=['POST','DELETE'])
         def api_composer_change_draft():
@@ -1220,13 +1244,13 @@ class AnimationWebInterface:
 
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
 
-    def _composer_status_payload(self, client_id: Optional[str] = None) -> Dict[str, Any]:
+    def _composer_status_payload(self, client_id: Optional[str] = None, *, include_current_scene: bool = False) -> Dict[str, Any]:
         """Describe live-first current/desired/observed reconciliation.
 
         This stays explicitly local: the acknowledgement comes from the
         topology-neutral adapter and never claims a receiver or wall mutation.
         """
-        return self.composer_live.snapshot(client_id=client_id)
+        return self.composer_live.snapshot(client_id=client_id, include_current_scene=include_current_scene)
 
     def _composer_submit_scene(
         self, scene: Any, *, client_id: str, mutation_id: str | None = None,
@@ -1335,6 +1359,19 @@ class AnimationWebInterface:
                 'pixels': base64.b64encode(frame.pixels.tobytes()).decode('ascii'),
             },
             'wall_mutations': 0,
+            'widget_placements': {
+                widget_id: {
+                    'strip_translation': value.strip_translation,
+                    'led_translation': value.led_translation,
+                    'clamped': value.clamped,
+                    'used_fallback': value.used_fallback,
+                    'overlap_pixels': value.overlap_pixels,
+                    'plant_overlap_pixels': value.plant_overlap_pixels,
+                    'widget_overlap_pixels': value.widget_overlap_pixels,
+                    'warning': value.warning,
+                }
+                for widget_id, value in frame.widget_placements.items()
+            },
         }
 
     def _composer_library_card_payload(self, reference: dict[str, str]) -> Dict[str, Any]:
@@ -1349,25 +1386,9 @@ class AnimationWebInterface:
             'wall_time': '2026-08-31T12:00:00+00:00',
         }
         if reference['kind'] == 'starter':
-            starter = self._composer_starter(get_starter(reference['id']))
-            scene = {
-                'schema': 'ledgrid.scene.v1', 'vibe': 'quiet', 'master_brightness': 1,
-                'background': starter['background'], 'overlays': starter['overlays'],
-            }
+            scene = self._composer_starter(get_starter(reference['id']))['scene']
         else:
-            look = self._composer_look_payload(self.composer_looks.get(reference['id']))
-            stored = look['scene']
-            scene = {
-                'schema': stored['schema'], 'background': stored['background'],
-                'overlays': stored['overlays'], 'master_brightness': stored['master_brightness'],
-            }
-            if stored['vibe_source'] == 'custom':
-                scene['custom'] = {
-                    'palette_id': stored['palette_id'], 'wall_pace': stored['wall_pace'],
-                    'presentation_luminance': stored['presentation_luminance'],
-                }
-            else:
-                scene['vibe'] = stored['vibe_source']
+            scene = self._composer_look_payload(self.composer_looks.get(reference['id']))['scene']
         preview = self._composer_preview_payload({
             'origin': 'composer', 'scene': scene, 'preview': preview_time,
         })
@@ -1396,70 +1417,9 @@ class AnimationWebInterface:
             raise ComposerLibraryStateError('That library item no longer exists.')
         return reference
 
-    def _composer_draft_reference(self, value: Any, *, require_current: bool) -> dict[str, Any]:
-        """Validate the typed saved/starter basis without inventing a fallback."""
-        if not isinstance(value, dict) or value.get('kind') not in {'starter', 'look'}:
-            raise WorkingDraftError('Working draft reference is unknown; discard it.')
-        expected = {'kind', 'id', 'basis', 'baseline'} if value['kind'] == 'starter' else {'kind', 'id', 'basis'}
-        if set(value) != expected or not isinstance(value['id'], str) or not value['id']:
-            raise WorkingDraftError('Working draft reference is malformed; discard it.')
-        reference = {'kind': value['kind'], 'id': value['id'], 'basis': normalize_scene_identity(value['basis']).to_dict()}
-        if reference['kind'] == 'starter':
-            starter = self._composer_starter(get_starter(reference['id']))
-            starter_canonical = self._composer_canonical({'origin': 'composer', 'scene': {
-                'schema': 'ledgrid.scene.v1', 'vibe': 'quiet', 'master_brightness': 1,
-                'background': starter['background'], 'overlays': starter['overlays'],
-            }})
-            baseline = self._composer_draft_canonical(value['baseline'])
-            if baseline.identity.to_dict() != reference['basis']:
-                raise WorkingDraftError('Starter no longer matches this working draft; discard it.')
-            if (baseline.scene['background'] != starter_canonical.scene['background']
-                    or baseline.scene['overlays'] != starter_canonical.scene['overlays']):
-                raise WorkingDraftError('Starter content no longer matches this working draft; discard it.')
-            reference['baseline'] = {'origin': 'composer', 'scene': baseline.scene}
-            return reference
-        if not require_current:
-            return reference
-        look = self._composer_look_payload(self.composer_looks.get(reference['id']))
-        if look['basis'] != reference['basis']:
-            raise WorkingDraftError('Saved look no longer matches this working draft; discard it.')
-        return reference
-
-    def _composer_working_draft(self, value: Any):
-        """Revalidate the stored canonical scene through the authored boundary."""
-        if not isinstance(value, dict) or set(value) != {'origin', 'scene'} or value['origin'] != 'composer':
-            raise WorkingDraftError('Working draft is malformed; discard it.')
-        scene = value['scene']
-        if not isinstance(scene, dict) or set(scene) != {
-            'schema', 'background', 'overlays', 'vibe_source', 'palette_id',
-            'wall_pace', 'presentation_luminance', 'master_brightness',
-        }:
-            raise WorkingDraftError('Working draft is not current Scene v1; discard it.')
-        authored = {
-            'schema': scene['schema'], 'background': scene['background'],
-            'overlays': scene['overlays'], 'master_brightness': scene['master_brightness'],
-        }
-        if scene['vibe_source'] == 'custom':
-            authored['custom'] = {
-                'palette_id': scene['palette_id'], 'wall_pace': scene['wall_pace'],
-                'presentation_luminance': scene['presentation_luminance'],
-            }
-        else:
-            authored['vibe'] = scene['vibe_source']
-        return self._composer_canonical({'origin': 'composer', 'scene': authored})
-
-    def _composer_draft_canonical(self, value: Any):
-        """Accept an authored reference baseline, or its stored canonical form."""
-        if isinstance(value, dict) and isinstance(value.get('scene'), dict) and 'vibe_source' in value['scene']:
-            return self._composer_working_draft(value)
-        return self._composer_canonical(value)
-
     def _composer_starter(self, starter: Dict[str, Any]) -> Dict[str, Any]:
-        """Reject invalid built-in data before it can reach draft state."""
-        self._composer_canonical({'origin': 'composer', 'scene': {
-            'schema': 'ledgrid.scene.v1', 'vibe': 'quiet', 'master_brightness': 1,
-            'background': starter['background'], 'overlays': starter['overlays'],
-        }})
+        """Reject invalid current built-ins before they reach selection."""
+        self._composer_canonical({'origin': 'composer', 'scene': starter['scene']})
         return starter
 
     def _composer_canonical(self, request_value: Any):

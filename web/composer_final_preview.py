@@ -147,6 +147,7 @@ class ComposerFinalPreview:
             widget_factory=self._widget_factory,
             plant_input_resolver=self._plant_inputs,
             plant_optics=self._plant_optics,
+            widget_safe_geometry=self._widget_safe_geometry,
         )
         self._active_digest: str | None = None
         self._lock = RLock()
@@ -184,6 +185,11 @@ class ComposerFinalPreview:
             "globe_proximity": geometry.globe_count / total,
             "occlusion": (geometry.foliage_count + geometry.globe_count) / total,
         }
+
+    def _widget_safe_geometry(self, _plants: Mapping[str, Any], _strips: int, _leds: int) -> np.ndarray:
+        """Bind Widget placement to the calibrated installation clearance map."""
+
+        return self._geometry.get().safe_flat
 
     def _plant_optics(self, pixels: np.ndarray, plants: Mapping[str, Any]) -> np.ndarray:
         """Apply calibrated foliage/globe presentation once after composition."""

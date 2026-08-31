@@ -163,11 +163,11 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         html = self.client.get("/").get_data(as_text=True)
         script = (self.interface.project_root / "web" / "static" / "js" / "composer_slice.js").read_text(encoding="utf-8")
         scheduler = (self.interface.project_root / "web" / "static" / "js" / "composer_preview_scheduler.js").read_text(encoding="utf-8")
-        preview = html[html.index('id="preview"'):html.index('id="live"')]
+        preview = html[html.index('class="preview-pane"'):html.index('class="operations-pane"')]
         for obsolete in ("Draft", "Original", "Split", "timeline", "FPS", "plant simulation"):
             self.assertNotIn(obsolete, preview)
-        self.assertIn("Installed final scene", preview)
-        self.assertIn("startFinalPreview()", script)
+        self.assertIn("Installed final", preview)
+        self.assertIn("previewScheduler.start", script)
         self.assertIn("ComposerPreviewScheduler", script)
         self.assertIn("setIntervalFn", scheduler)
         self.assertIn("frame.height - 1 - led", script)

@@ -205,6 +205,30 @@ class ComposerPreviewSchedulerTests(unittest.TestCase):
           }})().catch((error) => {{ console.error(error); process.exitCode = 1; }});
         """)
 
+    def test_default_browser_timer_wrappers_do_not_use_scheduler_as_receiver(self) -> None:
+        self._node(f"""
+          const fs = require('fs'); const vm = require('vm');
+          const source = fs.readFileSync({str(SCHEDULER)!r}, 'utf8');
+          const context = {{module: {{exports: {{}}}}}}; vm.createContext(context);
+          vm.runInContext(`
+            globalThis.armed = 0; globalThis.cleared = 0;
+            globalThis.setInterval = function(callback, delay) {{
+              if (this !== globalThis) throw new Error('illegal timer receiver');
+              if (delay !== 34) throw new Error('wrong timer delay');
+              globalThis.armed += 1; return 41;
+            }};
+            globalThis.clearInterval = function(timer) {{
+              if (this !== globalThis || timer !== 41) throw new Error('illegal clear receiver');
+              globalThis.cleared += 1;
+            }};
+          `, context);
+          vm.runInContext(source, context);
+          const {{ComposerPreviewScheduler}} = context.module.exports;
+          const scheduler = new ComposerPreviewScheduler({{request: () => null, onFrame: () => {{}}, onError: () => {{}}}});
+          scheduler.start(() => 'scene'); scheduler.suspend(new Error('offline'));
+          if (context.armed !== 1 || context.cleared !== 1) throw new Error('default timers were not invoked');
+        """)
+
 
 if __name__ == "__main__":
     unittest.main()

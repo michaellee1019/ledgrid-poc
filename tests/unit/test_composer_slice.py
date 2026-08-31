@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -9,6 +10,8 @@ from pathlib import Path
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from web.app import AnimationWebInterface
+from web.composer_final_preview import NATIVE_AURORA_BUNDLE_DIGEST
+from web.working_draft_store import WorkingDraftStore
 
 
 class _Controller:
@@ -92,91 +95,128 @@ def _conway(slot_id: str = "conway_lower", parameters: dict | None = None) -> di
     }
 
 
+def _current_scene() -> dict:
+    return {
+        "schema": "ledgrid.scene.v2",
+        "background": {"component_id": "native_aurora", "version": 1, "provider": "receiver_native", "role": "background", "bundle_digest": NATIVE_AURORA_BUNDLE_DIGEST, "parameters": {"gain": .62, "source_fps": 30, "seed": 4201}},
+        "animation": {"component_id": "aurora_curtains", "version": 1, "provider": "python", "role": "animation", "parameters": {"curtain_density": .56, "fold_depth": .58, "glow_intensity": .62, "source_fps": 30, "seed": 4201}},
+        "widgets": [], "plants": {"effects": {"version": 1, "active": [], "strengths": {}}},
+        "look": {"palette_id": "mist", "pace": .7, "presentation_brightness": .82},
+    }
+
+
 class ComposerSliceTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
         self.wall = _WallChannel()
         self.interface = AnimationWebInterface(
             self.wall, _PreviewManager(), local_mode=True,
         )
+        self.interface.working_draft = WorkingDraftStore(Path(self.tmp.name) / "recovery.json")
         self.client = self.interface.app.test_client()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
 
     def test_root_is_the_simple_local_composer_not_a_preview_or_dashboard(self) -> None:
         html = self.client.get("/").get_data(as_text=True)
-        self.assertIn("Local Composer", html)
-        self.assertIn("Aurora Curtains", html)
-        self.assertIn("Conway Life", Path("web/static/js/composer_slice.js").read_text(encoding="utf-8"))
-        self.assertIn("Go Live", html)
+        self.assertIn("Operations", html)
+        self.assertIn("Installed final", html)
+        self.assertIn("conway_life", Path("web/static/js/composer_slice.js").read_text(encoding="utf-8"))
+        self.assertIn('id="liveAction"', html)
         self.assertNotIn("previewCanvas", html)
-        self.assertIn('id="stopScene"', html)
+        self.assertNotIn("Tools", html)
         self.assertIn("/static/css/composer_slice.css", html)
         self.assertIn("/static/js/composer_slice.js", html)
         self.assertNotIn("/static/css/composer.css", html)
 
-    def test_check_then_activate_keeps_wall_channel_inert_and_reconciles_exact_identity(self) -> None:
-        checked = self.client.post("/api/composer/check", json=_scene([
-            _conway("conway_lower", {"seed": 1971, "rule": "B3/S23"}),
-            _overlay("clock_upper", {"show_seconds": True}),
-        ]))
+    def test_advisory_check_and_scene_submission_keep_wall_channel_inert(self) -> None:
+        scene = _current_scene()
+        checked = self.client.post("/api/composer/check", json={"origin": "composer", "scene": scene})
         self.assertEqual(checked.status_code, 200)
-        check_body = checked.get_json()
-        self.assertEqual(check_body["status"]["state"], "pending")
-        self.assertEqual(
-            [item["slot_id"] for item in check_body["canonical_scene"]["overlays"]],
-            ["conway_lower", "clock_upper"],
-        )
-        first, second = check_body["canonical_scene"]["overlays"]
-        self.assertEqual(first["component"]["component_id"], "conway_life")
-        self.assertEqual(second["component"]["component_id"], "clock_overlay")
-        self.assertEqual(first["component"]["parameters"], {
-            "seed": 1971, "rule": "B3/S23", "initial_density": 0.14,
-            "generations_per_second": 5.0, "seed_cells": [],
-        })
-        self.assertEqual(second["component"]["parameters"], {
-            "format_24h": False, "show_seconds": True,
-            "clock_offset_minutes": 0, "color": [255, 224, 128],
-        })
-        live = self.client.post("/api/composer/activate", json={
-            "token": check_body["token"], "basis": check_body["basis"],
-            "idempotency_key": "browser-intent-1",
-        })
+        self.assertTrue(checked.get_json()["valid"])
+        self.assertEqual(checked.get_json()["status"]["state"], "ready")
+        live = self.client.post("/api/composer/scene", json={"origin": "composer", "scene": scene, "client_id": "desktop", "mutation_id": "browser-intent-1", "client_sequence": 1})
         self.assertEqual(live.status_code, 200)
-        self.assertEqual(live.get_json()["status"]["state"], "converged")
-        self.assertEqual(live.get_json()["status"]["wall_mutations"], 0)
+        self.assertEqual(live.get_json()["state"], "live")
+        self.assertEqual(live.get_json()["wall_mutations"], 0)
         self.assertEqual(self.wall.commands, [])
         self.assertEqual(len(self.interface.composer_control.commands), 1)
 
-    def test_new_checked_basis_is_diverged_until_its_own_activation_and_bad_input_is_rejected(self) -> None:
-        first = self.client.post("/api/composer/check", json=_scene()).get_json()
-        self.client.post("/api/composer/activate", json={
-            "token": first["token"], "basis": first["basis"], "idempotency_key": "one",
-        })
-        changed = _scene([_overlay("clock_upper")])
-        checked = self.client.post("/api/composer/check", json=changed).get_json()
-        self.assertEqual(checked["status"]["state"], "diverged")
+    def test_valid_direct_edit_stays_live_and_bad_input_is_rejected(self) -> None:
+        first = _current_scene()
+        self.assertEqual(self.client.post("/api/composer/scene", json={"origin": "composer", "scene": first, "client_id": "desktop", "client_sequence": 1}).status_code, 200)
+        changed = _current_scene()
+        changed["look"] = {**changed["look"], "pace": 1.2}
+        published = self.client.post("/api/composer/scene", json={"origin": "composer", "scene": changed, "client_id": "desktop", "client_sequence": 2})
+        self.assertEqual(published.get_json()["state"], "live")
         rejected = self.client.post("/api/composer/check", json={"origin": "dashboard"})
         self.assertEqual(rejected.status_code, 400)
-        self.assertEqual(rejected.get_json()["status"]["state"], "rejected")
+        self.assertEqual(rejected.get_json()["status"]["state"], "live")
 
-    def test_exact_retry_and_expired_check_have_distinct_reconciliation_states(self) -> None:
-        checked = self.client.post("/api/composer/check", json=_scene()).get_json()
-        request = {
-            "token": checked["token"], "basis": checked["basis"],
-            "idempotency_key": "same-intent",
-        }
-        self.assertFalse(self.client.post("/api/composer/activate", json=request).get_json()["exact_retry"])
-        retry = self.client.post("/api/composer/activate", json=request).get_json()
+    def test_preview_exposes_runtime_widget_placement_diagnostics(self) -> None:
+        scene = _current_scene()
+        scene["widgets"] = [{
+            "id": "clock", "component": {"component_id": "clock_overlay", "version": 1, "provider": "python", "role": "widget", "parameters": {}},
+            "visible": True, "placement": {"mode": "manual", "strip_translation": 0, "led_translation": -8},
+        }]
+        preview = self.client.post("/api/composer/preview", json={"origin": "composer", "scene": scene, "preview": {"monotonic_elapsed": 12.0, "wall_time": "2026-08-31T12:00:00+00:00"}})
+        self.assertEqual(preview.status_code, 200)
+        placement = preview.get_json()["widget_placements"]["clock"]
+        self.assertIn("warning", placement)
+        self.assertIn("plant_overlap_pixels", placement)
+
+    def test_exact_scene_retry_is_idempotent_without_a_check_token(self) -> None:
+        request = {"origin": "composer", "scene": _current_scene(), "client_id": "desktop", "mutation_id": "same-intent", "client_sequence": 1}
+        self.assertFalse(self.client.post("/api/composer/scene", json=request).get_json()["exact_retry"])
+        retry = self.client.post("/api/composer/scene", json=request).get_json()
         self.assertTrue(retry["exact_retry"])
-        self.assertEqual(retry["status"]["state"], "retry")
+        self.assertEqual(retry["state"], "live")
 
-        fresh = self.client.post("/api/composer/check", json=_scene()).get_json()
-        expired = replace(self.interface._composer_checked, expires_at=0)
-        self.interface._composer_checked = expired
-        self.interface.composer_tokens._records[fresh["token"]].checked = expired
-        stale = self.client.post("/api/composer/activate", json={
-            "token": fresh["token"], "basis": fresh["basis"], "idempotency_key": "expired",
-        })
-        self.assertEqual(stale.status_code, 409)
-        self.assertEqual(stale.get_json()["status"]["state"], "stale")
+    def test_current_recovery_hydrates_the_newest_remote_scene_and_invalidates_undo(self) -> None:
+        first = _current_scene()
+        self.assertEqual(self.client.post("/api/composer/scene", json={
+            "origin": "composer", "scene": first, "client_id": "first-tab", "client_sequence": 1,
+        }).status_code, 200)
+        initial = self.client.get("/api/composer/recovery?client_id=first-tab").get_json()
+        self.assertEqual(initial["recovery"]["scene"], first)
+        changed = _current_scene()
+        changed["look"] = {**changed["look"], "pace": 1.15}
+        self.assertEqual(self.client.post("/api/composer/scene", json={
+            "origin": "composer", "scene": changed, "client_id": "second-tab", "client_sequence": 1,
+        }).status_code, 200)
+        refreshed = self.client.get("/api/composer/recovery?client_id=first-tab").get_json()
+        self.assertEqual(refreshed["recovery"]["scene"], changed)
+        self.assertTrue(refreshed["status"]["undo_invalidated"])
+        self.assertNotIn("draft", refreshed)
+
+    def test_recovery_prefers_the_atomic_live_scene_over_a_stale_persisted_copy(self) -> None:
+        first = _current_scene()
+        self.client.post("/api/composer/scene", json={"origin": "composer", "scene": first, "client_id": "first", "client_sequence": 1})
+        stale_recovery = self.interface.working_draft.get()
+        changed = _current_scene()
+        changed["look"] = {**changed["look"], "pace": 1.35}
+        self.client.post("/api/composer/scene", json={"origin": "composer", "scene": changed, "client_id": "second", "client_sequence": 1})
+        # A stale disk read must not be allowed to pair with the newer live
+        # revision; /recovery takes the scene from the live-state lock first.
+        self.interface.working_draft.get = lambda: stale_recovery
+        body = self.client.get("/api/composer/recovery?client_id=first").get_json()
+        self.assertTrue(body["recovery"]["authoritative"])
+        self.assertEqual(body["recovery"]["scene"], changed)
+        self.assertEqual(body["recovery"]["basis"], body["status"]["current"])
+
+    def test_corrupt_recovery_is_a_reachable_data_error_with_current_status(self) -> None:
+        self.interface.working_draft.path.write_text(
+            '{"schema":"ledgrid.composer.recovery.v2","basis":{},"opened_look_id":null,"saved_at":1,"scene":{"schema":"ledgrid.scene.v2"}}',
+            encoding="utf-8",
+        )
+        response = self.client.get("/api/composer/recovery?client_id=startup")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("status", response.get_json())
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        self.assertIn("function recoverFromInvalidRecovery(body)", script)
+        self.assertIn("if (response.status >= 500)", script)
+        self.assertIn("if (error.serverUnavailable)", script)
 
     def test_catalog_uses_the_real_clock_overlay_descriptor_and_client_preserves_error_state(self) -> None:
         descriptor = ClockOverlayAnimation.component_descriptor()
@@ -197,35 +237,24 @@ class ComposerSliceTests(unittest.TestCase):
                 provider="python", component_id="alert", version=1,
             )
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        self.assertIn("if (!activated.ok) { status(activationData); throw", script)
-        self.assertNotIn("$('#reconcileState').textContent = 'Rejected'", script)
+        self.assertIn("const endpoint = builtin ? '/built-ins/open' : '/scene';", script)
+        self.assertIn("renderStatus(result);", script)
+        self.assertIn("refreshInFlight", script)
+        self.assertIn("recoveryMatchesStatus", script)
 
     def test_readding_after_primary_removal_selects_the_missing_slot_and_checks(self) -> None:
         """The client must restore the missing Conway lower slot without duplicates."""
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        self.assertIn(
-            "Object.keys(defaults).find((candidate) => !state.overlays.some((item) => item.slot_id === candidate))",
-            script,
-        )
+        self.assertIn("await submit(next, {rememberEdit: true});", script)
         # Equivalent authored output after add-two, remove-Conway, add again.
-        response = self.client.post("/api/composer/check", json=_scene([
-            _overlay("clock_upper", {"show_seconds": True}),
-            _conway("conway_lower", {"seed": 1971}),
-        ]))
+        response = self.client.post("/api/composer/scene", json={"origin": "composer", "scene": _current_scene(), "client_id": "desktop", "client_sequence": 1})
         self.assertEqual(response.status_code, 200)
-        slots = [
-            item["slot_id"]
-            for item in response.get_json()["canonical_scene"]["overlays"]
-        ]
-        self.assertEqual(slots, ["clock_upper", "conway_lower"])
-        self.assertEqual(set(slots), {"conway_lower", "clock_upper"})
+        self.assertEqual(response.get_json()["state"], "live")
 
     def test_third_overlay_is_rejected_before_local_adapter_mutation(self) -> None:
-        rejected = self.client.post("/api/composer/check", json=_scene([
-            _conway(), _overlay("clock_upper"), _overlay("extra"),
-        ]))
+        rejected = self.client.post("/api/composer/check", json=_scene([_conway(), _overlay("clock_upper"), _overlay("extra")]))
         self.assertEqual(rejected.status_code, 400)
-        self.assertIn("zero to two", rejected.get_json()["error"])
+        self.assertIn("legacy or forbidden", rejected.get_json()["error"])
         self.assertEqual(self.interface.composer_control.commands, [])
 
 

@@ -10,6 +10,7 @@ clients deterministic.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import copy
 import threading
 from typing import Any, Mapping
 
@@ -221,7 +222,7 @@ class LiveSceneState:
             )
             return self.snapshot(client_id=client_id)
 
-    def snapshot(self, *, client_id: str | None = None) -> dict[str, Any]:
+    def snapshot(self, *, client_id: str | None = None, include_current_scene: bool = False) -> dict[str, Any]:
         with self._lock:
             observed = self._observed.identity.to_dict() if self._running and self._observed else None
             current = self._current.identity.to_dict() if self._current else None
@@ -246,7 +247,7 @@ class LiveSceneState:
                 and owned_revision < self._revision
                 and acknowledged_remote_revision < self._revision
             )
-            return {
+            payload = {
                 "state": state,
                 "connected": self._connected,
                 "running": self._running,
@@ -264,6 +265,11 @@ class LiveSceneState:
                 "readiness": self._readiness_locked(),
                 "wall_mutations": 0,
             }
+            if include_current_scene:
+                # Recovery must receive scene bytes and identity from this same
+                # lock acquisition, never from a later durable-store read.
+                payload["current_scene"] = copy.deepcopy(self._current.scene) if self._current else None
+            return payload
 
     def _publish_current_locked(self) -> None:
         if self._current is None:

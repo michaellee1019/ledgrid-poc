@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   class ComposerPreviewScheduler {
-    constructor({request, onFrame, onError, isVisible = () => true, intervalMs = 34, setIntervalFn = setInterval, clearIntervalFn = clearInterval}) {
+    constructor({request, onFrame, onError, isVisible = () => true, intervalMs = 34, setIntervalFn = (callback, delay) => globalThis.setInterval(callback, delay), clearIntervalFn = (timer) => globalThis.clearInterval(timer)}) {
       this.request = request;
       this.onFrame = onFrame;
       this.onError = onError;
