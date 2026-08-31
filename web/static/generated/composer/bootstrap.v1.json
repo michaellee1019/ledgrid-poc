@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "33670a8ed7556723ea478fe9d80af7f5d2a888c8986998ababe30b82b64d49ad",
+    "catalog_digest": "d3fec392f956cd6bd5194a70fa753c4489df4298aaa5430311a0cec4b4473190",
     "kind": "bundled",
     "version": 1
   },
@@ -8253,6 +8253,38 @@
           "swatches": [],
           "tags": [],
           "updated_at": "2026-07-20T00:00:00Z",
+          "version": 1
+        },
+        {
+          "animation": "conway_life",
+          "category": null,
+          "component_key": "python:conway_life",
+          "created_at": 1784606268.9646864,
+          "description": null,
+          "key": "python:conway_life:chaos",
+          "name": "chaos",
+          "ownership": "legacy",
+          "palette": null,
+          "params": {
+            "brightness": 1,
+            "color_saturation": 1,
+            "color_value": 1,
+            "generations_per_second": 20,
+            "glider_interval": 1.3,
+            "phase_frames": 20,
+            "plant_aware": true,
+            "random_density": 0.3,
+            "speed": 4.2,
+            "stagnation_generations": 120,
+            "wrap_edges": true
+          },
+          "plugin_id": "conway_life",
+          "preset_fingerprint": "56611bc9a34a1d9540fdf18fef2be2616bab8678890e17804aadc4f241c9dbc5",
+          "preset_id": "chaos",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": 1784606268.9646864,
           "version": 1
         },
         {

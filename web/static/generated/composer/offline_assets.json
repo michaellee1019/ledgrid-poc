@@ -1,12 +1,12 @@
 {
-  "cacheVersion": "g-eb7460bea47227877517",
+  "cacheVersion": "g-e52252cf495b8ad4c57e",
   "capturedAssets": [
     "/composer"
   ],
   "localAssets": [
     {
-      "bytes": 277464,
-      "sha256": "389618045983f9df76d146be24c93166a4f32ce59b2eeaa82860a0d5fef7c686",
+      "bytes": 283290,
+      "sha256": "fc9b260fb52bfb5264449ddb59b43b83768c51e721b3d323a10259e6491a8fe1",
       "url": "/composer-app.js"
     },
     {
@@ -20,8 +20,8 @@
       "url": "/static/composer.webmanifest"
     },
     {
-      "bytes": 77855,
-      "sha256": "7cfa433ddf4795690758b86215ec8de540572beabf3bd460a14fc55c241c5d9f",
+      "bytes": 83976,
+      "sha256": "8680db6ca318ab0abaace670850857a47f9cc3770ec84b0427af27b4807d22a2",
       "url": "/static/css/composer.css"
     },
     {
@@ -30,8 +30,8 @@
       "url": "/static/generated/composer/aurora_curtains_native.wasm"
     },
     {
-      "bytes": 850231,
-      "sha256": "ec789c41dc107591d5474a4d07590efabb90401ae3d4aa34c12dae6ec27aee0c",
+      "bytes": 851298,
+      "sha256": "41afd9a5b8503578797e1550427a235c2be9630462b61c777241c7b80d7dc38c",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
@@ -51,7 +51,7 @@
     },
     {
       "bytes": 1490,
-      "sha256": "f4e185cc496ae2a0d3cfee89f9c535e4bf59b9601dba551c4b98443cd512e03c",
+      "sha256": "ef7ca3c5b826146358f227cee6ae46d2dece141a9ecf7d2a515a4850812d2b05",
       "url": "/static/generated/composer/service_worker_config.v1.js"
     },
     {
@@ -110,12 +110,12 @@
       "url": "/static/js/composer_sha256.js"
     },
     {
-      "bytes": 26466,
-      "sha256": "87886fb5b9b28d1c4dfee7b90e7ad415d7b5618c55b6c45a9185a2625f93f768",
+      "bytes": 27255,
+      "sha256": "3635643f43fcbdd678568dd3fea72033faa22c1b78c9de877302450be595f11f",
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "g-4efb5afdb8feb0234b78",
+  "previousCacheVersion": "g-eb7460bea47227877517",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",
