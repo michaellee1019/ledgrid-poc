@@ -107,6 +107,8 @@ class ComposerLibraryApiTests(unittest.TestCase):
         self.assertIn("item.name.toLocaleLowerCase().includes(query)", script)
         self.assertIn("await recordRecent(item);", script)
         self.assertIn("if (state.reference) await recordRecent(state.reference);", script)
+        self.assertIn("state.library.recents.map((reference) => state.library.items.find", script)
+        self.assertIn("item.favorite ? 'Remove favorite' : 'Favorite'", script)
         self.assertIn("'librarySearch'", script)
         self.assertLess(script.index("'librarySearch'"), script.index("input.addEventListener('change', edit)"))
         self.assertLess(script.index('async function openLibraryItem(item) {\n    await preflightLibrary(item);'), script.index('const value=(await starters'))

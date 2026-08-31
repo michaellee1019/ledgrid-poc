@@ -106,11 +106,11 @@
   async function preflightLibrary(item) { const response=await fetch(`${api}/library/preflight`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reference:libraryReference(item)})}); const body=await response.json(); if (!response.ok) throw new Error(body.error || 'Library is unavailable.'); return body.reference; }
   function filteredLibrary() {
     const query=state.libraryQuery.trim().toLocaleLowerCase();
-    return state.library.items.filter((item) => {
-      const category = state.libraryFilter;
-      const categoryMatches = category === 'all' || item.kind === category || (category === 'favorites' && item.favorite) || (category === 'recent' && item.recent);
-      return categoryMatches && item.name.toLocaleLowerCase().includes(query);
-    });
+    const category = state.libraryFilter;
+    const ordered = category === 'recent'
+      ? state.library.recents.map((reference) => state.library.items.find((item) => item.kind === reference.kind && item.id === reference.id)).filter(Boolean)
+      : state.library.items.filter((item) => category === 'all' || item.kind === category || (category === 'favorites' && item.favorite));
+    return ordered.filter((item) => item.name.toLocaleLowerCase().includes(query));
   }
   async function recordRecent(item) { setLibrary(await library('/recents', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reference:libraryReference(item)})})); }
   async function toggleFavorite(item) { const path='/favorites'; const options={method:item.favorite ? 'DELETE':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reference:libraryReference(item)})}; setLibrary(await library(path, options)); }
