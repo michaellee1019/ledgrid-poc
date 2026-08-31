@@ -273,6 +273,18 @@ class AnimationWebInterface:
             except (ComposerLibraryStateError, SceneLookStoreError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
+        @self.app.route('/api/composer/library/cards', methods=['POST'])
+        def api_composer_library_card():
+            """Render one current library item without opening or recording it."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'reference'}:
+                    raise ComposerLibraryStateError('Choose one library item.')
+                reference = self._composer_library_reference(payload['reference'])
+                return jsonify(self._composer_library_card_payload(reference))
+            except (ComposerLibraryStateError, SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
         @self.app.route('/api/composer/starters')
         def api_composer_starters(): return jsonify({'starters': list_starters()})
 
@@ -1221,6 +1233,42 @@ class AnimationWebInterface:
             },
             'wall_mutations': 0,
         }
+
+    def _composer_library_card_payload(self, reference: dict[str, str]) -> Dict[str, Any]:
+        """Return a fixed-time, inert frame for a current library reference.
+
+        This is intentionally a read-only Composer-library seam: resolving an
+        item must not open it into the draft, update recents/favorites, or use
+        activation and reconciliation state.
+        """
+        preview_time = {
+            'monotonic_elapsed': 12.0,
+            'wall_time': '2026-08-31T12:00:00+00:00',
+        }
+        if reference['kind'] == 'starter':
+            starter = self._composer_starter(get_starter(reference['id']))
+            scene = {
+                'schema': 'ledgrid.scene.v1', 'vibe': 'quiet', 'master_brightness': 1,
+                'background': starter['background'], 'overlays': starter['overlays'],
+            }
+        else:
+            look = self._composer_look_payload(self.composer_looks.get(reference['id']))
+            stored = look['scene']
+            scene = {
+                'schema': stored['schema'], 'background': stored['background'],
+                'overlays': stored['overlays'], 'master_brightness': stored['master_brightness'],
+            }
+            if stored['vibe_source'] == 'custom':
+                scene['custom'] = {
+                    'palette_id': stored['palette_id'], 'wall_pace': stored['wall_pace'],
+                    'presentation_luminance': stored['presentation_luminance'],
+                }
+            else:
+                scene['vibe'] = stored['vibe_source']
+        preview = self._composer_preview_payload({
+            'origin': 'composer', 'scene': scene, 'preview': preview_time,
+        })
+        return {'reference': reference, 'preview_time': preview_time, **preview}
 
     def _composer_look_payload(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Reject old or corrupt records before exposing them to the local draft."""
