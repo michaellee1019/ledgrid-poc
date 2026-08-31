@@ -517,6 +517,7 @@ class DeploymentConfig:
     force_firmware: bool = False
     release_retention: int = DEFAULT_RELEASE_RETENTION
     health_timeout: float = 30.0
+    health_policy: str = "strict"
     ssh_options: tuple[str, ...] = DEFAULT_SSH_OPTIONS
     local_receipts: Path = DEFAULT_LOCAL_RECEIPTS
 
@@ -539,6 +540,8 @@ class DeploymentConfig:
             raise ValueError("release_retention must preserve at least two releases")
         if self.force_firmware and self.mode != "full":
             raise ValueError("forced firmware flashing requires a full deployment")
+        if self.health_policy not in {"strict", "demo-degraded-receiver-3-fec"}:
+            raise ValueError(f"unknown deployment health policy: {self.health_policy}")
 
 
 @dataclass(frozen=True)
@@ -1200,6 +1203,11 @@ class CoordinatorDeployment:
                 str(self.config.receiver_count),
                 "--timeout",
                 str(self.config.health_timeout),
+                *(
+                    ("--allow-demo-receiver-3-fec-degradation",)
+                    if self.config.health_policy == "demo-degraded-receiver-3-fec"
+                    else ()
+                ),
                 # Normal deploy readiness proves the selected release, fresh
                 # controller state, exact receiver roster, and live receiver
                 # responses. Low-level transport counter deltas remain an
@@ -1212,10 +1220,26 @@ class CoordinatorDeployment:
                 "complete-legacy-bootstrap", str(context.state["release_id"])
             )
             recorded = self.target.run("record-deploy")
-            return OperationResult(details={
+            warnings = result.get("warnings")
+            if warnings:
+                for warning in warnings:
+                    if not isinstance(warning, dict):
+                        continue
+                    context.report(
+                        "!!! DEMO DEGRADED RECEIVER 3 FEC: "
+                        "uncorrectable packets "
+                        f"lifetime={warning.get('lifetime')}, "
+                        f"process_baseline={warning.get('process_baseline')}, "
+                        f"process_delta={warning.get('process_delta')}; "
+                        "strict production health would fail"
+                    )
+            return OperationResult(
+                outcome="warning" if warnings else "executed",
+                details={
                 **result,
                 "legacy_bootstrap": bootstrap,
                 "deployment_status": recorded,
+                "health_policy": self.config.health_policy,
             })
 
         return self._post_activation(execute)
@@ -1616,6 +1640,12 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--skip-tests", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
+        "--health-policy",
+        choices=("strict", "demo-degraded-receiver-3-fec"),
+        default="strict",
+        help="strict is fail-closed; the demo exception permits only receiver 3 FEC uncorrectable growth",
+    )
+    parser.add_argument(
         "--force-firmware",
         action="store_true",
         default=os.environ.get("FORCE_FIRMWARE_FLASH", "0").lower()
@@ -1689,6 +1719,7 @@ def _config(args: argparse.Namespace) -> DeploymentConfig:
         receiver_count=args.receivers,
         force_firmware=args.force_firmware,
         release_retention=args.retain_releases,
+        health_policy=getattr(args, "health_policy", "strict"),
         ssh_options=_ssh_options(root, args.ssh_key),
     )
 

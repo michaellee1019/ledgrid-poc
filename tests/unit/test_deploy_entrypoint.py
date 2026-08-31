@@ -1371,6 +1371,86 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             "aligned_transport_evidence", result["receiver_contract"]
         )
 
+    def test_demo_receiver_3_fec_exception_warns_but_strict_health_fails_closed(self) -> None:
+        contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
+
+        def degraded_statuses(responses: int) -> tuple[Mapping[str, object], ...]:
+            statuses = [dict(item) for item in self._receiver_statuses(
+                version=7, capabilities=0x1FC00C, responses=responses,
+            )]
+            receiver_3 = statuses[3]
+            # The hardware's receiver counter is lifetime-scoped, while the
+            # host records the start-of-process baseline separately.
+            receiver_3["receiver_fec_packets_received"] += 55
+            receiver_3["receiver_fec_uncorrectable_packets"] = 55
+            receiver_3[
+                "receiver_fec_uncorrectable_packets_process_baseline"
+            ] = 41
+            receiver_3[
+                "receiver_fec_uncorrectable_packets_process_delta"
+            ] = 14
+            return tuple(statuses)
+
+        strict = degraded_statuses(2)
+        self.assertIn(
+            "terminal FEC transport errors since Host start",
+            deploy_target._receiver_health_rejection(
+                self._health_sample(
+                    responses=2,
+                    statuses=strict,
+                    receiver_aggregate=self._receiver_aggregate(strict),
+                ),
+                minimum_version=int(contract["minimum_status_version"]),
+                required_capabilities=int(contract["required_capabilities"]),
+                fec_receiver_ids=tuple(contract["fec_receiver_ids"]),
+                expected_devices=tuple(contract["devices"]),
+            ),
+        )
+
+        samples = tuple(
+            self._health_sample(
+                responses=responses,
+                statuses=(statuses := degraded_statuses(responses)),
+                receiver_aggregate=self._receiver_aggregate(statuses),
+            )
+            for responses in (2, 3)
+        )
+        with (
+            patch.object(
+                deploy_target,
+                "_request_receiver_status_refresh",
+                return_value="health-request",
+            ),
+            patch.object(deploy_target, "_sample_health", side_effect=samples),
+            patch.object(
+                deploy_target.time, "monotonic", side_effect=(0.0, 0.0, 0.0)
+            ),
+            patch.object(deploy_target.time, "sleep"),
+        ):
+            result = deploy_target.fresh_health(
+                Path("/target"),
+                "a" * 64,
+                restart_started_at=100.0,
+                strips=33,
+                leds_per_strip=138,
+                receivers=5,
+                stable_samples=1,
+                timeout=1.0,
+                unit="ledgrid.service",
+                api_url="http://local/status",
+                receiver_contract=contract,
+                allow_demo_receiver_3_fec_degradation=True,
+            )
+
+        self.assertEqual(result["warnings"], [{
+            "policy": "demo-degraded-receiver-3-fec",
+            "receiver_logical_device": 3,
+            "counter": "receiver_fec_uncorrectable_packets",
+            "lifetime": 55,
+            "process_baseline": 41,
+            "process_delta": 14,
+        }])
+
     def test_receiver_health_contract_v2_requires_explicit_receiver_3_fec_policy(self) -> None:
         contract = dict(self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT))
         self.assertEqual(contract["schema_version"], 2)
@@ -4231,7 +4311,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
 
     def _deployment(
         self, *, unchanged: bool = False, firmware_changed: bool = False,
-        force_firmware: bool = False,
+        force_firmware: bool = False, health_policy: str = "strict",
     ):
         runner = _Runner()
         context = DeployContext(
@@ -4252,6 +4332,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
             run_tests=False,
             health_timeout=1.0,
             force_firmware=force_firmware,
+            health_policy=health_policy,
         )
         deployment = deploy_entrypoint.CoordinatorDeployment(config, context)
         target = _FakeTarget(
@@ -4313,7 +4394,26 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         )
         health_call = next(call for call in target.calls if call[0] == "health")
         self.assertNotIn("--allow-legacy-status-fallback", health_call[1])
+        self.assertNotIn("--allow-demo-receiver-3-fec-degradation", health_call[1])
         self.assertIn("--skip-transport-delta-validation", health_call[1])
+
+    def test_demo_deploy_policy_passes_only_the_explicit_receiver_3_exception(self) -> None:
+        deployment, context, _runner, target = self._deployment(
+            health_policy="demo-degraded-receiver-3-fec"
+        )
+        try:
+            receipt = DeployCoordinator().run(context, deployment.steps())
+        finally:
+            deployment.close()
+
+        self.assertEqual(receipt.outcome, "success")
+        health_call = next(call for call in target.calls if call[0] == "health")
+        self.assertIn(
+            "--allow-demo-receiver-3-fec-degradation", health_call[1]
+        )
+        self.assertEqual(
+            receipt.health["health_policy"], "demo-degraded-receiver-3-fec"
+        )
 
     def test_unchanged_full_deployment_does_not_activate_restart_restore_or_flash(self) -> None:
         deployment, context, _runner, target = self._deployment(unchanged=True)

@@ -2896,6 +2896,7 @@ def _receiver_health_rejection(
     required_capabilities: int,
     fec_receiver_ids: Sequence[int],
     expected_devices: Sequence[Mapping[str, Any]],
+    allow_demo_receiver_3_fec_degradation: bool = False,
 ) -> Optional[str]:
     if sample.transport_envelope_devices != len(expected_devices):
         return (
@@ -3098,12 +3099,28 @@ def _receiver_health_rejection(
                 f"baseline({baseline_detail}), process_delta({process_detail}), "
                 f"counter_resets={terminal_resets}"
             )
+        demo_receiver_3_fec_degradation = (
+            allow_demo_receiver_3_fec_degradation
+            and logical_id == 3
+            and baseline_established is True
+            and baseline_invalid is False
+            and terminal_resets == 0
+            and process_terminal[
+                "receiver_fec_uncorrectable_packets_process_delta"
+            ] > 0
+            and process_terminal[
+                "receiver_fec_semantic_crc_errors_process_delta"
+            ] == 0
+            and process_terminal[
+                "receiver_fec_framing_errors_process_delta"
+            ] == 0
+        )
         terminal_observation_invalid = (
             baseline_established is not True
             or baseline_invalid is not False
             or terminal_resets != 0
             or any(process_terminal.values())
-        )
+        ) and not demo_receiver_3_fec_degradation
         if terminal_observation_invalid:
             lifetime_detail = ", ".join(
                 f"{field}={value}" for field, value in lifetime_terminal.items()
@@ -3254,6 +3271,36 @@ def _receiver_health_rejection(
     for gauge_name, expected in gauge_expectations.items():
         if sample.receiver_aggregate.get(gauge_name) != expected:
             return f"aggregate {gauge_name} drifted from per-receiver value"
+    return None
+
+
+def _demo_receiver_3_fec_warning(
+    sample: TargetHealthSample,
+) -> Optional[Mapping[str, int | str]]:
+    """Describe the only readiness degradation accepted by the demo policy."""
+    for status in sample.receiver_statuses:
+        if status.get("receiver_logical_device") != 3:
+            continue
+        delta = status.get("receiver_fec_uncorrectable_packets_process_delta")
+        if type(delta) is not int or delta <= 0:
+            return None
+        if (
+            status.get("receiver_fec_semantic_crc_errors_process_delta") != 0
+            or status.get("receiver_fec_framing_errors_process_delta") != 0
+        ):
+            return None
+        lifetime = status.get("receiver_fec_uncorrectable_packets")
+        baseline = status.get("receiver_fec_uncorrectable_packets_process_baseline")
+        if type(lifetime) is not int or type(baseline) is not int:
+            return None
+        return {
+            "policy": "demo-degraded-receiver-3-fec",
+            "receiver_logical_device": 3,
+            "counter": "receiver_fec_uncorrectable_packets",
+            "lifetime": lifetime,
+            "process_baseline": baseline,
+            "process_delta": delta,
+        }
     return None
 
 
@@ -3615,6 +3662,7 @@ def fresh_health(
     receiver_contract: Optional[Mapping[str, Any]] = None,
     allow_legacy_status_fallback: bool = False,
     validate_transport_deltas: bool = True,
+    allow_demo_receiver_3_fec_degradation: bool = False,
 ) -> Mapping[str, Any]:
     if stable_samples < 1:
         raise ValueError("stable_samples must be positive")
@@ -3660,6 +3708,9 @@ def fresh_health(
                     required_capabilities=contract.required_capabilities,
                     fec_receiver_ids=contract.fec_receiver_ids,
                     expected_devices=contract.devices,
+                    allow_demo_receiver_3_fec_degradation=(
+                        allow_demo_receiver_3_fec_degradation
+                    ),
                 )
             ) is not None:
                 rejection = receiver_rejection
@@ -3724,6 +3775,10 @@ def fresh_health(
                             health["receiver_contract"][
                                 "aligned_transport_evidence"
                             ] = _transport_accounting_evidence(accepted[0], sample)
+                        if allow_demo_receiver_3_fec_degradation:
+                            warning = _demo_receiver_3_fec_warning(sample)
+                            if warning is not None:
+                                health["warnings"] = [warning]
                     return health
         except Exception as exc:
             accepted.clear()
@@ -3817,6 +3872,11 @@ def _parser() -> argparse.ArgumentParser:
     health.add_argument("--receiver-contract-json")
     health.add_argument("--allow-legacy-status-fallback", action="store_true")
     health.add_argument("--skip-transport-delta-validation", action="store_true")
+    health.add_argument(
+        "--allow-demo-receiver-3-fec-degradation",
+        action="store_true",
+        help="demo-only exception for receiver 3 uncorrectable FEC process growth",
+    )
     subparsers.add_parser("record-deploy")
     subparsers.add_parser("reboot")
     subparsers.add_parser("current-release")
@@ -3899,6 +3959,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             receiver_contract=receiver_contract,
             allow_legacy_status_fallback=args.allow_legacy_status_fallback,
             validate_transport_deltas=not args.skip_transport_delta_validation,
+            allow_demo_receiver_3_fec_degradation=(
+                args.allow_demo_receiver_3_fec_degradation
+            ),
         )
     elif args.command == "record-deploy":
         result = record_deploy(root)

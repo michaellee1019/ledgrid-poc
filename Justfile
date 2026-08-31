@@ -33,19 +33,23 @@ generate-ai-ssh-key key_path=ai_ssh_key:
 # Run the focused product gate before a provision/firmware deployment.
 # Set TEST=false for an explicitly requested fast deployment.
 deploy:
-	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean
+	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --health-policy demo-degraded-receiver-3-fec
+
+# Production qualification retains fail-closed health, including receiver 3 FEC.
+deploy-strict:
+	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --health-policy strict
 
 # Explicit development exception: deploy tracked edits plus safe untracked source.
 deploy-dirty:
-	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy dirty
+	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy dirty --health-policy demo-degraded-receiver-3-fec
 
 # Stream the clean deployment while retaining the same captured log and policy.
 deploy-verbose:
-	{{captured}} --verbose --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --verbose
+	{{captured}} --verbose --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --verbose --health-policy demo-degraded-receiver-3-fec
 
 # Reconcile every attached receiver even when its recorded firmware identity matches.
 deploy-force-firmware:
-	{{captured}} --verbose --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --verbose --force-firmware
+	{{captured}} --verbose --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --verbose --force-firmware --health-policy demo-degraded-receiver-3-fec
 
 # Read-only source accounting plus the authoritative coordinator sequence.
 deploy-plan:
