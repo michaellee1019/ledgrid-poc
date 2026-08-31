@@ -577,7 +577,7 @@ class ComposerOperationsStatusContractTests(unittest.TestCase):
         self.assertEqual(result["reconciliation"]["state"], "stale")
         self.assertEqual(result["health"]["state"], "unavailable")
         self.assertEqual(result["raw_evidence"], {
-            "owner": "controller_status", "url": "/api/status", "observed_at": 1_000_000,
+            "owner": "controller_status", "url": "/api/v1/composer/settings/observed", "observed_at": 1_000_000,
         })
 
     def test_partial_receiver_evidence_is_degraded_without_exposing_driver_payload(self) -> None:
@@ -599,6 +599,64 @@ class ComposerOperationsStatusContractTests(unittest.TestCase):
         self.assertEqual(receivers["missing"], [1])
         self.assertEqual(receivers["unverified"], [1])
         self.assertNotIn("driver", result)
+
+    def test_current_driver_roster_proves_degraded_receivers_are_connected(self) -> None:
+        result = build_composer_operations_status(self._status(
+            receiver_count=5,
+            receiver_hybrid={
+                "operational": False,
+                "degraded": True,
+                "telemetry_complete": False,
+                "readable_devices": [0, 1, 2, 4],
+                "unverified_devices": [],
+                "error": "receiver 3 FEC status gap",
+            },
+            driver_stats={
+                "devices": [{"frames_sent": 1} for _ in range(5)],
+                "aggregate": {"device_map": [
+                    {"logical_device": index} for index in range(5)
+                ]},
+            },
+        ), now_ms=1_001_000)
+
+        receivers = result["health"]["receivers"]
+        self.assertEqual(receivers["connected"], [0, 1, 2, 3, 4])
+        self.assertEqual(receivers["missing"], [])
+        self.assertEqual(receivers["state"], "degraded")
+        self.assertEqual(result["health"]["state"], "degraded")
+        self.assertNotIn("driver_stats", result)
+
+    def test_driver_roster_rejects_malformed_duplicate_out_of_roster_and_unverified_ids(self) -> None:
+        current_driver = {
+            "devices": [{"frames_sent": 1} for _ in range(3)],
+            "aggregate": {"device_map": [{"logical_device": index} for index in range(3)]},
+        }
+        for label, driver, unverified, connected, missing in (
+            ("absent", {"devices": [{"frames_sent": 1} for _ in range(2)], "aggregate": {"device_map": [{"logical_device": 0}, {"logical_device": 1}]}}, [], [], [0, 1, 2]),
+            ("malformed", {"devices": [{"frames_sent": 1}, None, {"frames_sent": 1}], "aggregate": {"device_map": [{"logical_device": 0}, {"logical_device": 1}, {"logical_device": 2}]}}, [], [], [0, 1, 2]),
+            ("duplicate", {"devices": [{"frames_sent": 1} for _ in range(3)], "aggregate": {"device_map": [{"logical_device": 0}, {"logical_device": 1}, {"logical_device": 1}]}}, [], [], [0, 1, 2]),
+            ("out-of-roster", {"devices": [{"frames_sent": 1} for _ in range(3)], "aggregate": {"device_map": [{"logical_device": 0}, {"logical_device": 1}, {"logical_device": 3}]}}, [], [], [0, 1, 2]),
+            ("unverified", current_driver, [2], [0, 1], [2]),
+        ):
+            with self.subTest(label=label):
+                result = build_composer_operations_status(self._status(
+                    driver_stats=driver,
+                    receiver_hybrid={"operational": False, "degraded": True, "unverified_devices": unverified},
+                ), now_ms=1_001_000)
+                self.assertEqual(result["health"]["receivers"]["connected"], connected)
+                self.assertEqual(result["health"]["receivers"]["missing"], missing)
+                self.assertEqual(result["health"]["receivers"]["unverified"], unverified)
+
+    def test_stale_driver_roster_cannot_prove_current_connectivity(self) -> None:
+        result = build_composer_operations_status(self._status(
+            driver_stats={
+                "devices": [{"frames_sent": 1} for _ in range(3)],
+                "aggregate": {"device_map": [{"logical_device": index} for index in range(3)]},
+            },
+        ), now_ms=1_020_001)
+
+        self.assertEqual(result["health"]["receivers"]["connected"], [])
+        self.assertEqual(result["health"]["receivers"]["missing"], [0, 1, 2])
 
     def test_controller_reconnect_cannot_acknowledge_an_old_activation_receipt(self) -> None:
         result = build_composer_operations_status(self._status(

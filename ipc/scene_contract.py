@@ -387,15 +387,45 @@ def build_composer_operations_status(
         scene = raw.get("scene")
         receiver = scene.get("receiver") if isinstance(scene, Mapping) else None
     receiver = dict(receiver) if isinstance(receiver, Mapping) else {}
-    readable = sorted({value for value in receiver.get("readable_devices", ()) if _operations_uint(value) is not None})
-    unverified = sorted({value for value in receiver.get("unverified_devices", ()) if _operations_uint(value) is not None})
     driver = raw.get("driver_stats")
     devices = driver.get("devices") if isinstance(driver, Mapping) else None
     device_count = len(devices) if isinstance(devices, list) else 0
     expected_count = _operations_uint(raw.get("receiver_count"))
     expected_count = expected_count if expected_count is not None else device_count
     expected = list(range(expected_count))
-    missing = sorted(set(expected) - set(readable))
+    expected_ids = set(expected)
+    readable = {
+        value for value in receiver.get("readable_devices", ())
+        if _operations_uint(value) is not None and value in expected_ids
+    }
+    unverified = {
+        value for value in receiver.get("unverified_devices", ())
+        if _operations_uint(value) is not None and value in expected_ids
+    }
+    driver_connected: set[int] | None = None
+    if isinstance(driver, Mapping):
+        aggregate = driver.get("aggregate")
+        device_map = aggregate.get("device_map") if isinstance(aggregate, Mapping) else None
+        if isinstance(devices, list) and isinstance(device_map, list) and len(devices) == len(device_map):
+            mapped_ids = [
+                entry.get("logical_device") if isinstance(entry, Mapping) else None
+                for entry in device_map
+            ]
+            if (
+                all(isinstance(entry, Mapping) for entry in devices)
+                and all(_operations_uint(value) is not None and value in expected_ids for value in mapped_ids)
+                and len(set(mapped_ids)) == len(mapped_ids)
+                and set(mapped_ids) == expected_ids
+            ):
+                driver_connected = set(mapped_ids)
+        if driver_connected is None:
+            driver_connected = set()
+    connected = (driver_connected if driver_connected is not None else readable) - unverified
+    if freshness != "fresh":
+        connected = set()
+    connected = sorted(connected)
+    unverified = sorted(unverified)
+    missing = sorted(expected_ids - set(connected))
     if not receiver:
         receiver_state = "unknown"
     elif receiver.get("healthy") is True and not missing:
@@ -458,7 +488,7 @@ def build_composer_operations_status(
             "receivers": {
                 "state": receiver_state,
                 "expected": expected,
-                "connected": readable,
+                "connected": connected,
                 "missing": missing,
                 "unverified": unverified,
                 "telemetry_complete": receiver.get("telemetry_complete") if isinstance(receiver.get("telemetry_complete"), bool) else None,
