@@ -6,6 +6,7 @@ Flask-based web server for controlling animations and adjusting parameters in
 real time.
 """
 
+import base64
 import json
 import math
 import os
@@ -13,6 +14,7 @@ import re
 import tempfile
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,9 +33,10 @@ from drivers.frame_codec import (
 )
 from web.preview_worker import RuntimePreviewWorker
 from animation.core.component_catalog import ComponentCatalog
+from animation.core.scene_runtime import CanonicalSceneRuntime, CanonicalSceneRuntimeError
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
-from ipc.scene_contract import LocalSceneAdapter, SceneContractError
+from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_composer_scene
 from web.activation_token_store import (
     ActivationTokenError,
     ActivationTokenStale,
@@ -154,6 +157,14 @@ class AnimationWebInterface:
         def api_composer_status():
             """Read only local desired/observed Scene-v1 reconciliation state."""
             return jsonify(self._composer_status_payload())
+
+        @self.app.route('/api/composer/preview', methods=['POST'])
+        def api_composer_preview():
+            """Render one isolated local Scene-v1 draft without activating it."""
+            try:
+                return jsonify(self._composer_preview_payload(request.get_json(silent=True)))
+            except (CanonicalSceneRuntimeError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/check', methods=['POST'])
         def api_composer_check():
@@ -954,6 +965,53 @@ class AnimationWebInterface:
             'rejection': self._composer_rejection,
             # This is an explicit safety proof for the local adapter, not an
             # inferred property of a controller or deployment target.
+            'wall_mutations': 0,
+        }
+
+    def _composer_preview_payload(self, payload: Any) -> Dict[str, Any]:
+        """Use an inert canonical runtime to render an authored Composer draft.
+
+        The runtime's ``activate`` method only establishes an in-memory basis
+        for its render instances.  This method deliberately does not use the
+        token store, adapter, or historical controller channel.
+        """
+        if not isinstance(payload, dict) or set(payload) - {'origin', 'scene', 'preview'}:
+            raise SceneContractError('preview request must contain Composer scene and optional preview time')
+        preview = payload.get('preview', {})
+        if not isinstance(preview, dict) or set(preview) - {'monotonic_elapsed', 'wall_time'}:
+            raise SceneContractError('preview time is malformed')
+        request_scene = {'origin': payload.get('origin'), 'scene': payload.get('scene')}
+        canonical = normalize_composer_scene(request_scene, self.composer_catalog)
+        elapsed = preview.get('monotonic_elapsed', time.monotonic())
+        if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)):
+            raise SceneContractError('preview monotonic_elapsed must be numeric')
+        raw_wall_time = preview.get('wall_time')
+        if raw_wall_time is None:
+            wall_time = datetime.now().astimezone()
+        elif isinstance(raw_wall_time, str):
+            try:
+                wall_time = datetime.fromisoformat(raw_wall_time.replace('Z', '+00:00'))
+            except ValueError as exc:
+                raise SceneContractError('preview wall_time must be ISO-8601') from exc
+            if wall_time.tzinfo is None:
+                raise SceneContractError('preview wall_time must include a timezone')
+        else:
+            raise SceneContractError('preview wall_time must be ISO-8601')
+        controller = PreviewLEDController(strips=33, leds_per_strip=138)
+        runtime = CanonicalSceneRuntime(
+            controller, self.composer_catalog, wall_time_source=lambda: wall_time,
+        )
+        runtime.activate(canonical)
+        frame = runtime.render(float(elapsed))
+        return {
+            'basis': frame.basis.to_dict(),
+            'frame': {
+                'width': 33,
+                'height': 138,
+                'encoding': 'rgb_u8_base64',
+                'orientation': 'strip_major_led_zero_bottom',
+                'pixels': base64.b64encode(frame.pixels.tobytes()).decode('ascii'),
+            },
             'wall_mutations': 0,
         }
 

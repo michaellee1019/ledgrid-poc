@@ -22,7 +22,16 @@
       <label>Fold depth <input id="foldDepth" type="number" min="0" max="1" step="0.01" value="0.58"></label>
       <label>Glow <input id="glowIntensity" type="number" min="0" max="1" step="0.01" value="0.62"></label>
       <label>Scene mood <select id="vibe"><option value="quiet">Quiet</option><option value="neutral">Neutral</option><option value="vivid">Vivid</option></select></label>
+      <label>Palette <select id="previewPalette"><option value="mist">Mist</option><option value="neutral">Neutral</option><option value="spectrum">Spectrum</option><option value="ember">Ember</option></select></label>
+      <label>Pace <input id="wallPace" type="number" min="0" max="2" step="0.01" value="0.70"></label>
+      <label>Luminance <input id="sceneLuminance" type="number" min="0" max="2" step="0.01" value="0.82"></label>
     </div>
+  </section>
+
+  <section class="composer-card preview-card" aria-labelledby="preview-title">
+    <div class="section-title"><div><p class="eyebrow">Local runtime</p><h2 id="preview-title">Current draft</h2></div><strong id="previewIdentity">Rendering…</strong></div>
+    <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" aria-label="Current local Scene v1 preview"></canvas></div>
+    <p id="previewStatus" class="live-message" role="status" aria-live="polite">Rendering this local draft without changing the wall.</p>
   </section>
 
   <section class="composer-card" aria-labelledby="overlays-title">
