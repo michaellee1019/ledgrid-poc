@@ -50,6 +50,8 @@ from web.starter_looks import get_starter, list_starters
 from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 
 
+COMPOSER_SHELL_VERSION = "composer-shell-v1"
+
 PAINTER_MASK_TYPES = (
     {
         'id': 'foliage',
@@ -162,7 +164,18 @@ class AnimationWebInterface:
         @self.app.route('/')
         def index():
             """The one local authoring surface for the first Composer slice."""
-            return render_template('composer.html')
+            return render_template('composer.html', shell_version=COMPOSER_SHELL_VERSION)
+
+        @self.app.route('/composer-sw.js')
+        def composer_service_worker():
+            response = send_from_directory(
+                self.project_root / 'web' / 'static' / 'composer',
+                'composer_sw.js',
+                mimetype='application/javascript',
+            )
+            response.headers['Service-Worker-Allowed'] = '/'
+            response.headers['Cache-Control'] = 'no-cache'
+            return response
 
         @self.app.route('/api/composer/status')
         def api_composer_status():

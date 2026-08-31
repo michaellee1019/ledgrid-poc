@@ -8,6 +8,7 @@ body { background: #081316; color: #edf4f5; font-family: system-ui, -apple-syste
 .composer-nav a { border: 1px solid #44656a; border-radius: 999px; color: #d9e6e7; font-size: .9rem; font-weight: 700; padding: .5rem .72rem; text-decoration: none; }
 .composer-nav a:hover, .composer-nav a:focus-visible { background: #29464c; color: #f5fbfb; outline: 2px solid #83d7c5; outline-offset: 2px; }
 .navigation-message { color: #b9e9dc; margin: 0 0 .7rem; min-height: 1.5rem; }
+.composer-shell { background: #34251e; border: 1px solid #d69b6f; border-radius: 10px; color: #fff1e6; display: flex; gap: .8rem; align-items: center; justify-content: space-between; margin: 0 0 1rem; padding: .75rem 1rem; }.composer-shell p { margin: 0; }.composer.offline .preview-canvas { cursor: not-allowed; opacity: .55; }
 .composer-workspace { align-items: start; display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr) minmax(290px, 360px); }
 .composer-editor { min-width: 0; }
 .composer-rail { min-width: 0; position: sticky; top: 1rem; }

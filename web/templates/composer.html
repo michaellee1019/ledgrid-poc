@@ -4,10 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Composer</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/composer_slice.css', v='scene-v1') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='composer/manifest.webmanifest', v=shell_version) }}">
+  <meta name="theme-color" content="#081316">
+  <link rel="icon" href="{{ url_for('static', filename='composer/icon.svg', v=shell_version) }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/composer_slice.css', v=shell_version) }}">
 </head>
 <body>
 <main class="composer" data-api-root="/api/composer">
+  <section id="composerShell" class="composer-shell" hidden aria-live="polite"><p id="composerShellMessage"></p><button id="composerShellRetry" class="button secondary" type="button" hidden>Reload Composer</button><button id="composerShellUpdate" class="button secondary" type="button" hidden>Reload update</button></section>
   <section id="recoveryCard" class="composer-card" hidden><p class="eyebrow">Working draft</p><p id="recoveryMessage">A saved local draft is available.</p><button id="restoreDraft" class="button secondary" type="button">Restore</button><button id="discardDraft" class="button text" type="button">Discard</button></section>
   <header class="composer-heading">
     <div><p class="eyebrow">Local Composer</p><h1>Build a scene</h1><p>Changes stay on this computer until you choose Go Live.</p></div>
@@ -88,8 +92,9 @@
   </aside>
   </div>
 </main>
-<script src="{{ url_for('static', filename='js/composer_slice.js', v='scene-v1') }}"></script>
-<script src="{{ url_for('static', filename='js/composer_state_explanation.js', v='scene-v1') }}"></script>
-<script src="{{ url_for('static', filename='js/composer_navigation.js', v='scene-v1') }}"></script>
+<script src="{{ url_for('static', filename='js/composer_shell.js', v=shell_version) }}"></script>
+<script src="{{ url_for('static', filename='js/composer_slice.js', v=shell_version) }}"></script>
+<script src="{{ url_for('static', filename='js/composer_state_explanation.js', v=shell_version) }}"></script>
+<script src="{{ url_for('static', filename='js/composer_navigation.js', v=shell_version) }}"></script>
 </body>
 </html>
