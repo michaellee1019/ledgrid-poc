@@ -126,6 +126,9 @@ class AnimationWebInterface:
         self.composer_looks = SceneLookStore(self.project_root / "run_state" / "composer_looks.json")
         self.composer_library = ComposerLibraryState(self.project_root / "run_state" / "composer_library.json")
         self.working_draft = WorkingDraftStore(self.project_root / 'run_state' / 'composer_draft.json')
+        # A saved look is editable only while it remains the opened user look.
+        # Built-ins have no id here, which makes Save require Save As.
+        self._composer_opened_look_id: str | None = None
         if self.local_mode:
             self.generated_preview_dir = (
                 self.project_root / "run_state" / "mac_animation_previews"
@@ -184,13 +187,10 @@ class AnimationWebInterface:
             try:
                 value = self.working_draft.get()
                 if value is not None:
-                    canonical = self._composer_working_draft(value['draft'])
+                    canonical = self._composer_recovery_scene(value['scene'])
                     if canonical.identity.to_dict() != value['basis']:
-                        raise WorkingDraftError('Working draft no longer matches its basis; discard it.')
-                    reference = self._composer_draft_reference(value['reference'], require_current=False)
-                    # A matching basis is stale bookkeeping, never a recovery offer.
-                    if canonical.identity.to_dict() == reference['basis']:
-                        value = None
+                        raise WorkingDraftError('Crash recovery no longer matches its basis; discard it.')
+                    self._composer_opened_look_id = value['opened_look_id']
                 return jsonify({'draft': value})
             except (WorkingDraftError, SceneContractError, SceneLookStoreError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
@@ -200,18 +200,9 @@ class AnimationWebInterface:
             try:
                 if request.method == 'DELETE':
                     self.working_draft.discard()
+                    self._composer_opened_look_id = None
                     return jsonify({'discarded': True})
-                payload = request.get_json(silent=True) or {}
-                if set(payload) != {'draft', 'reference'}:
-                    raise WorkingDraftError('Working draft is malformed.')
-                canonical = self._composer_canonical(payload['draft'])
-                reference = self._composer_draft_reference(payload['reference'], require_current=True)
-                if canonical.identity.to_dict() == reference['basis']:
-                    self.working_draft.discard()
-                    return jsonify({'draft': None})
-                return jsonify({'draft': self.working_draft.save(
-                    {'origin': 'composer', 'scene': canonical.scene}, canonical.identity.to_dict(), reference, time.time(),
-                )})
+                raise WorkingDraftError('Crash recovery is updated only after a valid Scene v2 edit.')
             except (WorkingDraftError, SceneContractError, TypeError, ValueError) as exc: return jsonify({'error':str(exc)}),400
 
         @self.app.route('/api/composer/preview', methods=['POST'])
@@ -317,10 +308,12 @@ class AnimationWebInterface:
         def api_composer_save_look():
             payload = request.get_json(silent=True) or {}
             try:
-                if set(payload) != {'name', 'draft'}:
-                    raise SceneLookStoreError('A look needs a name and current draft.')
-                canonical = self._composer_canonical(payload['draft'])
-                return jsonify({'look': self._composer_look_payload(self.composer_looks.save(payload['name'], canonical))})
+                if set(payload) != {'name', 'scene'}:
+                    raise SceneLookStoreError('Save As needs a name and current Scene v2.')
+                canonical = self._composer_canonical({'origin': 'composer', 'scene': payload['scene']})
+                look = self.composer_looks.save_as(payload['name'], canonical)
+                self._persist_composer_recovery(canonical, look['id'])
+                return jsonify({'look': self._composer_look_payload(look)})
             except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
@@ -328,6 +321,76 @@ class AnimationWebInterface:
         def api_composer_open_look(look_id: str):
             try:
                 return jsonify({'look': self._composer_look_payload(self.composer_looks.get(look_id))})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks/<look_id>/open', methods=['POST'])
+        def api_composer_select_look(look_id: str):
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) - {'client_id', 'mutation_id', 'client_sequence'}:
+                    raise ValueError('look selection contains unknown fields')
+                look = self._composer_look_payload(self.composer_looks.get(look_id))
+                status = self._composer_submit_scene(
+                    look['scene'], client_id=payload.get('client_id', 'composer'),
+                    mutation_id=payload.get('mutation_id'), client_sequence=payload.get('client_sequence'),
+                    opened_look_id=look['id'], preserve_opened_look=False,
+                )
+                self.composer_library.revisit({'kind': 'look', 'id': look['id']})
+                return jsonify({'look': look, 'status': status})
+            except LiveSceneStale as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 409
+            except (ComposerLibraryStateError, SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+
+        @self.app.route('/api/composer/built-ins/open', methods=['POST'])
+        def api_composer_select_builtin():
+            """Open a current Scene v2 built-in without making it saveable.
+
+            Built-in catalogs are supplied by the composition chooser. This
+            endpoint is the explicit selection boundary that clears any prior
+            user-look save target while retaining ordinary live/stopped state.
+            """
+            payload = request.get_json(silent=True) or {}
+            try:
+                allowed = {'scene', 'client_id', 'mutation_id', 'client_sequence'}
+                if set(payload) - allowed or 'scene' not in payload:
+                    raise ValueError('built-in selection needs a Scene v2 and optional client metadata')
+                status = self._composer_submit_scene(
+                    payload['scene'], client_id=payload.get('client_id', 'composer'),
+                    mutation_id=payload.get('mutation_id'), client_sequence=payload.get('client_sequence'),
+                    opened_look_id=None, preserve_opened_look=False,
+                )
+                return jsonify({'builtin': True, 'status': status})
+            except LiveSceneStale as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 409
+            except (SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+
+        @self.app.route('/api/composer/looks/save', methods=['POST'])
+        def api_composer_save_opened_look():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'scene'}:
+                    raise SceneLookStoreError('Save needs the current Scene v2.')
+                if self._composer_opened_look_id is None:
+                    raise SceneLookStoreError('This built-in look is immutable; use Save As.')
+                canonical = self._composer_canonical({'origin': 'composer', 'scene': payload['scene']})
+                look = self.composer_looks.update(self._composer_opened_look_id, canonical)
+                self._persist_composer_recovery(canonical, look['id'])
+                return jsonify({'look': self._composer_look_payload(look)})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 409
+
+        @self.app.route('/api/composer/looks/import-legacy', methods=['POST'])
+        def api_composer_import_legacy_looks():
+            """One explicit, all-or-nothing import of reviewed legacy exports."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'looks'}:
+                    raise SceneLookStoreError('Legacy import needs only its reviewed looks.')
+                imported = self.composer_looks.import_legacy_once(payload['looks'], self._translate_legacy_look)
+                return jsonify({'looks': [self._composer_look_payload(look) for look in imported]})
             except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
@@ -341,7 +404,7 @@ class AnimationWebInterface:
             except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
-        @self.app.route('/api/composer/looks/<look_id>', methods=['PATCH', 'DELETE'])
+        @self.app.route('/api/composer/looks/<look_id>', methods=['PATCH', 'PUT', 'DELETE'])
         def api_composer_change_look(look_id: str):
             try:
                 if request.method == 'DELETE':
@@ -349,13 +412,21 @@ class AnimationWebInterface:
                     # corrupt library before changing the saved-look store, then
                     # remove this deleted look from persistent library references.
                     self.composer_library.get()
+                    if self._composer_opened_look_id == look_id:
+                        self._clear_opened_look_recovery()
                     self.composer_looks.delete(look_id)
                     self.composer_library.prune_look(look_id)
                     return jsonify({'deleted': look_id})
                 payload = request.get_json(silent=True) or {}
-                if set(payload) != {'name'}:
-                    raise SceneLookStoreError('A rename needs a new name.')
-                return jsonify({'look': self._composer_look_payload(self.composer_looks.rename(look_id, payload['name']))})
+                if set(payload) == {'name'}:
+                    return jsonify({'look': self._composer_look_payload(self.composer_looks.rename(look_id, payload['name']))})
+                if set(payload) == {'scene'}:
+                    canonical = self._composer_canonical({'origin': 'composer', 'scene': payload['scene']})
+                    look = self.composer_looks.update(look_id, canonical)
+                    if self._composer_opened_look_id == look_id:
+                        self._persist_composer_recovery(canonical, look_id)
+                    return jsonify({'look': self._composer_look_payload(look)})
+                raise SceneLookStoreError('A look change needs a name or current Scene v2.')
             except (ComposerLibraryStateError, SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
@@ -378,9 +449,8 @@ class AnimationWebInterface:
                 allowed = {'origin', 'scene', 'client_id', 'mutation_id', 'client_sequence'}
                 if set(payload) - allowed:
                     raise ValueError('scene request contains unknown fields')
-                request_scene = {'origin': payload.get('origin'), 'scene': payload.get('scene')}
-                return jsonify(self.composer_live.submit(
-                    request_scene,
+                return jsonify(self._composer_submit_scene(
+                    payload.get('scene'),
                     client_id=payload.get('client_id', 'composer'),
                     mutation_id=payload.get('mutation_id'),
                     client_sequence=payload.get('client_sequence'),
@@ -1155,6 +1225,73 @@ class AnimationWebInterface:
         """
         return self.composer_live.snapshot(client_id=client_id)
 
+    def _composer_submit_scene(
+        self, scene: Any, *, client_id: str, mutation_id: str | None = None,
+        client_sequence: int | None = None, opened_look_id: str | None = None,
+        preserve_opened_look: bool = True,
+    ) -> Dict[str, Any]:
+        """Commit one valid scene, then atomically refresh hidden recovery.
+
+        The live coordinator is the acceptance boundary.  Recovery is never
+        updated before it accepts the same current-only Scene v2, which means a
+        rejected edit cannot overwrite the last safely recoverable wall state.
+        """
+        canonical = self._composer_canonical({'origin': 'composer', 'scene': scene})
+        next_opened_look_id = self._composer_opened_look_id if preserve_opened_look else opened_look_id
+        try:
+            result = self.composer_live.submit(
+                {'origin': 'composer', 'scene': canonical.scene}, client_id=client_id,
+                mutation_id=mutation_id, client_sequence=client_sequence,
+            )
+        except TimeoutError:
+            # LiveSceneState accepts desired state before attempting output
+            # acknowledgement. A timeout therefore leaves a valid newer scene
+            # editable in recovery, even while observed output remains prior.
+            self._persist_composer_recovery(canonical, next_opened_look_id)
+            raise
+        # An exact retry may describe an older mutation after another client
+        # has already won. It is not a new local edit and must not roll crash
+        # recovery or the opened-look cursor backward.
+        if result['exact_retry']:
+            return result
+        self._persist_composer_recovery(canonical, next_opened_look_id)
+        return result
+
+    def _persist_composer_recovery(self, canonical, opened_look_id: str | None) -> dict[str, Any]:
+        """Write only complete current scenes; output/calibration cannot enter."""
+        self._composer_opened_look_id = opened_look_id
+        return self.working_draft.save(
+            canonical.scene, canonical.identity.to_dict(), opened_look_id, time.time(),
+        )
+
+    def _composer_recovery_scene(self, scene: Any):
+        return self._composer_canonical({'origin': 'composer', 'scene': scene})
+
+    def _clear_opened_look_recovery(self) -> None:
+        """Clear a deleted look cursor before the look can cease to exist."""
+        recovery = self.working_draft.get()
+        if recovery is None:
+            self._composer_opened_look_id = None
+            return
+        canonical = self._composer_recovery_scene(recovery['scene'])
+        if canonical.identity.to_dict() != recovery['basis']:
+            raise WorkingDraftError('Crash recovery no longer matches its basis; discard it.')
+        self._persist_composer_recovery(canonical, None)
+
+    def _translate_legacy_look(self, value: Dict[str, Any]):
+        """Import only explicitly selected, pre-translated current-scene exports.
+
+        Old Scene v1 payloads are intentionally not interpreted at runtime.
+        A migration tool or operator must classify a useful legacy look first,
+        then place its validated Scene v2 candidate in ``scene_v2``.
+        """
+        if set(value) != {'name', 'selected', 'scene_v2'} or not isinstance(value['selected'], bool):
+            raise SceneLookStoreError('A legacy look must include name, selected, and scene_v2.')
+        if not value['selected']:
+            return None
+        canonical = self._composer_canonical({'origin': 'composer', 'scene': value['scene_v2']})
+        return value['name'], canonical
+
     def _composer_preview_payload(self, payload: Any) -> Dict[str, Any]:
         """Use an inert canonical runtime to render an authored Composer draft.
 
@@ -1239,25 +1376,9 @@ class AnimationWebInterface:
         return {'reference': reference, 'preview_time': preview_time, **preview}
 
     def _composer_look_payload(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        """Reject old or corrupt records before exposing them to the local draft."""
+        """Reject old, corrupt, or non-current whole-scene look records."""
         scene = record['scene']
-        if not isinstance(scene, dict) or set(scene) != {
-            'schema', 'background', 'overlays', 'vibe_source', 'palette_id',
-            'wall_pace', 'presentation_luminance', 'master_brightness',
-        }:
-            raise SceneLookStoreError('Saved look is not current Scene v1; recreate it.')
-        authored_scene = {
-            'schema': scene['schema'], 'background': scene['background'],
-            'overlays': scene['overlays'], 'master_brightness': scene['master_brightness'],
-        }
-        if scene['vibe_source'] == 'custom':
-            authored_scene['custom'] = {
-                'palette_id': scene['palette_id'], 'wall_pace': scene['wall_pace'],
-                'presentation_luminance': scene['presentation_luminance'],
-            }
-        else:
-            authored_scene['vibe'] = scene['vibe_source']
-        canonical = self._composer_canonical({'origin': 'composer', 'scene': authored_scene})
+        canonical = self._composer_canonical({'origin': 'composer', 'scene': scene})
         if canonical.scene != scene or canonical.identity.to_dict() != record['basis']:
             raise SceneLookStoreError('Saved look has changed or is corrupt; recreate it.')
         return {'id': record['id'], 'name': record['name'], 'basis': record['basis'], 'scene': scene}
