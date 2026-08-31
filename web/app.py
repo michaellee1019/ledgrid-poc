@@ -282,7 +282,7 @@ class AnimationWebInterface:
                     raise ComposerLibraryStateError('Choose one library item.')
                 reference = self._composer_library_reference(payload['reference'])
                 return jsonify(self._composer_library_card_payload(reference))
-            except (ComposerLibraryStateError, SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+            except (CanonicalSceneRuntimeError, ComposerLibraryStateError, SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/starters')

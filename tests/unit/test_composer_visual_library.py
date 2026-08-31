@@ -5,7 +5,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from animation.core.scene_runtime import CanonicalSceneRuntimeError
 from tests.unit.test_composer_looks import _PreviewManager, _WallChannel, _scene
 from web.app import AnimationWebInterface
 from web.composer_library_state import ComposerLibraryState
@@ -67,6 +69,18 @@ class ComposerVisualLibraryTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/composer/status").get_json(), before_status)
         self.assertEqual(self.client.get("/api/composer/library").get_json(), before_library)
         self.assertIsNone(self.interface.working_draft.get())
+
+    def test_card_runtime_failure_is_json_visible_without_state_mutation(self) -> None:
+        before_status = self.client.get("/api/composer/status").get_json()
+        before_library = self.client.get("/api/composer/library").get_json()
+        with patch.object(self.interface, "_composer_preview_payload", side_effect=CanonicalSceneRuntimeError("card runtime failed")):
+            response = self.client.post("/api/composer/library/cards", json={"reference": {"kind": "starter", "id": "aurora"}})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json(), {"error": "card runtime failed"})
+        self.assertEqual(self.client.get("/api/composer/status").get_json(), before_status)
+        self.assertEqual(self.client.get("/api/composer/library").get_json(), before_library)
+        self.assertIsNone(self.interface.working_draft.get())
+        self.assertEqual((self.wall.commands, self.interface.composer_control.commands), ([], []))
 
     def test_client_declares_lazy_bounded_basis_keyed_card_loading(self) -> None:
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
