@@ -338,6 +338,7 @@ console.log(JSON.stringify({
   kinds: entries.map((entry) => entry.kind),
   categories: state.libraryDiscoveryCategories(entries),
   query: state.filterLibraryDiscoveryEntries(entries, {query: 'dim'}).map((entry) => entry.key),
+  rendererFirstQuery: state.filterLibraryDiscoveryEntries(entries, {query: 'aurora'}).map((entry) => entry.kind),
   native: state.filterLibraryDiscoveryEntries(entries, {runtime: 'native'}).map((entry) => entry.key),
   favorites: state.filterLibraryDiscoveryEntries(entries, {saved: 'favorites', favorites: [favorite]}).map((entry) => entry.key),
   recent: state.filterLibraryDiscoveryEntries(entries, {saved: 'recent', recents: [recent, favorite]}).map((entry) => entry.key),
@@ -348,6 +349,7 @@ console.log(JSON.stringify({
         self.assertEqual(result["kinds"], ["renderer", "renderer", "preset", "preset"])
         self.assertEqual(result["categories"], ["Night", "Showcase"])
         self.assertEqual(result["query"], ['["python","aurora","night"]'])
+        self.assertEqual(result["rendererFirstQuery"], ["renderer", "renderer", "preset", "preset"])
         self.assertEqual(result["native"], [
             '["receiver_native","aurora",""]',
             '["receiver_native","aurora","showcase"]',
@@ -582,7 +584,11 @@ console.log(JSON.stringify({
         self.assertIn("function pollActivationResourceResult()", source)
         self.assertIn("result.outcome === 'pending'", source)
         self.assertIn("do not infer success", source)
-        self.assertIn("Ready · edits apply automatically after a guarded server Check.", source)
+        self.assertIn("Local preview · edits stay on this device until you go Live.", source)
+        self.assertIn("async function toggleLiveWall()", source)
+        self.assertIn("state.globalSettings.draft.power = true", source)
+        self.assertIn("queueImmediateApply({immediate: true, source: 'Go Live'})", source)
+        self.assertIn("if (!state.liveWall.enabled)", source)
         self.assertIn("prepareOfflineButton", source)
         self.assertIn("const activationAvailable = state.bootstrap?.capabilities?.server_actions?.activation_available === true", source)
         self.assertIn("activationMode === 'development_canary'", source)

@@ -67,7 +67,7 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         cls.audit = _Audit()
         cls.audit.feed(cls.html)
 
-    def test_starting_points_precede_the_disclosed_renderer_catalog(self) -> None:
+    def test_renderer_catalog_is_open_and_visually_precedes_starting_points(self) -> None:
         preset_position = self.html.index('id="presetList"')
         disclosure_position = self.html.index('id="animationCatalogDisclosure"')
         catalog_position = self.html.index('id="componentList"')
@@ -76,7 +76,9 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         self.assertLess(disclosure_position, catalog_position)
         tag, attrs = self.audit.by_id("animationCatalogDisclosure")
         self.assertEqual(tag, "details")
-        self.assertNotIn("open", attrs)
+        self.assertIn("open", attrs)
+        self.assertIn(".library-pane > .catalog-disclosure { order: 2;", self.css)
+        self.assertIn(".library-pane > .featured-starts { order: 3;", self.css)
 
     def test_mobile_has_one_five_destination_navigation_surface(self) -> None:
         destinations = [

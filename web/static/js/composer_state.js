@@ -401,6 +401,20 @@
                         .map(librarySelectionKey).indexOf(right.key)
                 : 0);
         }
+        if (query) {
+            const relevance = (entry) => {
+                const name = normalizedSearchText(entry.name);
+                const componentName = normalizedSearchText(entry.component?.name);
+                const pluginId = normalizedSearchText(entry.component?.plugin_id).replaceAll('_', ' ');
+                if (name === query) return 0;
+                if (entry.kind === 'renderer' && (componentName.includes(query) || pluginId.includes(query))) return 1;
+                if (name.startsWith(query)) return 2;
+                if (entry.kind === 'renderer') return 3;
+                return 4;
+            };
+            return visible.sort((left, right) => relevance(left) - relevance(right)
+                || compareLibraryText(left.name, right.name));
+        }
         return visible;
     }
 

@@ -713,6 +713,8 @@ class BrowserComposerActionTests(unittest.TestCase):
             "exportPanelButton",
             "saveLibraryPanelButton",
             "mobileActivationStatus",
+            "mobileGoLiveButton",
+            "goLiveButton",
             "immediateApplyStatus",
         ):
             self.assertIn(f'id="{element_id}"', html)
@@ -730,6 +732,7 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("IMMEDIATE_APPLY_MIN_INTERVAL_MS = 120", javascript)
         self.assertIn("createLatestStateQueue()", javascript)
         self.assertIn("queueImmediateApply({immediate: true", javascript)
+        self.assertIn("source: 'Go Live'", javascript)
         self.assertIn("await submitCheckedIntent(entry.intent, serverCheck)", javascript)
         self.assertIn("await waitForImmediateActivation(entry, result)", javascript)
         self.assertNotIn("liveEditToggle", javascript)
@@ -742,6 +745,9 @@ class BrowserComposerActionTests(unittest.TestCase):
         javascript = (ROOT / "web/static/js/composer.js").read_text(encoding="utf-8")
 
         self.assertIn("if (state.urlState.applying) return false", javascript)
+        self.assertIn("if (!state.liveWall.enabled)", javascript)
+        self.assertIn("Local preview · edits stay on this device until you go Live.", javascript)
+        self.assertIn("function leaveLiveWall(", javascript)
         self.assertIn("scheduleApply: false", javascript)
         self.assertIn("if (!fromBrowser) queueImmediateApply", javascript)
         self.assertIn("apply.queue.enqueue(intent)", javascript)

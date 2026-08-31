@@ -102,6 +102,12 @@
             message: null,
             state: 'idle',
         },
+        liveWall: {
+            enabled: false,
+            entering: false,
+        },
+        parameterQuery: '',
+        parameterHelp: false,
         autosaveTimer: null,
         connectivityTimer: null,
         composerReady: false,
@@ -1353,6 +1359,7 @@
 
     async function stopOutput() {
         if (state.busyAction || state.operations.stop?.pending) return;
+        leaveLiveWall('Stopping wall output…');
         const observed = await refreshGlobalSettings({quiet: true, preserveDraft: true});
         if (!observed || !state.globalSettings.observed) {
             toast('Stop needs a current controller observation before it can be checked.', 'error');
@@ -1522,6 +1529,7 @@
         state.serverChecking = checking;
         document.dispatchEvent(new CustomEvent('composer:capability-change'));
         if (!online && wasOnline) {
+            state.liveWall.enabled = false;
             invalidateImmediateApply('Not sent · wall connection lost. Reconnect does not replay prior edits.');
         }
         const activationAvailable = state.bootstrap?.capabilities?.server_actions?.activation_available === true;
@@ -1628,15 +1636,100 @@
     function renderImmediateApplyStatus() {
         const apply = state.immediateApply;
         const status = $('immediateApplyStatus');
-        const message = apply.message || (apply.inFlight || apply.queue.hasQueued()
-            ? 'Pending · edits are checked and sent in order; only the newest queued edit is retained.'
-            : 'Ready · edits apply automatically after a guarded server Check.');
+        const message = !state.liveWall.enabled
+            ? 'Local preview · edits stay on this device until you go Live.'
+            : apply.message || (apply.inFlight || apply.queue.hasQueued()
+                ? 'Pending · edits are checked and sent in order; only the newest queued edit is retained.'
+                : 'Live · subsequent edits are checked and synchronized to the wall.');
         if (status) {
             status.textContent = message;
-            status.dataset.state = apply.state;
+            status.dataset.state = state.liveWall.enabled ? apply.state : 'local';
         }
         const mobileStatus = $('mobileActivationStatus');
         if (mobileStatus) mobileStatus.textContent = message;
+        renderLiveWallControls();
+    }
+
+    function renderLiveWallControls() {
+        const live = state.liveWall;
+        const blockReason = activationBlockReason();
+        const status = $('liveModeStatus');
+        if (status) {
+            const active = live.enabled && state.immediateApply.state === 'active';
+            status.dataset.state = live.enabled ? (active ? 'active' : 'pending') : 'local';
+            status.replaceChildren();
+            const indicator = document.createElement('i');
+            indicator.setAttribute('aria-hidden', 'true');
+            status.append(indicator, document.createTextNode(
+                live.enabled ? (active ? 'Live on wall' : 'Going live…') : 'Local preview',
+            ));
+        }
+        ['goLiveButton', 'mobileGoLiveButton'].forEach((id) => {
+            const button = $(id);
+            if (!button) return;
+            button.textContent = live.entering ? 'Connecting…' : live.enabled ? 'Leave Live' : 'Go Live';
+            button.dataset.live = String(live.enabled);
+            button.dataset.busy = String(live.entering);
+            button.disabled = live.entering
+                || Boolean(state.busyAction)
+                || (!live.enabled && (!state.component || state.serverChecking));
+            button.title = live.enabled
+                ? 'Return to local preview without stopping the current wall output.'
+                : (blockReason || 'Play this look on the wall and synchronize subsequent edits.');
+        });
+    }
+
+    function leaveLiveWall(message = 'Local preview · wall output is unchanged.') {
+        state.liveWall.enabled = false;
+        invalidateImmediateApply(message);
+        state.immediateApply.message = message;
+        state.immediateApply.state = 'local';
+        renderImmediateApplyStatus();
+    }
+
+    async function toggleLiveWall() {
+        if (state.liveWall.entering) return;
+        if (state.liveWall.enabled) {
+            leaveLiveWall();
+            return;
+        }
+        if (!state.component) {
+            toast('Choose a renderer before going Live.', 'error');
+            return;
+        }
+        state.liveWall.entering = true;
+        renderLiveWallControls();
+        try {
+            if (!state.serverOnline || !state.serverActivationCompatible) {
+                await checkConnectivity({quiet: true});
+            }
+            const blockReason = activationBlockReason();
+            if (blockReason) throw new Error(blockReason);
+            if (state.globalSettings.draft && state.globalSettings.draft.power !== true) {
+                state.globalSettings.draft.power = true;
+                state.globalSettings.dirty = !globalSettingsEqual(
+                    state.globalSettings.draft, state.globalSettings.observed,
+                );
+                persistGlobalDraft();
+                renderGlobalSettings();
+                resetChecker({preserveDocumentRevision: true});
+            }
+            state.liveWall.enabled = true;
+            state.immediateApply.message = 'Connecting · checking this exact scene against the wall…';
+            state.immediateApply.state = 'pending';
+            if (!queueImmediateApply({immediate: true, source: 'Go Live'})) {
+                throw new Error('The live scene could not be queued.');
+            }
+            toast('Going Live. Subsequent edits will synchronize to the wall.');
+        } catch (error) {
+            state.liveWall.enabled = false;
+            state.immediateApply.message = `Not live · ${error.message}`;
+            state.immediateApply.state = 'failed';
+            toast(state.immediateApply.message, 'error');
+        } finally {
+            state.liveWall.entering = false;
+            renderImmediateApplyStatus();
+        }
     }
 
     function invalidateImmediateApply(message = 'Not sent · reconnect does not replay prior edits.') {
@@ -1666,6 +1759,12 @@
 
     function queueImmediateApply({immediate = false, source = 'edit'} = {}) {
         if (state.urlState.applying) return false;
+        if (!state.liveWall.enabled) {
+            state.immediateApply.message = 'Local preview · edits stay on this device until you go Live.';
+            state.immediateApply.state = 'local';
+            renderImmediateApplyStatus();
+            return false;
+        }
         const blockReason = activationBlockReason();
         if (blockReason) {
             invalidateImmediateApply(`Not sent · ${blockReason}`);
@@ -1785,6 +1884,7 @@
         } catch (error) {
             outcome = {state: 'failed', retryable: true, message: `Not applied · ${error.message}`};
             if (immediateApplyEntryIsCurrent(entry)) {
+                state.liveWall.enabled = false;
                 if (error.code === 'offline') setServerOnline(false);
                 apply.message = outcome.message;
                 apply.state = 'failed';
@@ -1815,7 +1915,9 @@
         const reason = $('activationReadiness');
         if (reason) {
             reason.textContent = blockReason
-                || 'Ready for immediate apply: every edit receives a fresh guarded server Check.';
+                || (state.liveWall.enabled
+                    ? 'Live editing is ready: each change is checked, sent, and confirmed on the wall.'
+                    : 'Wall is ready. Go Live when you want this look and subsequent edits on the installation.');
             reason.dataset.state = blockReason ? 'blocked' : 'ready';
         }
         updateActivationResourceButtons();
@@ -1825,11 +1927,13 @@
     function setActionBusy(action, busy) {
         state.busyAction = busy ? action : null;
         const ids = action === 'activate'
-            ? []
+            ? ['goLiveButton', 'mobileGoLiveButton']
             : action === 'save'
                 ? ['saveLibraryButton', 'saveLibraryPanelButton']
                 : ['operationsStopButton'];
-        ids.forEach((id) => $(id).dataset.busy = String(busy));
+        ids.forEach((id) => {
+            if ($(id)) $(id).dataset.busy = String(busy);
+        });
         $('layersPanel').setAttribute('aria-busy', String(busy));
         updateServerActionButtons();
     }
@@ -2957,9 +3061,20 @@
         const schema = state.component?.parameter_schema || {};
         const entries = Object.entries(schema);
         const authoredEntries = entries.filter(([key]) => !isGlobalInstallationParameter(key));
-        const creative = authoredEntries.filter(([key, contract]) => !isAdvancedParameter(key, contract));
-        const advanced = authoredEntries.filter(([key, contract]) => isAdvancedParameter(key, contract));
+        const query = state.parameterQuery.trim().toLocaleLowerCase();
+        const matchesQuery = ([key, contract]) => !query
+            || `${humanize(key)} ${contract?.description || ''}`.toLocaleLowerCase().includes(query);
+        const creative = authoredEntries
+            .filter(([key, contract]) => !isAdvancedParameter(key, contract))
+            .filter(matchesQuery);
+        const advanced = authoredEntries
+            .filter(([key, contract]) => isAdvancedParameter(key, contract))
+            .filter(matchesQuery);
+        $('controlsPanel').dataset.parameterHelp = String(state.parameterHelp);
         $('parameterEmpty').hidden = creative.length > 0;
+        $('parameterEmpty').textContent = query
+            ? 'No creative controls match this filter.'
+            : 'Controls are generated from the selected renderer’s declared schema.';
         if ($('advancedParameterEmpty')) $('advancedParameterEmpty').hidden = advanced.length > 0;
         creative.forEach(([key, contract]) => host.appendChild(parameterControl(key, contract || {})));
         advanced.forEach(([key, contract]) => advancedHost?.appendChild(parameterControl(key, contract || {})));
@@ -5194,6 +5309,14 @@
             if (state.query.trim()) $('animationCatalogDisclosure').open = true;
             renderCatalog();
         });
+        $('parameterSearch').addEventListener('input', (event) => {
+            state.parameterQuery = event.target.value;
+            renderParameterControls();
+        });
+        $('parameterHelpToggle').addEventListener('change', (event) => {
+            state.parameterHelp = event.target.checked;
+            renderParameterControls();
+        });
         $('toggleLibraryFavoriteButton').addEventListener('click', toggleCurrentLibraryFavorite);
         document.querySelectorAll('[data-filter]').forEach((button) => button.addEventListener('click', () => {
             state.catalogFilter = button.dataset.filter;
@@ -5318,6 +5441,8 @@
         $('refreshWallButton').addEventListener('click', () => refreshGlobalSettings({preserveDraft: true}));
         $('operationsRefreshButton').addEventListener('click', () => refreshOperationsStatus());
         $('operationsStopButton').addEventListener('click', stopOutput);
+        $('goLiveButton').addEventListener('click', toggleLiveWall);
+        $('mobileGoLiveButton').addEventListener('click', toggleLiveWall);
         $('globalPower').addEventListener('change', (event) => updateGlobalDraft((next) => {
             next.power = Boolean(event.target.checked);
         }));

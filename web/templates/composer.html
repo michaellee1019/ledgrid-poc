@@ -37,6 +37,13 @@
       <button class="quiet-button" id="exportButton" type="button" title="Export JSON · Ctrl/⌘ E" aria-keyshortcuts="Control+E Meta+E">Export</button>
       <span class="toolbar-separator" aria-hidden="true"></span>
       <button class="quiet-button server-action" id="saveLibraryButton" type="button" title="Save to library · Ctrl/⌘ S" aria-keyshortcuts="Control+S Meta+S" disabled>Save</button>
+      <span class="toolbar-separator" aria-hidden="true"></span>
+      <div class="live-controls" aria-label="Wall playback">
+        <span class="live-mode-status" id="liveModeStatus" data-state="local" role="status" aria-live="polite"><i aria-hidden="true"></i>Local preview</span>
+        <button class="primary-button server-action" id="goLiveButton" type="button" title="Play this look on the wall and sync subsequent edits" disabled>Go Live</button>
+        <button class="danger-button server-action" id="operationsStopButton" type="button" aria-describedby="operationsStopHelp" title="Stop wall output" disabled><span aria-hidden="true">■</span> Stop</button>
+        <span class="sr-only" id="operationsStopHelp">Stop uses a checked, revision-qualified activation and waits for an observed safe idle state.</span>
+      </div>
       <input id="importFile" type="file" accept="application/json,.json" hidden>
     </div>
   </header>
@@ -56,8 +63,6 @@
     </div>
     <div class="operations-actions">
       <button class="quiet-button" id="operationsRefreshButton" type="button">Refresh status</button>
-      <button class="danger-button server-action" id="operationsStopButton" type="button" aria-describedby="operationsStopHelp" disabled>Stop output</button>
-      <span class="sr-only" id="operationsStopHelp">Stop uses a checked, revision-qualified activation and waits for an observed safe idle state.</span>
     </div>
     <details class="operations-diagnostics" id="operationsDiagnostics">
       <summary>Receiver &amp; performance diagnostics</summary>
@@ -145,7 +150,7 @@
         <kbd aria-hidden="true">/</kbd>
       </label>
 
-      <details class="catalog-disclosure" id="animationCatalogDisclosure">
+      <details class="catalog-disclosure" id="animationCatalogDisclosure" open>
         <summary>
           <span><strong>Renderer catalog</strong><small>All available backgrounds</small></span>
           <span class="count-pill" id="catalogCount">0</span>
@@ -255,11 +260,21 @@
 
       <section id="controlsPanel" role="tabpanel" aria-labelledby="controlsTab">
         <div class="pane-heading compact">
-          <div><p class="eyebrow">Properties</p><h1 id="inspectorHeading">Parameters</h1></div>
+          <div><p class="eyebrow">Properties</p><h1 id="inspectorHeading">Adjustments</h1></div>
           <button class="text-button" id="resetButton" type="button" disabled>Reset</button>
+        </div>
+        <div class="parameter-toolbar">
+          <label class="parameter-search" for="parameterSearch"><span aria-hidden="true">⌕</span><input id="parameterSearch" type="search" placeholder="Filter controls" autocomplete="off"></label>
+          <label class="compact-switch parameter-help-toggle" for="parameterHelpToggle"><span>Help</span><input id="parameterHelpToggle" type="checkbox" role="switch"></label>
         </div>
         <p class="empty-message" id="parameterEmpty">Controls are generated from the selected renderer’s declared schema.</p>
         <form class="parameter-list" id="parameterList" autocomplete="off"></form>
+        <section class="advanced-parameters inline-advanced-parameters" aria-labelledby="advancedParametersHeading">
+          <h2 id="advancedParametersHeading">Installation-aware controls</h2>
+          <p class="installation-authority" id="installationProfileStatus" role="status">Plant geometry comes from the host-managed installation profile.</p>
+          <p class="empty-message" id="advancedParameterEmpty">No installation-aware controls for this renderer.</p>
+          <div class="parameter-list" id="advancedParameterList"></div>
+        </section>
       </section>
 
       <section id="layersPanel" role="tabpanel" aria-labelledby="layersTab" hidden>
@@ -298,12 +313,6 @@
             <span><strong>Installation / Advanced</strong><small>Fallback, app installation, and offline readiness</small></span>
           </summary>
           <div class="advanced-disclosure-body">
-            <section class="advanced-parameters" aria-labelledby="advancedParametersHeading">
-              <h2 id="advancedParametersHeading">Advanced parameters</h2>
-              <p class="installation-authority" id="installationProfileStatus" role="status">Plant geometry comes from the host-managed installation profile.</p>
-              <p class="empty-message" id="advancedParameterEmpty">No advanced controls for this animation.</p>
-              <div class="parameter-list" id="advancedParameterList"></div>
-            </section>
             <label class="fallback-field" for="fallbackSelect">
               <span>Python safety fallback</span>
               <select id="fallbackSelect" aria-describedby="fallbackHelp"></select>
@@ -323,7 +332,7 @@
           <div class="server-surface-heading"><h2 id="serverActionsHeading">Wall actions</h2><span id="serverActionBadge">Online required</span></div>
           <p id="serverActionStatus" role="status" aria-live="polite">Drafts, checks, uploads, and downloads work locally. Saving and activation require the wall server.</p>
           <p class="activation-readiness" id="activationReadiness" role="status" aria-live="polite" data-state="unavailable">Run Check to determine whether this draft is ready for activation.</p>
-          <p class="activation-readiness" id="immediateApplyStatus" role="status" aria-live="polite" data-state="idle">Ready · edits apply automatically after a guarded server Check.</p>
+          <p class="activation-readiness" id="immediateApplyStatus" role="status" aria-live="polite" data-state="local">Local preview · edits stay on this device until you go Live.</p>
           <div class="local-action-buttons" aria-label="Local file actions">
             <button class="quiet-button" id="importPanelButton" type="button">Upload JSON</button>
             <button class="quiet-button" id="exportPanelButton" type="button">Download JSON</button>
@@ -417,7 +426,8 @@
   </main>
 
   <div class="mobile-activate-bar" aria-label="Apply selected animation to the wall">
-    <span id="mobileActivationStatus" role="status" aria-live="polite">Edits apply automatically after a guarded server Check.</span>
+    <span id="mobileActivationStatus" role="status" aria-live="polite">Local preview · edits stay on this device until you go Live.</span>
+    <button class="primary-button server-action" id="mobileGoLiveButton" type="button" disabled>Go Live</button>
   </div>
 
   <nav class="mobile-tabs" aria-label="Composer sections">

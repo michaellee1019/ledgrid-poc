@@ -950,4 +950,84 @@ h2 { font-size: 11px; font-weight: 650; }
     overflow: auto;
   }
   .composer-shell.mobile-dual-pane .parameter-list { padding-bottom: 16px; }
+
+  /* Mobile keeps the editor and explicit Live action; desktop diagnostics stay out of the way. */
+  .operations-bar { display: none; }
+  .composer-shell { height: calc(100dvh - var(--mobile-header-height) - var(--mobile-nav-height) - var(--mobile-activate-height)); }
+  .live-controls { margin-left: auto; }
+  .live-controls #goLiveButton, .live-controls .live-mode-status { display: none; }
+  .live-controls #operationsStopButton { min-height: 34px; }
+  .parameter-toolbar { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; margin-bottom: 10px; }
+  .parameter-search { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); background: #1d1d1d; }
+  .parameter-search input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; }
+  .parameter-help-toggle { padding: 0 9px; border: 1px solid var(--line); }
+  #controlsPanel[data-parameter-help="false"] .parameter-description { display: none; }
+  .inline-advanced-parameters { margin-bottom: 20px; }
+  .mobile-activate-bar { grid-template-columns: minmax(0,1fr) auto; }
+  .mobile-activate-bar .primary-button { min-height: 42px; }
+}
+
+/* Native authoring workflow: the canvas and controls own the window. */
+:root { --status-height: 27px; }
+
+.live-controls { display: flex; align-items: center; gap: 4px; }
+.live-mode-status { display: inline-flex; align-items: center; gap: 6px; min-width: 92px; padding: 0 7px; color: var(--muted); font-size: 9px; font-weight: 650; white-space: nowrap; }
+.live-mode-status i { width: 7px; height: 7px; border-radius: 50%; background: #777; }
+.live-mode-status[data-state="pending"] i { background: var(--amber); }
+.live-mode-status[data-state="active"] { color: #b9f3d2; }
+.live-mode-status[data-state="active"] i { background: var(--mint); box-shadow: 0 0 0 3px rgba(102,201,146,.16); }
+.primary-button[data-live="true"] { border-color: #2ea76a; background: #17653f; }
+.primary-button[data-live="true"]:hover:not(:disabled) { border-color: #58d493; background: #207b4e; }
+.danger-button { min-height: 30px; padding: 0 9px; border-radius: 2px; font-size: 10px; }
+
+@media (min-width: 761px) {
+  .operations-bar { position: fixed; z-index: 45; top: auto; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: minmax(180px,.9fr) minmax(240px,1.35fr) auto auto; gap: 10px; min-height: var(--status-height); height: var(--status-height); padding: 3px 8px; border-top: 1px solid #111; border-bottom: 0; background: #202020; }
+  .operations-summary, .operations-readout { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .operations-summary .eyebrow, .operations-identities span, .operations-summary small { display: none; }
+  .operations-identities { display: block; min-width: 0; }
+  .operations-identities strong, .operations-readout strong, .operations-readout span { font-size: 9px; line-height: 1; }
+  .operations-readout strong { color: var(--muted); }
+  .operations-readout span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .operations-actions button { min-height: 20px; padding: 0 6px; border: 0; background: transparent; color: var(--muted); font-size: 9px; }
+  .operations-diagnostics > summary { min-height: 20px; padding: 3px 0; font-size: 9px; }
+  .operations-diagnostics > div { top: auto; bottom: calc(100% + 5px); }
+  .composer-shell { height: calc(100dvh - var(--header-height) - var(--status-height)); }
+
+  .library-pane { display: flex; flex-direction: column; }
+  .library-pane > .pane-heading { order: 0; }
+  .library-pane > .search-field { order: 1; margin: 0 0 6px; }
+  .library-pane > .catalog-disclosure { order: 2; margin: 0; border: 0; background: transparent; }
+  .library-pane > .catalog-disclosure > summary { display: none; }
+  .library-pane > .catalog-disclosure > .catalog-disclosure-body { padding: 0 0 7px; border: 0; }
+  .library-pane > .featured-starts { order: 3; }
+  .library-pane > #favoriteLibrarySection { order: 4; }
+  .library-pane > #recentLibrarySection { order: 5; }
+  .library-pane > #savedRecordSection { order: 6; }
+  .catalog-result-summary { margin: 5px 2px; font-size: 9px; }
+
+  .stage-pane { grid-template-rows: 38px minmax(0,1fr) 42px 27px; padding-top: 0; }
+  .stage-topline { min-height: 38px; padding: 4px 0; }
+  .preview-workspace { padding-top: 4px; }
+  .wall-room { width: min(100%,370px); min-height: 260px; max-height: none; }
+  .wall-bezel { height: min(100%,680px); }
+
+  .parameter-toolbar { position: sticky; z-index: 3; top: 34px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 5px; margin: 0 0 9px; padding: 5px 0; background: #252525; }
+  .parameter-search { display: flex; align-items: center; gap: 5px; min-height: 29px; padding: 0 6px; border: 1px solid var(--line-strong); background: #1d1d1d; }
+  .parameter-search:focus-within { border-color: var(--acid); }
+  .parameter-search input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 10px; }
+  .parameter-help-toggle { display: flex; align-items: center; gap: 5px; min-height: 29px; padding: 0 6px; border: 1px solid var(--line); background: #292929; font-size: 9px; }
+  #controlsPanel[data-parameter-help="false"] .parameter-description { display: none; }
+  .parameter-control { padding: 2px 0 7px; border-bottom: 1px solid #333; }
+  .parameter-list { gap: 6px; }
+  .inline-advanced-parameters { margin: 4px 0 18px; padding: 8px 0 0; border: 0; border-top: 1px solid var(--line-strong); background: transparent; }
+  .inline-advanced-parameters h2 { margin: 0 0 4px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+}
+
+@media (max-width: 1180px) and (min-width: 761px) {
+  .live-mode-status, .header-actions > .toolbar-separator, #copyButton, #exportButton { display: none; }
+  .app-header { grid-template-columns: minmax(170px,.7fr) minmax(190px,1fr) auto; }
+}
+
+@media (min-width: 761px) and (max-width: 1040px) {
+  .operations-summary, .operations-readout, .operations-actions, .operations-diagnostics { grid-column: auto; grid-row: auto; }
 }
