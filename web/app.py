@@ -1902,7 +1902,7 @@ class AnimationWebInterface:
                 continue
 
     def _activation_runtime_digests(
-        self, catalog: List[Dict[str, Any]],
+        self, catalog: List[Dict[str, Any]], *, required: Optional[set[str]] = None,
     ) -> Dict[str, str]:
         """Bind Check to the controller's authoritative runtime derivation."""
 
@@ -1914,13 +1914,13 @@ class AnimationWebInterface:
                     manager_controller_runtime_digests(self.preview_manager)
                 )
             result = self._controller_runtime_digests_cache
-        required = {
+        required_identities = required if required is not None else {
             f"{component.get('provider')}:{component.get('plugin_id')}"
             for component in catalog
             if isinstance(component.get('provider'), str)
             and isinstance(component.get('plugin_id'), str)
         }
-        missing = sorted(required - result.keys())
+        missing = sorted(required_identities - result.keys())
         if missing:
             raise SceneValidationError(
                 'controller runtime identity is unavailable for '
@@ -2192,11 +2192,24 @@ class AnimationWebInterface:
                 'current_identity_digest': current_identity,
             },
         )
+        scene_components = [document['background'], document['fallback']]
+        scene_components.extend(
+            layer['component'] for layer in document.get('layers', [])
+            if isinstance(layer, dict) and isinstance(layer.get('component'), dict)
+        )
+        required_runtime_identities = {
+            f"{component.get('provider')}:{component.get('component_id')}"
+            for component in scene_components
+            if isinstance(component.get('provider'), str)
+            and isinstance(component.get('component_id'), str)
+        }
         basis = build_scene_activation_basis(
             browser_scene=document,
             catalog=catalog,
             global_settings=settings,
-            controller_runtime_digests=self._activation_runtime_digests(catalog),
+            controller_runtime_digests=self._activation_runtime_digests(
+                catalog, required=required_runtime_identities,
+            ),
             controller_session_id=session_id,
             controller_state_revision=state_revision,
             current_identity_digest=current_identity,

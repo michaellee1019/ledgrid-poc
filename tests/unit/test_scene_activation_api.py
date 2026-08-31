@@ -404,6 +404,22 @@ class SceneActivationApiTests(unittest.TestCase):
                 ):
                     self.interface._activation_runtime_digests(catalog)
 
+    def test_runtime_authority_only_requires_components_used_by_the_scene(self):
+        catalog = [
+            {"provider": "python", "plugin_id": "gradient"},
+            {"provider": "receiver_native", "plugin_id": "compiled_rainbow"},
+        ]
+        authority = {"python:gradient": "1" * 64}
+        with patch(
+            "web.app.manager_controller_runtime_digests",
+            return_value=authority,
+        ):
+            result = self.interface._activation_runtime_digests(
+                catalog, required={"python:gradient"},
+            )
+
+        self.assertEqual(result, authority)
+
     def _activation_body(self, checked: dict, *, scene=None, globals_=None) -> dict:
         return {
             "check_token": checked["check_token"],
