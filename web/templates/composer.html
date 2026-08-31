@@ -10,13 +10,16 @@
 <main class="composer" data-api-root="/api/composer">
   <section id="recoveryCard" class="composer-card" hidden><p class="eyebrow">Working draft</p><p id="recoveryMessage">A saved local draft is available.</p><button id="restoreDraft" class="button secondary" type="button">Restore</button><button id="discardDraft" class="button text" type="button">Discard</button></section>
   <header class="composer-heading">
-    <p class="eyebrow">Local Composer</p>
-    <h1>Build a scene</h1>
-    <p>Changes stay on this computer until you choose Go Live.</p>
+    <div><p class="eyebrow">Local Composer</p><h1>Build a scene</h1><p>Changes stay on this computer until you choose Go Live.</p></div>
+    <nav class="composer-nav" aria-label="Composer sections">
+      <a href="#build">Build</a><a href="#preview">Preview</a><a href="#library">Library</a><a href="#live">Live</a>
+    </nav>
   </header>
 
-  <section class="composer-card" aria-labelledby="background-title">
-    <div class="section-title"><div><p class="eyebrow">Background</p><h2 id="background-title">Aurora Curtains</h2></div><span class="qualified">Python · background · v1</span></div>
+  <div class="composer-workspace">
+  <div class="composer-editor">
+  <section id="build" class="composer-card" aria-labelledby="background-title" tabindex="-1">
+    <div class="section-title"><div><p class="eyebrow">Build</p><h2 id="background-title">Aurora Curtains</h2></div><span class="qualified">Python · background · v1</span></div>
     <p class="muted">A provider-qualified Scene v1 background.</p>
     <div class="field-grid">
       <label>Density <input id="curtainDensity" type="number" min="0" max="1" step="0.01" value="0.56"></label>
@@ -29,7 +32,7 @@
     </div>
   </section>
 
-  <section class="composer-card" aria-labelledby="library-title">
+  <section id="library" class="composer-card" aria-labelledby="library-title" tabindex="-1">
     <div class="section-title"><div><p class="eyebrow">Library</p><h2 id="library-title">Find a look</h2></div></div>
     <p class="muted">Starting points and saved looks stay local until you explicitly choose Go Live.</p>
     <label>Search by name <input id="librarySearch" type="search" placeholder="Search local looks"></label>
@@ -37,12 +40,6 @@
     <ol id="libraryList" class="overlay-list" aria-live="polite"></ol>
     <p id="libraryEmpty" class="empty">No local looks match this view.</p>
     <label>Remix name <input id="remixName" maxlength="80" placeholder="My remix"></label><button id="remixStarter" class="button secondary" type="button">Remix current starting point</button><p id="starterMessage" class="live-message" role="status" aria-live="polite"></p>
-  </section>
-
-  <section class="composer-card preview-card" aria-labelledby="preview-title">
-    <div class="section-title"><div><p class="eyebrow">Local runtime</p><h2 id="preview-title">Current draft</h2></div><strong id="previewIdentity">Rendering…</strong></div>
-    <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" aria-label="Current local Scene v1 preview"></canvas></div>
-    <p id="previewStatus" class="live-message" role="status" aria-live="polite">Rendering this local draft without changing the wall.</p><p id="draftState" class="live-message" role="status" aria-live="polite">Choose a starter or saved look to establish a basis.</p>
   </section>
 
   <section class="composer-card" aria-labelledby="overlays-title">
@@ -60,8 +57,16 @@
     <p id="lookEmpty" class="empty">No saved looks yet.</p>
     <p id="lookMessage" class="live-message" role="status" aria-live="polite"></p>
   </section>
+  </div>
 
-  <section class="composer-card live-card" aria-labelledby="live-title">
+  <aside class="composer-rail" aria-label="Draft preview and live status">
+  <section id="preview" class="composer-card preview-card" aria-labelledby="preview-title" tabindex="-1">
+    <div class="section-title"><div><p class="eyebrow">Preview</p><h2 id="preview-title">Current draft</h2></div><strong id="previewIdentity">Rendering…</strong></div>
+    <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" aria-label="Current local Scene v1 preview"></canvas></div>
+    <p id="previewStatus" class="live-message" role="status" aria-live="polite">Rendering this local draft without changing the wall.</p><p id="draftState" class="live-message" role="status" aria-live="polite">Choose a starter or saved look to establish a basis.</p>
+  </section>
+
+  <section id="live" class="composer-card live-card" aria-labelledby="live-title" tabindex="-1">
     <div class="section-title"><div><p class="eyebrow">Go Live</p><h2 id="live-title">Scene handoff</h2></div><div><button id="stopScene" class="button text" type="button">Stop</button><button id="goLive" class="button primary" type="button">Go Live</button></div></div>
     <p class="muted">Go Live checks this exact draft, then sends it only to the local Scene adapter. It does not contact the wall.</p>
     <div class="identity-grid">
@@ -71,6 +76,8 @@
     </div>
     <p id="liveMessage" class="live-message" role="status" aria-live="polite">Draft is local.</p>
   </section>
+  </aside>
+  </div>
 </main>
 <script src="{{ url_for('static', filename='js/composer_slice.js', v='scene-v1') }}"></script>
 </body>
