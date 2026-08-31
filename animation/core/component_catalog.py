@@ -65,8 +65,11 @@ class ComponentDescriptor:
             raise ValueError("intensity_parameter must be a named component-local control")
         if self.required_simulation_inputs:
             raise ValueError("packet A does not support required plant inputs")
-        if self.timing_policy is TimingPolicy.WALL_CLOCK:
-            raise ValueError("packet A accepts only scaled_context components")
+        if (
+            self.timing_policy is TimingPolicy.WALL_CLOCK
+            and self.role is not ComponentRole.OVERLAY
+        ):
+            raise ValueError("wall_clock timing is reserved for overlay components")
         optional_inputs = tuple(self.optional_simulation_inputs)
         if (
             any(not isinstance(item, str) or not item for item in optional_inputs)

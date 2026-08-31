@@ -58,6 +58,10 @@ class ProviderRoleProductSurfaceTests(unittest.TestCase):
         )
         self.assertEqual(descriptor.preserve_reason, "calibrated diagnostic")
 
-    def test_wall_clock_descriptor_is_rejected_before_scene_activation(self) -> None:
-        with self.assertRaisesRegex(ValueError, "scaled_context"):
-            ComponentDescriptor(component_id="clock", version=1, timing_policy="wall_clock")
+    def test_wall_clock_descriptor_is_allowed_only_for_an_overlay(self) -> None:
+        overlay = ComponentDescriptor(
+            component_id="clock", version=1, role="overlay", timing_policy="wall_clock",
+        )
+        self.assertEqual((overlay.role.value, overlay.timing_policy.value), ("overlay", "wall_clock"))
+        with self.assertRaisesRegex(ValueError, "reserved for overlay"):
+            ComponentDescriptor(component_id="clock", version=1, role="background", timing_policy="wall_clock")
