@@ -1283,6 +1283,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                         "required_capabilities": capabilities,
                         "fec_receiver_ids": [3],
                         "verified_logical_devices": [0, 1, 2, 3, 4],
+                        "transport_delta_validation": "passed",
                         "status_response_evidence": [
                             {
                                 "logical_device": logical_id,
@@ -1298,6 +1299,10 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 self.assertTrue(transport_evidence["full_frame_traffic_proven"])
                 self.assertTrue(transport_evidence["full_frame_sampling_proven"])
                 self.assertEqual(
+                    result["receiver_contract"]["transport_delta_validation"],
+                    "passed",
+                )
+                self.assertEqual(
                     transport_evidence["aggregate_sampling_state"]["after"][
                         "spidev_buffer_size"
                     ],
@@ -1309,6 +1314,62 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                     transport_evidence["aggregate"]["semantic_bytes_sent"]["delta"],
                     0,
                 )
+
+    def test_demo_health_accepts_live_receivers_without_transport_delta_proof(self) -> None:
+        contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
+        before_statuses = self._receiver_statuses(
+            version=7, capabilities=0x1FC00C, responses=2,
+        )
+        after_statuses = [dict(item) for item in self._receiver_statuses(
+            version=7, capabilities=0x1FC00C, responses=3,
+        )]
+        after_statuses[0]["full_frame_status_samples"] = before_statuses[0][
+            "full_frame_status_samples"
+        ]
+        after_statuses[0]["full_frame_status_transfers"] = before_statuses[0][
+            "full_frame_status_transfers"
+        ]
+        after_statuses[0]["full_frame_write_only_transfers"] = (
+            after_statuses[0]["full_frame_transfers"]
+            - after_statuses[0]["full_frame_status_transfers"]
+        )
+        samples = (
+            self._health_sample(responses=2, statuses=before_statuses),
+            self._health_sample(responses=3, statuses=tuple(after_statuses)),
+        )
+        with (
+            patch.object(
+                deploy_target,
+                "_request_receiver_status_refresh",
+                return_value="health-request",
+            ),
+            patch.object(deploy_target, "_sample_health", side_effect=samples),
+            patch.object(
+                deploy_target.time, "monotonic", side_effect=(0.0, 0.0, 0.0)
+            ),
+            patch.object(deploy_target.time, "sleep"),
+        ):
+            result = deploy_target.fresh_health(
+                Path("/target"),
+                "a" * 64,
+                restart_started_at=100.0,
+                strips=33,
+                leds_per_strip=138,
+                receivers=5,
+                stable_samples=1,
+                timeout=1.0,
+                unit="ledgrid.service",
+                api_url="http://local/status",
+                receiver_contract=contract,
+                validate_transport_deltas=False,
+            )
+
+        self.assertEqual(
+            result["receiver_contract"]["transport_delta_validation"], "skipped"
+        )
+        self.assertNotIn(
+            "aligned_transport_evidence", result["receiver_contract"]
+        )
 
     def test_receiver_health_contract_v2_requires_explicit_receiver_3_fec_policy(self) -> None:
         contract = dict(self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT))
@@ -4252,6 +4313,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         )
         health_call = next(call for call in target.calls if call[0] == "health")
         self.assertNotIn("--allow-legacy-status-fallback", health_call[1])
+        self.assertIn("--skip-transport-delta-validation", health_call[1])
 
     def test_unchanged_full_deployment_does_not_activate_restart_restore_or_flash(self) -> None:
         deployment, context, _runner, target = self._deployment(unchanged=True)

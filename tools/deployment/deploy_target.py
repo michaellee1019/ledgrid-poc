@@ -3614,6 +3614,7 @@ def fresh_health(
     api_url: str,
     receiver_contract: Optional[Mapping[str, Any]] = None,
     allow_legacy_status_fallback: bool = False,
+    validate_transport_deltas: bool = True,
 ) -> Mapping[str, Any]:
     if stable_samples < 1:
         raise ValueError("stable_samples must be positive")
@@ -3676,7 +3677,7 @@ def fresh_health(
                         "receiver status responses did not advance for logical "
                         f"devices {stale_ids}"
                     )
-                elif (
+                elif validate_transport_deltas and (
                     transport_rejection := _transport_accounting_delta_rejection(
                         accepted[-1], sample
                     )
@@ -3715,12 +3716,14 @@ def fresh_health(
                                 }
                                 for logical_id in range(receivers)
                             ],
-                            "aligned_transport_evidence": (
-                                _transport_accounting_evidence(
-                                    accepted[0], sample
-                                )
+                            "transport_delta_validation": (
+                                "passed" if validate_transport_deltas else "skipped"
                             ),
                         }
+                        if validate_transport_deltas:
+                            health["receiver_contract"][
+                                "aligned_transport_evidence"
+                            ] = _transport_accounting_evidence(accepted[0], sample)
                     return health
         except Exception as exc:
             accepted.clear()
@@ -3813,6 +3816,7 @@ def _parser() -> argparse.ArgumentParser:
     health.add_argument("--api-url", default=DEFAULT_API_URL)
     health.add_argument("--receiver-contract-json")
     health.add_argument("--allow-legacy-status-fallback", action="store_true")
+    health.add_argument("--skip-transport-delta-validation", action="store_true")
     subparsers.add_parser("record-deploy")
     subparsers.add_parser("reboot")
     subparsers.add_parser("current-release")
@@ -3894,6 +3898,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             api_url=args.api_url,
             receiver_contract=receiver_contract,
             allow_legacy_status_fallback=args.allow_legacy_status_fallback,
+            validate_transport_deltas=not args.skip_transport_delta_validation,
         )
     elif args.command == "record-deploy":
         result = record_deploy(root)

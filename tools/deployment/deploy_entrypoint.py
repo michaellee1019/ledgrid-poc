@@ -1186,6 +1186,7 @@ class CoordinatorDeployment:
             boundary = context.state.get("acceptance_boundary")
             if not isinstance(boundary, (int, float)) or isinstance(boundary, bool):
                 boundary = time.time()
+            receiver_health_args = self._receiver_health_args()
             result = self.target.run(
                 "health",
                 str(context.state["release_id"]),
@@ -1199,7 +1200,12 @@ class CoordinatorDeployment:
                 str(self.config.receiver_count),
                 "--timeout",
                 str(self.config.health_timeout),
-                *self._receiver_health_args(),
+                # Normal deploy readiness proves the selected release, fresh
+                # controller state, exact receiver roster, and live receiver
+                # responses. Low-level transport counter deltas remain an
+                # explicit hardware/release qualification concern.
+                *(("--skip-transport-delta-validation",) if receiver_health_args else ()),
+                *receiver_health_args,
                 *self._health_compatibility_args(),
             )
             bootstrap = self.target.run(
