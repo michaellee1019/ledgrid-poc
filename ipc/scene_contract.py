@@ -349,6 +349,7 @@ class LocalSceneAdapter:
 
     def __init__(self) -> None:
         self._observed: SceneIdentity | None = None
+        self._safe_idle: SceneIdentity | None = None
 
     def validate_control(self, command: Mapping[str, Any]) -> tuple[SceneIdentity, bytes]:
         if not isinstance(command, Mapping) or set(command) != {"action", "basis", "scene"}:
@@ -366,10 +367,22 @@ class LocalSceneAdapter:
 
         identity, _ = self.validate_control(command)
         self._observed = identity
+        self._safe_idle = None
+        return identity
+
+    def accept_stop(self, basis: Mapping[str, Any]) -> SceneIdentity:
+        """Acknowledge safe idle only for the exact currently observed basis."""
+        identity = normalize_scene_identity(basis)
+        if self._observed != identity:
+            raise SceneContractError("stop basis does not match the observed scene")
+        self._safe_idle = identity
         return identity
 
     def observed_identity(self) -> SceneIdentity | None:
         return self._observed
+
+    def safe_idle_identity(self) -> SceneIdentity | None:
+        return self._safe_idle
 
 
 def _validate_json(value: Any) -> None:

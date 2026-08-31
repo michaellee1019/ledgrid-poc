@@ -125,6 +125,7 @@ class AnimationWebInterface:
         self._composer_rejection: Optional[str] = None
         self._composer_retry = False
         self._composer_state_override: Optional[str] = None
+        self._composer_idle_basis: Optional[dict[str, Any]] = None
         if self.local_mode:
             self.generated_preview_dir = (
                 self.project_root / "run_state" / "mac_animation_previews"
@@ -270,11 +271,34 @@ class AnimationWebInterface:
             self._composer_rejection = None
             self._composer_retry = receipt.exact_retry
             self._composer_state_override = None
+            self._composer_idle_basis = None
             return jsonify({
                 'basis': receipt.identity.to_dict(),
                 'exact_retry': receipt.exact_retry,
                 'status': self._composer_status_payload(),
             })
+
+        @self.app.route('/api/composer/stop', methods=['POST'])
+        def api_composer_stop():
+            """Record exact-basis local safe idle; never contacts the wall."""
+            payload = request.get_json(silent=True) or {}
+            observed = self.composer_adapter.observed_identity()
+            basis = payload.get('basis')
+            if observed is None or basis != observed.to_dict():
+                self._composer_state_override = 'diverged'
+                return jsonify({'error': 'Stop needs the currently observed scene.', 'status': self._composer_status_payload()}), 409
+            try:
+                self.composer_control.send_command('stop_scene', basis=basis)
+                acknowledged = self.composer_adapter.accept_stop(basis)
+            except TimeoutError as exc:
+                self._composer_state_override = 'timeout'
+                return jsonify({'error': str(exc) or 'Stop acknowledgement timed out.', 'status': self._composer_status_payload()}), 504
+            except (SceneContractError, ValueError, TypeError) as exc:
+                self._composer_state_override = 'rejected'
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 409
+            self._composer_idle_basis = acknowledged.to_dict()
+            self._composer_state_override = 'stopped'
+            return jsonify({'status': self._composer_status_payload()})
         
         @self.app.route('/api/animations')
         def api_list_animations():
@@ -994,7 +1018,13 @@ class AnimationWebInterface:
         )
         observed_identity = self.composer_adapter.observed_identity()
         observed = observed_identity.to_dict() if observed_identity is not None else None
-        if self._composer_state_override:
+        self._composer_idle_basis = (
+            self.composer_adapter.safe_idle_identity().to_dict()
+            if self.composer_adapter.safe_idle_identity() is not None else None
+        )
+        if self._composer_idle_basis is not None:
+            state = 'stopped'
+        elif self._composer_state_override:
             state = self._composer_state_override
         elif self._composer_rejection:
             state = 'rejected'
@@ -1015,6 +1045,7 @@ class AnimationWebInterface:
             'observed': observed,
             'state': state,
             'rejection': self._composer_rejection,
+            'safe_idle': self._composer_idle_basis is not None,
             # This is an explicit safety proof for the local adapter, not an
             # inferred property of a controller or deployment target.
             'wall_mutations': 0,

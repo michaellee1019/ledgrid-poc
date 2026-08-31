@@ -107,7 +107,7 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertIn("Conway Life", Path("web/static/js/composer_slice.js").read_text(encoding="utf-8"))
         self.assertIn("Go Live", html)
         self.assertNotIn("previewCanvas", html)
-        self.assertNotIn("Stop", html)
+        self.assertIn('id="stopScene"', html)
         self.assertIn("/static/css/composer_slice.css", html)
         self.assertIn("/static/js/composer_slice.js", html)
         self.assertNotIn("/static/css/composer.css", html)
