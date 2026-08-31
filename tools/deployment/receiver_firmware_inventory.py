@@ -106,9 +106,17 @@ def _validate_hardware_serial(value: str) -> None:
 
 
 def parse_platformio_receiver_devices(
-    payload: str | Sequence[Mapping[str, Any]], *, receiver_count: int
+    payload: str | Sequence[Mapping[str, Any]],
+    *,
+    receiver_count: int,
+    expected_hardware_serials: Sequence[str] | None = None,
 ) -> tuple[ReceiverUSBDevice, ...]:
-    """Parse exactly one safe, stable USB identity for every receiver."""
+    """Parse the configured safe, stable USB receiver identities.
+
+    A complete target-owned roster allows unrelated ESP32 serial devices to
+    remain attached.  Without that roster, discovery stays fail-closed and
+    requires exactly ``receiver_count`` devices.
+    """
 
     if (
         isinstance(receiver_count, bool)
@@ -151,12 +159,6 @@ def parse_platformio_receiver_devices(
             )
         )
 
-    devices.sort(key=lambda item: (item.physical_location, item.hardware_serial))
-    if len(devices) != receiver_count:
-        raise RuntimeError(
-            f"expected exactly {receiver_count} ESP32 serial devices; "
-            f"found {len(devices)}: {[item.port for item in devices]}"
-        )
     for field, values in (
         ("ports", [item.port for item in devices]),
         ("hardware serials", [item.hardware_serial for item in devices]),
@@ -165,7 +167,40 @@ def parse_platformio_receiver_devices(
         duplicates = sorted({value for value in values if values.count(value) > 1})
         if duplicates:
             raise RuntimeError(f"duplicate receiver {field}: {duplicates}")
-    return tuple(devices)
+
+    expected = None
+    if expected_hardware_serials is not None:
+        try:
+            expected = tuple(_normalize_hardware_serial(value) for value in expected_hardware_serials)
+        except (AttributeError, RuntimeError) as exc:
+            raise ValueError("expected receiver hardware serials are malformed") from exc
+        if len(expected) != receiver_count or len(set(expected)) != receiver_count:
+            raise ValueError(
+                "expected receiver hardware serials must contain exactly one "
+                "canonical identity for every configured receiver"
+            )
+
+    if expected is None:
+        if len(devices) != receiver_count:
+            raise RuntimeError(
+                f"expected exactly {receiver_count} ESP32 serial devices; "
+                f"found {len(devices)}: {[item.port for item in devices]}"
+            )
+        selected = devices
+    else:
+        selected = [
+            item for item in devices if item.hardware_serial in set(expected)
+        ]
+        selected_serials = {item.hardware_serial for item in selected}
+        if selected_serials != set(expected):
+            missing = sorted(set(expected) - selected_serials)
+            raise RuntimeError(
+                "configured receiver hardware serials are missing from discovery: "
+                f"{missing}"
+            )
+
+    selected.sort(key=lambda item: (item.physical_location, item.hardware_serial))
+    return tuple(selected)
 
 
 def inventory_path(root: Path) -> Path:

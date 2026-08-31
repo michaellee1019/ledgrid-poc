@@ -42,7 +42,10 @@ from tools.deployment.receiver_hybrid_config import (
     RECEIVER_HYBRID_CONFIG_RELATIVE_PATH,
     write_receiver_hybrid_config,
 )
-from tools.deployment.receiver_firmware_inventory import ReceiverUSBDevice
+from tools.deployment.receiver_firmware_inventory import (
+    FirmwareInventoryRecord,
+    ReceiverUSBDevice,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -2793,6 +2796,44 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             marker.assert_not_called()
             openocd.assert_not_called()
 
+    def test_complete_ledger_roster_selects_known_devices_before_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            devices = _receiver_devices()
+            inventory = deploy_target._receiver_inventory_module()
+            records = {
+                device.hardware_serial: FirmwareInventoryRecord(
+                    hardware_serial=device.hardware_serial,
+                    installation_digest="a" * 64,
+                    firmware_environment=PRODUCTION_FIRMWARE_ENVIRONMENT,
+                    firmware_sha256="b" * 64,
+                )
+                for device in devices
+            }
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
+                ),
+                patch.object(
+                    inventory, "read_firmware_inventory", return_value=records,
+                ),
+                patch.object(
+                    deploy_target,
+                    "_discover_receiver_devices",
+                    side_effect=RuntimeError("injected discovery stop"),
+                ) as discover,
+                self.assertRaisesRegex(RuntimeError, "injected discovery stop"),
+            ):
+                deploy_target.flash_firmware(root, "a" * 64)
+
+            self.assertEqual(
+                discover.call_args.kwargs["expected_hardware_serials"],
+                tuple(records),
+            )
+
     def test_openocd_flash_binds_each_exact_device_and_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -3438,6 +3479,10 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             )
         self.assertEqual(observed, devices)
         self.assertEqual(discover.call_count, 2)
+        self.assertEqual(
+            discover.call_args.kwargs["expected_hardware_serials"],
+            [device.hardware_serial for device in devices],
+        )
         sleep.assert_called_once()
 
     def test_usb_identity_stabilization_timeout_is_fail_closed(self) -> None:

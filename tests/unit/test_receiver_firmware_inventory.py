@@ -131,12 +131,65 @@ class ReceiverHardwareDiscoveryTests(unittest.TestCase):
             parse_platformio_receiver_devices(
                 platformio_payload()[:-1], receiver_count=5
             )
+        with self.assertRaisesRegex(RuntimeError, "expected exactly 5"):
+            parse_platformio_receiver_devices(
+                platformio_payload((
+                    "02:10:20:30:40:01",
+                    "02:10:20:30:40:02",
+                    "02:10:20:30:40:03",
+                    "02:10:20:30:40:04",
+                    "02:10:20:30:40:05",
+                    "44:b1:76:c3:cf:b8",
+                )),
+                receiver_count=5,
+            )
         invalid = platformio_payload()
         invalid[1]["hwid"] = invalid[1]["hwid"].replace(
             "02:10:20:30:40:05", "generic-usb-serial"
         )
         with self.assertRaisesRegex(RuntimeError, "factory MAC"):
             parse_platformio_receiver_devices(invalid, receiver_count=5)
+
+    def test_complete_known_roster_ignores_unrelated_extra_esp32(self) -> None:
+        known_serials = (
+            "02:10:20:30:40:01",
+            "02:10:20:30:40:02",
+            "02:10:20:30:40:03",
+            "02:10:20:30:40:04",
+            "02:10:20:30:40:05",
+        )
+        payload = platformio_payload((*known_serials, "44:b1:76:c3:cf:b8"))
+
+        parsed = parse_platformio_receiver_devices(
+            payload,
+            receiver_count=5,
+            expected_hardware_serials=known_serials,
+        )
+
+        self.assertEqual(
+            {item.hardware_serial for item in parsed}, set(known_serials)
+        )
+        self.assertNotIn("44:b1:76:c3:cf:b8", {
+            item.hardware_serial for item in parsed
+        })
+
+    def test_known_roster_still_fails_closed_when_a_configured_board_is_missing(self) -> None:
+        known_serials = (
+            "02:10:20:30:40:01",
+            "02:10:20:30:40:02",
+            "02:10:20:30:40:03",
+            "02:10:20:30:40:04",
+            "02:10:20:30:40:05",
+        )
+        with self.assertRaisesRegex(RuntimeError, "configured receiver hardware serials"):
+            parse_platformio_receiver_devices(
+                platformio_payload((
+                    *known_serials[:-1],
+                    "44:b1:76:c3:cf:b8",
+                )),
+                receiver_count=5,
+                expected_hardware_serials=known_serials,
+            )
 
 
 class ReceiverFlashPlanningTests(unittest.TestCase):

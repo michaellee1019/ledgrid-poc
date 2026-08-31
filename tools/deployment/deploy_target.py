@@ -1414,14 +1414,19 @@ def _receiver_inventory_module():
 
 
 def _discover_receiver_devices(
-    *, receiver_count: int, timeout: float = 15.0
+    *,
+    receiver_count: int,
+    expected_hardware_serials: Sequence[str] | None = None,
+    timeout: float = 15.0,
 ) -> tuple[Any, ...]:
     pio = _platformio_executable()
     completed = _command(
         (pio, "device", "list", "--json-output"), timeout=timeout
     )
     return _receiver_inventory_module().parse_platformio_receiver_devices(
-        completed.stdout, receiver_count=receiver_count
+        completed.stdout,
+        receiver_count=receiver_count,
+        expected_hardware_serials=expected_hardware_serials,
     )
 
 
@@ -1611,6 +1616,9 @@ def _wait_for_receiver_binding(
         try:
             observed = _discover_receiver_devices(
                 receiver_count=receiver_count,
+                expected_hardware_serials=[
+                    device.hardware_serial for device in expected
+                ],
                 timeout=max(0.25, min(3.0, remaining)),
             )
             _assert_receiver_binding(expected, observed, phase=phase)
@@ -2035,16 +2043,24 @@ def flash_firmware(
         raise RuntimeError(
             "firmware installation artifacts changed between build and flash"
         )
-    devices = _discover_receiver_devices(receiver_count=receiver_count)
+    receiver_inventory = _receiver_inventory_module()
+    installed_inventory = receiver_inventory.read_firmware_inventory(root)
+    known_roster = (
+        tuple(installed_inventory)
+        if len(installed_inventory) == receiver_count
+        else None
+    )
+    devices = _discover_receiver_devices(
+        receiver_count=receiver_count,
+        expected_hardware_serials=known_roster,
+    )
     _require_finalized_receiver_devices(devices)
     ports = [device.port for device in devices]
-    receiver_inventory = _receiver_inventory_module()
     # Preserve the target-owned marker path and atomic update behavior. A
     # schema-v1 digest remains readable, but cannot equal the complete v3
     # artifact identity and therefore causes one deliberate migration flash.
     shared_marker = _prepare_shared_firmware_marker(root, workspace)
     installed_marker_before = _read_shared_firmware_marker(shared_marker)
-    installed_inventory = receiver_inventory.read_firmware_inventory(root)
     commit_matches = _receiver_firmware_commit_matches(
         root,
         devices=devices,

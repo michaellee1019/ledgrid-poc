@@ -196,9 +196,15 @@ recovery checkout.
 
 Before deciding that receiver firmware is unchanged, the Pi passively asks
 PlatformIO for the devices currently attached to its USB bus. The coordinator
-requires exactly the configured receiver count, a unique ESP32 factory USB
-serial for every board, and a unique physical USB location. A changing
-`/dev/ttyACM*` number is never treated as hardware identity.
+requires a unique ESP32 factory USB serial for every board and a unique
+physical USB location. A changing `/dev/ttyACM*` number is never treated as
+hardware identity. Once the target-owned ledger contains the complete configured
+five-serial roster, ordinary deploys select that exact roster and ignore
+additional unrelated ESP32 serial devices (currently the spare
+`44:b1:76:c3:cf:b8` at `LOCATION=1-1.3:1.0`). They never choose the first five
+TTYs or USB locations. Without a complete ledger roster, extra devices remain
+ambiguous and fail closed; missing, malformed, or duplicate identities always
+fail closed.
 
 Successful installations are recorded atomically in the target-owned
 `run_state/receiver_firmware_inventory.json` ledger. Each record binds one
