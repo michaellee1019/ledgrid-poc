@@ -2080,6 +2080,87 @@ class MultiDeviceLEDController:
                 "acknowledged_receivers": acknowledgements,
             }
 
+    def _trusted_receiver_lane_status(self, logical_device):
+        """Return one causally fresh v3+ lane-mask status for one receiver.
+
+        This is deliberately kept next to trusted complete-frame receipts: a
+        diagnostic lane change must not trust the controller's configured
+        topology value or a queued, pre-command status response.
+        """
+        if (
+            isinstance(logical_device, bool)
+            or not isinstance(logical_device, int)
+            or not 0 <= logical_device < len(self.devices)
+        ):
+            raise ValueError("logical_device must name one installed receiver")
+        device = self.devices[logical_device]
+        before = device.get_stats().get("receiver_status_responses")
+        if isinstance(before, bool) or not isinstance(before, int):
+            raise RuntimeError("receiver lane-mask acknowledgement has invalid baseline")
+        fresh_query = getattr(device, "query_fresh_receiver_status", None)
+        if not callable(fresh_query):
+            raise RuntimeError("receiver lane-mask acknowledgement requires fresh status")
+        status = fresh_query()
+        after = status.get("receiver_status_responses") if isinstance(status, dict) else None
+        if isinstance(after, bool) or not isinstance(after, int) or after <= before:
+            raise RuntimeError("receiver lane-mask acknowledgement used a stale status")
+        if int(status.get("receiver_status_version", 0) or 0) < 3:
+            raise RuntimeError("receiver lane-mask acknowledgement requires receiver status v3")
+        if status.get("receiver_logical_device") != logical_device:
+            raise RuntimeError("receiver lane-mask acknowledgement has the wrong receiver")
+        lane_mask = status.get("receiver_lane_mask")
+        if isinstance(lane_mask, bool) or not isinstance(lane_mask, int) or not 1 <= lane_mask <= 0xFF:
+            raise RuntimeError("receiver lane-mask acknowledgement has an invalid mask")
+        return dict(status)
+
+    def capture_trusted_receiver_lane_mask(self, logical_device):
+        """Receipt-capture a receiver's current lane mask without changing topology."""
+        with self._controller_lock():
+            self._require_pinned_receipt_roster()
+            status = self._trusted_receiver_lane_status(logical_device)
+            self._require_pinned_receipt_roster()
+            return {
+                "logical_device": logical_device,
+                "lane_mask": status["receiver_lane_mask"],
+                "authority_digest": self.receiver_identity_authority_digest,
+                "status": status,
+            }
+
+    def set_trusted_receiver_lane_mask(self, logical_device, lane_mask):
+        """Set one receiver's temporary lane mask and require a fresh proof.
+
+        Unlike ``set_lane_mask``, this never broadcasts to the other receivers
+        and it intentionally does not update ``receiver_lane_masks``.  Callers
+        retain the captured prior value and must explicitly restore it.
+        """
+        if (
+            isinstance(lane_mask, bool)
+            or not isinstance(lane_mask, int)
+            or not 1 <= lane_mask <= 0xFF
+        ):
+            raise ValueError("lane_mask must be one nonzero byte")
+        if (
+            isinstance(logical_device, bool)
+            or not isinstance(logical_device, int)
+            or not 0 <= logical_device < len(self.devices)
+        ):
+            raise ValueError("logical_device must name one installed receiver")
+        with self._controller_lock():
+            self._require_pinned_receipt_roster()
+            self.devices[logical_device].set_lane_mask(lane_mask)
+            status = self._trusted_receiver_lane_status(logical_device)
+            if status["receiver_lane_mask"] != lane_mask:
+                raise RuntimeError("receiver lane-mask acknowledgement did not apply the requested mask")
+            if not self._status_result_ok(status):
+                raise RuntimeError("receiver lane-mask acknowledgement was rejected")
+            self._require_pinned_receipt_roster()
+            return {
+                "logical_device": logical_device,
+                "lane_mask": lane_mask,
+                "authority_digest": self.receiver_identity_authority_digest,
+                "status": status,
+            }
+
     def _send_to_device(
         self,
         device_id: int,

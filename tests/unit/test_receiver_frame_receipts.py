@@ -51,6 +51,26 @@ class _ReceiptDevice:
         self.drift = drift
         self.failure = failure
         self.calls = []
+        self.lane_masks = []
+        self.lane_mask = 0xFF
+        self.status_responses = 0
+
+    def get_stats(self):
+        return {"receiver_status_responses": self.status_responses}
+
+    def query_fresh_receiver_status(self):
+        self.status_responses += 1
+        return {
+            "receiver_status_responses": self.status_responses,
+            "receiver_status_version": 3,
+            "receiver_logical_device": self.logical_device,
+            "receiver_lane_mask": self.lane_mask,
+            "receiver_last_result": 1,
+        }
+
+    def set_lane_mask(self, lane_mask):
+        self.lane_masks.append(lane_mask)
+        self.lane_mask = lane_mask
 
     def present_complete_frame(self, frame, *, wall_frame_sequence, frame_digest):
         self.calls.append((tuple(frame), wall_frame_sequence, frame_digest))
@@ -81,6 +101,7 @@ def _receipt_controller(*, reject=None, drift=None, failure=None):
     controller.receiver_global_strip_offsets = (0, 8, 16, 24, 32)
     controller.receiver_pixel_counts = tuple(width * 138 for width in controller.receiver_strip_counts)
     controller.receiver_pixel_offsets = tuple(offset * 138 for offset in controller.receiver_global_strip_offsets)
+    controller.receiver_lane_masks = (0xFF,) * 5
     controller.reverse_host_strips_by_logical_receiver = (False,) * 5
     controller.device_map = list(ROUTES)
     controller._receiver_identities = _identities()
@@ -100,6 +121,20 @@ def _receipt_controller(*, reject=None, drift=None, failure=None):
 
 
 class ReceiverFrameReceiptTests(unittest.TestCase):
+    def test_trusted_single_receiver_lane_mask_is_fresh_and_does_not_persist_topology(self):
+        controller = _receipt_controller()
+
+        prior = controller.capture_trusted_receiver_lane_mask(4)
+        applied = controller.set_trusted_receiver_lane_mask(4, 0x08)
+        restored = controller.set_trusted_receiver_lane_mask(4, prior["lane_mask"])
+
+        self.assertEqual(prior["lane_mask"], 0xFF)
+        self.assertEqual(applied["lane_mask"], 0x08)
+        self.assertEqual(restored["lane_mask"], 0xFF)
+        self.assertEqual(controller.devices[4].lane_masks, [0x08, 0xFF])
+        self.assertTrue(all(not device.lane_masks for device in controller.devices[:4]))
+        self.assertEqual(controller.receiver_lane_masks, (0xFF,) * 5)
+
     def test_receipt_is_exactly_authority_backed_after_all_five_acknowledgements(self):
         controller = _receipt_controller()
         frame = np.zeros((33, 138, 3), dtype=np.uint8)
