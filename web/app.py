@@ -12,6 +12,7 @@ import os
 import re
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +30,15 @@ from drivers.frame_codec import (
     FRAME_ENCODING_NAME,
 )
 from web.preview_worker import RuntimePreviewWorker
+from animation.core.component_catalog import ComponentCatalog
+from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
+from animation.plugins.clock_overlay import ClockOverlayAnimation
+from ipc.scene_contract import LocalSceneAdapter, SceneContractError
+from web.activation_token_store import (
+    ActivationTokenError,
+    ActivationTokenStale,
+    ActivationTokenStore,
+)
 
 
 PAINTER_MASK_TYPES = (
@@ -45,6 +55,23 @@ PAINTER_MASK_TYPES = (
         'color': [255, 72, 190],
     },
 )
+
+
+class _ComposerLocalControlChannel:
+    """In-memory Scene-v1 control sink used by the local Composer demo.
+
+    This is deliberately separate from the application's historical controller
+    channel: Composer activation records a checked command for inspection but
+    cannot reach a wall, receiver, camera, or deployment service.
+    """
+
+    def __init__(self) -> None:
+        self.commands: list[dict[str, Any]] = []
+
+    def send_command(self, action: str, **data: Any) -> dict[str, Any]:
+        command = {"action": action, **data}
+        self.commands.append(command)
+        return command
 
 class AnimationWebInterface:
     """Web interface for animation management"""
@@ -78,6 +105,19 @@ class AnimationWebInterface:
             self.project_root / "web" / "static" / "generated" / "animation-previews"
         )
         self.runtime_preview_dir = self.project_root / "run_state" / "animation_previews"
+        # Composer is an intentionally local-only Scene-v1 demonstration.  It
+        # has its own inert control sink rather than borrowing the wall channel.
+        self.composer_catalog = ComponentCatalog([
+            AuroraCurtainsAnimation.component_descriptor(),
+            ClockOverlayAnimation.component_descriptor(),
+        ])
+        self.composer_tokens = ActivationTokenStore()
+        self.composer_adapter = LocalSceneAdapter()
+        self.composer_control = _ComposerLocalControlChannel()
+        self._composer_checked = None
+        self._composer_rejection: Optional[str] = None
+        self._composer_retry = False
+        self._composer_state_override: Optional[str] = None
         if self.local_mode:
             self.generated_preview_dir = (
                 self.project_root / "run_state" / "mac_animation_previews"
@@ -107,17 +147,71 @@ class AnimationWebInterface:
         
         @self.app.route('/')
         def index():
-            """Main dashboard"""
-            animations = self._dashboard_animations()
-            status = self._status_payload()
-            return render_template(
-                'index.html',
-                animations=[item for item in animations if not item['is_test']],
-                test_animations=[item for item in animations if item['is_test']],
-                status=status,
-                speed_baseline=DEFAULT_ANIMATION_SPEED_SCALE,
-                local_mode=self.local_mode,
-            )
+            """The one local authoring surface for the first Composer slice."""
+            return render_template('composer.html')
+
+        @self.app.route('/api/composer/status')
+        def api_composer_status():
+            """Read only local desired/observed Scene-v1 reconciliation state."""
+            return jsonify(self._composer_status_payload())
+
+        @self.app.route('/api/composer/check', methods=['POST'])
+        def api_composer_check():
+            """Check an authored scene before the separate intentional Go Live."""
+            payload = request.get_json(silent=True)
+            try:
+                checked = self.composer_tokens.check(payload, self.composer_catalog)
+            except (SceneContractError, ValueError, TypeError) as exc:
+                self._composer_rejection = str(exc)
+                self._composer_retry = False
+                self._composer_state_override = 'rejected'
+                return jsonify({
+                    'error': str(exc), 'status': self._composer_status_payload(),
+                }), 400
+            self._composer_checked = checked
+            self._composer_rejection = None
+            self._composer_retry = False
+            self._composer_state_override = None
+            return jsonify({
+                'token': checked.token,
+                'basis': checked.identity.to_dict(),
+                'canonical_scene': checked.canonical.scene,
+                'expires_at': checked.expires_at,
+                'status': self._composer_status_payload(),
+            })
+
+        @self.app.route('/api/composer/activate', methods=['POST'])
+        def api_composer_activate():
+            """Activate one checked basis through the topology-neutral adapter."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                receipt = self.composer_tokens.activate(
+                    payload.get('token', ''), basis=payload.get('basis', {}),
+                    idempotency_key=payload.get('idempotency_key') or str(uuid.uuid4()),
+                    control_channel=self.composer_control, local_adapter=self.composer_adapter,
+                )
+            except ActivationTokenStale as exc:
+                self._composer_rejection = None
+                self._composer_retry = False
+                self._composer_state_override = 'stale'
+                return jsonify({
+                    'error': str(exc), 'status': self._composer_status_payload(),
+                }), 409
+            except (ActivationTokenError, SceneContractError, ValueError, TypeError) as exc:
+                self._composer_rejection = str(exc)
+                self._composer_retry = False
+                self._composer_state_override = 'rejected'
+                return jsonify({
+                    'error': str(exc), 'status': self._composer_status_payload(),
+                }), 409
+            self._composer_rejection = None
+            self._composer_retry = receipt.exact_retry
+            self._composer_state_override = None
+            return jsonify({
+                'basis': receipt.identity.to_dict(),
+                'exact_retry': receipt.exact_retry,
+                'status': self._composer_status_payload(),
+            })
         
         @self.app.route('/api/animations')
         def api_list_animations():
@@ -824,6 +918,44 @@ class AnimationWebInterface:
         print(f"   Emoji:     http://{self.host}:{self.port}/emoji")
 
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
+
+    def _composer_status_payload(self) -> Dict[str, Any]:
+        """Describe local reconciliation without inferring an acknowledgement.
+
+        ``observed`` comes only from :class:`LocalSceneAdapter`; a successful
+        Check is therefore pending rather than treated as an activation.
+        """
+        desired = (
+            self._composer_checked.identity.to_dict()
+            if self._composer_checked is not None else None
+        )
+        observed_identity = self.composer_adapter.observed_identity()
+        observed = observed_identity.to_dict() if observed_identity is not None else None
+        if self._composer_state_override:
+            state = self._composer_state_override
+        elif self._composer_rejection:
+            state = 'rejected'
+        elif self._composer_checked is None:
+            state = 'pending'
+        elif time.monotonic() > self._composer_checked.expires_at:
+            state = 'stale'
+        elif self._composer_retry:
+            state = 'retry'
+        elif observed is None:
+            state = 'pending'
+        elif observed == desired:
+            state = 'converged'
+        else:
+            state = 'diverged'
+        return {
+            'desired': desired,
+            'observed': observed,
+            'state': state,
+            'rejection': self._composer_rejection,
+            # This is an explicit safety proof for the local adapter, not an
+            # inferred property of a controller or deployment target.
+            'wall_mutations': 0,
+        }
 
     def _fallback_led_info(self) -> Dict[str, int]:
         """Current preview-manager dimensions used as a fallback layout."""
