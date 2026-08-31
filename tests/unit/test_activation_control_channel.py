@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from ipc.scene_contract import LocalSceneAdapter, SceneContractError
-from tests.unit.test_scene_activation_contract import _catalog, _request
+from tests.unit.test_scene_activation_contract import _catalog, _full_request, _request
 from web.activation_token_store import (
     ActivationTokenConflict,
     ActivationTokenStale,
@@ -105,6 +105,22 @@ class ActivationControlChannelTests(unittest.TestCase):
         with self.assertRaises(SceneContractError):
             self.adapter.accept_control(command)
         self.assertIsNone(self.adapter.observed_identity())
+
+    def test_full_scene_activation_preserves_checked_overlay_order_identity(self) -> None:
+        checked = self.store.check(_full_request(), _catalog())
+
+        receipt = self.store.activate(
+            checked.token, basis=checked.identity.to_dict(),
+            idempotency_key="composer-full-scene-1", control_channel=self.channel,
+            local_adapter=self.adapter,
+        )
+
+        self.assertEqual(receipt.identity, checked.identity)
+        self.assertEqual(
+            [item["slot_id"] for item in receipt.command["scene"]["overlays"]],
+            ["clock", "alert"],
+        )
+        self.assertEqual(self.adapter.observed_identity(), checked.identity)
 
 
 if __name__ == "__main__":
