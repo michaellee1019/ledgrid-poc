@@ -480,17 +480,28 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             self.assertIn("engine_not_executed", errors)
             self.assertIn("missing_journey:core_no_mutation", errors)
 
-    def test_probe_uses_named_keyboard_selection_and_bounded_direct_catalog_click(self) -> None:
+    def test_probe_uses_named_keyboard_selection_from_the_catalog_roving_tab_stop(self) -> None:
         source = (
             ROOT / "tools" / "browser_qualification" / "playwright_probe.mjs"
         ).read_text(encoding="utf-8")
+        keyboard_selection = source[
+            source.index("async function focusNamedComponentWithKeyboard"):
+            source.index("async function completeLocalCheckWithKeyboard")
+        ]
 
         self.assertIn("await preferred.evaluate((element) => element.click());", source)
-        self.assertIn("focusNamedComponentWithKeyboard(page, contract.background_name)", source)
-        self.assertNotIn(
-            "document.querySelectorAll('#componentList .component-card:not([disabled])').length === 1",
-            source,
+        self.assertIn(
+            "focusNamedComponentWithKeyboard(page, contract.background_name)", source
         )
+        self.assertIn(
+            "'#componentList .component-card[tabindex=\"0\"]:not([disabled])',",
+            keyboard_selection,
+        )
+        self.assertIn("{normalTab: true}", keyboard_selection)
+        self.assertIn("await page.keyboard.press(step % 2 === 0 ? 'ArrowDown' : 'ArrowRight');", keyboard_selection)
+        self.assertIn("{maxSteps = 64}", keyboard_selection)
+        self.assertNotIn(".focus()", keyboard_selection)
+        self.assertNotIn(".click()", keyboard_selection)
 
     def test_keyboard_library_save_requires_its_no_wall_mutation_confirmation(self) -> None:
         source = (

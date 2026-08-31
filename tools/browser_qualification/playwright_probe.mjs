@@ -773,7 +773,7 @@ async function runResponsiveLayouts(browser, contract, composerUrl) {
   return journey;
 }
 
-async function focusWithKeyboard(page, selector, {reverse = false, maxSteps = 400} = {}) {
+async function focusWithKeyboard(page, selector, {reverse = false, maxSteps = 400, normalTab = false} = {}) {
   for (let step = 0; step <= maxSteps; step += 1) {
     const focused = await page.evaluate((target) => document.activeElement?.matches(target) === true, selector);
     if (focused) {
@@ -787,7 +787,7 @@ async function focusWithKeyboard(page, selector, {reverse = false, maxSteps = 40
       });
     }
     const keys = [];
-    if (args.engine === 'webkit') keys.push('Alt');
+    if (args.engine === 'webkit' && !normalTab) keys.push('Alt');
     if (reverse) keys.push('Shift');
     keys.push('Tab');
     await page.keyboard.press(keys.join('+'));
@@ -795,12 +795,21 @@ async function focusWithKeyboard(page, selector, {reverse = false, maxSteps = 40
   throw new Error(`Keyboard focus did not reach ${selector} within ${maxSteps} Tab steps`);
 }
 
-async function focusNamedComponentWithKeyboard(page, name, {maxSteps = 400} = {}) {
+async function focusNamedComponentWithKeyboard(page, name, {maxSteps = 64} = {}) {
   await page.waitForFunction((expectedName) => (
     [...document.querySelectorAll('#componentList .component-card:not([disabled])')]
       .filter((card) => card.querySelector('strong')?.textContent?.trim() === expectedName)
       .length === 1
   ), name, {timeout: timeoutMs});
+
+  // Enter the catalog through its one roving Tab stop. Individual cards other
+  // than that stop deliberately use tabindex=-1, so Tab alone cannot reach a
+  // filtered result reliably.
+  await focusWithKeyboard(
+    page,
+    '#componentList .component-card[tabindex="0"]:not([disabled])',
+    {normalTab: true},
+  );
   for (let step = 0; step <= maxSteps; step += 1) {
     const focused = await page.evaluate((expectedName) => {
       const active = document.activeElement;
@@ -809,12 +818,9 @@ async function focusNamedComponentWithKeyboard(page, name, {maxSteps = 400} = {}
         && active.querySelector('strong')?.textContent?.trim() === expectedName;
     }, name);
     if (focused) return;
-    const keys = [];
-    if (args.engine === 'webkit') keys.push('Alt');
-    keys.push('Tab');
-    await page.keyboard.press(keys.join('+'));
+    await page.keyboard.press(step % 2 === 0 ? 'ArrowDown' : 'ArrowRight');
   }
-  throw new Error(`Keyboard focus did not reach the ${name} component within ${maxSteps} Tab steps`);
+  throw new Error(`Keyboard focus did not reach the ${name} component within ${maxSteps} arrow steps`);
 }
 
 async function completeLocalCheckWithKeyboard(page) {
