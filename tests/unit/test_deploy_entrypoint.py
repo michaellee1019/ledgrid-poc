@@ -4511,6 +4511,7 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
                 "5",
                 "--timeout",
                 "1.0",
+                "--allow-legacy-status-fallback",
             ),
         )
         self.assertEqual(receipt.health["observed_release"], target.requested)
