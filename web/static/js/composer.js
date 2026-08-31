@@ -125,6 +125,8 @@
         globalSettings: {
             observed: null,
             draft: null,
+            sessionEdits: new Set(),
+            observationQualified: false,
             dirty: false,
             loading: false,
             applying: false,
@@ -880,7 +882,9 @@
     }
 
     function activationGlobalSettings(draft = state.globalSettings.draft) {
-        if (!draft) throw new Error('Wall settings have not been observed yet.');
+        if (!draft || !state.globalSettings.observationQualified) {
+            throw new Error('Wall settings need a fresh revision-qualified controller observation.');
+        }
         const profile = vibeProfile(draft.vibeId);
         const controller = state.controllerObservation || {};
         const revision = Number(controller.globalSettingsRevision ?? controller.stateRevision);
@@ -983,43 +987,19 @@
         };
     }
 
-    function loadStoredGlobalDraft() {
-        try {
-            const stored = JSON.parse(localStorage.getItem(`${STORAGE_PREFIX}.global-draft`));
-            if (!stored || typeof stored !== 'object') return null;
-            return {
-                vibeId: vibeProfiles().some((profile) => profile.vibe_id === stored.vibeId) ? stored.vibeId : 'neutral',
-                // Old Composer drafts had no power field.  Treat them as an
-                // offline-safe intent until the first controller observation,
-                // rather than recreating the former implicit power-on path.
-                power: typeof stored.power === 'boolean' ? stored.power : false,
-                brightness: Math.max(0, Math.min(255, Math.round(safeNumber(stored.brightness, 128)))),
-                targetFps: Math.max(1, Math.min(200, Math.round(safeNumber(stored.targetFps, 30)))),
-                speedMultiplier: Math.max(.25, Math.min(3, safeNumber(stored.speedMultiplier, 1))),
-                plantModifiers: canonicalPlantModifiers(stored.plantModifiers),
-            };
-        } catch (_error) {
-            return null;
-        }
-    }
-
     function persistGlobalDraft() {
-        if (!state.globalSettings.draft) return;
-        localStorage.setItem(`${STORAGE_PREFIX}.global-draft`, JSON.stringify(state.globalSettings.draft));
+        // Wall-global intent is session-only. Remove legacy persisted drafts so
+        // a browser cache can never become a future Check or Go Live input.
+        try { localStorage.removeItem(`${STORAGE_PREFIX}.global-draft`); } catch (_error) {}
     }
 
     function initializeGlobalSettings() {
-        const bootstrapState = normalizedGlobalSettings({
-            plant_modifiers: state.bootstrap?.installation_profile?.plant_modifiers,
-            vibe: {state: {vibe_id: 'neutral'}},
-            brightness: 128,
-            target_fps: 30,
-            animation_speed_scale: state.bootstrap?.global_control_contract?.operator_speed_baseline,
-            power: false,
-        });
-        state.globalSettings.observed = bootstrapState;
-        state.globalSettings.draft = loadStoredGlobalDraft() || clone(bootstrapState);
-        state.globalSettings.dirty = !globalSettingsEqual(state.globalSettings.observed, state.globalSettings.draft);
+        persistGlobalDraft();
+        state.globalSettings.observed = null;
+        state.globalSettings.draft = null;
+        state.globalSettings.sessionEdits.clear();
+        state.globalSettings.observationQualified = false;
+        state.globalSettings.dirty = false;
         state.globalSettings.reconciliation = null;
         renderGlobalSettings();
     }
@@ -1117,7 +1097,14 @@
 
     function renderGlobalSettings() {
         const draft = state.globalSettings.draft;
-        if (!draft) return;
+        const controls = ['globalPower', 'globalBrightness', 'globalSpeed', 'globalTargetFps'];
+        if (!draft) {
+            controls.forEach((id) => { $(id).disabled = true; });
+            $('wallDraftStatus').textContent = 'Waiting for a fresh revision-qualified controller observation.';
+            updateServerActionButtons();
+            return;
+        }
+        controls.forEach((id) => { $(id).disabled = false; });
         $('globalPower').checked = draft.power;
         renderVibeOptions(draft);
         $('globalBrightness').value = String(draft.brightness);
@@ -1165,9 +1152,17 @@
 
     function updateGlobalDraft(mutator, {render = true} = {}) {
         if (!state.globalSettings.draft) return;
-        const next = clone(state.globalSettings.draft);
+        const previous = clone(state.globalSettings.draft);
+        const next = clone(previous);
         mutator(next);
         next.plantModifiers = canonicalPlantModifiers(next.plantModifiers);
+        (ComposerState.GLOBAL_SETTING_FIELDS || []).forEach((field) => {
+            if (!globalSettingsEqual(previous[field], next[field])) {
+                if (globalSettingsEqual(state.globalSettings.observed?.[field], next[field])) {
+                    state.globalSettings.sessionEdits.delete(field);
+                } else state.globalSettings.sessionEdits.add(field);
+            }
+        });
         state.globalSettings.draft = next;
         state.globalSettings.dirty = !globalSettingsEqual(next, state.globalSettings.observed);
         state.globalSettings.pendingObservation = false;
@@ -1204,6 +1199,21 @@
                 installationProfileDigest: payload.installation_profile_digest || null,
             };
             const priorControllerSession = state.controllerObservation?.sessionId;
+            const qualified = ComposerState.qualifiedWallObservation({
+                sessionId: nextControllerObservation.sessionId,
+                revision: Number(nextControllerObservation.globalSettingsRevision),
+                fresh: payload?.telemetry?.fresh,
+            });
+            if (!qualified) {
+                state.controllerObservation = nextControllerObservation;
+                state.globalSettings.observationQualified = false;
+                state.wallStateLoaded = false;
+                throw new Error('The controller observation is stale or missing its revision binding.');
+            }
+            const reconnected = Boolean(
+                priorControllerSession
+                && priorControllerSession !== nextControllerObservation.sessionId
+            );
             if (
                 state.serverCheck
                 && JSON.stringify(state.controllerObservation) !== JSON.stringify(nextControllerObservation)
@@ -1213,7 +1223,7 @@
             if (
                 priorControllerSession
                 && nextControllerObservation.sessionId
-                && priorControllerSession !== nextControllerObservation.sessionId
+                && reconnected
             ) {
                 invalidateControllerActivation();
                 invalidateImmediateApply(
@@ -1222,11 +1232,19 @@
             }
             state.controllerObservation = nextControllerObservation;
             state.wallStateLoaded = true;
-            const hadDirtyDraft = state.globalSettings.dirty;
+            state.globalSettings.observationQualified = true;
             state.globalSettings.observed = observed;
+            if (reconnected) state.globalSettings.sessionEdits.clear();
             if (state.globalSettings.pendingObservation) {
                 reconcilePendingGlobalSettings(payload, observed);
-            } else if (!preserveDraft || !hadDirtyDraft) state.globalSettings.draft = clone(observed);
+            } else {
+                state.globalSettings.draft = ComposerState.draftFromWallObservation(
+                    observed,
+                    preserveDraft ? state.globalSettings.draft : null,
+                    [...state.globalSettings.sessionEdits],
+                    {reset: reconnected || !priorObserved},
+                );
+            }
             const observedProfileDigest = payload.installation_profile_digest;
             updateSelectedInstallationProfile(observedProfileDigest);
             state.globalSettings.dirty = !globalSettingsEqual(state.globalSettings.draft, observed);
@@ -1640,6 +1658,9 @@
         if (!capability.activationReady) return capability.reason || 'This look is not activation-ready.';
         if (state.serverChecking) return 'Waiting for the wall server.';
         if (!state.serverOnline) return 'Reconnect to the wall server before activation.';
+        if (!state.globalSettings.observationQualified || !state.globalSettings.draft) {
+            return 'Wait for a fresh revision-qualified controller observation.';
+        }
         if (state.busyAction === 'stop' || state.operations.stop?.pending) {
             return 'Wait for the checked Stop operation to finish.';
         }
@@ -1722,7 +1743,8 @@
             button.dataset.busy = String(live.entering);
             button.disabled = live.entering
                 || Boolean(state.busyAction)
-                || (!live.enabled && !state.component);
+                || (!live.enabled && !state.component)
+                || (!live.enabled && Boolean(blockReason));
             button.title = live.enabled
                 ? 'Return to local preview without stopping the current wall output.'
                 : (blockReason || 'Play this look on the wall and synchronize subsequent edits.');
@@ -1757,6 +1779,7 @@
             if (blockReason) throw new Error(blockReason);
             if (state.globalSettings.draft && state.globalSettings.draft.power !== true) {
                 state.globalSettings.draft.power = true;
+                state.globalSettings.sessionEdits.add('power');
                 state.globalSettings.dirty = !globalSettingsEqual(
                     state.globalSettings.draft, state.globalSettings.observed,
                 );
@@ -5557,6 +5580,7 @@
         }));
         $('resetWallDraftButton').addEventListener('click', () => {
             state.globalSettings.draft = clone(state.globalSettings.observed);
+            state.globalSettings.sessionEdits.clear();
             state.globalSettings.dirty = false;
             persistGlobalDraft();
             resetChecker({preserveDocumentRevision: true});

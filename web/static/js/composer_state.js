@@ -464,6 +464,39 @@
         return Boolean(left && right && stableJson(left) === stableJson(right));
     }
 
+    const GLOBAL_SETTING_FIELDS = Object.freeze([
+        'power', 'vibeId', 'brightness', 'targetFps', 'speedMultiplier', 'plantModifiers',
+    ]);
+
+    function qualifiedWallObservation({sessionId, revision, fresh} = {}) {
+        return Boolean(
+            typeof sessionId === 'string'
+            && sessionId.trim()
+            && Number.isSafeInteger(revision)
+            && revision >= 0
+            && fresh === true
+        );
+    }
+
+    /**
+     * A controller observation owns every wall-wide value by default. Only
+     * fields explicitly edited in this browser session may remain divergent
+     * while the controller session is unchanged; reconnects always reset to
+     * the newly observed controller state.
+     */
+    function draftFromWallObservation(observed, draft = null, sessionEdits = [], {reset = false} = {}) {
+        if (!observed || typeof observed !== 'object') return null;
+        const next = clone(observed);
+        if (reset || !draft || typeof draft !== 'object') return next;
+        const edited = new Set(Array.isArray(sessionEdits) ? sessionEdits : []);
+        GLOBAL_SETTING_FIELDS.forEach((field) => {
+            if (edited.has(field) && Object.prototype.hasOwnProperty.call(draft, field)) {
+                next[field] = clone(draft[field]);
+            }
+        });
+        return next;
+    }
+
     function checkAllowsActivation(result, expectedBinding) {
         return Boolean(
             result
@@ -560,7 +593,9 @@
         componentPresetIdentity,
         createLatestStateQueue,
         createWallReconciliation,
+        draftFromWallObservation,
         formatNumber,
+        GLOBAL_SETTING_FIELDS,
         localInstallationProfile,
         LIBRARY_FAVORITES_LIMIT,
         LIBRARY_DISCOVERY_BATCH_SIZE,
@@ -574,6 +609,7 @@
         normalizeNumber,
         normalizeLibrarySelection,
         orderedMetricStats,
+        qualifiedWallObservation,
         runtimeDigest,
         recordLibraryRecent,
         reconcileWallObservation,

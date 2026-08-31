@@ -232,7 +232,8 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertEqual(payload["output_power"]["state"], "stale")
         self.assertTrue(payload["output_power"]["observed"])
         self.assertEqual(payload["output_power"]["revision"]["state_revision"], 7)
-        self.assertEqual(payload["health"]["receivers"]["missing"], [1])
+        # The stale fixture cannot treat its prior readable receiver as fresh.
+        self.assertEqual(payload["health"]["receivers"]["missing"], [0, 1])
         self.assertEqual(payload["raw_evidence"]["owner"], "controller_status")
 
     def test_stop_uses_checked_activation_and_requires_exact_safe_idle_observation(self) -> None:
