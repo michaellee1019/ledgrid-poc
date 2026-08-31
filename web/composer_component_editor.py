@@ -101,4 +101,6 @@ def validate_editor_scene(request: Any, catalog: ComponentCatalog) -> None:
             raise ComponentEditorError("Composer offers only Conway Life and Clock Overlay")
         if component_id in used:
             raise ComponentEditorError("Composer permits each overlay component only once")
+        if overlay.get("slot_id") != choices[component_id]["slot_id"]:
+            raise ComponentEditorError("Composer overlay slot does not match its stable component slot")
         used.add(component_id)

@@ -150,7 +150,7 @@ class ComposerSliceTests(unittest.TestCase):
         self.client.post("/api/composer/activate", json={
             "token": first["token"], "basis": first["basis"], "idempotency_key": "one",
         })
-        changed = _scene([_overlay("clock_primary")])
+        changed = _scene([_overlay("clock_upper")])
         checked = self.client.post("/api/composer/check", json=changed).get_json()
         self.assertEqual(checked["status"]["state"], "diverged")
         rejected = self.client.post("/api/composer/check", json={"origin": "dashboard"})

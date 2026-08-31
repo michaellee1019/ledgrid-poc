@@ -73,3 +73,24 @@ class ComposerComponentEditorTests(unittest.TestCase):
             validate_editor_scene(duplicate, self.interface.composer_catalog)
         self.assertEqual(self.wall.commands, [])
         self.assertEqual(self.interface.composer_control.commands, [])
+
+    def test_wrong_stable_slot_rejects_before_preview_check_or_persistence(self):
+        wrong_slot = _scene([_overlay("conway_lower")])
+        for endpoint in ("/api/composer/preview", "/api/composer/check"):
+            response = self.client.post(endpoint, json=wrong_slot)
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("stable component slot", response.get_json()["error"])
+
+        saved = self.client.post("/api/composer/looks", json={"name": "Basis", "draft": _scene()}).get_json()["look"]
+        rejected_look = self.client.post("/api/composer/looks", json={"name": "Wrong slot", "draft": wrong_slot})
+        self.assertEqual(rejected_look.status_code, 400)
+        self.assertEqual([look["id"] for look in self.client.get("/api/composer/looks").get_json()["looks"]], [saved["id"]])
+
+        reference = {"kind": "look", "id": saved["id"], "basis": saved["basis"]}
+        rejected_draft = self.client.post("/api/composer/draft", json={"draft": wrong_slot, "reference": reference})
+        self.assertEqual(rejected_draft.status_code, 400)
+        self.assertIsNone(self.client.get("/api/composer/draft").get_json()["draft"])
+        with self.assertRaises(ComponentEditorError):
+            validate_editor_scene(wrong_slot, self.interface.composer_catalog)
+        self.assertEqual(self.wall.commands, [])
+        self.assertEqual(self.interface.composer_control.commands, [])

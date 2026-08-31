@@ -119,7 +119,7 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         self.assertNotEqual(first["frame"]["pixels"], second["frame"]["pixels"])
 
     def test_preview_failure_leaves_composer_reconciliation_and_wall_channels_unchanged(self) -> None:
-        bad = _preview([_overlay("clock_primary", [255, 0, 0])])
+        bad = _preview([_overlay("clock_upper", [255, 0, 0])])
         bad["preview"] = {"wall_time": "not-a-time"}
         response = self.client.post("/api/composer/preview", json=bad)
         self.assertEqual(response.status_code, 400)
