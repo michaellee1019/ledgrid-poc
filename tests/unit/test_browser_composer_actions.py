@@ -734,7 +734,7 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("queueImmediateApply({immediate: true", javascript)
         self.assertIn("source: 'Go Live'", javascript)
         self.assertIn("await submitCheckedIntent(entry.intent, serverCheck)", javascript)
-        self.assertIn("await waitForImmediateActivation(entry, result)", javascript)
+        self.assertIn("async function waitForImmediateActivation(entry, result, expectedControllerSession)", javascript)
         self.assertNotIn("liveEditToggle", javascript)
         self.assertNotIn("reviewActivation", javascript)
         self.assertNotIn('id="activatePanelButton"', html)
@@ -755,8 +755,20 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("await refreshGlobalSettings({quiet: true, preserveDraft: true})", javascript)
         self.assertIn("await createServerCheck(", javascript)
         self.assertIn("await submitCheckedIntent(entry.intent, serverCheck)", javascript)
-        self.assertIn("await waitForImmediateActivation(entry, result)", javascript)
+        self.assertIn(
+            "entry, result, serverCheck.basis.controller.session_id,", javascript,
+        )
+        self.assertIn(
+            "status.controller?.session_id !== expectedControllerSession", javascript,
+        )
+        self.assertIn(
+            "if (!immediateApplyEntryIsCurrent(entry)) return;", javascript,
+        )
         self.assertIn("controller reconnected. A fresh edit is required", javascript)
+        self.assertIn("function invalidateControllerActivation()", javascript)
+        self.assertIn("invalidateControllerActivation();", javascript)
+        self.assertIn("generation = state.activation.generation", javascript)
+        self.assertIn("async function pollActivationResourceResult(generation = state.activation.generation)", javascript)
         self.assertIn("outcome = {state: 'failed', retryable: true", javascript)
         self.assertNotIn('id="activateDialog"', html)
         self.assertNotIn('id="wallReviewDialog"', html)

@@ -84,6 +84,7 @@
             activationId: null,
             idempotencyKey: null,
             statusUrl: null,
+            generation: 0,
             pollTimer: null,
             pollStartedAt: 0,
             phase: null,
@@ -1214,6 +1215,7 @@
                 && nextControllerObservation.sessionId
                 && priorControllerSession !== nextControllerObservation.sessionId
             ) {
+                invalidateControllerActivation();
                 invalidateImmediateApply(
                     'Not sent · controller reconnected. A fresh edit is required; prior edits were not replayed.',
                 );
@@ -1531,6 +1533,7 @@
         document.dispatchEvent(new CustomEvent('composer:capability-change'));
         if (!online && wasOnline) {
             state.liveWall.enabled = false;
+            invalidateControllerActivation();
             invalidateImmediateApply('Not sent · wall connection lost. Reconnect does not replay prior edits.');
         }
         const activationAvailable = state.bootstrap?.capabilities?.server_actions?.activation_available === true;
@@ -1840,14 +1843,19 @@
         return true;
     }
 
-    async function waitForImmediateActivation(entry, result) {
+    async function waitForImmediateActivation(entry, result, expectedControllerSession) {
         const statusUrl = result.status_url
             || `/api/v1/scene/activations/${encodeURIComponent(result.activation_id)}`;
         const startedAt = Date.now();
         while (Date.now() - startedAt < 120000) {
+            if (!immediateApplyEntryIsCurrent(entry)) return null;
             const status = await requestJson(statusUrl);
+            if (!immediateApplyEntryIsCurrent(entry)) return null;
             if (status.activation_id !== result.activation_id) {
                 throw new Error('The activation status correlation ID changed.');
+            }
+            if (status.controller?.session_id !== expectedControllerSession) {
+                throw new Error('The controller restarted before this activation was observed.');
             }
             if (immediateApplyEntryIsCurrent(entry)) {
                 state.activation.activationId = result.activation_id;
@@ -1917,7 +1925,10 @@
                 apply.state = 'queued';
                 renderImmediateApplyStatus();
             }
-            await waitForImmediateActivation(entry, result);
+            await waitForImmediateActivation(
+                entry, result, serverCheck.basis.controller.session_id,
+            );
+            if (!immediateApplyEntryIsCurrent(entry)) return;
             if (immediateApplyEntryIsCurrent(entry)) {
                 const refreshed = await refreshGlobalSettings({quiet: true, preserveDraft: true});
                 if (!refreshed) throw new Error('The applied edit could not be confirmed in current wall settings.');
@@ -4256,6 +4267,24 @@
         state.activation.pollTimer = null;
     }
 
+    function invalidateControllerActivation() {
+        const activation = state.activation;
+        clearActivationPolling();
+        clearActivationResourcePolling();
+        activation.generation += 1;
+        activation.activationId = null;
+        activation.idempotencyKey = null;
+        activation.statusUrl = null;
+        activation.pollStartedAt = 0;
+        activation.phase = null;
+        activation.lastStatus = null;
+        activation.resourceRequestUrl = null;
+        activation.resourceRequestId = null;
+        activation.resourceKind = null;
+        activation.resourcePollStartedAt = 0;
+        updateActivationResourceButtons();
+    }
+
     function clearActivationResourcePolling() {
         if (state.activation.resourcePollTimer) {
             window.clearTimeout(state.activation.resourcePollTimer);
@@ -4406,12 +4435,15 @@
         return false;
     }
 
-    async function pollActivationStatus() {
+    async function pollActivationStatus(generation = state.activation.generation) {
         clearActivationPolling();
-        if (!state.activation.statusUrl) return;
+        const activationId = state.activation.activationId;
+        const statusUrl = state.activation.statusUrl;
+        if (!activationId || !statusUrl) return;
         try {
-            const status = await requestJson(state.activation.statusUrl);
-            if (status.activation_id !== state.activation.activationId) {
+            const status = await requestJson(statusUrl);
+            if (generation !== state.activation.generation) return;
+            if (status.activation_id !== activationId) {
                 throw new Error('The activation status correlation ID changed.');
             }
             if (renderActivationStatus(status)) return;
@@ -4419,11 +4451,14 @@
             if (error.code === 'offline') setServerOnline(false);
             $('serverActionStatus').textContent = `Pending activation status could not be refreshed: ${error.message}`;
         }
+        if (generation !== state.activation.generation) return;
         if (Date.now() - state.activation.pollStartedAt >= 120000) {
             $('serverActionStatus').textContent = 'Activation is still unconfirmed after two minutes; refresh status before treating the wall as Active.';
             return;
         }
-        state.activation.pollTimer = window.setTimeout(pollActivationStatus, 1000);
+        state.activation.pollTimer = window.setTimeout(
+            () => pollActivationStatus(generation), 1000,
+        );
     }
 
     async function cancelPendingActivation() {
@@ -4484,16 +4519,18 @@
         }
     }
 
-    async function pollActivationResourceResult() {
+    async function pollActivationResourceResult(generation = state.activation.generation) {
         clearActivationResourcePolling();
         const url = state.activation.resourceRequestUrl;
         const requestId = state.activation.resourceRequestId;
         const kind = state.activation.resourceKind;
-        if (!url || !requestId || !kind) return;
+        const activationId = state.activation.activationId;
+        if (!url || !requestId || !kind || !activationId) return;
         try {
             const result = await requestJson(url);
+            if (generation !== state.activation.generation) return;
             if (
-                result.activation_id !== state.activation.activationId
+                result.activation_id !== activationId
                 || result.request_id !== requestId
             ) {
                 throw new Error('The activation request result correlation changed.');
@@ -4512,22 +4549,25 @@
                     return;
                 }
                 const status = await requestJson(state.activation.statusUrl);
-                if (status.activation_id !== state.activation.activationId) {
+                if (generation !== state.activation.generation) return;
+                if (status.activation_id !== activationId) {
                     throw new Error('The activation status correlation ID changed.');
                 }
                 renderActivationStatus(status);
                 return;
             }
         } catch (error) {
+            if (generation !== state.activation.generation) return;
             if (error.code === 'offline') setServerOnline(false);
             $('serverActionStatus').textContent = `${humanize(kind)} result could not be refreshed: ${error.message}`;
         }
+        if (generation !== state.activation.generation) return;
         if (Date.now() - state.activation.resourcePollStartedAt >= 120000) {
             $('serverActionStatus').textContent = `${humanize(kind)} remains unconfirmed after two minutes; do not infer success from the activation's prior state.`;
             return;
         }
         state.activation.resourcePollTimer = window.setTimeout(
-            pollActivationResourceResult, 1000
+            () => pollActivationResourceResult(generation), 1000
         );
     }
 

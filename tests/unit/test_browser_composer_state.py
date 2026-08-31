@@ -581,7 +581,10 @@ console.log(JSON.stringify({
         self.assertIn("`${state.activation.statusUrl}/rollback`", source)
         self.assertIn("expected_controller_state_revision: status.controller.state_revision_after", source)
         self.assertIn("accepted.request_status_url", source)
-        self.assertIn("function pollActivationResourceResult()", source)
+        self.assertIn(
+            "function pollActivationResourceResult(generation = state.activation.generation)",
+            source,
+        )
         self.assertIn("result.outcome === 'pending'", source)
         self.assertIn("do not infer success", source)
         self.assertIn("Local preview · edits stay on this device until you go Live.", source)
