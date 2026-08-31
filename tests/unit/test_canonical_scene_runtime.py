@@ -153,10 +153,19 @@ class SceneV2RuntimeTests(unittest.TestCase):
         self.widget_pixels[0] = (255, 0, 0, 255)
         self.runtime.activate(_canonical(widgets=[_widget("clock", led=0)]))
         self.runtime.render(1.0)
+        clock = self.runtime._widgets["clock"].instance
         self.runtime.activate(_canonical(widgets=[_widget("clock", led=1)]))
         moved = self.runtime.render(1.0)
+        self.assertIs(self.runtime._widgets["clock"].instance, clock)
         np.testing.assert_array_equal(moved.pixels[:2], ((10, 20, 30), (255, 0, 0)))
         self.assertEqual(moved.dirty_ranges, ((0, 3),))
+        self.runtime.activate(_canonical(widgets=[_widget("clock", visible=False, led=1)]))
+        hidden = self.runtime.render(1.0)
+        np.testing.assert_array_equal(hidden.pixels[1], (105, 10, 15))
+        np.testing.assert_array_equal(hidden.pixels[2], (10, 20, 30))
+        np.testing.assert_array_equal(hidden.foreground.pixels[1], (100, 0, 0, 128))
+        self.runtime.activate(_canonical(widgets=[_widget("clock", led=1)]))
+        self.runtime.render(1.0)
         self.runtime.activate(_canonical(widgets=[]))
         removed = self.runtime.render(1.0)
         np.testing.assert_array_equal(removed.pixels[0], (10, 20, 30))
@@ -168,6 +177,54 @@ class SceneV2RuntimeTests(unittest.TestCase):
         self.assertFalse(stable.changed)
         self.assertFalse(stable.foreground.changed)
         self.assertEqual(stable.foreground.dirty_ranges, ())
+
+    def test_auto_widget_placement_uses_injected_installation_safe_geometry(self) -> None:
+        self.widget_pixels.fill(0)
+        self.widget_pixels[1 * 138 + 1] = (255, 0, 0, 255)
+        safe = np.zeros(self.total, dtype=np.bool_)
+        safe[2 * 138 + 3] = True
+        runtime = CanonicalSceneRuntime(
+            self.controller, _catalog(), animation_factory=lambda *args: _Plane(self.alpha),
+            widget_factory=lambda *args: _Plane(self.widget_pixels.copy()),
+            background_renderer=lambda context, count: BaseFrame(self.background, changed=False),
+            widget_safe_geometry=lambda plants, strips, leds: safe,
+        )
+        widget = {"id": "clock", "component": _component("widget", "widget"), "visible": True,
+                  "placement": {"mode": "auto"}}
+        runtime.activate(_canonical(widgets=[widget]))
+        frame = runtime.render(1.0)
+        placement = frame.widget_placements["clock"]
+        self.assertEqual((placement.strip_translation, placement.led_translation), (1, 2))
+        self.assertFalse(placement.used_fallback)
+        np.testing.assert_array_equal(frame.pixels[2 * 138 + 3], (255, 0, 0))
+
+    def test_auto_widgets_reserve_prior_footprints_in_stable_scene_order(self) -> None:
+        self.widget_pixels.fill(0)
+        self.widget_pixels[1 * 138 + 1] = (255, 0, 0, 255)
+        runtime = CanonicalSceneRuntime(
+            self.controller, _catalog(), animation_factory=lambda *args: _Plane(self.alpha),
+            widget_factory=lambda *args: _Plane(self.widget_pixels.copy()),
+            background_renderer=lambda context, count: BaseFrame(self.background, changed=False),
+        )
+        widgets = [
+            {"id": "first", "component": _component("widget", "widget"), "visible": True,
+             "placement": {"mode": "auto"}},
+            {"id": "second", "component": _component("widget", "widget"), "visible": True,
+             "placement": {"mode": "auto"}},
+        ]
+        runtime.activate(_canonical(widgets=widgets))
+        frame = runtime.render(1.0)
+        first, second = frame.widget_placements["first"], frame.widget_placements["second"]
+        self.assertEqual((first.strip_translation, first.led_translation), (0, 0))
+        self.assertEqual((second.strip_translation, second.led_translation), (-1, 0))
+        self.assertFalse(second.used_fallback)
+        np.testing.assert_array_equal(frame.pixels[1 * 138 + 1], (255, 0, 0))
+        np.testing.assert_array_equal(frame.pixels[0 * 138 + 1], (255, 0, 0))
+        first_instance, second_instance = runtime._widgets["first"].instance, runtime._widgets["second"].instance
+        runtime.activate(_canonical(widgets=widgets))
+        runtime.render(2.0)
+        self.assertIs(runtime._widgets["first"].instance, first_instance)
+        self.assertIs(runtime._widgets["second"].instance, second_instance)
 
     def test_plant_look_and_output_stages_apply_once_each(self) -> None:
         calls: list[tuple[int, int, int]] = []

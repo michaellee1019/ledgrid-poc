@@ -27,20 +27,20 @@ class ClockOverlayTests(unittest.TestCase):
     def setUp(self) -> None:
         self.controller = PreviewLEDController(strips=33, leds_per_strip=138)
 
-    def test_manifest_declares_python_overlay_and_loader_discovers_it(self) -> None:
+    def test_manifest_declares_python_widget_and_loader_discovers_it(self) -> None:
         loader = AnimationPluginLoader()
         self.assertIn("clock_overlay", loader.scan_plugins())
         manifest = loader.plugin_manifests["clock_overlay"]
-        self.assertEqual((manifest["provider"], manifest["role"]), ("python", "overlay"))
+        self.assertEqual((manifest["provider"], manifest["role"]), ("python", "widget"))
         loaded = loader.load_plugin("clock_overlay")
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.__name__, ClockOverlayAnimation.__name__)
 
-    def test_provider_qualified_descriptor_is_a_wall_clock_overlay(self) -> None:
+    def test_provider_qualified_descriptor_is_a_wall_clock_widget(self) -> None:
         descriptor = ClockOverlayAnimation.component_descriptor()
         self.assertEqual(
             (descriptor.component_id, descriptor.version, descriptor.provider.value, descriptor.role.value),
-            ("clock_overlay", 1, "python", "overlay"),
+            ("clock_overlay", 1, "python", "widget"),
         )
         self.assertIs(descriptor.timing_policy, TimingPolicy.WALL_CLOCK)
         self.assertEqual(dict(descriptor.defaults), {
@@ -56,36 +56,44 @@ class ClockOverlayTests(unittest.TestCase):
             descriptor,
         )
 
-    def test_full_composer_scene_resolves_json_safe_clock_defaults(self) -> None:
+    def test_scene_v2_resolves_json_safe_clock_defaults(self) -> None:
         catalog = ComponentCatalog([
-            ComponentDescriptor(component_id="aurora", version=1, role="background"),
+            ComponentDescriptor(
+                "native", 1, "receiver_native", "background", "scaled_context", "none", "preserve",
+                ("final_optics",), ("native_preview",), defaults={"bundle_digest": "a" * 64},
+            ),
+            ComponentDescriptor(
+                "aurora", 1, "python", "animation", "scaled_context", "premultiplied_rgba",
+                "semantic", ("none",), (),
+            ),
             ClockOverlayAnimation.component_descriptor(),
         ])
         canonical = normalize_composer_scene({
             "origin": "composer",
             "scene": {
-                "schema": "ledgrid.scene.v1",
+                "schema": "ledgrid.scene.v2",
                 "background": {
-                    "component_id": "aurora", "version": 1,
-                    "provider": "python", "role": "background", "parameters": {},
+                    "component_id": "native", "version": 1,
+                    "provider": "receiver_native", "role": "background", "parameters": {},
+                    "bundle_digest": "a" * 64,
                 },
-                "overlays": [{
-                    "slot_id": "clock",
+                "animation": {
+                    "component_id": "aurora", "version": 1,
+                    "provider": "python", "role": "animation", "parameters": {},
+                },
+                "widgets": [{
+                    "id": "clock",
                     "component": {
                         "component_id": "clock_overlay", "version": 1,
-                        "provider": "python", "role": "overlay", "parameters": {},
+                        "provider": "python", "role": "widget", "parameters": {},
                     },
-                    "enabled": True, "opacity": 255,
-                    "placement": {
-                        "strip_translation": 0, "led_translation": 0,
-                        "clip_policy": "clip_to_wall",
-                    },
-                    "stale_policy": {"policy": "hold"},
+                    "visible": True, "placement": {"mode": "auto"},
                 }],
-                "vibe": "quiet", "master_brightness": 1.0,
+                "plants": {"effects": {"version": 1, "active": [], "strengths": {}}},
+                "look": {"palette_id": "mist", "pace": 2.0, "presentation_brightness": 1.0},
             },
         }, catalog)
-        parameters = canonical.scene["overlays"][0]["component"]["parameters"]
+        parameters = canonical.scene["widgets"][0]["component"]["parameters"]
         self.assertEqual(parameters, {
             "format_24h": False,
             "show_seconds": True,

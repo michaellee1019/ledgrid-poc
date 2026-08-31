@@ -19,6 +19,9 @@ from animation.core.base import RenderedFrame
 from animation.core.component_catalog import AlphaBehavior, ComponentCatalog, ComponentDescriptor, PalettePolicy
 from animation.core.compositing import BaseFrame, HostSceneCompositor, OverlayFrame, PlacedOverlay
 from animation.core.presentation_contracts import NEUTRAL_PLANT_INPUTS, ResolvedScene
+from animation.core.widget_placement import (
+    WidgetPlacementResolution, resolve_widget_placement, translated_widget_coverage,
+)
 from ipc.scene_contract import (
     CanonicalScene, SCENE_V2_REVISION, SceneIdentity, canonical_json_bytes,
     normalize_composer_scene,
@@ -40,6 +43,7 @@ class RuntimeFrame:
         "native_background", "animation", "widgets", "plant_optics",
         "look_presentation", "output_master_brightness",
     )
+    widget_placements: Mapping[str, WidgetPlacementResolution] = MappingProxyType({})
 
 
 BackgroundRenderer = Callable[[ResolvedScene, int], BaseFrame]
@@ -47,6 +51,7 @@ ComponentFactory = Callable[[ComponentDescriptor, Any, Mapping[str, Any]], Any]
 PlantInputResolver = Callable[[Mapping[str, Any], ComponentDescriptor], Mapping[str, float]]
 PlantOptics = Callable[[np.ndarray, Mapping[str, Any]], np.ndarray]
 WidgetPlacementResolver = Callable[[Mapping[str, Any], int, int, int], tuple[int, int]]
+WidgetSafeGeometry = Callable[[Mapping[str, Any], int, int], np.ndarray]
 
 
 @dataclass
@@ -73,6 +78,7 @@ class CanonicalSceneRuntime:
         plant_input_resolver: Optional[PlantInputResolver] = None,
         plant_optics: Optional[PlantOptics] = None,
         widget_placement_resolver: Optional[WidgetPlacementResolver] = None,
+        widget_safe_geometry: Optional[WidgetSafeGeometry] = None,
         master_brightness: float = 1.0,
     ) -> None:
         if not isinstance(catalog, ComponentCatalog):
@@ -86,7 +92,11 @@ class CanonicalSceneRuntime:
         self._widget_factory = widget_factory or self._default_component_factory
         self._plant_input_resolver = plant_input_resolver or self._neutral_plant_inputs
         self._plant_optics = plant_optics or self._identity_plant_optics
-        self._widget_placement_resolver = widget_placement_resolver or self._default_widget_placement
+        # The legacy resolver remains an opt-in compatibility seam. New
+        # callers bind calibrated ``PlantMaskGeometry.safe_flat`` here so
+        # placements use installation authority rather than scene data.
+        self._widget_placement_resolver = widget_placement_resolver
+        self._widget_safe_geometry = widget_safe_geometry or self._all_safe_widget_geometry
         self._master_brightness = self._factor(master_brightness, "master_brightness")
         self._animation: _ComponentSlot | None = None
         self._widgets: dict[str, _ComponentSlot] = {}
@@ -145,13 +155,21 @@ class CanonicalSceneRuntime:
         animation_descriptor = self._descriptor(scene["animation"])
         animation_context = self._context(canonical, animation_descriptor, self._animation.parameters, elapsed)
         layers = [PlacedOverlay(self._render_plane(self._animation, animation_descriptor, animation_context))]
+        placements: dict[str, WidgetPlacementResolution] = {}
+        reserved_widgets = np.zeros(self.strip_count * self.leds_per_strip, dtype=np.bool_)
         for index, widget in enumerate(scene["widgets"]):
             if not widget["visible"]:
                 continue
             descriptor, slot = self._descriptor(widget["component"]), self._widgets[widget["id"]]
             context = self._context(canonical, descriptor, slot.parameters, elapsed)
-            strip_offset, led_offset = self._placement(widget, index)
-            layers.append(PlacedOverlay(self._render_plane(slot, descriptor, context), strip_offset, led_offset))
+            plane = self._render_plane(slot, descriptor, context)
+            placement = self._placement(widget, index, plane, scene["plants"], reserved_widgets)
+            placements[widget["id"]] = placement
+            layers.append(PlacedOverlay(plane, placement.strip_translation, placement.led_translation))
+            reserved_widgets |= translated_widget_coverage(
+                plane, strip_count=self.strip_count, leds_per_strip=self.leds_per_strip,
+                strip_translation=placement.strip_translation, led_translation=placement.led_translation,
+            )
 
         composed = self._compositor.compose(background, tuple(layers))
         foreground = self._compositor.aggregate_foreground()
@@ -171,7 +189,8 @@ class CanonicalSceneRuntime:
         assert self._last_output is not None
         self._frame_count += 1
         return RuntimeFrame(self._last_output, canonical.identity, changed,
-                            composed.dirty_ranges if changed and not pipeline_changed else None, foreground)
+                            composed.dirty_ranges if changed and not pipeline_changed else None, foreground,
+                            widget_placements=MappingProxyType(placements))
 
     def _sync_slots(self, scene: Mapping[str, Any]) -> None:
         component = scene["animation"]
@@ -250,14 +269,22 @@ class CanonicalSceneRuntime:
             slot.plane_revision += 1
         return OverlayFrame(slot.opaque_pixels, revision=slot.plane_revision, changed=changed, dirty_ranges=dirty)
 
-    def _placement(self, widget: Mapping[str, Any], index: int) -> tuple[int, int]:
-        placement = widget["placement"]
-        if placement["mode"] == "manual":
-            return placement["strip_translation"], placement["led_translation"]
-        resolved = self._widget_placement_resolver(widget, index, self.strip_count, self.leds_per_strip)
-        if not isinstance(resolved, tuple) or len(resolved) != 2 or any(isinstance(item, bool) or not isinstance(item, int) for item in resolved):
-            raise CanonicalSceneRuntimeError("widget placement resolver must return integer offsets")
-        return resolved
+    def _placement(self, widget: Mapping[str, Any], index: int, frame: OverlayFrame,
+                   plants: Mapping[str, Any], reserved_widgets: np.ndarray) -> WidgetPlacementResolution:
+        if self._widget_placement_resolver is not None:
+            resolved = self._widget_placement_resolver(widget, index, self.strip_count, self.leds_per_strip)
+            if not isinstance(resolved, tuple) or len(resolved) != 2 or any(isinstance(item, bool) or not isinstance(item, int) for item in resolved):
+                raise CanonicalSceneRuntimeError("widget placement resolver must return integer offsets")
+            return WidgetPlacementResolution(*resolved)
+        try:
+            safe_flat = self._widget_safe_geometry(plants, self.strip_count, self.leds_per_strip)
+            return resolve_widget_placement(
+                widget["placement"], frame, strip_count=self.strip_count,
+                leds_per_strip=self.leds_per_strip, safe_flat=safe_flat,
+                reserved_flat=reserved_widgets,
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            raise CanonicalSceneRuntimeError(f"widget placement could not be resolved: {exc}") from exc
 
     def _descriptor(self, component: Mapping[str, Any]) -> ComponentDescriptor:
         try:
@@ -293,9 +320,10 @@ class CanonicalSceneRuntime:
         return pixels
 
     @staticmethod
-    def _default_widget_placement(widget: Mapping[str, Any], index: int, strips: int, leds: int) -> tuple[int, int]:
-        del widget, index, strips, leds
-        return (0, 0)
+    def _all_safe_widget_geometry(plants: Mapping[str, Any], strips: int, leds: int) -> np.ndarray:
+        """Headless default; installed runtimes inject ``PlantMaskGeometry.safe_flat``."""
+        del plants
+        return np.ones(strips * leds, dtype=np.bool_)
 
     @staticmethod
     def _factor(value: Any, name: str) -> float:
