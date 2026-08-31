@@ -47,6 +47,13 @@ class ComposerStateExplanationTests(unittest.TestCase):
         self.assertIn("'Unavailable'", self.script)
         self.assertIn("r${value.revision} · ${value.digest}", self.script)
 
+    def test_preview_failure_message_takes_precedence_in_exact_details(self) -> None:
+        self.assertIn(
+            "snapshot.previewUnavailable ? snapshot.previewMessage : snapshot.localMessage",
+            self.script,
+        )
+        self.assertIn("details.message.textContent = detailMessage(snapshot)", self.script)
+
     def test_existing_owners_publish_preview_draft_status_and_recovery_snapshots(self) -> None:
         for hook in ("markDraftLocal()", "commitPreview(body)", "function status(payload)", "state.recovery=body.draft"):
             self.assertIn(hook, self.slice)

@@ -12,6 +12,7 @@
 
   function identity(value) { return value && Number.isInteger(value.revision) && typeof value.digest === 'string' ? `r${value.revision} · ${value.digest}` : 'Unavailable'; }
   function reference(value) { return value && value.kind && value.id ? `${value.kind} · ${value.id} · ${identity(value.basis)}` : 'Unavailable'; }
+  function detailMessage(snapshot) { return (snapshot.previewUnavailable ? snapshot.previewMessage : snapshot.localMessage) || snapshot.previewMessage || 'Unavailable'; }
   function explanation(snapshot) {
     const reconciliation = snapshot.reconciliation || {};
     if (snapshot.recovery) return {statement:'A recoverable local draft is available.', action:['Restore local draft', '#restoreDraft']};
@@ -39,7 +40,7 @@
     details.preview.textContent = identity(snapshot.preview);
     details.desired.textContent = identity(snapshot.reconciliation && snapshot.reconciliation.desired);
     details.observed.textContent = identity(snapshot.reconciliation && snapshot.reconciliation.observed);
-    details.message.textContent = snapshot.localMessage || snapshot.previewMessage || 'Unavailable';
+    details.message.textContent = detailMessage(snapshot);
     if (!value.action) { action.hidden=true; action.removeAttribute('data-focus'); return; }
     action.hidden=false; action.textContent=value.action[0]; action.dataset.focus=value.action[1];
   }
