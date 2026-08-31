@@ -15,6 +15,7 @@ import sys
 
 RUNTIME_PRESETS = PurePosixPath("presets/animations")
 COMPOSER_GENERATED_ROOT = PurePosixPath("web/static/generated/composer")
+REPOSITORY_COORDINATION_ROOTS = frozenset({".agents", ".beads", ".codex"})
 FAST_CODE_SUFFIXES = {".css", ".html", ".js", ".py"}
 FAST_CONFIG_FILES = {
     # Guarded Check loads this release-owned budget at request time.  A fast
@@ -70,6 +71,11 @@ def _is_beneath(path: PurePosixPath, parent: PurePosixPath) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _is_repository_coordination_path(path: PurePosixPath) -> bool:
+    """Return whether ``path`` is local workflow metadata, not app source."""
+    return bool(path.parts and path.parts[0] in REPOSITORY_COORDINATION_ROOTS)
 
 
 def _validate_git_path(raw_path: bytes) -> PurePosixPath:
@@ -150,7 +156,9 @@ def manifest_plan(root: Path, scope: str) -> ManifestPlan:
     safe_untracked: list[PurePosixPath] = []
 
     for path in _git_index_paths(root):
-        if not (root / path.as_posix()).exists():
+        if _is_repository_coordination_path(path):
+            excluded.append(ExcludedPath(path, "repository coordination metadata"))
+        elif not (root / path.as_posix()).exists():
             excluded.append(ExcludedPath(path, "deleted from working tree"))
         elif _is_beneath(path, RUNTIME_PRESETS):
             excluded.append(ExcludedPath(path, "target-owned runtime preset"))
@@ -160,7 +168,9 @@ def manifest_plan(root: Path, scope: str) -> ManifestPlan:
             selected.add(path)
 
     for path in _git_untracked_paths(root):
-        if not _is_safe_untracked(root, path):
+        if _is_repository_coordination_path(path):
+            excluded.append(ExcludedPath(path, "repository coordination metadata"))
+        elif not _is_safe_untracked(root, path):
             reason = (
                 "target-owned runtime preset"
                 if _is_beneath(path, RUNTIME_PRESETS)
@@ -194,9 +204,32 @@ def _git(root: Path, *args: str) -> bytes:
     ).stdout
 
 
+def _status_paths(root: Path) -> list[PurePosixPath]:
+    """Return every path named by Git's NUL-delimited porcelain status."""
+    records = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all").split(b"\0")
+    paths: list[PurePosixPath] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if len(record) < 4:
+            raise RuntimeError("Git returned malformed porcelain status")
+        paths.append(_validate_git_path(record[3:]))
+        if record[:1] in {b"R", b"C"} or record[1:2] in {b"R", b"C"}:
+            if index >= len(records) or not records[index]:
+                raise RuntimeError("Git returned malformed renamed porcelain status")
+            paths.append(_validate_git_path(records[index]))
+            index += 1
+    return paths
+
+
 def working_tree_dirty(root: Path) -> bool:
-    """Return whether any tracked or non-ignored untracked source is modified."""
-    return bool(_git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all"))
+    """Return whether app source, rather than local coordination metadata, changed."""
+    return any(
+        not _is_repository_coordination_path(path) for path in _status_paths(root)
+    )
 
 
 def source_identity(root: Path, plan: ManifestPlan) -> dict[str, object]:

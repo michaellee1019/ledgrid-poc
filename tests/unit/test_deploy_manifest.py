@@ -175,6 +175,36 @@ class DeployManifestTests(unittest.TestCase):
             },
         )
 
+    def test_repository_coordination_metadata_never_enters_a_deployment(self):
+        self._write(".beads/interactions.jsonl")
+        deleted = self._write(".beads/deleted.jsonl")
+        self._write(".agents/skills/demo/SKILL.md")
+        self._write(".codex/config.toml")
+        self._write("web/app.py")
+        self._commit(
+            ".beads/interactions.jsonl",
+            ".beads/deleted.jsonl",
+            ".agents/skills/demo/SKILL.md",
+            ".codex/config.toml",
+            "web/app.py",
+        )
+        before = source_identity(self.root, manifest_plan(self.root, "full"))
+        deleted.unlink()
+
+        plan = manifest_plan(self.root, "full")
+
+        self.assertEqual(plan.selected, (PurePosixPath("web/app.py"),))
+        self.assertEqual(
+            {(item.path.as_posix(), item.reason) for item in plan.excluded},
+            {
+                (".agents/skills/demo/SKILL.md", "repository coordination metadata"),
+                (".beads/deleted.jsonl", "repository coordination metadata"),
+                (".beads/interactions.jsonl", "repository coordination metadata"),
+                (".codex/config.toml", "repository coordination metadata"),
+            },
+        )
+        self.assertEqual(before, source_identity(self.root, plan))
+
     def test_fast_plan_explains_non_fast_tracked_and_safe_untracked_files(self):
         self._write("docs/README.md")
         self._write("tools/new-config.toml")
@@ -274,6 +304,40 @@ class DeployManifestTests(unittest.TestCase):
         self._commit("README.md")
         self.assertFalse(working_tree_dirty(self.root))
         self._write("scratch.txt")
+        self.assertTrue(working_tree_dirty(self.root))
+
+    def test_clean_state_ignores_repository_coordination_changes_only(self):
+        self._write(".beads/interactions.jsonl", b"initial")
+        self._write(".agents/skills/demo/SKILL.md", b"initial")
+        self._write(".codex/config.toml", b"initial")
+        self._write("web/app.py", b"initial")
+        self._commit(
+            ".beads/interactions.jsonl",
+            ".agents/skills/demo/SKILL.md",
+            ".codex/config.toml",
+            "web/app.py",
+        )
+
+        self._write(".beads/interactions.jsonl", b"changed")
+        self._write(".agents/skills/demo/LOCAL.md", b"untracked")
+        self._write(".codex/local.toml", b"untracked")
+        self.assertFalse(working_tree_dirty(self.root))
+
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve().parents[2] / "tools/deployment/deploy_manifest.py"),
+            "--root",
+            str(self.root),
+            "--scope",
+            "full",
+            "--policy",
+            "clean",
+            "--json",
+        ]
+        clean = subprocess.run(command, check=True, capture_output=True, text=True)
+        self.assertFalse(json.loads(clean.stdout)["dirty"])
+
+        self._write("web/app.py", b"changed")
         self.assertTrue(working_tree_dirty(self.root))
 
     def test_clean_cli_rejects_dirty_tree_while_dirty_cli_records_identity(self):
