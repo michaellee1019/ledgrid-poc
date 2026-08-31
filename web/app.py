@@ -13,7 +13,6 @@ import os
 import re
 import tempfile
 import time
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -38,12 +37,8 @@ from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_composer_scene, normalize_scene_identity
-from web.activation_token_store import (
-    ActivationTokenError,
-    ActivationTokenStale,
-    ActivationTokenStore,
-)
 from web.composer_component_editor import editor_catalog, validate_editor_scene
+from web.live_scene_state import LiveSceneBlocked, LiveSceneStale, LiveSceneState
 from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
@@ -123,17 +118,14 @@ class AnimationWebInterface:
             ConwayLifeAnimation.component_descriptor(),
             ClockOverlayAnimation.component_descriptor(),
         ])
-        self.composer_tokens = ActivationTokenStore()
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
         self.composer_control = _ComposerLocalControlChannel()
+        self.composer_live = LiveSceneState(
+            self.composer_catalog, self.composer_adapter, self.composer_control,
+        )
         self.composer_looks = SceneLookStore(self.project_root / "run_state" / "composer_looks.json")
         self.composer_library = ComposerLibraryState(self.project_root / "run_state" / "composer_library.json")
         self.working_draft = WorkingDraftStore(self.project_root / 'run_state' / 'composer_draft.json')
-        self._composer_checked = None
-        self._composer_rejection: Optional[str] = None
-        self._composer_retry = False
-        self._composer_state_override: Optional[str] = None
-        self._composer_idle_basis: Optional[dict[str, Any]] = None
         if self.local_mode:
             self.generated_preview_dir = (
                 self.project_root / "run_state" / "mac_animation_previews"
@@ -179,8 +171,8 @@ class AnimationWebInterface:
 
         @self.app.route('/api/composer/status')
         def api_composer_status():
-            """Read only local desired/observed Scene-v1 reconciliation state."""
-            return jsonify(self._composer_status_payload())
+            """Read current desired/observed Scene v2 publication state."""
+            return jsonify(self._composer_status_payload(request.args.get('client_id')))
 
         @self.app.route('/api/composer/components')
         def api_composer_components():
@@ -369,85 +361,85 @@ class AnimationWebInterface:
 
         @self.app.route('/api/composer/check', methods=['POST'])
         def api_composer_check():
-            """Check an authored scene before the separate intentional Go Live."""
+            """Run advisory Scene v2 diagnostics without gating publication."""
             payload = request.get_json(silent=True)
             try:
-                validate_editor_scene(payload, self.composer_catalog)
-                checked = self.composer_tokens.check(payload, self.composer_catalog)
+                return jsonify(self.composer_live.check(payload))
             except (SceneContractError, ValueError, TypeError) as exc:
-                self._composer_rejection = str(exc)
-                self._composer_retry = False
-                self._composer_state_override = 'rejected'
                 return jsonify({
                     'error': str(exc), 'status': self._composer_status_payload(),
                 }), 400
-            self._composer_checked = checked
-            self._composer_rejection = None
-            self._composer_retry = False
-            self._composer_state_override = None
-            return jsonify({
-                'token': checked.token,
-                'basis': checked.identity.to_dict(),
-                'canonical_scene': checked.canonical.scene,
-                'expires_at': checked.expires_at,
-                'status': self._composer_status_payload(),
-            })
 
-        @self.app.route('/api/composer/activate', methods=['POST'])
-        def api_composer_activate():
-            """Activate one checked basis through the topology-neutral adapter."""
+        @self.app.route('/api/composer/scene', methods=['POST'])
+        def api_composer_scene():
+            """Accept the newest valid scene and publish it when Composer is armed."""
             payload = request.get_json(silent=True) or {}
             try:
-                receipt = self.composer_tokens.activate(
-                    payload.get('token', ''), basis=payload.get('basis', {}),
-                    idempotency_key=payload.get('idempotency_key') or str(uuid.uuid4()),
-                    control_channel=self.composer_control, local_adapter=self.composer_adapter,
-                )
-            except ActivationTokenStale as exc:
-                self._composer_rejection = None
-                self._composer_retry = False
-                self._composer_state_override = 'stale'
+                allowed = {'origin', 'scene', 'client_id', 'mutation_id', 'client_sequence'}
+                if set(payload) - allowed:
+                    raise ValueError('scene request contains unknown fields')
+                request_scene = {'origin': payload.get('origin'), 'scene': payload.get('scene')}
+                return jsonify(self.composer_live.submit(
+                    request_scene,
+                    client_id=payload.get('client_id', 'composer'),
+                    mutation_id=payload.get('mutation_id'),
+                    client_sequence=payload.get('client_sequence'),
+                ))
+            except LiveSceneStale as exc:
                 return jsonify({
                     'error': str(exc), 'status': self._composer_status_payload(),
                 }), 409
-            except (ActivationTokenError, SceneContractError, ValueError, TypeError) as exc:
-                self._composer_rejection = str(exc)
-                self._composer_retry = False
-                self._composer_state_override = 'rejected'
-                return jsonify({
-                    'error': str(exc), 'status': self._composer_status_payload(),
-                }), 409
-            self._composer_rejection = None
-            self._composer_retry = receipt.exact_retry
-            self._composer_state_override = None
-            self._composer_idle_basis = None
-            return jsonify({
-                'basis': receipt.identity.to_dict(),
-                'exact_retry': receipt.exact_retry,
-                'status': self._composer_status_payload(),
-            })
+            except (SceneContractError, ValueError, TypeError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+            except TimeoutError as exc:
+                return jsonify({'error': str(exc) or 'Scene acknowledgement timed out.',
+                                'status': self._composer_status_payload()}), 504
+
+        @self.app.route('/api/composer/go-live', methods=['POST'])
+        def api_composer_go_live():
+            payload = request.get_json(silent=True) or {}
+            try:
+                return jsonify({'status': self.composer_live.go_live(client_id=payload.get('client_id', 'composer'))})
+            except LiveSceneBlocked as exc:
+                return jsonify({'error': str(exc), 'blockers': exc.blockers,
+                                'status': self._composer_status_payload()}), 409
+            except TimeoutError as exc:
+                return jsonify({'error': str(exc) or 'Scene acknowledgement timed out.',
+                                'status': self._composer_status_payload()}), 504
+
+        @self.app.route('/api/composer/connection', methods=['POST'])
+        def api_composer_connection():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'connected'}:
+                    raise ValueError('connection request must contain connected')
+                return jsonify({'status': self.composer_live.set_connected(payload['connected'])})
+            except (ValueError, TypeError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+
+        @self.app.route('/api/composer/undo-ack', methods=['POST'])
+        def api_composer_undo_ack():
+            """Acknowledge a remote scene revision after clearing local undo."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'client_id', 'revision'}:
+                    raise ValueError('undo acknowledgement needs client_id and revision')
+                return jsonify({'status': self.composer_live.acknowledge_undo_invalidation(
+                    client_id=payload['client_id'], revision=payload['revision'],
+                )})
+            except (ValueError, TypeError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
 
         @self.app.route('/api/composer/stop', methods=['POST'])
         def api_composer_stop():
-            """Record exact-basis local safe idle; never contacts the wall."""
+            """Stop output while retaining the current editable scene."""
             payload = request.get_json(silent=True) or {}
-            observed = self.composer_adapter.observed_identity()
-            basis = payload.get('basis')
-            if observed is None or basis != observed.to_dict():
-                self._composer_state_override = 'diverged'
-                return jsonify({'error': 'Stop needs the currently observed scene.', 'status': self._composer_status_payload()}), 409
             try:
-                self.composer_control.send_command('stop_scene', basis=basis)
-                acknowledged = self.composer_adapter.accept_stop(basis)
+                return jsonify({'status': self.composer_live.stop(client_id=payload.get('client_id', 'composer'))})
             except TimeoutError as exc:
-                self._composer_state_override = 'timeout'
                 return jsonify({'error': str(exc) or 'Stop acknowledgement timed out.', 'status': self._composer_status_payload()}), 504
             except (SceneContractError, ValueError, TypeError) as exc:
-                self._composer_state_override = 'rejected'
                 return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 409
-            self._composer_idle_basis = acknowledged.to_dict()
-            self._composer_state_override = 'stopped'
-            return jsonify({'status': self._composer_status_payload()})
         
         @self.app.route('/api/animations')
         def api_list_animations():
@@ -1155,50 +1147,13 @@ class AnimationWebInterface:
 
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
 
-    def _composer_status_payload(self) -> Dict[str, Any]:
-        """Describe local reconciliation without inferring an acknowledgement.
+    def _composer_status_payload(self, client_id: Optional[str] = None) -> Dict[str, Any]:
+        """Describe live-first current/desired/observed reconciliation.
 
-        ``observed`` comes only from :class:`LocalSceneAdapter`; a successful
-        Check is therefore pending rather than treated as an activation.
+        This stays explicitly local: the acknowledgement comes from the
+        topology-neutral adapter and never claims a receiver or wall mutation.
         """
-        desired = (
-            self._composer_checked.identity.to_dict()
-            if self._composer_checked is not None else None
-        )
-        observed_identity = self.composer_adapter.observed_identity()
-        observed = observed_identity.to_dict() if observed_identity is not None else None
-        self._composer_idle_basis = (
-            self.composer_adapter.safe_idle_identity().to_dict()
-            if self.composer_adapter.safe_idle_identity() is not None else None
-        )
-        if self._composer_idle_basis is not None:
-            state = 'stopped'
-        elif self._composer_state_override:
-            state = self._composer_state_override
-        elif self._composer_rejection:
-            state = 'rejected'
-        elif self._composer_checked is None:
-            state = 'pending'
-        elif time.monotonic() > self._composer_checked.expires_at:
-            state = 'stale'
-        elif self._composer_retry:
-            state = 'retry'
-        elif observed is None:
-            state = 'pending'
-        elif observed == desired:
-            state = 'converged'
-        else:
-            state = 'diverged'
-        return {
-            'desired': desired,
-            'observed': observed,
-            'state': state,
-            'rejection': self._composer_rejection,
-            'safe_idle': self._composer_idle_basis is not None,
-            # This is an explicit safety proof for the local adapter, not an
-            # inferred property of a controller or deployment target.
-            'wall_mutations': 0,
-        }
+        return self.composer_live.snapshot(client_id=client_id)
 
     def _composer_preview_payload(self, payload: Any) -> Dict[str, Any]:
         """Use an inert canonical runtime to render an authored Composer draft.
