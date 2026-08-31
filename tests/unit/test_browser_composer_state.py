@@ -551,7 +551,7 @@ console.log(JSON.stringify({
         self.assertIn("ComposerState.advisoryRenderStatus(p95, frameBudgetMs)", source)
         self.assertNotIn("failures.push('render time')", source)
         self.assertIn("serverCheck: null", source)
-        self.assertIn("Pending · newest edit queued for a guarded apply.", source)
+        self.assertIn("a newer edit replaces it before send", source)
         self.assertIn("activationIdentitiesMatch(status)", source)
         self.assertIn("warnings: warnings.slice()", source)
         self.assertIn("browser_evidence: clone(state.checkResult)", source)

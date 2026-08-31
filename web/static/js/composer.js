@@ -1662,7 +1662,39 @@
         }
         const mobileStatus = $('mobileActivationStatus');
         if (mobileStatus) mobileStatus.textContent = message;
+        const directEditStatus = $('directEditStatus');
+        if (directEditStatus) {
+            directEditStatus.dataset.state = state.liveWall.enabled ? apply.state : 'local';
+            const copy = directEditStatus.querySelector('span');
+            if (copy) {
+                copy.textContent = !state.liveWall.enabled
+                    ? 'Editing locally · dial changes update this preview immediately. Go Live to send this scene to the wall.'
+                    : message;
+            }
+        }
+        renderSceneChoiceStatus();
         renderLiveWallControls();
+    }
+
+    function renderSceneChoiceStatus() {
+        const status = $('sceneChoiceStatus');
+        if (!status) return;
+        if (!state.component) {
+            status.textContent = 'Choose a scene to start a local draft.';
+            status.dataset.state = 'local';
+            return;
+        }
+        const sceneName = $('presetName')?.value.trim() || state.component.name || humanize(state.component.plugin_id);
+        const apply = state.immediateApply;
+        const stateLabel = !state.liveWall.enabled
+            ? 'Local draft'
+            : apply.state === 'active'
+                ? 'Applied on wall'
+                : apply.state === 'failed'
+                    ? 'Not applied'
+                    : 'Applying latest edit';
+        status.textContent = `Selected scene · ${sceneName} · ${stateLabel}`;
+        status.dataset.state = state.liveWall.enabled ? apply.state : 'local';
     }
 
     function renderLiveWallControls() {
@@ -1794,7 +1826,7 @@
         }
         const apply = state.immediateApply;
         apply.queue.enqueue(intent);
-        apply.message = 'Pending · newest edit queued for a guarded apply.';
+        apply.message = `Pending · ${source} queued; a newer edit replaces it before send.`;
         apply.state = 'pending';
         if (!apply.inFlight) {
             if (apply.timer) window.clearTimeout(apply.timer);
@@ -1845,7 +1877,7 @@
         if (!entry) return;
         apply.inFlight = true;
         apply.lastSentAt = Date.now();
-        apply.message = 'Checking the latest edit against the current controller revision…';
+        apply.message = `Checking · ${entry.intent.source} against the current controller revision…`;
         apply.state = 'checking';
         renderImmediateApplyStatus();
         let outcome = null;
@@ -1881,7 +1913,7 @@
                     };
                     renderGlobalSettings();
                 }
-                apply.message = 'Queued · pending is not observed active.';
+                apply.message = `Queued · ${entry.intent.source} awaits controller observation.`;
                 apply.state = 'queued';
                 renderImmediateApplyStatus();
             }
@@ -1890,14 +1922,14 @@
                 const refreshed = await refreshGlobalSettings({quiet: true, preserveDraft: true});
                 if (!refreshed) throw new Error('The applied edit could not be confirmed in current wall settings.');
             }
-            outcome = {state: 'active', message: 'Active · the exact newest edit was observed by the controller.'};
+            outcome = {state: 'active', message: `Applied · ${entry.intent.source} is the exact newest edit observed by the controller.`};
             if (immediateApplyEntryIsCurrent(entry)) {
                 apply.message = outcome.message;
                 apply.state = 'active';
                 renderImmediateApplyStatus();
             }
         } catch (error) {
-            outcome = {state: 'failed', retryable: true, message: `Not applied · ${error.message}`};
+            outcome = {state: 'failed', retryable: true, message: `Not applied · ${entry.intent.source}: ${error.message}`};
             if (immediateApplyEntryIsCurrent(entry)) {
                 state.liveWall.enabled = false;
                 if (error.code === 'offline') setServerOnline(false);
@@ -3283,7 +3315,7 @@
         scheduleAutosave();
         syncComposerUrl({mode: 'coalesce'});
         requestRender();
-        queueImmediateApply({source: 'parameter'});
+        queueImmediateApply({source: `${humanize(key)} dial edit`});
     }
 
     function snapshot() {
@@ -5400,6 +5432,7 @@
             resetChecker();
             scheduleAutosave();
             syncComposerUrl({mode: 'coalesce'});
+            renderSceneChoiceStatus();
         });
         $('presetName').addEventListener('change', commitHistory);
         $('importButton').addEventListener('click', () => $('importFile').click());

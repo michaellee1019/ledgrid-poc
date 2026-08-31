@@ -191,6 +191,7 @@
         <div>
           <p class="eyebrow">Canvas · 33 × 138</p>
           <h1 id="stageHeading">Select a browser-ready animation</h1>
+          <p class="scene-choice-status" id="sceneChoiceStatus" data-state="local" role="status" aria-live="polite">Choose a scene to start a local draft.</p>
           <p id="componentDescription">Frames render on this device and never change the physical wall.</p>
         </div>
         <div class="engine-badge" id="engineBadge" data-state="waiting"><span></span><strong>Waiting</strong><small>No worker selected</small></div>
@@ -267,6 +268,7 @@
           <label class="parameter-search" for="parameterSearch"><span aria-hidden="true">⌕</span><input id="parameterSearch" type="search" placeholder="Filter controls" autocomplete="off"></label>
           <label class="compact-switch parameter-help-toggle" for="parameterHelpToggle"><span>Help</span><input id="parameterHelpToggle" type="checkbox" role="switch"></label>
         </div>
+        <p class="direct-edit-status" id="directEditStatus" data-state="local" role="status" aria-live="polite"><i aria-hidden="true"></i><span>Editing locally · dial changes update this preview immediately. Go Live to send this scene to the wall.</span></p>
         <p class="empty-message" id="parameterEmpty">Controls are generated from the selected renderer’s declared schema.</p>
         <form class="parameter-list" id="parameterList" autocomplete="off"></form>
         <section class="advanced-parameters inline-advanced-parameters" aria-labelledby="advancedParametersHeading">

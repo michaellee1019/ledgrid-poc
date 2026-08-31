@@ -131,8 +131,15 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
 
         for element_id in (
             "activationReadiness", "immediateApplyStatus", "mobileActivationStatus",
+            "directEditStatus", "sceneChoiceStatus",
         ):
             self.audit.by_id(element_id)
+
+        self.assertIn("dial changes update this preview immediately", self.html)
+        self.assertIn("a newer edit replaces it before send", self.javascript)
+        self.assertIn("exact newest edit observed by the controller", self.javascript)
+        self.assertIn("function renderSceneChoiceStatus()", self.javascript)
+        self.assertIn('.direct-edit-status[data-state="active"]', self.css)
 
         self.assertEqual(
             self.manifest["display_override"],
