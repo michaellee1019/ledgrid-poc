@@ -59,13 +59,13 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Beads Autopilot
 
-These rules apply to the `ledgrid-poc-ib7` initiative. They replace the retired worktree-train protocol with a small continuous-delivery loop.
+These rules apply to the `ledgrid-poc-ib7` Live-First Composer initiative. They replace the retired worktree-train and source-parity sequencing with a depth-first continuous-delivery loop.
 
 ### The `start` contract
 
 When the user's request is simply `start`, treat it as explicit authorization to run Beads autopilot for the current session. `resume` and `keep going` have the same meaning when the initiative is already clear.
 
-Autopilot may reconcile Beads, create local branches and worktrees, claim work, spawn subagents, make local commits, integrate completed work, close Beads, and continue to the next ready item without asking between ordinary local steps. It does not authorize git or Dolt pushes, the squash to `main`, physical-wall or receiver operations, destructive deployment, or a product decision outside the accepted epic.
+Autopilot may reconcile Beads, create local branches and worktrees, claim work, spawn subagents, make local commits, integrate completed work, close Beads, and continue to the next ready item without asking between ordinary local steps. It does not authorize git or Dolt pushes, a squash or merge to `main`, physical-wall or receiver operations, deployment, or a product decision outside the accepted epic.
 
 ### Lean startup
 
@@ -80,7 +80,17 @@ git worktree list --porcelain
 
 Inspect the live agent tree too. Repair mismatches before claiming anything: integrate a completed handoff, preserve dirty work, or return an orphaned claim to `open` with a short interruption note. Do not create a planning phase merely to restate the backlog.
 
-Use `bd ready --json` and select an unassigned descendant of `ledgrid-poc-ib7`. Rank actual P0/P1 product leaves first: user-visible behavior, safety and operability, critical-path unblockers, then complexity deletion. Defer verification-only, documentation-only, inventory, and test-program work until its boundary is actually due. A leaf needs actionable acceptance, an identifiable ownership/conflict area, and focused validation; do not block delivery to perfect estimates, prose, wave metadata, or execution cards.
+The integration base is the recorded `codex/ib7-selective-reconstruction` branch and its registered clean worktree. Treat `update-animation-pipeline` as a donor and never merge it wholesale. A sane, minimal eventual history onto `main` matters, but is secondary to reaching the right product and a convincing end-to-end demo. Do not stop visible product work merely to inventory, rewrite history, prune broadly, or perfect a future squash.
+
+Use `bd ready --json` and select unassigned descendants of `ledgrid-poc-ib7`. Rank the shortest dependency path to the current Live-First demo first: user-visible behavior, shared contract unblockers, safety and operability, then complexity deletion. Defer broad renderer migration, inventory, verification-only work, documentation programs, and merge-history cleanup until the demo boundary or an actual dependency requires them. A leaf needs actionable acceptance, an identifiable ownership/conflict area, and focused validation; do not block delivery to perfect estimates, prose, or execution cards.
+
+### Sol portfolio steward
+
+Start a short-lived portfolio steward before dispatch when the current wave is missing or stale, after each batch of up to 15 selected Beads, or earlier when no product leaf is ready, an item stalls or reopens twice, priorities/dependencies disagree, or Beads/worktree/branch reality drifts. Use at most one steward at a time with `gpt-5.6-sol` and reasoning effort `high`.
+
+The steward reads the binding Scene v2 decision, epic, recent handoffs, ready/blocked queues, and branch progress. It may prepare or repair at most 15 bounded executable Beads, partition them into dependency-ordered non-conflicting waves, clarify acceptance from accepted decisions, and retire stale coordination work. It normally changes Beads only, leaves a short epic note, and exits before implementation dispatch. It must not inflate the backlog, rewrite product intent, implement code, authorize pushes/hardware, or claim later waves.
+
+Only the current runnable wave receives `worktree-ready` and may be claimed. Later selected Beads remain open and unclaimed until their dependencies integrate. Represent an unresolved product or authority choice as a separate Bead carrying the exact `human` label, block dependents on it, and leave it discoverable through `bd human list`.
 
 ### Terra implementation workers
 
@@ -92,23 +102,12 @@ A worker implements the smallest complete product increment, runs baseline valid
 
 Baseline validation is changed-language syntax or lint, focused tests, and `git diff --check`. Add one adjacent regression only when a shared contract changed. Use one browser smoke only for a user-visible browser boundary. Full browser matrices, aggregate preflight, firmware matrices, and soak tests belong at release or hardware boundaries, not ordinary leaves.
 
-### Sol portfolio steward
+### Risk-tiered acceptance
 
-Use at most one portfolio steward at a time, with model `gpt-5.6-sol` and reasoning effort `xhigh` (Extra High). The steward is a bounded reviewer, not another implementation lane. It reads the epic, recent handoffs, ready and blocked queues, and current branch progress; it normally changes Beads only.
-
-Invoke the steward when any of these is true:
-
-- three product Beads have integrated since the last steward note;
-- no actionable P0/P1 product leaf is ready;
-- the same item has stalled, failed, or reopened twice;
-- claims, worktrees, dependencies, or priorities disagree;
-- a conflict domain is starved while lower-value validation or coordination work advances;
-- the coordinator cannot resolve the next product step from accepted decisions.
-
-The steward may repair dependencies and priorities, close or supersede stale coordination/test Beads, clarify acceptance from existing decisions, and split only the next one to three executable product leaves. It must not inflate the backlog, rewrite the product goal, perform implementation, or authorize pushes/hardware. It leaves one short comment on `ledgrid-poc-ib7`: progress against the big picture, the next critical path, and any stalled, starved, or orphaned work. Escalate to the user only when resolving ambiguity would change product intent or require new authority.
+Shared schemas, compositor or protocol work, risky live-state changes, and user-visible acceptance require an independent reviewer using `gpt-5.6-sol` with reasoning effort `high`. The reviewer works from an isolated worktree, checks the accepted Bead rather than redesigning it, records actionable findings or approval, and does not merge. The coordinator may review routine bounded leaves. A review is a gate on integration, not a separate long-running implementation lane.
 
 ### Continuous integration loop
 
-Wait for the first worker to finish, review the handoff, and acquire the Beads merge slot only for integration. Rebase onto the current integration tip, rerun the focused checks on the prospective tip, fast-forward merge, record the integrated SHA, close the Bead, release the slot, and remove only the clean merged worktree. Then immediately refill the free Terra slot from the ready queue.
+Wait for the first worker to finish, review the handoff, obtain required independent acceptance, and acquire the Beads merge slot only for integration. Rebase onto the current selective-reconstruction tip, rerun the focused checks on the prospective tip, fast-forward merge, record the integrated SHA, close the Bead, release the slot, and remove only the clean merged worktree. Unlock and claim the next dependency wave only after its prerequisites integrate, then refill available Terra capacity.
 
 Continue until the user says `stop`, no meaningful local work can proceed, or a real permission/product decision is required. On stop, interrupt workers, wait for the live tree to empty, release the merge slot, reconcile every `in_progress` Bead, and preserve dirty or unmerged worktrees. Never stage `.beads/**`, traces, screenshots, or local run state.
