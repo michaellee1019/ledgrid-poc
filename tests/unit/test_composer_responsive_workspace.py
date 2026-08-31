@@ -38,14 +38,11 @@ class ComposerResponsiveWorkspaceTests(unittest.TestCase):
         self.assertIn('#previewIdentity { overflow-wrap: anywhere;', self.css)
         self.assertIn('.button { min-height: 2.75rem;', self.css)
 
-    def test_fragment_focus_is_presentation_only_and_does_not_call_product_handlers(self) -> None:
-        start = self.script.index('function focusComposerSection()')
-        end = self.script.index("window.addEventListener('hashchange', focusComposerSection);", start)
-        navigation = self.script[start:end]
+    def test_semantic_navigation_is_an_isolated_focus_only_owner(self) -> None:
+        navigation = (ROOT / 'web/static/js/composer_navigation.js').read_text(encoding='utf-8')
         self.assertIn('target.focus({preventScroll:true})', navigation)
-        for forbidden in ('edit(', 'queuePreview(', 'autosave(', 'goLive(', 'stopScene(', 'fetch('):
-            self.assertNotIn(forbidden, navigation)
-        self.assertIn("window.addEventListener('hashchange', focusComposerSection);", self.script)
+        self.assertIn("window.addEventListener('popstate', projectLocation);", navigation)
+        self.assertNotIn("window.addEventListener('hashchange'", self.script)
         self.assertNotIn("window.addEventListener('resize'", self.script)
 
 
