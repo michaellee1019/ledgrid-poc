@@ -589,6 +589,7 @@ console.log(JSON.stringify({
         self.assertIn("state.globalSettings.draft.power = true", source)
         self.assertIn("queueImmediateApply({immediate: true, source: 'Go Live'})", source)
         self.assertIn("if (!state.liveWall.enabled)", source)
+        self.assertIn("|| (!live.enabled && !state.component)", source)
         self.assertIn("prepareOfflineButton", source)
         self.assertIn("const activationAvailable = state.bootstrap?.capabilities?.server_actions?.activation_available === true", source)
         self.assertIn("activationMode === 'development_canary'", source)

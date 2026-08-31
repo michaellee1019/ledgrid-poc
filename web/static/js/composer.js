@@ -1672,7 +1672,7 @@
             button.dataset.busy = String(live.entering);
             button.disabled = live.entering
                 || Boolean(state.busyAction)
-                || (!live.enabled && (!state.component || state.serverChecking));
+                || (!live.enabled && !state.component);
             button.title = live.enabled
                 ? 'Return to local preview without stopping the current wall output.'
                 : (blockReason || 'Play this look on the wall and synchronize subsequent edits.');
