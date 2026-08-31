@@ -37,6 +37,10 @@ console.log(JSON.stringify({
   qualified: state.qualifiedWallObservation({sessionId:'a'.repeat(32), revision:9, fresh:true}),
   staleTelemetry: state.qualifiedWallObservation({sessionId:'a'.repeat(32), revision:9, fresh:false}),
   missingRevision: state.qualifiedWallObservation({sessionId:'a'.repeat(32), revision:null, fresh:true}),
+  freshTimestamp: state.wallObservationTimestampIsFresh(995000, 1000000),
+  staleTimestamp: state.wallObservationTimestampIsFresh(984999, 1000000),
+  futureTimestamp: state.wallObservationTimestampIsFresh(1005001, 1000000),
+  missingTimestamp: state.wallObservationTimestampIsFresh(null, 1000000),
   first: state.draftFromWallObservation(observed, stale, [], {reset:true}),
   sameSession: state.draftFromWallObservation({...observed, brightness:72}, edited, ['speedMultiplier']),
   reconnect: state.draftFromWallObservation({...observed, brightness:72}, edited, ['speedMultiplier'], {reset:true}),
@@ -45,6 +49,10 @@ console.log(JSON.stringify({
         self.assertTrue(result["qualified"])
         self.assertFalse(result["staleTelemetry"])
         self.assertFalse(result["missingRevision"])
+        self.assertTrue(result["freshTimestamp"])
+        self.assertFalse(result["staleTimestamp"])
+        self.assertFalse(result["futureTimestamp"])
+        self.assertFalse(result["missingTimestamp"])
         self.assertEqual(result["first"], {
             "power": False, "vibeId": "neutral", "brightness": 71,
             "targetFps": 47, "speedMultiplier": 1.4,
@@ -62,6 +70,8 @@ console.log(JSON.stringify({
         self.assertIn("localStorage.removeItem(`${STORAGE_PREFIX}.global-draft`)", source)
         self.assertIn("sessionEdits: new Set()", source)
         self.assertIn("qualifiedWallObservation", refresh)
+        self.assertIn("wallObservationTimestampIsFresh(observedStatusTimeMs(payload))", refresh)
+        self.assertNotIn("payload?.telemetry?.fresh", refresh)
         self.assertIn("draftFromWallObservation", refresh)
         self.assertIn("state.globalSettings.sessionEdits.clear();", refresh)
         self.assertIn("state.globalSettings.observationQualified = false;", init)

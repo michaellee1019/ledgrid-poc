@@ -478,6 +478,16 @@
         );
     }
 
+    function wallObservationTimestampIsFresh(observedAt, now = Date.now()) {
+        return Boolean(
+            Number.isFinite(observedAt)
+            && observedAt >= 0
+            && Number.isFinite(now)
+            && observedAt <= now + 5000
+            && now - observedAt <= 15000
+        );
+    }
+
     /**
      * A controller observation owns every wall-wide value by default. Only
      * fields explicitly edited in this browser session may remain divergent
@@ -562,9 +572,7 @@
             state: 'reconnected', acknowledged: false, retryable: true,
             message: 'The controller reconnected. Review the wall change again to retry against its new session.',
         });
-        const timestampIsFresh = Number.isFinite(observedAt)
-            && observedAt <= now + 5000
-            && now - observedAt <= 15000;
+        const timestampIsFresh = wallObservationTimestampIsFresh(observedAt, now);
         if (fresh !== true && !(fresh == null && timestampIsFresh)) return Object.freeze({
             state: 'stale', acknowledged: false, retryable: false,
             message: 'Waiting for a fresh wall observation. Refresh Wall settings to retry now.',
@@ -618,5 +626,6 @@
         stableJson,
         toggleLibraryFavorite,
         uniqueLibrarySelections,
+        wallObservationTimestampIsFresh,
     });
 })(typeof window === 'undefined' ? globalThis : window);

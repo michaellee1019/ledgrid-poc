@@ -941,7 +941,7 @@
                 revision: Number(controller.globalSettingsRevision),
                 observed,
                 observedAt: observedStatusTimeMs(payload),
-                fresh: payload?.telemetry?.fresh === true ? true : null,
+                fresh: ComposerState.wallObservationTimestampIsFresh(observedStatusTimeMs(payload)),
             },
         );
         reconciliation.outcome = outcome;
@@ -1202,7 +1202,7 @@
             const qualified = ComposerState.qualifiedWallObservation({
                 sessionId: nextControllerObservation.sessionId,
                 revision: Number(nextControllerObservation.globalSettingsRevision),
-                fresh: payload?.telemetry?.fresh,
+                fresh: ComposerState.wallObservationTimestampIsFresh(observedStatusTimeMs(payload)),
             });
             if (!qualified) {
                 state.controllerObservation = nextControllerObservation;
