@@ -3,7 +3,7 @@
   const root = document.querySelector('.composer');
   const api = root.dataset.apiRoot;
   const list = document.querySelector('#overlayList');
-  const state = { overlays: [], checked: null, activationKey: null, presentationMode: 'vibe', previewGeneration: 0 };
+  const state = { overlays: [], checked: null, activationKey: null, presentationMode: 'vibe', previewGeneration: 0, looks: [], deleteLookId: null };
   const defaults = {
     conway_lower: { slot_id: 'conway_lower', component_id: 'conway_life', enabled: true, opacity: 190, strip: 0, led: 0, stale: 'hold', parameters: { seed: 1971, rule: 'B3/S23', initial_density: 0.14, generations_per_second: 5.0 } },
     clock_upper: { slot_id: 'clock_upper', component_id: 'clock_overlay', enabled: true, opacity: 208, strip: 0, led: -8, stale: 'hold', parameters: { show_seconds: true, color: [255, 224, 128] } },
@@ -26,7 +26,8 @@
       })),
     } };
   }
-  function edit() { state.checked = null; state.activationKey = null; $('#desiredIdentity').textContent = 'Not checked'; $('#reconcileState').textContent = 'Pending'; $('#reconcileState').dataset.state = 'pending'; $('#liveMessage').textContent = 'Draft is local.'; queuePreview(); }
+  function markDraftLocal() { state.checked = null; state.activationKey = null; $('#desiredIdentity').textContent = 'Not checked'; $('#reconcileState').textContent = 'Pending'; $('#reconcileState').dataset.state = 'pending'; $('#liveMessage').textContent = 'Draft is local.'; }
+  function edit() { markDraftLocal(); queuePreview(); }
   function setVibeDefaults() { const values = { quiet: ['mist', .70, .82], neutral: ['neutral', 1, 1], vivid: ['spectrum', 1.25, 1.15] }[$('#vibe').value]; $('#previewPalette').value = values[0]; $('#wallPace').value = values[1]; $('#sceneLuminance').value = values[2]; }
   function drawPreview(frame) {
     if (!frame || frame.encoding !== 'rgb_u8_base64' || frame.width !== 33 || frame.height !== 138 || frame.orientation !== 'strip_major_led_zero_bottom') throw new Error('Preview returned an unsupported frame.');
@@ -38,7 +39,7 @@
   }
   async function queuePreview() {
     const generation = ++state.previewGeneration; $('#previewStatus').textContent = 'Rendering this local draft…';
-    try { const response = await fetch(`${api}/preview`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(draft()) }); const body = await response.json(); if (generation !== state.previewGeneration) return; if (!response.ok) throw new Error(body.error || 'Preview could not render.'); drawPreview(body.frame); $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Current local runtime frame · no wall change.'; }
+    try { const response = await fetch(`${api}/preview`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(draft()) }); const body = await response.json(); if (generation !== state.previewGeneration) return null; if (!response.ok) throw new Error(body.error || 'Preview could not render.'); drawPreview(body.frame); $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Current local runtime frame · no wall change.'; return body; }
     catch (error) { if (generation === state.previewGeneration) { $('#previewIdentity').textContent = 'Preview unavailable'; $('#previewStatus').textContent = error.message || 'Preview could not render.'; } }
   }
   function render() {
@@ -57,6 +58,9 @@
     });
   }
   function status(payload) { const data = payload.status || payload; $('#desiredIdentity').textContent = data.desired ? identity(data.desired) : 'Not checked'; $('#observedIdentity').textContent = identity(data.observed); $('#reconcileState').textContent = data.state[0].toUpperCase() + data.state.slice(1); $('#reconcileState').dataset.state = data.state; if (data.rejection) $('#liveMessage').textContent = data.rejection; }
+  async function looks(path = '', options = {}) { const response = await fetch(`${api}/looks${path}`, options); const body = await response.json(); if (!response.ok) throw new Error(body.error); return body; }
+  function copyName(name) { let candidate = `${name} copy`; let suffix = 2; const names = new Set(state.looks.map((look) => look.name.toLocaleLowerCase())); while (names.has(candidate.toLocaleLowerCase())) candidate = `${name} copy ${suffix++}`; return candidate; }
+  function renderLooks() { const target = $('#lookList'); target.replaceChildren(); $('#lookEmpty').hidden = state.looks.length > 0; state.looks.forEach((look) => { const row = document.createElement('li'); row.className = 'overlay'; row.innerHTML = `<div class="overlay-top"><input class="look-row-name" maxlength="80"><div><button class="button text" data-look="open">Open</button><button class="button text" data-look="duplicate">Duplicate</button><button class="button text" data-look="rename">Rename</button><button class="button text" data-look="delete">${state.deleteLookId === look.id ? 'Confirm delete' : 'Delete'}</button></div></div>`; row.querySelector('input').value = look.name; row.addEventListener('click', async (event) => { const action = event.target.dataset.look; if (!action) return; if (action !== 'delete') state.deleteLookId = null; try { if (action === 'duplicate') await looks(`/${look.id}/duplicate`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:copyName(look.name)})}); if (action === 'rename') await looks(`/${look.id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:row.querySelector('input').value})}); if (action === 'delete') { if (state.deleteLookId !== look.id) { state.deleteLookId = look.id; renderLooks(); return; } await looks(`/${look.id}`, {method:'DELETE'}); state.deleteLookId = null; } if (action === 'open') { const result=await looks(`/${look.id}`); const scene=result.look.scene; const p=scene.background.parameters; $('#curtainDensity').value=p.curtain_density; $('#foldDepth').value=p.fold_depth; $('#glowIntensity').value=p.glow_intensity; $('#previewPalette').value=scene.palette_id; $('#wallPace').value=scene.wall_pace; $('#sceneLuminance').value=scene.presentation_luminance; state.presentationMode=scene.vibe_source==='custom'?'custom':'vibe'; if(state.presentationMode==='vibe') $('#vibe').value=scene.vibe_source; state.overlays=scene.overlays.map((o)=>({slot_id:o.slot_id,component_id:o.component.component_id,enabled:o.enabled,opacity:o.opacity,strip:o.placement.strip_translation,led:o.placement.led_translation,stale:o.stale_policy.policy==='hold'?'hold':'clear',parameters:{...o.component.parameters}})); markDraftLocal(); render(); const preview=await queuePreview(); if(!preview||preview.basis.digest!==result.look.basis.digest) throw new Error('Saved look preview no longer matches; recreate it.'); } state.looks=(await looks()).looks; renderLooks(); } catch(error) { $('#lookMessage').textContent=error.message||'Saved look could not be changed.'; } }); target.append(row); }); }
   async function goLive() {
     const button = $('#goLive'); button.disabled = true; $('#liveMessage').textContent = 'Checking this exact local draft…';
     try {
@@ -75,8 +79,9 @@
     finally { button.disabled = false; }
   }
   $('#addOverlay').addEventListener('click', () => { const slot = Object.keys(defaults).find((candidate) => !state.overlays.some((item) => item.slot_id === candidate)); if (!slot) return; state.overlays.push({...defaults[slot], parameters: {...defaults[slot].parameters}}); edit(); render(); });
+  $('#saveLook').addEventListener('click', async () => { try { const result=await looks('', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('#lookName').value,draft:draft()})}); $('#lookName').value=''; state.looks=(await looks()).looks; renderLooks(); $('#lookMessage').textContent=`Saved ${result.look.name}.`; } catch (error) { $('#lookMessage').textContent=error.message || 'Saved look could not be created.'; } });
   document.querySelectorAll('.composer input, .composer select').forEach((input) => { if (!['vibe', 'previewPalette', 'wallPace', 'sceneLuminance'].includes(input.id)) input.addEventListener('change', edit); });
   $('#vibe').addEventListener('change', () => { state.presentationMode = 'vibe'; setVibeDefaults(); edit(); });
   ['#previewPalette', '#wallPace', '#sceneLuminance'].forEach((selector) => $(selector).addEventListener('change', () => { state.presentationMode = 'custom'; edit(); }));
-  $('#goLive').addEventListener('click', goLive); render(); queuePreview();
+  $('#goLive').addEventListener('click', goLive); render(); queuePreview(); looks().then((result) => { state.looks=result.looks; renderLooks(); }).catch((error) => { $('#lookMessage').textContent=error.message; });
 })();

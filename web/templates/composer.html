@@ -41,6 +41,15 @@
     <p id="overlayEmpty" class="empty">No overlays yet.</p>
   </section>
 
+  <section class="composer-card" aria-labelledby="looks-title">
+    <div class="section-title"><div><p class="eyebrow">Saved looks</p><h2 id="looks-title">Keep a draft</h2></div><button id="saveLook" class="button secondary" type="button">Save look</button></div>
+    <label class="look-name">Look name <input id="lookName" maxlength="80" placeholder="Evening garden"></label>
+    <p class="muted">Saved looks stay local. Opening one restores its draft and preview; it never goes live.</p>
+    <ol id="lookList" class="overlay-list" aria-live="polite"></ol>
+    <p id="lookEmpty" class="empty">No saved looks yet.</p>
+    <p id="lookMessage" class="live-message" role="status" aria-live="polite"></p>
+  </section>
+
   <section class="composer-card live-card" aria-labelledby="live-title">
     <div class="section-title"><div><p class="eyebrow">Go Live</p><h2 id="live-title">Scene handoff</h2></div><button id="goLive" class="button primary" type="button">Go Live</button></div>
     <p class="muted">Go Live checks this exact draft, then sends it only to the local Scene adapter. It does not contact the wall.</p>

@@ -43,6 +43,7 @@ from web.activation_token_store import (
     ActivationTokenStale,
     ActivationTokenStore,
 )
+from web.scene_look_store import SceneLookStore, SceneLookStoreError
 
 
 PAINTER_MASK_TYPES = (
@@ -119,6 +120,7 @@ class AnimationWebInterface:
         self.composer_tokens = ActivationTokenStore()
         self.composer_adapter = LocalSceneAdapter()
         self.composer_control = _ComposerLocalControlChannel()
+        self.composer_looks = SceneLookStore(self.project_root / "run_state" / "composer_looks.json")
         self._composer_checked = None
         self._composer_rejection: Optional[str] = None
         self._composer_retry = False
@@ -166,6 +168,54 @@ class AnimationWebInterface:
             try:
                 return jsonify(self._composer_preview_payload(request.get_json(silent=True)))
             except (CanonicalSceneRuntimeError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks')
+        def api_composer_looks():
+            try:
+                return jsonify({'looks': self.composer_looks.list()})
+            except SceneLookStoreError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks', methods=['POST'])
+        def api_composer_save_look():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'name', 'draft'}:
+                    raise SceneLookStoreError('A look needs a name and current draft.')
+                canonical = normalize_composer_scene(payload['draft'], self.composer_catalog)
+                return jsonify({'look': self._composer_look_payload(self.composer_looks.save(payload['name'], canonical))})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks/<look_id>')
+        def api_composer_open_look(look_id: str):
+            try:
+                return jsonify({'look': self._composer_look_payload(self.composer_looks.get(look_id))})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks/<look_id>/duplicate', methods=['POST'])
+        def api_composer_duplicate_look(look_id: str):
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'name'}:
+                    raise SceneLookStoreError('A duplicate needs a new name.')
+                return jsonify({'look': self._composer_look_payload(self.composer_looks.duplicate(look_id, payload['name']))})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks/<look_id>', methods=['PATCH', 'DELETE'])
+        def api_composer_change_look(look_id: str):
+            try:
+                if request.method == 'DELETE':
+                    self.composer_looks.delete(look_id)
+                    return jsonify({'deleted': look_id})
+                payload = request.get_json(silent=True) or {}
+                if set(payload) != {'name'}:
+                    raise SceneLookStoreError('A rename needs a new name.')
+                return jsonify({'look': self._composer_look_payload(self.composer_looks.rename(look_id, payload['name']))})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/check', methods=['POST'])
@@ -1016,6 +1066,30 @@ class AnimationWebInterface:
             },
             'wall_mutations': 0,
         }
+
+    def _composer_look_payload(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject old or corrupt records before exposing them to the local draft."""
+        scene = record['scene']
+        if not isinstance(scene, dict) or set(scene) != {
+            'schema', 'background', 'overlays', 'vibe_source', 'palette_id',
+            'wall_pace', 'presentation_luminance', 'master_brightness',
+        }:
+            raise SceneLookStoreError('Saved look is not current Scene v1; recreate it.')
+        authored_scene = {
+            'schema': scene['schema'], 'background': scene['background'],
+            'overlays': scene['overlays'], 'master_brightness': scene['master_brightness'],
+        }
+        if scene['vibe_source'] == 'custom':
+            authored_scene['custom'] = {
+                'palette_id': scene['palette_id'], 'wall_pace': scene['wall_pace'],
+                'presentation_luminance': scene['presentation_luminance'],
+            }
+        else:
+            authored_scene['vibe'] = scene['vibe_source']
+        canonical = normalize_composer_scene({'origin': 'composer', 'scene': authored_scene}, self.composer_catalog)
+        if canonical.scene != scene or canonical.identity.to_dict() != record['basis']:
+            raise SceneLookStoreError('Saved look has changed or is corrupt; recreate it.')
+        return {'id': record['id'], 'name': record['name'], 'basis': record['basis'], 'scene': scene}
 
     def _fallback_led_info(self) -> Dict[str, int]:
         """Current preview-manager dimensions used as a fallback layout."""
