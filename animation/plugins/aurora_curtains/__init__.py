@@ -57,7 +57,7 @@ class AuroraCurtainsAnimation(AnimationBase):
     COMPONENT_ID = "aurora_curtains"
     COMPONENT_VERSION = 1
     PROVIDER = "python"
-    ROLE = "background"
+    ROLE = "animation"
     FRAME_FORMAT = "rgb_uint8_strip_major"
     CADENCE_POLICY = "source_rate_cached"
     TIMING_POLICY = "scaled_context"
@@ -82,8 +82,11 @@ class AuroraCurtainsAnimation(AnimationBase):
         version=COMPONENT_VERSION,
         provider=PROVIDER,
         role=ROLE,
+        alpha_behavior="opaque",
         palette_policy=PALETTE_POLICY,
         timing_policy=TIMING_POLICY,
+        plant_capabilities=("none",),
+        fidelity_exceptions=(),
         intensity_parameter="glow_intensity",
         defaults=DEFAULTS,
     )

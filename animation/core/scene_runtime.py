@@ -31,7 +31,6 @@ from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from ipc.scene_contract import (
-    SCENE_V1_REVISION,
     CanonicalScene,
     SceneIdentity,
     canonical_json_bytes,
@@ -169,6 +168,9 @@ class CanonicalSceneRuntime:
 
     def activate(self, canonical: CanonicalScene) -> SceneIdentity:
         """Accept one already-canonical scene without reinterpreting its identity."""
+        raise CanonicalSceneRuntimeError(
+            "the Scene v1 host runtime is retired; use the Scene v2 compositor"
+        )
         self._require_canonical_basis(canonical)
         self._sync_slots(canonical.scene)
         self._canonical = canonical
@@ -240,7 +242,7 @@ class CanonicalSceneRuntime:
         for overlay in scene["overlays"]:
             slot_id = overlay["slot_id"]
             active_slots.add(slot_id)
-            descriptor = self._require_component(overlay["component"], ComponentRole.OVERLAY)
+            descriptor = self._require_component(overlay["component"], None)
             parameters = _freeze_mapping(overlay["component"]["parameters"])
             key = self._component_key(overlay["component"])
             existing = self._overlays.get(slot_id)
@@ -292,7 +294,7 @@ class CanonicalSceneRuntime:
                 animation = slot.animation
                 if not isinstance(animation, ConwayLifeAnimation):
                     raise CanonicalSceneRuntimeError("Conway Life slot has an incompatible animation")
-                descriptor = self._require_component(overlay["component"], ComponentRole.OVERLAY)
+                descriptor = self._require_component(overlay["component"], None)
                 context = self._overlay_context(scene, descriptor, slot.parameters, elapsed)
                 animation.set_presentation_context(context)
                 frame = animation.generate_frame(context.phase_time, self._frame_count)
@@ -329,7 +331,7 @@ class CanonicalSceneRuntime:
             plant_inputs=MappingProxyType({}),
         )
 
-    def _require_component(self, component: Mapping[str, Any], role: ComponentRole) -> ComponentDescriptor:
+    def _require_component(self, component: Mapping[str, Any], role: ComponentRole | None) -> ComponentDescriptor:
         try:
             descriptor = self.catalog.require(
                 provider=component["provider"], component_id=component["component_id"], version=component["version"],
@@ -340,7 +342,7 @@ class CanonicalSceneRuntime:
             raise CanonicalSceneRuntimeError("canonical scene component is outside the supported Python runtime")
         if role is ComponentRole.BACKGROUND and descriptor.timing_policy is not TimingPolicy.SCALED_CONTEXT:
             raise CanonicalSceneRuntimeError("canonical scene component is outside the supported Python runtime")
-        if role is ComponentRole.OVERLAY and (
+        if role is None and (
             (descriptor.component_id == ClockOverlayAnimation.COMPONENT_ID and descriptor.timing_policy is not TimingPolicy.WALL_CLOCK)
             or (descriptor.component_id == ConwayLifeAnimation.COMPONENT_ID and descriptor.timing_policy is not TimingPolicy.SCALED_CONTEXT)
             or descriptor.component_id not in {ClockOverlayAnimation.COMPONENT_ID, ConwayLifeAnimation.COMPONENT_ID}
@@ -362,7 +364,7 @@ class CanonicalSceneRuntime:
     def _require_canonical_basis(canonical: CanonicalScene) -> None:
         if not isinstance(canonical, CanonicalScene):
             raise TypeError("canonical must be a CanonicalScene")
-        if canonical.identity.revision != SCENE_V1_REVISION:
+        if canonical.identity.revision != 1:
             raise CanonicalSceneRuntimeError("canonical scene revision is not current Scene v1")
         bytes_value = canonical_json_bytes(canonical.scene)
         if bytes_value != canonical.canonical_bytes:

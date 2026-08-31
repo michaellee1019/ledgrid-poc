@@ -1,4 +1,9 @@
-"""A narrow in-memory catalog for the one-background Scene v1 packet."""
+"""Capability catalog for the current-only Scene v2 contract.
+
+Provider identity is part of a component's integrity address. It is not a
+discovery category: callers select a component for a Scene role and this
+catalog verifies its declared provider, role, rendering, and fidelity facts.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +20,8 @@ class ComponentProvider(str, Enum):
 
 class ComponentRole(str, Enum):
     BACKGROUND = "background"
-    OVERLAY = "overlay"
+    ANIMATION = "animation"
+    WIDGET = "widget"
 
 
 class PalettePolicy(str, Enum):
@@ -28,18 +34,37 @@ class TimingPolicy(str, Enum):
     WALL_CLOCK = "wall_clock"
 
 
+class AlphaBehavior(str, Enum):
+    """How a component's visual output participates in composition."""
+
+    NONE = "none"
+    PREMULTIPLIED_RGBA = "premultiplied_rgba"
+    OPAQUE = "opaque"
+
+
+class PlantCapability(str, Enum):
+    """Named plant-aware behaviours supported by a component."""
+
+    NONE = "none"
+    EFFECT_INTENT = "effect_intent"
+    SIMULATION_INPUTS = "simulation_inputs"
+    FINAL_OPTICS = "final_optics"
+
+
 @dataclass(frozen=True)
 class ComponentDescriptor:
-    """The capability declaration consumed by the Scene-v1 resolver."""
+    """A fully declared capability record for one catalog component."""
 
     component_id: str
     version: int
-    provider: ComponentProvider | str = ComponentProvider.PYTHON
-    role: ComponentRole | str = ComponentRole.BACKGROUND
-    palette_policy: PalettePolicy | str = PalettePolicy.SEMANTIC
-    timing_policy: TimingPolicy | str = TimingPolicy.SCALED_CONTEXT
+    provider: ComponentProvider | str
+    role: ComponentRole | str
+    timing_policy: TimingPolicy | str
+    alpha_behavior: AlphaBehavior | str
+    palette_policy: PalettePolicy | str
+    plant_capabilities: tuple[PlantCapability | str, ...]
+    fidelity_exceptions: tuple[str, ...]
     intensity_parameter: str | None = None
-    preserve_reason: str | None = None
     optional_simulation_inputs: tuple[str, ...] = ()
     required_simulation_inputs: tuple[str, ...] = ()
     defaults: Mapping[str, Any] = field(default_factory=dict)
@@ -51,34 +76,61 @@ class ComponentDescriptor:
             raise ValueError("component version must be a positive integer")
         object.__setattr__(self, "provider", ComponentProvider(self.provider))
         object.__setattr__(self, "role", ComponentRole(self.role))
-        object.__setattr__(self, "palette_policy", PalettePolicy(self.palette_policy))
         object.__setattr__(self, "timing_policy", TimingPolicy(self.timing_policy))
-        if self.palette_policy is PalettePolicy.PRESERVE and not self.preserve_reason:
-            raise ValueError("preserve palette policy requires a fidelity reason")
-        if self.palette_policy is PalettePolicy.SEMANTIC and self.preserve_reason:
-            raise ValueError("semantic palette policy cannot have a preserve reason")
+        object.__setattr__(self, "alpha_behavior", AlphaBehavior(self.alpha_behavior))
+        object.__setattr__(self, "palette_policy", PalettePolicy(self.palette_policy))
+        capabilities = tuple(PlantCapability(item) for item in self.plant_capabilities)
+        if not capabilities or len(capabilities) != len(set(capabilities)):
+            raise ValueError("plant_capabilities must be a non-empty unique declaration")
+        if PlantCapability.NONE in capabilities and len(capabilities) != 1:
+            raise ValueError("plant capability none cannot be combined with another capability")
+        object.__setattr__(self, "plant_capabilities", capabilities)
+        exceptions = tuple(self.fidelity_exceptions)
+        if any(not isinstance(item, str) or not item for item in exceptions) or len(exceptions) != len(set(exceptions)):
+            raise ValueError("fidelity_exceptions must be unique non-empty names")
+        if self.palette_policy is PalettePolicy.PRESERVE and not exceptions:
+            raise ValueError("preserve palette policy requires a fidelity exception")
+        if self.palette_policy is PalettePolicy.SEMANTIC and exceptions:
+            raise ValueError("semantic palette policy cannot have fidelity exceptions")
+        object.__setattr__(self, "fidelity_exceptions", exceptions)
         if self.intensity_parameter is not None and (
             not isinstance(self.intensity_parameter, str)
             or not self.intensity_parameter.isidentifier()
             or self.intensity_parameter in {"brightness", "intensity", "speed", "rate"}
         ):
             raise ValueError("intensity_parameter must be a named component-local control")
-        if self.required_simulation_inputs:
-            raise ValueError("packet A does not support required plant inputs")
-        if (
-            self.timing_policy is TimingPolicy.WALL_CLOCK
-            and self.role is not ComponentRole.OVERLAY
-        ):
-            raise ValueError("wall_clock timing is reserved for overlay components")
         optional_inputs = tuple(self.optional_simulation_inputs)
-        if (
-            any(not isinstance(item, str) or not item for item in optional_inputs)
-            or len(optional_inputs) != len(set(optional_inputs))
-        ):
-            raise ValueError("optional simulation inputs must be unique names")
+        required_inputs = tuple(self.required_simulation_inputs)
+        if any(not isinstance(item, str) or not item for item in optional_inputs + required_inputs):
+            raise ValueError("simulation inputs must be non-empty names")
+        if len(optional_inputs) != len(set(optional_inputs)) or len(required_inputs) != len(set(required_inputs)):
+            raise ValueError("simulation inputs must be unique names")
+        if set(optional_inputs) & set(required_inputs):
+            raise ValueError("simulation inputs cannot be both optional and required")
+        if (optional_inputs or required_inputs) and PlantCapability.SIMULATION_INPUTS not in capabilities:
+            raise ValueError("simulation inputs require the simulation_inputs plant capability")
         object.__setattr__(self, "optional_simulation_inputs", optional_inputs)
-        object.__setattr__(self, "required_simulation_inputs", tuple(self.required_simulation_inputs))
+        object.__setattr__(self, "required_simulation_inputs", required_inputs)
         object.__setattr__(self, "defaults", MappingProxyType(dict(self.defaults)))
+        self._validate_role_shape()
+
+    def validate_scene_v2(self) -> None:
+        """Retain a named validation hook for scene-boundary callers."""
+
+        self._validate_role_shape()
+
+    def _validate_role_shape(self) -> None:
+        if self.role is ComponentRole.BACKGROUND:
+            if self.provider is not ComponentProvider.RECEIVER_NATIVE or self.alpha_behavior is not AlphaBehavior.NONE:
+                raise ValueError("Scene v2 Background must be receiver_native with alpha_behavior none")
+        elif self.role is ComponentRole.ANIMATION:
+            if self.provider is not ComponentProvider.PYTHON:
+                raise ValueError("Scene v2 Animation must be provided by Python")
+            if self.alpha_behavior not in {AlphaBehavior.PREMULTIPLIED_RGBA, AlphaBehavior.OPAQUE}:
+                raise ValueError("Scene v2 Animation must declare premultiplied_rgba or opaque alpha behavior")
+        elif self.role is ComponentRole.WIDGET:
+            if self.provider is not ComponentProvider.PYTHON or self.alpha_behavior is not AlphaBehavior.PREMULTIPLIED_RGBA:
+                raise ValueError("Scene v2 Widget must be Python premultiplied_rgba")
 
 
 class ComponentCatalog:
@@ -97,7 +149,7 @@ class ComponentCatalog:
         try:
             descriptor = self._descriptors[(ComponentProvider(provider).value, component_id)]
         except (KeyError, ValueError) as exc:
-            raise ValueError("scene background is not a qualified catalog component") from exc
+            raise ValueError("scene component is not a qualified catalog component") from exc
         if descriptor.version != version:
             raise ValueError("scene component version does not match the catalog")
         return descriptor

@@ -1,153 +1,171 @@
-"""Composer Check contracts for the first closed Scene-v1 activation slice."""
+"""Focused acceptance tests for the current-only Scene v2 identity boundary."""
 
 from __future__ import annotations
 
+import copy
 import unittest
 
 from animation.core.component_catalog import ComponentCatalog, ComponentDescriptor
-from ipc.scene_contract import SceneContractError, normalize_composer_scene
-from web.activation_token_store import ActivationTokenStore
+from ipc.scene_contract import (
+    SCENE_V2_REVISION,
+    SceneContractError,
+    build_scene_activation_command,
+    normalize_composer_scene,
+)
 
 
 def _catalog() -> ComponentCatalog:
     return ComponentCatalog([
         ComponentDescriptor(
-            component_id="aurora", version=1, provider="python", role="background",
-            intensity_parameter="glow_intensity",
+            component_id="native-aurora", version=1, provider="receiver_native", role="background",
+            timing_policy="scaled_context", alpha_behavior="none", palette_policy="semantic",
+            plant_capabilities=("final_optics",), fidelity_exceptions=(),
+            defaults={"bundle_digest": "a" * 64, "gain": 0.5},
         ),
         ComponentDescriptor(
-            component_id="native-aurora", version=2, provider="receiver_native",
-            role="background", defaults={"bundle_digest": "a" * 64, "gain": 0.5},
+            component_id="aurora", version=1, provider="python", role="animation",
+            timing_policy="scaled_context", alpha_behavior="premultiplied_rgba", palette_policy="semantic",
+            plant_capabilities=("effect_intent", "simulation_inputs"), fidelity_exceptions=(),
+            optional_simulation_inputs=("foliage_density",), defaults={"seed": 17},
         ),
         ComponentDescriptor(
-            component_id="clock", version=1, provider="python", role="overlay",
-            defaults={"show_seconds": True},
+            component_id="opaque-film", version=1, provider="python", role="animation",
+            timing_policy="scaled_context", alpha_behavior="opaque", palette_policy="preserve",
+            plant_capabilities=("none",), fidelity_exceptions=("authored_media_color",),
         ),
         ComponentDescriptor(
-            component_id="alert", version=1, provider="python", role="overlay",
+            component_id="clock", version=1, provider="python", role="widget",
+            timing_policy="wall_clock", alpha_behavior="premultiplied_rgba", palette_policy="semantic",
+            plant_capabilities=("none",), fidelity_exceptions=(), defaults={"show_seconds": True},
         ),
     ])
 
 
-def _request(**changes: object) -> dict:
-    request = {
-        "origin": "composer",
-        "scene": {
-            "schema": "ledgrid.scene.v1",
-            "background": {
-                "component_id": "aurora", "version": 1, "provider": "python",
-                "role": "background", "parameters": {"glow_intensity": 0.75},
-            },
-            "vibe": "quiet",
-            "master_brightness": 0.5,
+def _scene(**changes: object) -> dict:
+    scene = {
+        "schema": "ledgrid.scene.v2",
+        "background": {
+            "component_id": "native-aurora", "version": 1, "provider": "receiver_native",
+            "role": "background", "parameters": {"gain": 0.75}, "bundle_digest": "a" * 64,
         },
+        "animation": {
+            "component_id": "aurora", "version": 1, "provider": "python",
+            "role": "animation", "parameters": {},
+        },
+        "widgets": [{
+            "id": "clock-upper", "component": {
+                "component_id": "clock", "version": 1, "provider": "python",
+                "role": "widget", "parameters": {},
+            }, "visible": True, "placement": {"mode": "auto"},
+        }],
+        "plants": {"effects": {
+            "version": 1, "active": ["illuminate"], "strengths": {"illuminate": 0.4},
+        }},
+        "look": {"palette_id": "mist", "pace": 0.7, "presentation_brightness": 0.82},
     }
+    scene.update(changes)
+    return scene
+
+
+def _request(**changes: object) -> dict:
+    request = {"origin": "composer", "scene": _scene()}
     request.update(changes)
     return request
 
 
-def _overlay(slot_id: str, component_id: str = "clock", **changes: object) -> dict:
-    overlay = {
-        "slot_id": slot_id,
-        "component": {
-            "component_id": component_id, "version": 1, "provider": "python",
-            "role": "overlay", "parameters": {},
-        },
-        "enabled": True,
-        "opacity": 192,
-        "placement": {
-            "strip_translation": 1, "led_translation": -2,
-            "clip_policy": "clip_to_wall",
-        },
-        "stale_policy": {"policy": "clear_after_lease", "lease_ms": 1200},
-    }
-    overlay.update(changes)
-    return overlay
-
-
-def _full_request(**changes: object) -> dict:
-    scene = {**_request()["scene"], "overlays": [_overlay("clock"), _overlay("alert", "alert", enabled=False)]}
-    scene.update(changes)
-    return _request(scene=scene)
-
-
-class SceneActivationContractTests(unittest.TestCase):
-    def test_sole_composer_request_has_closed_canonical_bytes_digest_and_revision(self) -> None:
-        canonical = normalize_composer_scene(_request(), _catalog())
+class SceneV2ContractTests(unittest.TestCase):
+    def test_canonical_identity_is_stable_for_whole_scene(self) -> None:
+        first = normalize_composer_scene(_request(), _catalog())
         reordered = _request(scene={
-            "master_brightness": 0.5,
-            "background": _request()["scene"]["background"],
-            "schema": "ledgrid.scene.v1", "vibe": "quiet",
+            "look": _scene()["look"], "plants": _scene()["plants"], "widgets": _scene()["widgets"],
+            "animation": _scene()["animation"], "background": _scene()["background"], "schema": "ledgrid.scene.v2",
         })
-        equivalent = normalize_composer_scene(reordered, _catalog())
+        second = normalize_composer_scene(reordered, _catalog())
 
-        self.assertEqual(canonical.canonical_bytes, equivalent.canonical_bytes)
-        self.assertEqual(canonical.identity, equivalent.identity)
-        self.assertEqual(canonical.identity.revision, 1)
-        self.assertRegex(canonical.identity.digest, r"^[0-9a-f]{64}$")
-        self.assertEqual(canonical.scene["background"]["provider"], "python")
+        self.assertEqual(first.canonical_bytes, second.canonical_bytes)
+        self.assertEqual(first.identity, second.identity)
+        self.assertEqual(first.identity.revision, SCENE_V2_REVISION)
+        self.assertEqual(first.scene["animation"]["parameters"], {"seed": 17})
+        self.assertNotIn("output_power", first.scene)
+        self.assertNotIn("calibration", first.scene["plants"])
+        self.assertEqual(build_scene_activation_command(first)["scene"], first.scene)
 
-    def test_malformed_unknown_and_non_composer_inputs_fail_before_check_storage(self) -> None:
-        store = ActivationTokenStore()
-        invalid = (
-            _request(origin="dashboard"),
-            _request(unexpected=True),
-            _request(scene={**_request()["scene"], "background": {
-                **_request()["scene"]["background"], "component_id": "unknown",
-            }}),
-        )
-        for request in invalid:
-            with self.subTest(request=request):
-                with self.assertRaises(SceneContractError):
-                    store.check(request, _catalog())
-        self.assertEqual(store._records, {})
+    def test_alpha_and_opaque_animations_are_both_valid(self) -> None:
+        transparent = normalize_composer_scene(_request(), _catalog())
+        opaque = normalize_composer_scene(_request(scene=_scene(animation={
+            "component_id": "opaque-film", "version": 1, "provider": "python",
+            "role": "animation", "parameters": {},
+        })), _catalog())
+        self.assertEqual(transparent.scene["animation"]["component_id"], "aurora")
+        self.assertEqual(opaque.scene["animation"]["component_id"], "opaque-film")
 
-    def test_full_scene_canonical_identity_includes_ordered_slots_and_resolved_values(self) -> None:
-        first = normalize_composer_scene(_full_request(), _catalog())
-        reversed_order = _full_request(overlays=[_overlay("alert", "alert", enabled=False), _overlay("clock")])
-        second = normalize_composer_scene(reversed_order, _catalog())
-        equivalent = normalize_composer_scene(_full_request(), _catalog())
-
-        self.assertEqual(first.canonical_bytes, equivalent.canonical_bytes)
-        self.assertEqual(first.identity, equivalent.identity)
-        self.assertNotEqual(first.canonical_bytes, second.canonical_bytes)
+    def test_widgets_keep_author_order_identity_visibility_and_placement(self) -> None:
+        scene = _scene(widgets=[
+            _scene()["widgets"][0],
+            {"id": "clock-lower", "component": {
+                "component_id": "clock", "version": 1, "provider": "python", "role": "widget", "parameters": {},
+            }, "visible": False, "placement": {"mode": "manual", "strip_translation": 2, "led_translation": -8}},
+        ])
+        first = normalize_composer_scene(_request(scene=scene), _catalog())
+        second_scene = copy.deepcopy(scene)
+        second_scene["widgets"].reverse()
+        second = normalize_composer_scene(_request(scene=second_scene), _catalog())
+        self.assertEqual([item["id"] for item in first.scene["widgets"]], ["clock-upper", "clock-lower"])
+        self.assertFalse(first.scene["widgets"][1]["visible"])
         self.assertNotEqual(first.identity.digest, second.identity.digest)
-        self.assertEqual(first.scene["background"]["slot_id"], "background")
-        self.assertEqual([item["slot_id"] for item in first.scene["overlays"]], ["clock", "alert"])
-        self.assertEqual(first.scene["overlays"][0]["component"]["parameters"], {"show_seconds": True})
-        self.assertEqual(first.scene["overlays"][0]["placement"]["led_translation"], -2)
-        self.assertEqual(first.scene["overlays"][0]["stale_policy"], {"policy": "clear_after_lease", "lease_ms": 1200})
 
-    def test_full_scene_accepts_catalog_bound_native_background_and_rejects_malformed_inputs_before_storage(self) -> None:
-        native_background = {
-            "component_id": "native-aurora", "version": 2, "provider": "receiver_native",
-            "role": "background", "parameters": {"gain": 0.75}, "bundle_digest": "a" * 64,
-        }
-        native = normalize_composer_scene(_full_request(background=native_background, overlays=[]), _catalog())
-        self.assertEqual(native.scene["background"]["bundle_digest"], "a" * 64)
-        self.assertEqual(native.scene["background"]["parameters"], {"gain": 0.75})
-
-        store = ActivationTokenStore()
+    def test_legacy_roles_and_installation_or_output_data_reject_without_mutation(self) -> None:
+        request = _request()
+        original = copy.deepcopy(request)
         invalid = (
-            _full_request(overlays=[_overlay("clock"), _overlay("clock", "alert")]),
-            _full_request(overlays=[_overlay("clock"), _overlay("alert", "alert"), _overlay("third", "clock")]),
-            _full_request(overlays=[_overlay("clock", component={
-                "component_id": "clock", "version": 1, "provider": "receiver_native",
-                "role": "overlay", "parameters": {},
-            })]),
-            _full_request(overlays=[_overlay("clock", placement={
-                "strip_translation": 0, "led_translation": 0, "clip_policy": "wrap",
-            })]),
-            _full_request(overlays=[_overlay("clock", opacity=True)]),
-            _full_request(overlays=[_overlay("clock", stale_policy={"policy": "hold", "lease_ms": 1})]),
-            _full_request(background={**native_background, "bundle_digest": "b" * 64}, overlays=[]),
-            _full_request(background={**_request()["scene"]["background"], "role": "overlay"}),
+            _request(scene={**_scene(), "schema": "ledgrid.scene.v1"}),
+            _request(scene={**_scene(), "overlays": []}),
+            _request(scene={**_scene(), "output_power": True}),
+            _request(scene={**_scene(), "plants": {"effects": {"geometry": {}}}}),
+            _request(scene={**_scene(), "plants": {"effects": {"active": ["illuminate"], "strengths": {"illuminate": 2}}}}),
+            _request(scene={**_scene(), "background": {**_scene()["background"], "role": "animation"}}),
+            _request(scene={**_scene(), "widgets": [_scene()["widgets"][0], _scene()["widgets"][0]]}),
         )
-        for request in invalid:
-            with self.subTest(request=request):
+        for candidate in invalid:
+            with self.subTest(candidate=candidate):
                 with self.assertRaises(SceneContractError):
-                    store.check(request, _catalog())
-        self.assertEqual(store._records, {})
+                    normalize_composer_scene(candidate, _catalog())
+        with self.assertRaises(SceneContractError):
+            normalize_composer_scene({**request, "scene": {**request["scene"], "vibe": "quiet"}}, _catalog())
+        self.assertEqual(request, original)
+
+    def test_plants_store_only_bounded_effect_intent_not_installation_geometry(self) -> None:
+        for field in ("calibration", "homography", "mask", "geometry", "globe_coordinates"):
+            with self.subTest(field=field), self.assertRaises(SceneContractError):
+                normalize_composer_scene(
+                    _request(scene=_scene(plants={"effects": {field: {}}})), _catalog()
+                )
+        canonical = normalize_composer_scene(
+            _request(scene=_scene(plants={"effects": {
+                "active": ["obstacle", "illuminate"],
+                "strengths": {"obstacle": 1.0, "illuminate": 0.25},
+            }})), _catalog()
+        )
+        self.assertEqual(canonical.scene["plants"], {"effects": {
+            "version": 1, "active": ["illuminate", "obstacle"],
+            "strengths": {"illuminate": 0.25, "obstacle": 1.0},
+        }})
+
+    def test_capability_declarations_are_required_and_role_bound(self) -> None:
+        with self.assertRaises(TypeError):
+            ComponentDescriptor(component_id="missing", version=1)  # type: ignore[call-arg]
+        with self.assertRaisesRegex(ValueError, "Background"):
+            ComponentDescriptor(
+                component_id="bad-background", version=1, provider="python", role="background",
+                timing_policy="scaled_context", alpha_behavior="none", palette_policy="semantic",
+                plant_capabilities=("none",), fidelity_exceptions=(),
+            )
+        with self.assertRaisesRegex(ValueError, "fidelity exception"):
+            ComponentDescriptor(
+                component_id="bad-media", version=1, provider="python", role="animation",
+                timing_policy="scaled_context", alpha_behavior="opaque", palette_policy="preserve",
+                plant_capabilities=("none",), fidelity_exceptions=(),
+            )
 
 
 if __name__ == "__main__":

@@ -44,7 +44,7 @@ class ConwayLifeAnimation(AnimationBase):
     COMPONENT_ID = "conway_life"
     COMPONENT_VERSION = 1
     PROVIDER = "python"
-    ROLE = "overlay"
+    ROLE = "animation"
     FRAME_FORMAT = "rgba_uint8_premultiplied_strip_major"
     TIMING_POLICY = "scaled_context"
     CADENCE_POLICY = "local_generation_cadence_cached"
@@ -66,8 +66,11 @@ class ConwayLifeAnimation(AnimationBase):
         version=COMPONENT_VERSION,
         provider=PROVIDER,
         role=ROLE,
+        alpha_behavior="premultiplied_rgba",
         palette_policy=PALETTE_POLICY,
         timing_policy=TIMING_POLICY,
+        plant_capabilities=("simulation_inputs",),
+        fidelity_exceptions=(),
         optional_simulation_inputs=("foliage_density", "globe_proximity", "occlusion"),
         defaults=DEFAULTS,
     )

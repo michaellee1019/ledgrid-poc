@@ -124,7 +124,7 @@ class AnimationWebInterface:
             ClockOverlayAnimation.component_descriptor(),
         ])
         self.composer_tokens = ActivationTokenStore()
-        self.composer_adapter = LocalSceneAdapter()
+        self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
         self.composer_control = _ComposerLocalControlChannel()
         self.composer_looks = SceneLookStore(self.project_root / "run_state" / "composer_looks.json")
         self.composer_library = ComposerLibraryState(self.project_root / "run_state" / "composer_library.json")

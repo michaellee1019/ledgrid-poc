@@ -7,10 +7,9 @@ only the two product slots it can faithfully tune.
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any, Mapping
 
-from animation.core.component_catalog import ComponentCatalog, ComponentRole
+from animation.core.component_catalog import ComponentCatalog
 
 
 class ComponentEditorError(ValueError):
@@ -42,34 +41,8 @@ _CHOICES = (
 
 
 def editor_catalog(catalog: ComponentCatalog) -> dict[str, list[dict[str, Any]]]:
-    """Build the editor's closed catalog from qualified runtime descriptors."""
-    choices: list[dict[str, Any]] = []
-    for choice in _CHOICES:
-        descriptor = catalog.require(
-            provider="python", component_id=choice["component_id"], version=1,
-        )
-        if descriptor.role is not ComponentRole.OVERLAY:
-            raise ComponentEditorError("Composer editor component is not an overlay")
-        controls = [
-            {**control, "options": list(control["options"])}
-            if "options" in control else dict(control)
-            for control in choice["controls"]
-        ]
-        parameters = dict(descriptor.defaults)
-        control_ids = {control["id"] for control in controls}
-        if not control_ids <= set(parameters):
-            raise ComponentEditorError("Composer editor controls do not match the component catalog")
-        choices.append({
-            "slot_id": choice["slot_id"],
-            "component_id": descriptor.component_id,
-            "version": descriptor.version,
-            "provider": descriptor.provider.value,
-            "role": descriptor.role.value,
-            "label": choice["label"],
-            "parameters": deepcopy(parameters),
-            "controls": controls,
-        })
-    return {"choices": choices}
+    """Quarantine the retired Scene v1 overlay editor until its v2 replacement."""
+    raise ComponentEditorError("the Scene v1 overlay editor is retired; use the Scene v2 workspace")
 
 
 def validate_editor_scene(request: Any, catalog: ComponentCatalog) -> None:

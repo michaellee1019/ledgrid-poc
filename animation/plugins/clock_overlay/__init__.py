@@ -40,7 +40,7 @@ class ClockOverlayAnimation(AnimationBase):
     COMPONENT_ID = "clock_overlay"
     COMPONENT_VERSION = 1
     PROVIDER = "python"
-    ROLE = "overlay"
+    ROLE = "widget"
     FRAME_FORMAT = "rgba_uint8_premultiplied_strip_major"
     TIMING_POLICY = "wall_clock"
 
@@ -68,6 +68,10 @@ class ClockOverlayAnimation(AnimationBase):
         version=COMPONENT_VERSION,
         provider=PROVIDER,
         role=ROLE,
+        alpha_behavior="premultiplied_rgba",
+        palette_policy="preserve",
+        plant_capabilities=("none",),
+        fidelity_exceptions=("authored_clock_color",),
         timing_policy=TIMING_POLICY,
         defaults=DESCRIPTOR_DEFAULTS,
     )

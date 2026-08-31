@@ -1,11 +1,12 @@
-"""Exact-basis control and observed-identity contracts for Scene v1."""
+"""Exact-basis control and observed-identity contracts for Scene v2."""
 
 from __future__ import annotations
 
+import hashlib
 import unittest
 
-from ipc.scene_contract import LocalSceneAdapter, SceneContractError
-from tests.unit.test_scene_activation_contract import _catalog, _full_request, _request
+from ipc.scene_contract import LocalSceneAdapter, SceneContractError, canonical_json_bytes
+from tests.unit.test_scene_activation_contract import _catalog, _request, _scene
 from web.activation_token_store import (
     ActivationTokenConflict,
     ActivationTokenStale,
@@ -38,9 +39,17 @@ class ActivationControlChannelTests(unittest.TestCase):
         self.store = ActivationTokenStore(clock=self.clock, ttl_seconds=10)
         self.checked = self.store.check(_request(), _catalog())
         self.channel = _ControlChannel()
-        self.adapter = LocalSceneAdapter()
+        self.adapter = LocalSceneAdapter(_catalog())
 
     def test_check_activation_control_and_observed_adapter_have_one_identity(self) -> None:
+        command = {
+            "action": "activate_scene", "basis": self.checked.identity.to_dict(),
+            "scene": self.checked.canonical.scene,
+        }
+        identity, canonical_bytes = self.adapter.validate_control(command)
+        self.assertEqual(identity, self.checked.identity)
+        self.assertEqual(canonical_bytes, self.checked.canonical.canonical_bytes)
+        self.assertEqual(hashlib.sha256(canonical_bytes).hexdigest(), identity.digest)
         receipt = self.store.activate(
             self.checked.token, basis=self.checked.identity.to_dict(),
             idempotency_key="composer-save-1", control_channel=self.channel,
@@ -81,7 +90,7 @@ class ActivationControlChannelTests(unittest.TestCase):
                 "unknown", basis=self.checked.identity.to_dict(), idempotency_key="x",
                 control_channel=self.channel, local_adapter=self.adapter,
             )
-        wrong_basis = {"revision": 1, "digest": "0" * 64}
+        wrong_basis = {"revision": 2, "digest": "0" * 64}
         with self.assertRaises(ActivationTokenConflict):
             self.store.activate(
                 self.checked.token, basis=wrong_basis, idempotency_key="x",
@@ -97,30 +106,22 @@ class ActivationControlChannelTests(unittest.TestCase):
         self.assertEqual(self.channel.commands, [])
         self.assertIsNone(self.adapter.observed_identity())
 
-    def test_adapter_rejects_changed_scene_before_observation(self) -> None:
+    def test_adapter_rejects_self_digested_malformed_scene_before_observation(self) -> None:
+        malformed = _scene()
+        malformed["animation"] = {**malformed["animation"], "role": "widget"}
         command = {
-            "action": "activate_scene", "basis": self.checked.identity.to_dict(),
-            "scene": {"not": "the checked canonical scene"},
+            "action": "activate_scene",
+            "basis": {"revision": 2, "digest": hashlib.sha256(canonical_json_bytes(malformed)).hexdigest()},
+            "scene": malformed,
         }
         with self.assertRaises(SceneContractError):
             self.adapter.accept_control(command)
         self.assertIsNone(self.adapter.observed_identity())
 
-    def test_full_scene_activation_preserves_checked_overlay_order_identity(self) -> None:
-        checked = self.store.check(_full_request(), _catalog())
-
-        receipt = self.store.activate(
-            checked.token, basis=checked.identity.to_dict(),
-            idempotency_key="composer-full-scene-1", control_channel=self.channel,
-            local_adapter=self.adapter,
-        )
-
-        self.assertEqual(receipt.identity, checked.identity)
-        self.assertEqual(
-            [item["slot_id"] for item in receipt.command["scene"]["overlays"]],
-            ["clock", "alert"],
-        )
-        self.assertEqual(self.adapter.observed_identity(), checked.identity)
+    def test_v1_request_rejects_before_the_local_composer_boundary_constructs_state(self) -> None:
+        with self.assertRaises(SceneContractError):
+            self.store.check({"origin": "composer", "scene": {"schema": "ledgrid.scene.v1"}}, _catalog())
+        self.assertIsNone(self.adapter.observed_identity())
 
 
 if __name__ == "__main__":
