@@ -3265,6 +3265,19 @@ class LEDController:
         self._refresh_configuration()
         self._xfer([CMD_SET_LANE_MASK, int(lane_mask) & 0xFF])
 
+    def set_lane_mask_acknowledged(self, lane_mask):
+        """Set a lane mask and prove the receiver processed this command.
+
+        ``set_lane_mask`` intentionally remains the ordinary fire-and-forget
+        configuration path.  The guarded maintenance transaction uses this
+        stricter form, then separately waits for the display task to report
+        that the requested mask has become physically applied.
+        """
+        if isinstance(lane_mask, bool) or not isinstance(lane_mask, int):
+            raise ValueError("lane_mask must be an integer")
+        self._refresh_configuration()
+        return self._command_status(bytes((CMD_SET_LANE_MASK, lane_mask & 0xFF)))
+
     def set_stagger_phases(self, phases):
         """Spread the lanes' WS2812 rising edges over this many samples.
 

@@ -42,7 +42,17 @@ def _identities():
 
 
 class _ReceiptDevice:
-    def __init__(self, identity, *, reject=False, drift=False, failure=None):
+    def __init__(
+        self,
+        identity,
+        *,
+        reject=False,
+        drift=False,
+        failure=None,
+        lane_apply_after=0,
+        lane_operation_result=1,
+        lane_operation_drift=False,
+    ):
         self.hardware_serial = identity.hardware_serial
         self.firmware_sha256 = identity.firmware_sha256
         self.receiver_identity_authority_digest = AUTHORITY_DIGEST
@@ -55,23 +65,56 @@ class _ReceiptDevice:
         self.lane_mask = 0xFF
         self.status_responses = 0
         self.receiver_sequence = 0x1000 + self.logical_device
+        self.lane_apply_after = lane_apply_after
+        self.lane_operation_result = lane_operation_result
+        self.lane_operation_drift = lane_operation_drift
+        self.pending_lane_mask = None
+        self.lane_status_polls = 0
+        self.lane_operation_sequence = 0
 
     def get_stats(self):
         return {"receiver_status_responses": self.status_responses}
 
     def query_fresh_receiver_status(self):
         self.status_responses += 1
+        if self.pending_lane_mask is not None:
+            self.lane_status_polls += 1
+            if (
+                self.lane_apply_after is not None
+                and self.lane_status_polls > self.lane_apply_after
+            ):
+                self.lane_mask = self.pending_lane_mask
+        operation_sequence = self.lane_operation_sequence
+        command = 0x09
+        if self.lane_operation_drift and self.pending_lane_mask is not None:
+            operation_sequence += 1
+            command = 0x0A
         return {
             "receiver_status_responses": self.status_responses,
             "receiver_status_version": 3,
             "receiver_logical_device": self.logical_device,
             "receiver_lane_mask": self.lane_mask,
-            "receiver_last_result": 1,
+            "receiver_last_result": self.lane_operation_result,
+            "receiver_operation_sequence": operation_sequence,
+            "receiver_last_processed_command": command,
         }
 
     def set_lane_mask(self, lane_mask):
         self.lane_masks.append(lane_mask)
         self.lane_mask = lane_mask
+
+    def set_lane_mask_acknowledged(self, lane_mask):
+        self.lane_masks.append(lane_mask)
+        self.pending_lane_mask = lane_mask
+        self.lane_status_polls = 0
+        self.lane_operation_sequence += 1
+        return {
+            "receiver_status_version": 3,
+            "receiver_logical_device": self.logical_device,
+            "receiver_last_result": self.lane_operation_result,
+            "receiver_operation_sequence": self.lane_operation_sequence,
+            "receiver_last_processed_command": 0x09,
+        }
 
     def present_complete_frame(self, frame, *, wall_frame_sequence, frame_digest):
         self.calls.append((tuple(frame), wall_frame_sequence, frame_digest))
@@ -94,7 +137,15 @@ class _ReceiptDevice:
         }
 
 
-def _receipt_controller(*, reject=None, drift=None, failure=None):
+def _receipt_controller(
+    *,
+    reject=None,
+    drift=None,
+    failure=None,
+    lane_apply_after=0,
+    lane_operation_result=1,
+    lane_operation_drift=False,
+):
     controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
     controller._transport_lock = threading.RLock()
     controller.num_devices = 5
@@ -118,6 +169,9 @@ def _receipt_controller(*, reject=None, drift=None, failure=None):
             reject=index == reject,
             drift=index == drift,
             failure=failure if index == 3 else None,
+            lane_apply_after=lane_apply_after if index == 4 else 0,
+            lane_operation_result=lane_operation_result if index == 4 else 1,
+            lane_operation_drift=lane_operation_drift if index == 4 else False,
         )
         for index, identity in enumerate(controller.receiver_identities)
     ]
@@ -138,6 +192,31 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
         self.assertEqual(controller.devices[4].lane_masks, [0x08, 0xFF])
         self.assertTrue(all(not device.lane_masks for device in controller.devices[:4]))
         self.assertEqual(controller.receiver_lane_masks, (0xFF,) * 5)
+
+    def test_trusted_lane_mask_accepts_delayed_display_application(self):
+        controller = _receipt_controller(lane_apply_after=1)
+
+        receipt = controller.set_trusted_receiver_lane_mask(4, 0x08)
+
+        self.assertEqual(receipt["lane_mask"], 0x08)
+        self.assertEqual(controller.devices[4].lane_status_polls, 2)
+
+    def test_trusted_lane_mask_times_out_when_display_never_applies_it(self):
+        controller = _receipt_controller(lane_apply_after=None)
+
+        with mock.patch(
+            "drivers.multi_device.TRUSTED_LANE_MASK_APPLY_TIMEOUT_SECONDS", 0,
+        ), self.assertRaisesRegex(RuntimeError, "timed out"):
+            controller.set_trusted_receiver_lane_mask(4, 0x08)
+
+    def test_trusted_lane_mask_rejects_operation_drift_or_rejection(self):
+        cases = (
+            (_receipt_controller(lane_operation_drift=True), "operation drifted"),
+            (_receipt_controller(lane_operation_result=2), "was rejected"),
+        )
+        for controller, expected in cases:
+            with self.subTest(expected=expected), self.assertRaisesRegex(RuntimeError, expected):
+                controller.set_trusted_receiver_lane_mask(4, 0x08)
 
     def test_receipt_is_exactly_authority_backed_after_all_five_acknowledgements(self):
         controller = _receipt_controller()

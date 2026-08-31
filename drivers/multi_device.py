@@ -28,6 +28,7 @@ from drivers.spi_controller import (
     CAPABILITY_NATIVE_TYPED_PARAMETERS_V1,
     CAPABILITY_NATIVE_QUARANTINE_V1,
     CAPABILITY_NATIVE_GUARDED_LOADER_V1,
+    CMD_SET_LANE_MASK,
     LEDController,
     MAX_NATIVE_CHUNK_BYTES,
     MAX_RGBA_PIXELS_PER_BATCH_SPAN,
@@ -80,6 +81,8 @@ NATIVE_BACKGROUND_REQUIRED_CAPABILITIES = (
 
 _TRUSTED_RECEIPT_RECEIVER_COUNT = 5
 _TRUSTED_RECEIPT_FRAME_PIXELS = DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP
+TRUSTED_LANE_MASK_APPLY_TIMEOUT_SECONDS = 0.25
+TRUSTED_LANE_MASK_APPLY_POLL_INTERVAL_SECONDS = 0.01
 
 
 class MultiDeviceLEDController:
@@ -2157,12 +2160,44 @@ class MultiDeviceLEDController:
             raise ValueError("logical_device must name one installed receiver")
         with self._controller_lock():
             self._require_pinned_receipt_roster()
-            self.devices[logical_device].set_lane_mask(lane_mask)
-            status = self._trusted_receiver_lane_status(logical_device)
-            if status["receiver_lane_mask"] != lane_mask:
-                raise RuntimeError("receiver lane-mask acknowledgement did not apply the requested mask")
-            if not self._status_result_ok(status):
+            device = self.devices[logical_device]
+            operation_status = device.set_lane_mask_acknowledged(lane_mask)
+            if (
+                not isinstance(operation_status, dict)
+                or int(operation_status.get("receiver_status_version", 0) or 0) < 3
+                or operation_status.get("receiver_logical_device") != logical_device
+                or not self._status_result_ok(operation_status)
+            ):
                 raise RuntimeError("receiver lane-mask acknowledgement was rejected")
+            operation_sequence = operation_status.get("receiver_operation_sequence")
+            if (
+                isinstance(operation_sequence, bool)
+                or not isinstance(operation_sequence, int)
+                or not 0 <= operation_sequence <= 0xFFFFFFFF
+                or operation_status.get("receiver_last_processed_command")
+                != CMD_SET_LANE_MASK
+            ):
+                raise RuntimeError("receiver lane-mask acknowledgement is stale or invalid")
+            deadline = time.monotonic() + TRUSTED_LANE_MASK_APPLY_TIMEOUT_SECONDS
+            while True:
+                status = self._trusted_receiver_lane_status(logical_device)
+                observed_sequence = status.get("receiver_operation_sequence")
+                if (
+                    isinstance(observed_sequence, bool)
+                    or not isinstance(observed_sequence, int)
+                    or not 0 <= observed_sequence <= 0xFFFFFFFF
+                    or observed_sequence != operation_sequence
+                    or status.get("receiver_last_processed_command")
+                    != CMD_SET_LANE_MASK
+                ):
+                    raise RuntimeError("receiver lane-mask acknowledgement operation drifted")
+                if not self._status_result_ok(status):
+                    raise RuntimeError("receiver lane-mask acknowledgement was rejected")
+                if status["receiver_lane_mask"] == lane_mask:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("receiver lane-mask application timed out")
+                time.sleep(TRUSTED_LANE_MASK_APPLY_POLL_INTERVAL_SECONDS)
             self._require_pinned_receipt_roster()
             return {
                 "logical_device": logical_device,
