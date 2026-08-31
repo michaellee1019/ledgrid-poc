@@ -206,6 +206,16 @@ TTYs or USB locations. Without a complete ledger roster, extra devices remain
 ambiguous and fail closed; missing, malformed, or duplicate identities always
 fail closed.
 
+The wall's operator-approved logical roster is fixed by factory serial, not by
+today's USB path: logical receivers 0–4 are respectively
+`44:b1:76:c5:15:7c`, `9c:13:9e:bb:3d:14`, `44:b1:76:c3:cf:58`,
+`44:b1:76:c3:cf:80`, and `94:a9:90:f4:e4:9c`. Their SPI routes are
+`(0,0)`, `(0,1)`, `(1,1)`, `(1,0)`, and `(1,2)`. If
+`run_state/receiver_identity_authority.json` must be reprovisioned, build the
+operator evidence from this mapping plus the current five-record firmware
+ledger and run `python -m tools.deployment.receiver_identity_authority`; never
+infer the mapping from `/dev/ttyACM*` order or current USB locations.
+
 Successful installations are recorded atomically in the target-owned
 `run_state/receiver_firmware_inventory.json` ledger. Each record binds one
 factory hardware serial to the complete flash-installation digest, selected
