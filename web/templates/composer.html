@@ -16,6 +16,14 @@
     </nav>
   </header>
 
+  <section id="stateExplanation" class="composer-card state-explanation" aria-labelledby="state-explanation-title">
+    <div class="section-title"><div><p class="eyebrow">Scene status</p><h2 id="state-explanation-title">What happens next</h2></div><span class="qualified">Local adapter only</span></div>
+    <p class="muted">This explains Composer and its local adapter only; it does not report wall or receiver health.</p>
+    <p id="stateExplanationStatement" class="state-explanation-statement" role="status" aria-live="polite">Checking the local Composer state…</p>
+    <button id="stateExplanationAction" class="button secondary" type="button" hidden></button>
+    <details id="stateExplanationDetails"><summary>Exact local details</summary><dl class="state-explanation-details"><div><dt>Draft reference</dt><dd id="stateExplanationDraft">Unavailable</dd></div><div><dt>Preview</dt><dd id="stateExplanationPreview">Unavailable</dd></div><div><dt>Desired</dt><dd id="stateExplanationDesired">Unavailable</dd></div><div><dt>Observed</dt><dd id="stateExplanationObserved">Unavailable</dd></div><div><dt>Last local message</dt><dd id="stateExplanationMessage">Unavailable</dd></div></dl></details>
+  </section>
+
   <div class="composer-workspace">
   <div class="composer-editor">
   <section id="build" class="composer-card" aria-labelledby="background-title" tabindex="-1">
@@ -80,5 +88,6 @@
   </div>
 </main>
 <script src="{{ url_for('static', filename='js/composer_slice.js', v='scene-v1') }}"></script>
+<script src="{{ url_for('static', filename='js/composer_state_explanation.js', v='scene-v1') }}"></script>
 </body>
 </html>

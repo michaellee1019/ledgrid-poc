@@ -13,6 +13,7 @@ body { background: #081316; color: #edf4f5; font-family: system-ui, -apple-syste
 .eyebrow { color: #83d7c5; font-size: .76rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin: 0; }
 .composer-card { background: #152328; border: 1px solid #29434a; border-radius: 14px; min-width: 0; padding: 1.25rem; margin: 1rem 0; box-shadow: 0 12px 30px #06101333; }
 .composer-card:focus { outline: 2px solid #83d7c5; outline-offset: 3px; }
+.state-explanation { border-color: #4b776f; }.state-explanation-statement { color: #f1ffff; font-size: 1.03rem; font-weight: 650; }.state-explanation-details { display: grid; gap: .55rem; margin: .85rem 0 0; }.state-explanation-details div { background: #0d181c; border-radius: 7px; padding: .6rem; }.state-explanation-details dt { color: #a7bbbe; font-size: .8rem; }.state-explanation-details dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 .section-title { display: flex; gap: 1rem; align-items: center; justify-content: space-between; }
 .qualified { color: #9bd4c8; font-size: .85rem; white-space: nowrap; }
 .muted, .empty { color: #b6c7c9; }
