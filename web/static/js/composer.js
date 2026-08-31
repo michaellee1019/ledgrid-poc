@@ -110,6 +110,7 @@
         parameterHelp: false,
         autosaveTimer: null,
         connectivityTimer: null,
+        connectivityPromise: null,
         composerReady: false,
         serverOnline: false,
         serverChecking: true,
@@ -1566,6 +1567,20 @@
         if (state.masks.loaded) updateMaskControls();
     }
 
+    function adoptMatchingServerCatalog(payload) {
+        const localDigest = state.bootstrap?.artifact?.catalog_digest;
+        if (!localDigest || payload?.catalog_digest !== localDigest) return false;
+        const actions = clone(state.bootstrap.capabilities?.server_actions || {});
+        actions.activation_available = payload.actions?.activate_scene === true
+            && payload.actions?.check_scene === true;
+        actions.activation_mode = payload.activation_mode;
+        state.bootstrap.capabilities.server_actions = actions;
+        state.serverBootstrap = state.bootstrap;
+        document.dispatchEvent(new CustomEvent('composer:capability-change'));
+        updateServerComponentCompatibility();
+        return true;
+    }
+
     function componentCapability(component = state.component) {
         if (ComposerState.capability) return ComposerState.capability(component);
         return {
@@ -1938,14 +1953,26 @@
         updateServerActionButtons();
     }
 
-    async function checkConnectivity({quiet = false} = {}) {
+    async function checkConnectivity(options = {}) {
+        if (state.connectivityPromise) return state.connectivityPromise;
+        state.connectivityPromise = runConnectivityCheck(options);
+        try {
+            return await state.connectivityPromise;
+        } finally {
+            state.connectivityPromise = null;
+        }
+    }
+
+    async function runConnectivityCheck({quiet = false} = {}) {
         if (!state.bootstrap) return;
         try {
             const url = state.bootstrap.capabilities?.server_actions?.connectivity_url || '/api/v1/composer/connectivity';
             const payload = await requestJson(url);
             if (payload.online === true) {
                 try {
-                    await refreshServerBootstrap(payload.bootstrap_url);
+                    if (!adoptMatchingServerCatalog(payload)) {
+                        await refreshServerBootstrap(payload.bootstrap_url);
+                    }
                     refreshOperationsStatus({quiet: true});
                 } catch (error) {
                     state.serverBootstrap = null;

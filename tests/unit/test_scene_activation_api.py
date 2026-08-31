@@ -447,6 +447,7 @@ class SceneActivationApiTests(unittest.TestCase):
         connectivity = self.client.get(
             "/api/v1/composer/connectivity"
         ).get_json()
+        self.assertRegex(connectivity["catalog_digest"], r"^[0-9a-f]{64}$")
         bootstrap = self.client.get("/api/v1/composer/bootstrap").get_json()
         self.assertEqual(connectivity["activation_mode"], "development_canary")
         self.assertEqual(

@@ -176,6 +176,7 @@ class AnimationWebInterface:
         self.animation_presets_dir = self.project_root / "presets" / "animations"
         self.scene_presets_dir = self.project_root / "presets" / "scenes"
         self.deployment_status_path = self.project_root / "run_state" / "deployment.json"
+        self._bundled_composer_catalog_digest_cache: Optional[str] = None
         self.target_qualification_evidence_path = (
             self.project_root
             / "run_state"
@@ -216,6 +217,24 @@ class AnimationWebInterface:
 
         # Register routes
         self._register_routes()
+
+    def _bundled_composer_catalog_digest(self) -> Optional[str]:
+        """Return the deployed browser catalog identity without rebuilding it."""
+        if self._bundled_composer_catalog_digest_cache is not None:
+            return self._bundled_composer_catalog_digest_cache
+        path = (
+            self.project_root / "web" / "static" / "generated"
+            / "composer" / "bootstrap.v1.json"
+        )
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            digest = payload.get("artifact", {}).get("catalog_digest")
+        except (OSError, ValueError, TypeError):
+            return None
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            return None
+        self._bundled_composer_catalog_digest_cache = digest
+        return digest
 
     def _register_routes(self):
         """Register Flask routes"""
@@ -290,6 +309,7 @@ class AnimationWebInterface:
                     'activation_status': self.activation_enabled,
                 },
                 'activation_mode': self.activation_mode,
+                'catalog_digest': self._bundled_composer_catalog_digest(),
                 'bootstrap_url': '/api/v1/composer/bootstrap?catalog_only=1',
             })
             response.headers['Cache-Control'] = 'no-store'

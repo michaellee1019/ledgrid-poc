@@ -249,9 +249,11 @@ async function requestJson() {
   return {capabilities: {server_actions: catalogOnly}, components: [], installation_profile: {digest: EMPTY_PROFILE_DIGEST}};
 }
 function assertBootstrap(payload) { return payload; }
-function mergeServerPresetCatalog() {}
-function updateServerComponentCompatibility() {}
-function resetChecker() {}
+    function mergeServerPresetCatalog() {}
+    function updateServerComponentCompatibility() {}
+    const document = {dispatchEvent() {}};
+    function CustomEvent() {}
+    function resetChecker() {}
 function renderLayers() {}
 function restartRuntimesAtCurrentState() {}
 function $(id) { return {disabled: false, id}; }
