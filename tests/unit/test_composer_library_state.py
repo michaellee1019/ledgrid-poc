@@ -89,6 +89,9 @@ class ComposerLibraryApiTests(unittest.TestCase):
         self.client.post('/api/composer/activate', json={'token': checked['token'], 'basis': checked['basis'], 'idempotency_key': 'library-proof'})
         before = self.client.get('/api/composer/status').get_json()
         self.interface.composer_library.path.write_text('{"schema":"old","favorites":[],"recents":[]}', encoding='utf-8')
+        preflight = self.client.post('/api/composer/library/preflight', json={'reference': {'kind': 'look', 'id': saved['id']}})
+        self.assertEqual(preflight.status_code, 400)
+        self.assertEqual(self.client.get('/api/composer/status').get_json(), before)
         rejected = self.client.post('/api/composer/library/favorites', json={'reference': {'kind': 'look', 'id': saved['id']}})
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(self.client.delete(f"/api/composer/looks/{saved['id']}").status_code, 400)
@@ -104,6 +107,11 @@ class ComposerLibraryApiTests(unittest.TestCase):
         self.assertIn("item.name.toLocaleLowerCase().includes(query)", script)
         self.assertIn("await recordRecent(item);", script)
         self.assertIn("if (state.reference) await recordRecent(state.reference);", script)
+        self.assertIn("'librarySearch'", script)
+        self.assertLess(script.index("'librarySearch'"), script.index("input.addEventListener('change', edit)"))
+        self.assertLess(script.index('async function openLibraryItem(item) {\n    await preflightLibrary(item);'), script.index('const value=(await starters'))
+        go_live = script.index('async function goLive()')
+        self.assertLess(script.index('if (state.reference) await preflightLibrary(state.reference);', go_live), script.index('if (!state.checked)', go_live))
         self.assertNotIn('window.prompt', script)
 
 

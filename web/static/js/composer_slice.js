@@ -103,6 +103,7 @@
   function setLibrary(value) { state.library = value; renderLibrary(); }
   async function refreshLibrary() { setLibrary(await library()); }
   function libraryReference(item) { return {kind:item.kind, id:item.id}; }
+  async function preflightLibrary(item) { const response=await fetch(`${api}/library/preflight`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reference:libraryReference(item)})}); const body=await response.json(); if (!response.ok) throw new Error(body.error || 'Library is unavailable.'); return body.reference; }
   function filteredLibrary() {
     const query=state.libraryQuery.trim().toLocaleLowerCase();
     return state.library.items.filter((item) => {
@@ -114,6 +115,7 @@
   async function recordRecent(item) { setLibrary(await library('/recents', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reference:libraryReference(item)})})); }
   async function toggleFavorite(item) { const path='/favorites'; const options={method:item.favorite ? 'DELETE':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reference:libraryReference(item)})}; setLibrary(await library(path, options)); }
   async function openLibraryItem(item) {
+    await preflightLibrary(item);
     if (item.kind === 'starter') {
       const value=(await starters(`/${item.id}`)).starter; const candidate=starterDraft(value, true); const preview=await validatePreview(candidate);
       assignDraft(candidate); setReference(reference('starter', value.id, preview.basis, candidate)); markDraftLocal(); commitPreview(preview); await autosave(preview, candidate); await recordRecent(item); $('#starterMessage').textContent=`Previewing ${value.name}.`;
@@ -135,6 +137,7 @@
   async function goLive() {
     const button = $('#goLive'); button.disabled = true; $('#liveMessage').textContent = 'Checking this exact local draft…';
     try {
+      if (state.reference) await preflightLibrary(state.reference);
       if (!state.checked) {
         const checked = await fetch(`${api}/check`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(draft()) });
         const checkData = await checked.json();
@@ -154,7 +157,7 @@
   async function makeSavedReference(result, candidate) { setReference(reference('look', result.look.id, result.look.basis)); if (!state.committedPreview || !sameBasis(state.committedPreview.basis, result.look.basis)) await queuePreview(candidate); else await autosave(state.committedPreview, candidate); }
   $('#saveLook').addEventListener('click', async () => { try { const candidate=draft(); const result=await looks('', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('#lookName').value,draft:candidate})}); await makeSavedReference(result, candidate); $('#lookName').value=''; state.looks=(await looks()).looks; renderLooks(); await refreshLibrary(); $('#lookMessage').textContent=`Saved ${result.look.name}.`; } catch (error) { $('#lookMessage').textContent=error.message || 'Saved look could not be created.'; } });
   $('#remixStarter').addEventListener('click', async () => { if (!state.starterId || !$('#remixName').value) return; try { const candidate=draft(); const result=await starters(`/${state.starterId}/remix`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('#remixName').value,draft:candidate})}); await makeSavedReference(result, candidate); $('#remixName').value=''; state.looks=(await looks()).looks; renderLooks(); await refreshLibrary(); $('#starterMessage').textContent='Saved your remix.'; } catch(error) { $('#starterMessage').textContent=error.message; } });
-  document.querySelectorAll('.composer input, .composer select').forEach((input) => { if (!['vibe', 'previewPalette', 'wallPace', 'sceneLuminance'].includes(input.id)) input.addEventListener('change', edit); });
+  document.querySelectorAll('.composer input, .composer select').forEach((input) => { if (!['vibe', 'previewPalette', 'wallPace', 'sceneLuminance', 'librarySearch'].includes(input.id)) input.addEventListener('change', edit); });
   $('#vibe').addEventListener('change', () => { state.presentationMode = 'vibe'; setVibeDefaults(); edit(); });
   ['#previewPalette', '#wallPace', '#sceneLuminance'].forEach((selector) => $(selector).addEventListener('change', () => { state.presentationMode = 'custom'; edit(); }));
   async function auroraFallback() { const result=await starters('/aurora'); const candidate=starterDraft(result.starter); const preview=await validatePreview(candidate); return {candidate, reference:reference('starter', result.starter.id, preview.basis, candidate), preview}; }

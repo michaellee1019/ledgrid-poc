@@ -260,6 +260,19 @@ class AnimationWebInterface:
             except (ComposerLibraryStateError, SceneLookStoreError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
+        @self.app.route('/api/composer/library/preflight', methods=['POST'])
+        def api_composer_library_preflight():
+            """Verify a referenced library action can remain local before it begins."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'reference'}:
+                    raise ComposerLibraryStateError('Choose one library item.')
+                reference = self._composer_library_reference(payload['reference'])
+                self.composer_library.get()
+                return jsonify({'reference': reference})
+            except (ComposerLibraryStateError, SceneLookStoreError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
         @self.app.route('/api/composer/starters')
         def api_composer_starters(): return jsonify({'starters': list_starters()})
 
