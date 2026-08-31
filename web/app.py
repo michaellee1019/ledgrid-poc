@@ -36,6 +36,7 @@ from animation.core.component_catalog import ComponentCatalog
 from animation.core.scene_runtime import CanonicalSceneRuntime, CanonicalSceneRuntimeError
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
+from animation.plugins.conway_life import ConwayLifeAnimation
 from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_composer_scene
 from web.activation_token_store import (
     ActivationTokenError,
@@ -112,6 +113,7 @@ class AnimationWebInterface:
         # has its own inert control sink rather than borrowing the wall channel.
         self.composer_catalog = ComponentCatalog([
             AuroraCurtainsAnimation.component_descriptor(),
+            ConwayLifeAnimation.component_descriptor(),
             ClockOverlayAnimation.component_descriptor(),
         ])
         self.composer_tokens = ActivationTokenStore()

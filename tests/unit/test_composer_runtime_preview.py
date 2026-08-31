@@ -46,6 +46,21 @@ def _overlay(slot_id: str, color: list[int]) -> dict:
     }
 
 
+def _conway(slot_id: str = "conway_lower") -> dict:
+    return {
+        "slot_id": slot_id,
+        "component": {
+            "component_id": "conway_life", "version": 1,
+            "provider": "python", "role": "overlay",
+            "parameters": {"seed": 1971, "rule": "B3/S23"},
+        },
+        "enabled": True,
+        "opacity": 190,
+        "placement": {"strip_translation": 0, "led_translation": 0, "clip_policy": "clip_to_wall"},
+        "stale_policy": {"policy": "hold"},
+    }
+
+
 def _preview(overlays: list[dict] | None = None) -> dict:
     return {
         "origin": "composer",
@@ -74,7 +89,7 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         self.client = self.interface.app.test_client()
 
     def test_preview_is_deterministic_canonical_33_by_138_and_has_no_control_side_effect(self) -> None:
-        request = _preview([_overlay("clock_primary", [255, 224, 128])])
+        request = _preview([_conway(), _overlay("clock_upper", [255, 224, 128])])
         first = self.client.post("/api/composer/preview", json=request)
         second = self.client.post("/api/composer/preview", json=request)
         self.assertEqual((first.status_code, second.status_code), (200, 200))
@@ -95,11 +110,11 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         self.assertEqual(self.wall.commands, [])
         self.assertEqual(self.interface.composer_control.commands, [])
 
-    def test_reordered_overlapping_clocks_change_canonical_identity_and_pixels(self) -> None:
-        red = _overlay("clock_primary", [255, 0, 0])
-        blue = _overlay("clock_secondary", [0, 0, 255])
-        first = self.client.post("/api/composer/preview", json=_preview([red, blue])).get_json()
-        second = self.client.post("/api/composer/preview", json=_preview([blue, red])).get_json()
+    def test_reordered_overlapping_conway_and_clock_change_canonical_identity_and_pixels(self) -> None:
+        conway = _conway()
+        clock = _overlay("clock_upper", [255, 0, 0])
+        first = self.client.post("/api/composer/preview", json=_preview([conway, clock])).get_json()
+        second = self.client.post("/api/composer/preview", json=_preview([clock, conway])).get_json()
         self.assertNotEqual(first["basis"]["digest"], second["basis"]["digest"])
         self.assertNotEqual(first["frame"]["pixels"], second["frame"]["pixels"])
 

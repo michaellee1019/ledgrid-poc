@@ -29,6 +29,7 @@ from animation.core.compositing import BaseFrame, HostSceneCompositor, OverlayFr
 from animation.core.presentation_contracts import ResolvedScene
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
+from animation.plugins.conway_life import ConwayLifeAnimation
 from ipc.scene_contract import (
     SCENE_V1_REVISION,
     CanonicalScene,
@@ -53,6 +54,7 @@ class RuntimeFrame:
 
 BackgroundFactory = Callable[[Any, Mapping[str, Any]], AuroraCurtainsAnimation]
 ClockFactory = Callable[[Any, Mapping[str, Any], Callable[[], datetime]], ClockOverlayAnimation]
+ConwayFactory = Callable[[Any, Mapping[str, Any]], ConwayLifeAnimation]
 
 
 class _RuntimeClockOverlay(ClockOverlayAnimation):
@@ -84,17 +86,18 @@ class _BackgroundSlot:
 @dataclass
 class _OverlaySlot:
     component_key: tuple[str, str, int, str]
-    animation: ClockOverlayAnimation
+    component_id: str
+    animation: ClockOverlayAnimation | ConwayLifeAnimation
     parameters: Mapping[str, Any]
 
 
 class CanonicalSceneRuntime:
-    """Render activated Aurora-plus-Clock Scene v1 bases on a host canvas.
+    """Render activated Aurora-plus-Conway-and-Clock Scene v1 bases on a host canvas.
 
     Only integrated Python ``aurora_curtains`` backgrounds and
-    ``clock_overlay`` planes are supported in this vertical slice.  Factories
-    and a wall-time source are explicit inputs so lifecycle and timing tests do
-    not need globals or real hardware.
+    ``conway_life`` and ``clock_overlay`` planes are supported in this vertical
+    slice. Factories and a wall-time source are explicit inputs so lifecycle
+    and timing tests do not need globals or real hardware.
     """
 
     def __init__(
@@ -104,6 +107,7 @@ class CanonicalSceneRuntime:
         *,
         background_factory: Optional[BackgroundFactory] = None,
         clock_factory: Optional[ClockFactory] = None,
+        conway_factory: Optional[ConwayFactory] = None,
         wall_time_source: Optional[Callable[[], datetime]] = None,
     ) -> None:
         if not isinstance(catalog, ComponentCatalog):
@@ -114,6 +118,7 @@ class CanonicalSceneRuntime:
         self._compositor = HostSceneCompositor(self.strip_count, self.leds_per_strip)
         self._background_factory = background_factory or self._default_background_factory
         self._clock_factory = clock_factory or self._default_clock_factory
+        self._conway_factory = conway_factory or self._default_conway_factory
         self._wall_time_source = wall_time_source or (lambda: datetime.now().astimezone())
         self._background: _BackgroundSlot | None = None
         self._overlays: dict[str, _OverlaySlot] = {}
@@ -150,6 +155,12 @@ class CanonicalSceneRuntime:
         wall_time_source: Callable[[], datetime],
     ) -> ClockOverlayAnimation:
         return _RuntimeClockOverlay(controller, parameters, wall_time_source)
+
+    @staticmethod
+    def _default_conway_factory(
+        controller: Any, parameters: Mapping[str, Any],
+    ) -> ConwayLifeAnimation:
+        return ConwayLifeAnimation(controller, parameters)
 
     @property
     def desired_identity(self) -> SceneIdentity | None:
@@ -230,15 +241,20 @@ class CanonicalSceneRuntime:
             slot_id = overlay["slot_id"]
             active_slots.add(slot_id)
             descriptor = self._require_component(overlay["component"], ComponentRole.OVERLAY)
-            if descriptor.component_id != ClockOverlayAnimation.COMPONENT_ID:
-                raise CanonicalSceneRuntimeError("only Python Clock Overlay planes are integrated")
             parameters = _freeze_mapping(overlay["component"]["parameters"])
             key = self._component_key(overlay["component"])
             existing = self._overlays.get(slot_id)
             if existing is None or existing.component_key != key:
+                if descriptor.component_id == ClockOverlayAnimation.COMPONENT_ID:
+                    animation = self._clock_factory(self.controller, parameters, self._wall_time_source)
+                elif descriptor.component_id == ConwayLifeAnimation.COMPONENT_ID:
+                    animation = self._conway_factory(self.controller, parameters)
+                else:
+                    raise CanonicalSceneRuntimeError("only Python Conway Life and Clock Overlay planes are integrated")
                 self._overlays[slot_id] = _OverlaySlot(
                     component_key=key,
-                    animation=self._clock_factory(self.controller, parameters, self._wall_time_source),
+                    component_id=descriptor.component_id,
+                    animation=animation,
                     parameters=parameters,
                 )
             elif existing.parameters != parameters:
@@ -271,9 +287,19 @@ class CanonicalSceneRuntime:
     def _render_overlays(self, scene: Mapping[str, Any], elapsed: float) -> tuple[PlacedOverlay, ...]:
         placed: list[PlacedOverlay] = []
         for overlay in scene["overlays"]:
-            frame = self._overlays[overlay["slot_id"]].animation.generate_frame(elapsed, self._frame_count)
+            slot = self._overlays[overlay["slot_id"]]
+            if slot.component_id == ConwayLifeAnimation.COMPONENT_ID:
+                animation = slot.animation
+                if not isinstance(animation, ConwayLifeAnimation):
+                    raise CanonicalSceneRuntimeError("Conway Life slot has an incompatible animation")
+                descriptor = self._require_component(overlay["component"], ComponentRole.OVERLAY)
+                context = self._overlay_context(scene, descriptor, slot.parameters, elapsed)
+                animation.set_presentation_context(context)
+                frame = animation.generate_frame(context.phase_time, self._frame_count)
+            else:
+                frame = slot.animation.generate_frame(elapsed, self._frame_count)
             if not isinstance(frame, OverlayFrame):
-                raise CanonicalSceneRuntimeError("Clock Overlay must render an OverlayFrame")
+                raise CanonicalSceneRuntimeError("integrated overlay must render an OverlayFrame")
             placement = overlay["placement"]
             placed.append(PlacedOverlay(
                 frame=frame,
@@ -284,6 +310,25 @@ class CanonicalSceneRuntime:
             ))
         return tuple(placed)
 
+    @staticmethod
+    def _overlay_context(
+        scene: Mapping[str, Any],
+        descriptor: ComponentDescriptor,
+        parameters: Mapping[str, Any],
+        elapsed: float,
+    ) -> ResolvedScene:
+        canonical_bytes = canonical_json_bytes(scene)
+        return ResolvedScene(
+            canonical_scene=_freeze_mapping(scene),
+            canonical_bytes=canonical_bytes,
+            digest=hashlib.sha256(canonical_bytes).hexdigest(),
+            descriptor=descriptor,
+            parameters=parameters,
+            palette=MappingProxyType({"palette_id": scene["palette_id"]}),
+            phase_time=elapsed * float(scene["wall_pace"]),
+            plant_inputs=MappingProxyType({}),
+        )
+
     def _require_component(self, component: Mapping[str, Any], role: ComponentRole) -> ComponentDescriptor:
         try:
             descriptor = self.catalog.require(
@@ -291,12 +336,14 @@ class CanonicalSceneRuntime:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise CanonicalSceneRuntimeError("canonical scene component is absent from this catalog") from exc
-        if (
-            descriptor.provider is not ComponentProvider.PYTHON
-            or descriptor.role is not role
-            or descriptor.timing_policy is not (
-                TimingPolicy.SCALED_CONTEXT if role is ComponentRole.BACKGROUND else TimingPolicy.WALL_CLOCK
-            )
+        if descriptor.provider is not ComponentProvider.PYTHON or descriptor.role is not role:
+            raise CanonicalSceneRuntimeError("canonical scene component is outside the supported Python runtime")
+        if role is ComponentRole.BACKGROUND and descriptor.timing_policy is not TimingPolicy.SCALED_CONTEXT:
+            raise CanonicalSceneRuntimeError("canonical scene component is outside the supported Python runtime")
+        if role is ComponentRole.OVERLAY and (
+            (descriptor.component_id == ClockOverlayAnimation.COMPONENT_ID and descriptor.timing_policy is not TimingPolicy.WALL_CLOCK)
+            or (descriptor.component_id == ConwayLifeAnimation.COMPONENT_ID and descriptor.timing_policy is not TimingPolicy.SCALED_CONTEXT)
+            or descriptor.component_id not in {ClockOverlayAnimation.COMPONENT_ID, ConwayLifeAnimation.COMPONENT_ID}
         ):
             raise CanonicalSceneRuntimeError("canonical scene component is outside the supported Python runtime")
         return descriptor

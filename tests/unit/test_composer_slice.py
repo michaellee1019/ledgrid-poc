@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from animation.plugins.clock_overlay import ClockOverlayAnimation
+from animation.plugins.conway_life import ConwayLifeAnimation
 from web.app import AnimationWebInterface
 
 
@@ -78,6 +79,19 @@ def _overlay(slot_id: str, parameters: dict | None = None) -> dict:
     }
 
 
+def _conway(slot_id: str = "conway_lower", parameters: dict | None = None) -> dict:
+    return {
+        "slot_id": slot_id,
+        "component": {
+            "component_id": "conway_life", "version": 1,
+            "provider": "python", "role": "overlay", "parameters": parameters or {},
+        },
+        "enabled": True, "opacity": 190,
+        "placement": {"strip_translation": 0, "led_translation": 0, "clip_policy": "clip_to_wall"},
+        "stale_policy": {"policy": "hold"},
+    }
+
+
 class ComposerSliceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.wall = _WallChannel()
@@ -90,6 +104,7 @@ class ComposerSliceTests(unittest.TestCase):
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn("Local Composer", html)
         self.assertIn("Aurora Curtains", html)
+        self.assertIn("Conway Life", Path("web/static/js/composer_slice.js").read_text(encoding="utf-8"))
         self.assertIn("Go Live", html)
         self.assertNotIn("previewCanvas", html)
         self.assertNotIn("Stop", html)
@@ -99,29 +114,26 @@ class ComposerSliceTests(unittest.TestCase):
 
     def test_check_then_activate_keeps_wall_channel_inert_and_reconciles_exact_identity(self) -> None:
         checked = self.client.post("/api/composer/check", json=_scene([
-            _overlay("clock_primary", {"show_seconds": True}),
-            _overlay("clock_secondary", {
-                "format_24h": True, "show_seconds": False,
-                "clock_offset_minutes": 60,
-            }),
+            _conway("conway_lower", {"seed": 1971, "rule": "B3/S23"}),
+            _overlay("clock_upper", {"show_seconds": True}),
         ]))
         self.assertEqual(checked.status_code, 200)
         check_body = checked.get_json()
         self.assertEqual(check_body["status"]["state"], "pending")
         self.assertEqual(
             [item["slot_id"] for item in check_body["canonical_scene"]["overlays"]],
-            ["clock_primary", "clock_secondary"],
+            ["conway_lower", "clock_upper"],
         )
         first, second = check_body["canonical_scene"]["overlays"]
-        self.assertEqual(first["component"]["component_id"], "clock_overlay")
+        self.assertEqual(first["component"]["component_id"], "conway_life")
         self.assertEqual(second["component"]["component_id"], "clock_overlay")
         self.assertEqual(first["component"]["parameters"], {
-            "format_24h": False, "show_seconds": True,
-            "clock_offset_minutes": 0, "color": [255, 224, 128],
+            "seed": 1971, "rule": "B3/S23", "initial_density": 0.14,
+            "generations_per_second": 5.0, "seed_cells": [],
         })
         self.assertEqual(second["component"]["parameters"], {
-            "format_24h": True, "show_seconds": False,
-            "clock_offset_minutes": 60, "color": [255, 224, 128],
+            "format_24h": False, "show_seconds": True,
+            "clock_offset_minutes": 0, "color": [255, 224, 128],
         })
         live = self.client.post("/api/composer/activate", json={
             "token": check_body["token"], "basis": check_body["basis"],
@@ -174,6 +186,12 @@ class ComposerSliceTests(unittest.TestCase):
             ),
             descriptor,
         )
+        self.assertIs(
+            self.interface.composer_catalog.require(
+                provider="python", component_id="conway_life", version=1,
+            ),
+            ConwayLifeAnimation.component_descriptor(),
+        )
         with self.assertRaises(ValueError):
             self.interface.composer_catalog.require(
                 provider="python", component_id="alert", version=1,
@@ -183,24 +201,32 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertNotIn("$('#reconcileState').textContent = 'Rejected'", script)
 
     def test_readding_after_primary_removal_selects_the_missing_slot_and_checks(self) -> None:
-        """The client must not duplicate secondary after removing primary."""
+        """The client must restore the missing Conway lower slot without duplicates."""
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
         self.assertIn(
-            "state.overlays.some((item) => item.slot_id === 'clock_primary') ? 'clock_secondary' : 'clock_primary'",
+            "Object.keys(defaults).find((candidate) => !state.overlays.some((item) => item.slot_id === candidate))",
             script,
         )
-        # Equivalent authored output after add-two, remove-primary, add again.
+        # Equivalent authored output after add-two, remove-Conway, add again.
         response = self.client.post("/api/composer/check", json=_scene([
-            _overlay("clock_secondary", {"clock_offset_minutes": 60}),
-            _overlay("clock_primary", {"show_seconds": True}),
+            _overlay("clock_upper", {"show_seconds": True}),
+            _conway("conway_lower", {"seed": 1971}),
         ]))
         self.assertEqual(response.status_code, 200)
         slots = [
             item["slot_id"]
             for item in response.get_json()["canonical_scene"]["overlays"]
         ]
-        self.assertEqual(slots, ["clock_secondary", "clock_primary"])
-        self.assertEqual(set(slots), {"clock_primary", "clock_secondary"})
+        self.assertEqual(slots, ["clock_upper", "conway_lower"])
+        self.assertEqual(set(slots), {"conway_lower", "clock_upper"})
+
+    def test_third_overlay_is_rejected_before_local_adapter_mutation(self) -> None:
+        rejected = self.client.post("/api/composer/check", json=_scene([
+            _conway(), _overlay("clock_upper"), _overlay("extra"),
+        ]))
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn("zero to two", rejected.get_json()["error"])
+        self.assertEqual(self.interface.composer_control.commands, [])
 
 
 if __name__ == "__main__":

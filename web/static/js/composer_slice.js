@@ -5,8 +5,8 @@
   const list = document.querySelector('#overlayList');
   const state = { overlays: [], checked: null, activationKey: null, presentationMode: 'vibe', previewGeneration: 0 };
   const defaults = {
-    clock_primary: { slot_id: 'clock_primary', enabled: true, opacity: 208, strip: 0, led: -8, stale: 'hold', parameters: { show_seconds: true, color: [255, 224, 128] } },
-    clock_secondary: { slot_id: 'clock_secondary', enabled: true, opacity: 160, strip: 1, led: 10, stale: 'clear', parameters: { format_24h: true, show_seconds: false, clock_offset_minutes: 60, color: [80, 220, 255] } },
+    conway_lower: { slot_id: 'conway_lower', component_id: 'conway_life', enabled: true, opacity: 190, strip: 0, led: 0, stale: 'hold', parameters: { seed: 1971, rule: 'B3/S23', initial_density: 0.14, generations_per_second: 5.0 } },
+    clock_upper: { slot_id: 'clock_upper', component_id: 'clock_overlay', enabled: true, opacity: 208, strip: 0, led: -8, stale: 'hold', parameters: { show_seconds: true, color: [255, 224, 128] } },
   };
   const $ = (selector) => document.querySelector(selector);
   const identity = (item) => item ? `r${item.revision} · ${item.digest}` : 'No acknowledgement';
@@ -20,7 +20,7 @@
         curtain_density: Number($('#curtainDensity').value), fold_depth: Number($('#foldDepth').value), glow_intensity: Number($('#glowIntensity').value), source_fps: 30, seed: 4201,
       } },
       overlays: state.overlays.map((overlay) => ({
-        slot_id: overlay.slot_id, component: { component_id: 'clock_overlay', version: 1, provider: 'python', role: 'overlay', parameters: overlay.parameters },
+        slot_id: overlay.slot_id, component: { component_id: overlay.component_id, version: 1, provider: 'python', role: 'overlay', parameters: overlay.parameters },
         enabled: overlay.enabled, opacity: Number(overlay.opacity), placement: { strip_translation: Number(overlay.strip), led_translation: Number(overlay.led), clip_policy: 'clip_to_wall' },
         stale_policy: overlay.stale === 'hold' ? { policy: 'hold' } : { policy: 'clear_after_lease', lease_ms: 1200 },
       })),
@@ -45,9 +45,13 @@
     list.replaceChildren(); $('#overlayEmpty').hidden = state.overlays.length > 0; $('#addOverlay').disabled = state.overlays.length >= 2;
     state.overlays.forEach((overlay, index) => {
       const row = document.createElement('li'); row.className = 'overlay';
-      row.innerHTML = `<div class="overlay-top"><div><span class="overlay-title">Clock Overlay</span><span class="overlay-slot"> · slot: ${overlay.slot_id}</span></div><div><button class="button text" data-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="button text" data-action="down" ${index === state.overlays.length - 1 ? 'disabled' : ''}>Down</button><button class="button text" data-action="remove">Remove</button></div></div><div class="overlay-controls"><label class="enabled"><input data-field="enabled" type="checkbox" ${overlay.enabled ? 'checked' : ''}> Enabled</label><label>Opacity <input data-field="opacity" type="number" min="0" max="255" value="${overlay.opacity}"></label><label>Across <input data-field="strip" type="number" value="${overlay.strip}"></label><label>Down <input data-field="led" type="number" value="${overlay.led}"></label><label>Stale frames <select data-field="stale"><option value="hold" ${overlay.stale === 'hold' ? 'selected' : ''}>Hold</option><option value="clear" ${overlay.stale === 'clear' ? 'selected' : ''}>Clear after lease</option></select></label></div>`;
-      row.addEventListener('input', (event) => { const field = event.target.dataset.field; if (!field) return; overlay[field] = field === 'enabled' ? event.target.checked : event.target.value; edit(); });
-      row.addEventListener('change', (event) => { if (event.target.dataset.field) edit(); });
+      const title = overlay.component_id === 'conway_life' ? 'Conway Life' : 'Clock Overlay';
+      const lifeControls = overlay.component_id === 'conway_life'
+        ? `<label>Seed <input data-param="seed" type="number" min="0" max="999999" value="${overlay.parameters.seed}"></label><label>Rule <select data-param="rule"><option value="B3/S23" ${overlay.parameters.rule === 'B3/S23' ? 'selected' : ''}>B3/S23</option><option value="B36/S23" ${overlay.parameters.rule === 'B36/S23' ? 'selected' : ''}>B36/S23</option></select></label>`
+        : '';
+      row.innerHTML = `<div class="overlay-top"><div><span class="overlay-title">${title}</span><span class="overlay-slot"> · slot: ${overlay.slot_id}</span></div><div><button class="button text" data-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="button text" data-action="down" ${index === state.overlays.length - 1 ? 'disabled' : ''}>Down</button><button class="button text" data-action="remove">Remove</button></div></div><div class="overlay-controls"><label class="enabled"><input data-field="enabled" type="checkbox" ${overlay.enabled ? 'checked' : ''}> Enabled</label><label>Opacity <input data-field="opacity" type="number" min="0" max="255" value="${overlay.opacity}"></label><label>Across <input data-field="strip" type="number" value="${overlay.strip}"></label><label>Down <input data-field="led" type="number" value="${overlay.led}"></label><label>Stale frames <select data-field="stale"><option value="hold" ${overlay.stale === 'hold' ? 'selected' : ''}>Hold</option><option value="clear" ${overlay.stale === 'clear' ? 'selected' : ''}>Clear after lease</option></select></label>${lifeControls}</div>`;
+      row.addEventListener('input', (event) => { const field = event.target.dataset.field; const parameter = event.target.dataset.param; if (field) overlay[field] = field === 'enabled' ? event.target.checked : event.target.value; if (parameter) overlay.parameters[parameter] = parameter === 'seed' ? Number(event.target.value) : event.target.value; if (!field && !parameter) return; edit(); });
+      row.addEventListener('change', (event) => { const field = event.target.dataset.field; const parameter = event.target.dataset.param; if (field) overlay[field] = field === 'enabled' ? event.target.checked : event.target.value; if (parameter) overlay.parameters[parameter] = parameter === 'seed' ? Number(event.target.value) : event.target.value; if (field || parameter) edit(); });
       row.addEventListener('click', (event) => { const action = event.target.dataset.action; if (!action) return; if (action === 'remove') state.overlays.splice(index, 1); if (action === 'up') [state.overlays[index - 1], state.overlays[index]] = [state.overlays[index], state.overlays[index - 1]]; if (action === 'down') [state.overlays[index + 1], state.overlays[index]] = [state.overlays[index], state.overlays[index + 1]]; edit(); render(); });
       list.append(row);
     });
@@ -70,7 +74,7 @@
     } catch (error) { $('#liveMessage').textContent = error.message || 'The draft was not accepted.'; }
     finally { button.disabled = false; }
   }
-  $('#addOverlay').addEventListener('click', () => { const slot = state.overlays.some((item) => item.slot_id === 'clock_primary') ? 'clock_secondary' : 'clock_primary'; state.overlays.push({...defaults[slot], parameters: {...defaults[slot].parameters}}); edit(); render(); });
+  $('#addOverlay').addEventListener('click', () => { const slot = Object.keys(defaults).find((candidate) => !state.overlays.some((item) => item.slot_id === candidate)); if (!slot) return; state.overlays.push({...defaults[slot], parameters: {...defaults[slot].parameters}}); edit(); render(); });
   document.querySelectorAll('.composer input, .composer select').forEach((input) => { if (!['vibe', 'previewPalette', 'wallPace', 'sceneLuminance'].includes(input.id)) input.addEventListener('change', edit); });
   $('#vibe').addEventListener('change', () => { state.presentationMode = 'vibe'; setVibeDefaults(); edit(); });
   ['#previewPalette', '#wallPace', '#sceneLuminance'].forEach((selector) => $(selector).addEventListener('change', () => { state.presentationMode = 'custom'; edit(); }));

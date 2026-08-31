@@ -12,6 +12,7 @@ from animation.core.manager import PreviewLEDController
 from animation.core.scene_runtime import CanonicalSceneRuntime, CanonicalSceneRuntimeError
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
+from animation.plugins.conway_life import ConwayLifeAnimation
 from ipc.scene_contract import normalize_composer_scene
 
 
@@ -21,6 +22,7 @@ FIXED_NOW = datetime(2026, 8, 31, 13, 47, 10, tzinfo=timezone.utc)
 def _catalog() -> ComponentCatalog:
     return ComponentCatalog([
         AuroraCurtainsAnimation.component_descriptor(),
+        ConwayLifeAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
     ])
 
@@ -50,6 +52,34 @@ def _clock(
             "clip_policy": "clip_to_wall",
         },
         "stale_policy": stale_policy or {"policy": "hold"},
+    }
+
+
+def _conway(
+    slot_id: str = "conway_lower",
+    *,
+    seed: int = 1971,
+    rule: str = "B3/S23",
+    enabled: bool = True,
+    opacity: int = 190,
+    strip_translation: int = 0,
+    led_translation: int = 0,
+) -> dict:
+    return {
+        "slot_id": slot_id,
+        "component": {
+            "component_id": "conway_life", "version": 1,
+            "provider": "python", "role": "overlay",
+            "parameters": {"seed": seed, "rule": rule},
+        },
+        "enabled": enabled,
+        "opacity": opacity,
+        "placement": {
+            "strip_translation": strip_translation,
+            "led_translation": led_translation,
+            "clip_policy": "clip_to_wall",
+        },
+        "stale_policy": {"policy": "hold"},
     }
 
 
@@ -98,16 +128,26 @@ class _CountingClock(ClockOverlayAnimation):
         return self._now_source()
 
 
+class _CountingConway(ConwayLifeAnimation):
+    instances: list["_CountingConway"] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.__class__.instances.append(self)
+
+
 class CanonicalSceneRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         _CountingAurora.instances.clear()
         _CountingClock.instances.clear()
+        _CountingConway.instances.clear()
         self.controller = PreviewLEDController(strips=33, leds_per_strip=138)
         self.runtime = CanonicalSceneRuntime(
             self.controller,
             _catalog(),
             background_factory=lambda controller, config: _CountingAurora(controller, config),
             clock_factory=lambda controller, config, clock: _CountingClock(controller, config, clock),
+            conway_factory=lambda controller, config: _CountingConway(controller, config),
             wall_time_source=lambda: FIXED_NOW,
         )
 
@@ -157,6 +197,49 @@ class CanonicalSceneRuntimeTests(unittest.TestCase):
         self.assertEqual(len(_CountingAurora.instances), 2)
         self.assertIs(self.runtime._overlays["red"].animation, red)
         self.assertIs(self.runtime._overlays["blue"].animation, blue)
+
+    def test_conway_and_clock_have_independent_instances_and_semantic_resets(self) -> None:
+        initial = _canonical(overlays=[_conway(), _clock("clock_upper", color=[255, 224, 128])])
+        self.runtime.activate(initial)
+        self.runtime.render(1.0)
+        conway, clock = _CountingConway.instances[0], _CountingClock.instances[0]
+        before = conway.semantic_snapshot()
+
+        self.runtime.activate(_canonical(overlays=[
+            _conway(opacity=128, led_translation=3),
+            _clock("clock_upper", color=[255, 224, 128], led_translation=2),
+        ]))
+        self.runtime.render(1.0)
+        self.assertIs(self.runtime._overlays["conway_lower"].animation, conway)
+        self.assertIs(self.runtime._overlays["clock_upper"].animation, clock)
+        self.assertEqual(conway.semantic_snapshot()["grid"], before["grid"])
+
+        self.runtime.activate(_canonical(overlays=[
+            _conway(seed=1972, rule="B36/S23"), _clock("clock_upper", color=[255, 224, 128]),
+        ]))
+        self.runtime.render(1.0)
+        self.assertIs(self.runtime._overlays["conway_lower"].animation, conway)
+        self.assertIs(self.runtime._overlays["clock_upper"].animation, clock)
+        self.assertEqual(conway.semantic_snapshot()["seed"], 1972)
+        self.assertEqual(conway.semantic_snapshot()["rule"], "B36/S23")
+
+    def test_conway_move_disable_remove_and_order_leave_no_stale_pixels(self) -> None:
+        both = _canonical(overlays=[_conway(), _clock("clock_upper", color=[255, 224, 128])])
+        self.runtime.activate(both)
+        lower_conway = self.runtime.render(1.0).pixels.copy()
+        reversed_scene = _canonical(overlays=[_clock("clock_upper", color=[255, 224, 128]), _conway()])
+        self.runtime.activate(reversed_scene)
+        upper_conway = self.runtime.render(1.0).pixels.copy()
+        self.assertFalse(np.array_equal(lower_conway, upper_conway))
+
+        self.runtime.activate(_canonical(overlays=[_conway(led_translation=4)]))
+        moved = self.runtime.render(1.0).pixels.copy()
+        self.runtime.activate(_canonical(overlays=[_conway(led_translation=4, enabled=False)]))
+        disabled = self.runtime.render(1.0).pixels.copy()
+        self.runtime.activate(_canonical(overlays=[]))
+        removed = self.runtime.render(1.0).pixels.copy()
+        self.assertFalse(np.array_equal(moved, disabled))
+        np.testing.assert_array_equal(disabled, removed)
 
     def test_aurora_consumes_wall_pace_once_and_clock_ignores_elapsed(self) -> None:
         slow = _canonical(overlays=[_clock("clock", color=[255, 224, 128])])
