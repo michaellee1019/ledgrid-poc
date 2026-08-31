@@ -1174,10 +1174,15 @@ class SceneActivationApiTests(unittest.TestCase):
             root / "tools" / "benchmarks" / "receiver_acceptance.py",
             root / "tools" / "benchmarks" / "receiver_native_physical_acceptance.py",
         ])
+        rollback_compatibility = root / "tools" / "deployment" / "deploy_target.py"
         for path in entrypoints:
             source = path.read_text(encoding="utf-8")
             for route in retired:
                 with self.subTest(entrypoint=path.relative_to(root), route=route):
+                    if path == rollback_compatibility and route == "/api/status":
+                        self.assertEqual(source.count(route), 1)
+                        self.assertIn("allow_legacy_status_fallback", source)
+                        continue
                     self.assertNotIn(route, source)
 
 
