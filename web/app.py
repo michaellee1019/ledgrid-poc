@@ -44,6 +44,7 @@ from web.activation_token_store import (
     ActivationTokenStore,
 )
 from web.composer_component_editor import editor_catalog, validate_editor_scene
+from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
 from web.working_draft_store import WorkingDraftStore, WorkingDraftError
@@ -124,6 +125,7 @@ class AnimationWebInterface:
         self.composer_adapter = LocalSceneAdapter()
         self.composer_control = _ComposerLocalControlChannel()
         self.composer_looks = SceneLookStore(self.project_root / "run_state" / "composer_looks.json")
+        self.composer_library = ComposerLibraryState(self.project_root / "run_state" / "composer_library.json")
         self.working_draft = WorkingDraftStore(self.project_root / 'run_state' / 'composer_draft.json')
         self._composer_checked = None
         self._composer_rejection: Optional[str] = None
@@ -222,6 +224,42 @@ class AnimationWebInterface:
             except SceneLookStoreError as exc:
                 return jsonify({'error': str(exc)}), 400
 
+        @self.app.route('/api/composer/library')
+        def api_composer_library():
+            """Project the immutable starters and current local looks into one library."""
+            try:
+                return jsonify(ComposerLibraryState.project(
+                    self.composer_library.get(), self._composer_library_items(),
+                ))
+            except (ComposerLibraryStateError, SceneLookStoreError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/library/favorites', methods=['POST', 'DELETE'])
+        def api_composer_library_favorites():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'reference'}:
+                    raise ComposerLibraryStateError('Choose one library item.')
+                reference = self._composer_library_reference(payload['reference'])
+                state = (self.composer_library.favorite(reference)
+                         if request.method == 'POST' else self.composer_library.unfavorite(reference))
+                return jsonify(ComposerLibraryState.project(state, self._composer_library_items()))
+            except (ComposerLibraryStateError, SceneLookStoreError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/library/recents', methods=['POST'])
+        def api_composer_library_recents():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'reference'}:
+                    raise ComposerLibraryStateError('Choose one library item.')
+                reference = self._composer_library_reference(payload['reference'])
+                return jsonify(ComposerLibraryState.project(
+                    self.composer_library.revisit(reference), self._composer_library_items(),
+                ))
+            except (ComposerLibraryStateError, SceneLookStoreError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
         @self.app.route('/api/composer/starters')
         def api_composer_starters(): return jsonify({'starters': list_starters()})
 
@@ -237,8 +275,13 @@ class AnimationWebInterface:
                 self._composer_starter(get_starter(starter_id))
                 if set(payload) != {'name', 'draft'}: raise SceneLookStoreError('A remix needs a name and current draft.')
                 canonical = self._composer_canonical(payload['draft'])
-                return jsonify({'look': self._composer_look_payload(self.composer_looks.save(payload['name'], canonical))})
-            except (ValueError, SceneLookStoreError, SceneContractError, TypeError) as exc: return jsonify({'error': str(exc)}), 400
+                # Validate local library state before saving so corrupt state cannot
+                # create a saved look while this explicit remix cannot be recorded.
+                self.composer_library.get()
+                look = self._composer_look_payload(self.composer_looks.save(payload['name'], canonical))
+                self.composer_library.revisit({'kind': 'look', 'id': look['id']})
+                return jsonify({'look': look})
+            except (ComposerLibraryStateError, ValueError, SceneLookStoreError, SceneContractError, TypeError) as exc: return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/looks', methods=['POST'])
         def api_composer_save_look():
@@ -272,13 +315,18 @@ class AnimationWebInterface:
         def api_composer_change_look(look_id: str):
             try:
                 if request.method == 'DELETE':
+                    # Composer's only library/looks compatibility seam: reject a
+                    # corrupt library before changing the saved-look store, then
+                    # remove this deleted look from persistent library references.
+                    self.composer_library.get()
                     self.composer_looks.delete(look_id)
+                    self.composer_library.prune_look(look_id)
                     return jsonify({'deleted': look_id})
                 payload = request.get_json(silent=True) or {}
                 if set(payload) != {'name'}:
                     raise SceneLookStoreError('A rename needs a new name.')
                 return jsonify({'look': self._composer_look_payload(self.composer_looks.rename(look_id, payload['name']))})
-            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+            except (ComposerLibraryStateError, SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/check', methods=['POST'])
@@ -1184,6 +1232,21 @@ class AnimationWebInterface:
         if canonical.scene != scene or canonical.identity.to_dict() != record['basis']:
             raise SceneLookStoreError('Saved look has changed or is corrupt; recreate it.')
         return {'id': record['id'], 'name': record['name'], 'basis': record['basis'], 'scene': scene}
+
+    def _composer_library_items(self) -> list[dict[str, str]]:
+        """Names are deliberately current projections, never copied into preferences."""
+        starters = [{'kind': 'starter', **item} for item in list_starters()]
+        looks = [{'kind': 'look', 'id': item['id'], 'name': item['name']} for item in self.composer_looks.list()]
+        return [*starters, *looks]
+
+    def _composer_library_reference(self, value: Any) -> dict[str, str]:
+        """Require a current typed reference before a preference can be persisted."""
+        reference = ComposerLibraryState._reference(value)
+        if (reference['kind'], reference['id']) not in {
+            (item['kind'], item['id']) for item in self._composer_library_items()
+        }:
+            raise ComposerLibraryStateError('That library item no longer exists.')
+        return reference
 
     def _composer_draft_reference(self, value: Any, *, require_current: bool) -> dict[str, Any]:
         """Validate the typed saved/starter basis without inventing a fallback."""

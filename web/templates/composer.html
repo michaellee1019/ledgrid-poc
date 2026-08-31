@@ -29,7 +29,15 @@
     </div>
   </section>
 
-  <section class="composer-card"><div class="section-title"><div><p class="eyebrow">Starting points</p><h2>Try a look</h2></div></div><p class="muted">Browse locally, then remix a starting point into your own saved look.</p><div id="starterList" class="overlay-list"></div><label>Remix name <input id="remixName" maxlength="80" placeholder="My remix"></label><button id="remixStarter" class="button secondary" type="button">Remix</button><p id="starterMessage" class="live-message"></p></section>
+  <section class="composer-card" aria-labelledby="library-title">
+    <div class="section-title"><div><p class="eyebrow">Library</p><h2 id="library-title">Find a look</h2></div></div>
+    <p class="muted">Starting points and saved looks stay local until you explicitly choose Go Live.</p>
+    <label>Search by name <input id="librarySearch" type="search" placeholder="Search local looks"></label>
+    <div class="library-filters" role="group" aria-label="Library filter"><button class="button secondary active" data-library-filter="all" type="button">All</button><button class="button secondary" data-library-filter="starter" type="button">Starting points</button><button class="button secondary" data-library-filter="look" type="button">My looks</button><button class="button secondary" data-library-filter="favorites" type="button">Favorites</button><button class="button secondary" data-library-filter="recent" type="button">Recent</button></div>
+    <ol id="libraryList" class="overlay-list" aria-live="polite"></ol>
+    <p id="libraryEmpty" class="empty">No local looks match this view.</p>
+    <label>Remix name <input id="remixName" maxlength="80" placeholder="My remix"></label><button id="remixStarter" class="button secondary" type="button">Remix current starting point</button><p id="starterMessage" class="live-message" role="status" aria-live="polite"></p>
+  </section>
 
   <section class="composer-card preview-card" aria-labelledby="preview-title">
     <div class="section-title"><div><p class="eyebrow">Local runtime</p><h2 id="preview-title">Current draft</h2></div><strong id="previewIdentity">Rendering…</strong></div>
