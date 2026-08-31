@@ -122,3 +122,18 @@ class WorkingDraftTests(unittest.TestCase):
         self.assertNotIn('window.prompt', script)
         self.assertNotIn('window.confirm', script)
         self.assertIn('id="draftState"', html)
+
+    def test_client_save_marks_only_the_current_exact_preview_as_saved(self):
+        script = Path('web/static/js/composer_slice.js').read_text(encoding='utf-8')
+        start = script.index('async function makeSavedReference(')
+        end = script.index("$('#saveLook').addEventListener", start)
+        save_reference = script[start:end]
+        self.assertIn('if (generation !== state.previewGeneration) return;', save_reference)
+        self.assertIn('await autosave(state.committedPreview, candidate, generation);', save_reference)
+        self.assertIn('await queuePreview(candidate, {generation});', save_reference)
+        self.assertIn("const generation=state.previewGeneration", script)
+        self.assertEqual(script.count('await makeSavedReference(result, candidate, generation);'), 2)
+        autosave = script[script.index('async function autosave('):script.index('async function queuePreview(')]
+        self.assertIn("sameBasis(body.basis, state.reference.basis)", autosave)
+        self.assertIn("await draftRequest('', {method:'DELETE'})", autosave)
+        self.assertIn('setUnsaved(false)', autosave)
