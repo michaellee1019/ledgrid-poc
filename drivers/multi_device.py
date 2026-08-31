@@ -2055,11 +2055,18 @@ class MultiDeviceLEDController:
                     or acknowledgement.get("logical_device") != logical_device
                     or acknowledgement.get("wall_frame_sequence") != wall_frame_sequence
                     or acknowledgement.get("frame_digest") != frame_digest
+                    or isinstance(
+                        acknowledgement.get("receiver_accepted_sequence"), bool
+                    )
+                    or not isinstance(
+                        acknowledgement.get("receiver_accepted_sequence"), int
+                    )
+                    or not 0 <= acknowledgement["receiver_accepted_sequence"] <= 0xFFFFFFFF
                     or not isinstance(acknowledgement.get("status"), dict)
                     or acknowledgement["status"].get("receiver_logical_device")
                     != logical_device
                     or acknowledgement["status"].get("receiver_last_accepted_sequence")
-                    != wall_frame_sequence
+                    != acknowledgement["receiver_accepted_sequence"]
                 ):
                     raise RuntimeError(
                         f"receiver {logical_device} returned a rejected or stale acknowledgement"
@@ -2069,6 +2076,9 @@ class MultiDeviceLEDController:
                     "spi_route": list(identities[logical_device].spi_route),
                     "hardware_serial": identities[logical_device].hardware_serial,
                     "firmware_sha256": identities[logical_device].firmware_sha256,
+                    "receiver_accepted_sequence": acknowledgement[
+                        "receiver_accepted_sequence"
+                    ],
                 })
             self._require_pinned_receipt_roster()
             self._logical_frames_sent += 1
