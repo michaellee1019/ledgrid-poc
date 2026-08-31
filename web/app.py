@@ -254,6 +254,9 @@ class AnimationWebInterface:
             return None
         if not isinstance(bundled, list):
             return None
+        if not self.local_mode:
+            self._bundled_composer_catalog_cache = bundled
+            return bundled
         identity = lambda item: (item.get("provider"), item.get("plugin_id"))
         bundled_identities = {identity(item) for item in bundled if isinstance(item, dict)}
         running = self._component_catalog()
@@ -1902,7 +1905,38 @@ class AnimationWebInterface:
     ) -> Dict[str, str]:
         """Bind Check to the controller's authoritative runtime derivation."""
 
-        result = manager_controller_runtime_digests(self.preview_manager)
+        if self.local_mode:
+            result = manager_controller_runtime_digests(self.preview_manager)
+        else:
+            result = {}
+            for component in catalog:
+                provider = component.get('provider')
+                plugin_id = component.get('plugin_id')
+                if not isinstance(provider, str) or not isinstance(plugin_id, str):
+                    continue
+                build = component.get('build')
+                build = build if isinstance(build, dict) else {}
+                capabilities = component.get('browser_capabilities')
+                capabilities = capabilities if isinstance(capabilities, dict) else {}
+                identity = capabilities.get('managed_identity')
+                identity = identity if isinstance(identity, dict) else {}
+                candidates = (
+                    component.get('controller_runtime_digest'),
+                    build.get('expected_payload_digest'),
+                    build.get('bundle_digest'),
+                    build.get('contract_digest'),
+                    component.get('component_digest'),
+                    identity.get('expected_payload_digest'),
+                    identity.get('bundle_digest'),
+                    identity.get('component_digest'),
+                )
+                digest = next((
+                    value for value in candidates
+                    if isinstance(value, str)
+                    and re.fullmatch(r'[0-9a-f]{64}', value) is not None
+                ), None)
+                if digest is not None:
+                    result[f'{provider}:{plugin_id}'] = digest
         required = {
             f"{component.get('provider')}:{component.get('plugin_id')}"
             for component in catalog
