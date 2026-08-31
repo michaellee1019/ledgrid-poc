@@ -455,6 +455,13 @@ class SceneActivationApiTests(unittest.TestCase):
             "development_canary",
         )
 
+    def test_activation_catalog_can_reuse_matching_deployed_bundle(self) -> None:
+        bundled = self.interface._matching_bundled_browser_catalog()
+
+        # Test doubles intentionally differ from the deployed product catalog,
+        # so their validation remains on the dynamic catalog path.
+        self.assertIsNone(bundled)
+
     def test_check_is_read_only_and_returns_short_lived_opaque_authorization(self) -> None:
         response = self._check()
 

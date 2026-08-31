@@ -177,6 +177,8 @@ class AnimationWebInterface:
         self.scene_presets_dir = self.project_root / "presets" / "scenes"
         self.deployment_status_path = self.project_root / "run_state" / "deployment.json"
         self._bundled_composer_catalog_digest_cache: Optional[str] = None
+        self._bundled_composer_catalog_cache: Optional[List[Dict[str, Any]]] = None
+        self._bundled_composer_catalog_checked = False
         self.target_qualification_evidence_path = (
             self.project_root
             / "run_state"
@@ -235,6 +237,31 @@ class AnimationWebInterface:
             return None
         self._bundled_composer_catalog_digest_cache = digest
         return digest
+
+    def _matching_bundled_browser_catalog(self) -> Optional[List[Dict[str, Any]]]:
+        """Reuse the deployed catalog when it matches the running manager."""
+        if self._bundled_composer_catalog_checked:
+            return self._bundled_composer_catalog_cache
+        self._bundled_composer_catalog_checked = True
+        path = (
+            self.project_root / "web" / "static" / "generated"
+            / "composer" / "bootstrap.v1.json"
+        )
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            bundled = payload.get("components")
+        except (OSError, ValueError, TypeError):
+            return None
+        if not isinstance(bundled, list):
+            return None
+        identity = lambda item: (item.get("provider"), item.get("plugin_id"))
+        bundled_identities = {identity(item) for item in bundled if isinstance(item, dict)}
+        running = self._component_catalog()
+        running_identities = {identity(item) for item in running if isinstance(item, dict)}
+        if not bundled_identities or bundled_identities != running_identities:
+            return None
+        self._bundled_composer_catalog_cache = bundled
+        return bundled
 
     def _register_routes(self):
         """Register Flask routes"""
@@ -2597,6 +2624,9 @@ class AnimationWebInterface:
 
     def _browser_scene_catalog(self) -> List[Dict[str, Any]]:
         """Return catalog records with runtime-bound browser capabilities."""
+        bundled = self._matching_bundled_browser_catalog()
+        if bundled is not None:
+            return bundled
         return self._browser_composer_bootstrap()['components']
 
     def _validated_browser_scene_document(
