@@ -224,6 +224,9 @@ class HostSceneCompositor:
         self._placement_signature: Optional[tuple[tuple[int, int, int, bool], ...]] = None
         self._content_signature: Optional[tuple[tuple[int, int], ...]] = None
         self._coverage: DirtyRanges = ()
+        self._aggregate_revision = 0
+        self._foreground_changed = False
+        self._foreground_dirty_ranges: Optional[DirtyRanges] = ()
 
     def compose(self, base: BaseFrame, overlays: Sequence[PlacedOverlay] = ()) -> BaseFrame:
         """Return the composed RGB frame with exact known stale-pixel coverage."""
@@ -248,11 +251,15 @@ class HostSceneCompositor:
         content_changed = content_signature != self._content_signature
         overlays_changed = placement_changed or content_changed or any(item.frame.changed for item in placed)
         if self._has_output and not base.changed and not overlays_changed:
+            self._foreground_changed = False
+            self._foreground_dirty_ranges = ()
             return BaseFrame(self._outputs[self._output_index], changed=False, dirty_ranges=())
 
         first = not self._has_output
         dirty_unknown = first
         dirty_groups: list[DirtyRanges] = []
+        foreground_dirty_unknown = first
+        foreground_dirty_groups: list[DirtyRanges] = []
         if first or base.changed:
             np.copyto(self._base, base.pixels)
             if not first:
@@ -267,21 +274,33 @@ class HostSceneCompositor:
             current_coverage = _coverage_ranges(self._aggregate)
             if not first and (placement_changed or content_changed):
                 dirty_groups.extend((previous_coverage, current_coverage))
+                foreground_dirty_groups.extend((previous_coverage, current_coverage))
             if not first:
                 for item in placed:
                     if not item.frame.changed or not item.enabled or item.opacity == 0:
                         continue
                     if item.frame.dirty_ranges is None:
                         dirty_unknown = True
+                        foreground_dirty_unknown = True
                     else:
-                        dirty_groups.append(self._translate_ranges(
+                        translated = self._translate_ranges(
                             item.frame.dirty_ranges,
                             strip_offset=item.strip_offset,
                             led_offset=item.led_offset,
-                        ))
+                        )
+                        dirty_groups.append(translated)
+                        foreground_dirty_groups.append(translated)
             self._coverage = current_coverage
             self._placement_signature = placement_signature
             self._content_signature = content_signature
+            self._aggregate_revision += 1
+
+        self._foreground_changed = first or overlays_changed
+        self._foreground_dirty_ranges = (
+            None if foreground_dirty_unknown else _union_ranges(
+                *foreground_dirty_groups, pixel_count=self.pixel_count,
+            )
+        )
 
         self._output_index = (self._output_index + 1) % len(self._outputs)
         output = self._outputs[self._output_index]
@@ -291,6 +310,23 @@ class HostSceneCompositor:
             output,
             changed=True,
             dirty_ranges=None if dirty_unknown else _union_ranges(*dirty_groups, pixel_count=self.pixel_count),
+        )
+
+    def aggregate_foreground(self) -> OverlayFrame:
+        """Return the existing aggregate premultiplied foreground transport.
+
+        The returned buffer is owned by this compositor and is deliberately not
+        another receiver plane. Callers present it only at the foreground
+        transport seam and do not retain it across a later ``compose``.
+        """
+
+        if not self._has_output:
+            raise ValueError("cannot read foreground before the first composition")
+        return OverlayFrame(
+            self._aggregate,
+            revision=self._aggregate_revision,
+            changed=self._foreground_changed,
+            dirty_ranges=self._foreground_dirty_ranges,
         )
 
     def _require_pixel_count(self, name: str, pixels: np.ndarray) -> None:

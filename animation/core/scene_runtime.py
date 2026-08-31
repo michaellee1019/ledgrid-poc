@@ -1,15 +1,13 @@
-"""Topology-neutral renderer for an already-activated canonical Scene v1.
+"""Current-only Scene v2 compositor runtime.
 
-The Composer and activation boundary own normalization and identity.  This
-module deliberately consumes that completed basis; it neither accepts a
-Composer request nor changes the scene JSON while turning its two supported
-Python component kinds into one host RGB frame.
+The receiver owns exactly one qualified native Background.  One Python
+Animation and ordered Python Widgets are folded into the established aggregate
+premultiplied-RGBA foreground transport before final RGB output.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 import hashlib
 import math
 from types import MappingProxyType
@@ -18,96 +16,64 @@ from typing import Any, Callable, Mapping, Optional
 import numpy as np
 
 from animation.core.base import RenderedFrame
-from animation.core.component_catalog import (
-    ComponentCatalog,
-    ComponentDescriptor,
-    ComponentProvider,
-    ComponentRole,
-    TimingPolicy,
-)
+from animation.core.component_catalog import AlphaBehavior, ComponentCatalog, ComponentDescriptor, PalettePolicy
 from animation.core.compositing import BaseFrame, HostSceneCompositor, OverlayFrame, PlacedOverlay
-from animation.core.presentation_contracts import ResolvedScene
-from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
-from animation.plugins.clock_overlay import ClockOverlayAnimation
-from animation.plugins.conway_life import ConwayLifeAnimation
+from animation.core.presentation_contracts import NEUTRAL_PLANT_INPUTS, ResolvedScene
 from ipc.scene_contract import (
-    CanonicalScene,
-    SceneIdentity,
-    canonical_json_bytes,
+    CanonicalScene, SCENE_V2_REVISION, SceneIdentity, canonical_json_bytes,
+    normalize_composer_scene,
 )
 
 
 class CanonicalSceneRuntimeError(ValueError):
-    """An activated scene is outside the intentionally closed host runtime."""
+    """An activated scene cannot be rendered by the current Scene v2 runtime."""
 
 
 @dataclass(frozen=True)
 class RuntimeFrame:
-    """One composed RGB frame, explicitly tied to its activated Scene basis."""
-
     pixels: np.ndarray
     basis: SceneIdentity
     changed: bool
     dirty_ranges: tuple[tuple[int, int], ...] | None = None
+    foreground: OverlayFrame | None = None
+    stage_trace: tuple[str, ...] = (
+        "native_background", "animation", "widgets", "plant_optics",
+        "look_presentation", "output_master_brightness",
+    )
 
 
-BackgroundFactory = Callable[[Any, Mapping[str, Any]], AuroraCurtainsAnimation]
-ClockFactory = Callable[[Any, Mapping[str, Any], Callable[[], datetime]], ClockOverlayAnimation]
-ConwayFactory = Callable[[Any, Mapping[str, Any]], ConwayLifeAnimation]
-
-
-class _RuntimeClockOverlay(ClockOverlayAnimation):
-    """Default Clock adapter whose wall-time source belongs to the runtime."""
-
-    def __init__(
-        self,
-        controller: Any,
-        config: Mapping[str, Any],
-        wall_time_source: Callable[[], datetime],
-    ) -> None:
-        self._runtime_wall_time_source = wall_time_source
-        super().__init__(controller, config)
-
-    def _clock_now(self) -> datetime:
-        return self._runtime_wall_time_source() + timedelta(
-            minutes=int(self.params["clock_offset_minutes"])
-        )
+BackgroundRenderer = Callable[[ResolvedScene, int], BaseFrame]
+ComponentFactory = Callable[[ComponentDescriptor, Any, Mapping[str, Any]], Any]
+PlantInputResolver = Callable[[Mapping[str, Any], ComponentDescriptor], Mapping[str, float]]
+PlantOptics = Callable[[np.ndarray, Mapping[str, Any]], np.ndarray]
+WidgetPlacementResolver = Callable[[Mapping[str, Any], int, int, int], tuple[int, int]]
 
 
 @dataclass
-class _BackgroundSlot:
+class _ComponentSlot:
     component_key: tuple[str, str, int, str]
-    semantic_seed: int
-    animation: AuroraCurtainsAnimation
+    instance: Any
     parameters: Mapping[str, Any]
-
-
-@dataclass
-class _OverlaySlot:
-    component_key: tuple[str, str, int, str]
-    component_id: str
-    animation: ClockOverlayAnimation | ConwayLifeAnimation
-    parameters: Mapping[str, Any]
+    plane_revision: int = 0
+    opaque_pixels: np.ndarray | None = None
 
 
 class CanonicalSceneRuntime:
-    """Render activated Aurora-plus-Conway-and-Clock Scene v1 bases on a host canvas.
+    """Render a canonical Scene v2 without changing its identity.
 
-    Only integrated Python ``aurora_curtains`` backgrounds and
-    ``conway_life`` and ``clock_overlay`` planes are supported in this vertical
-    slice. Factories and a wall-time source are explicit inputs so lifecycle
-    and timing tests do not need globals or real hardware.
+    ``background_renderer`` is the receiver-native preview seam.  Plant
+    calibration is supplied by runtime-owned callbacks, never saved in a look.
     """
 
     def __init__(
-        self,
-        controller: Any,
-        catalog: ComponentCatalog,
-        *,
-        background_factory: Optional[BackgroundFactory] = None,
-        clock_factory: Optional[ClockFactory] = None,
-        conway_factory: Optional[ConwayFactory] = None,
-        wall_time_source: Optional[Callable[[], datetime]] = None,
+        self, controller: Any, catalog: ComponentCatalog, *,
+        background_renderer: Optional[BackgroundRenderer] = None,
+        animation_factory: Optional[ComponentFactory] = None,
+        widget_factory: Optional[ComponentFactory] = None,
+        plant_input_resolver: Optional[PlantInputResolver] = None,
+        plant_optics: Optional[PlantOptics] = None,
+        widget_placement_resolver: Optional[WidgetPlacementResolver] = None,
+        master_brightness: float = 1.0,
     ) -> None:
         if not isinstance(catalog, ComponentCatalog):
             raise TypeError("catalog must be a ComponentCatalog")
@@ -115,244 +81,237 @@ class CanonicalSceneRuntime:
         self.catalog = catalog
         self.strip_count, self.leds_per_strip = self._controller_geometry(controller)
         self._compositor = HostSceneCompositor(self.strip_count, self.leds_per_strip)
-        self._background_factory = background_factory or self._default_background_factory
-        self._clock_factory = clock_factory or self._default_clock_factory
-        self._conway_factory = conway_factory or self._default_conway_factory
-        self._wall_time_source = wall_time_source or (lambda: datetime.now().astimezone())
-        self._background: _BackgroundSlot | None = None
-        self._overlays: dict[str, _OverlaySlot] = {}
+        self._background_renderer = background_renderer or self._black_native_preview
+        self._animation_factory = animation_factory or self._default_component_factory
+        self._widget_factory = widget_factory or self._default_component_factory
+        self._plant_input_resolver = plant_input_resolver or self._neutral_plant_inputs
+        self._plant_optics = plant_optics or self._identity_plant_optics
+        self._widget_placement_resolver = widget_placement_resolver or self._default_widget_placement
+        self._master_brightness = self._factor(master_brightness, "master_brightness")
+        self._animation: _ComponentSlot | None = None
+        self._widgets: dict[str, _ComponentSlot] = {}
         self._canonical: CanonicalScene | None = None
         self._frame_count = 0
-        self._output_buffers = tuple(
-            np.empty((self.strip_count * self.leds_per_strip, 3), dtype=np.uint8)
-            for _ in range(2)
-        )
+        total = self.strip_count * self.leds_per_strip
+        self._output_buffers = tuple(np.empty((total, 3), dtype=np.uint8) for _ in range(2))
         self._output_index = -1
-        self._scale_work = np.empty((self.strip_count * self.leds_per_strip, 3), dtype=np.float32)
-        self._last_presentation_signature: tuple[float, float] | None = None
+        self._scale_work = np.empty((total, 3), dtype=np.float32)
         self._last_output: np.ndarray | None = None
+        self._last_pipeline_signature: tuple[Any, ...] | None = None
 
     @staticmethod
     def _controller_geometry(controller: Any) -> tuple[int, int]:
-        strips = getattr(controller, "strip_count", None)
-        leds = getattr(controller, "leds_per_strip", None)
-        if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in (strips, leds)):
+        strips, leds = getattr(controller, "strip_count", None), getattr(controller, "leds_per_strip", None)
+        if any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in (strips, leds)):
             raise ValueError("controller must expose positive strip_count and leds_per_strip")
-        total = getattr(controller, "total_leds", strips * leds)
-        if total != strips * leds:
+        if getattr(controller, "total_leds", strips * leds) != strips * leds:
             raise ValueError("controller total_leds does not match strip geometry")
         return strips, leds
 
-    @staticmethod
-    def _default_background_factory(controller: Any, parameters: Mapping[str, Any]) -> AuroraCurtainsAnimation:
-        return AuroraCurtainsAnimation(controller, parameters)
-
-    @staticmethod
-    def _default_clock_factory(
-        controller: Any,
-        parameters: Mapping[str, Any],
-        wall_time_source: Callable[[], datetime],
-    ) -> ClockOverlayAnimation:
-        return _RuntimeClockOverlay(controller, parameters, wall_time_source)
-
-    @staticmethod
-    def _default_conway_factory(
-        controller: Any, parameters: Mapping[str, Any],
-    ) -> ConwayLifeAnimation:
-        return ConwayLifeAnimation(controller, parameters)
-
     @property
     def desired_identity(self) -> SceneIdentity | None:
-        """Identity of the basis requested for all subsequent render calls."""
         return None if self._canonical is None else self._canonical.identity
 
+    @property
+    def master_brightness(self) -> float:
+        """Installation-owned factor; never part of a Scene v2 look."""
+        return self._master_brightness
+
+    def set_master_brightness(self, value: float) -> float:
+        self._master_brightness = self._factor(value, "master_brightness")
+        return self._master_brightness
+
     def activate(self, canonical: CanonicalScene) -> SceneIdentity:
-        """Accept one already-canonical scene without reinterpreting its identity."""
-        raise CanonicalSceneRuntimeError(
-            "the Scene v1 host runtime is retired; use the Scene v2 compositor"
-        )
         self._require_canonical_basis(canonical)
         self._sync_slots(canonical.scene)
         self._canonical = canonical
         return canonical.identity
 
-    # A named alias makes the activation boundary clear to control-plane callers.
     activate_scene = activate
 
     def render(self, monotonic_elapsed: float) -> RuntimeFrame:
-        """Render the desired basis at host monotonic time and injected wall time."""
         canonical = self._canonical
         if canonical is None:
-            raise CanonicalSceneRuntimeError("no canonical Scene v1 has been activated")
+            raise CanonicalSceneRuntimeError("no canonical Scene v2 has been activated")
         elapsed = self._finite_nonnegative(monotonic_elapsed, "monotonic_elapsed")
-        assert self._background is not None
+        scene = canonical.scene
+        bg_context = self._context(canonical, self._descriptor(scene["background"]), scene["background"]["parameters"], elapsed)
+        background = self._background_renderer(bg_context, self._frame_count)
+        if not isinstance(background, BaseFrame):
+            raise CanonicalSceneRuntimeError("receiver-native background renderer must return BaseFrame")
+        self._require_geometry(background.pixels, 3, "receiver-native background")
 
-        context = self._background_context(canonical, elapsed)
-        background = self._render_background(self._background.animation, context)
-        overlays = self._render_overlays(canonical.scene, elapsed)
-        composed = self._compositor.compose(background, overlays)
-        presentation_signature = (
-            float(canonical.scene["presentation_luminance"]),
-            float(canonical.scene["master_brightness"]),
-        )
-        presentation_changed = presentation_signature != self._last_presentation_signature
-        changed = composed.changed or presentation_changed
-        if changed or self._last_output is None:
-            self._output_index = (self._output_index + 1) % len(self._output_buffers)
-            output = self._output_buffers[self._output_index]
-            np.multiply(composed.pixels, presentation_signature[0] * presentation_signature[1], out=self._scale_work)
+        assert self._animation is not None
+        animation_descriptor = self._descriptor(scene["animation"])
+        animation_context = self._context(canonical, animation_descriptor, self._animation.parameters, elapsed)
+        layers = [PlacedOverlay(self._render_plane(self._animation, animation_descriptor, animation_context))]
+        for index, widget in enumerate(scene["widgets"]):
+            if not widget["visible"]:
+                continue
+            descriptor, slot = self._descriptor(widget["component"]), self._widgets[widget["id"]]
+            context = self._context(canonical, descriptor, slot.parameters, elapsed)
+            strip_offset, led_offset = self._placement(widget, index)
+            layers.append(PlacedOverlay(self._render_plane(slot, descriptor, context), strip_offset, led_offset))
+
+        composed = self._compositor.compose(background, tuple(layers))
+        foreground = self._compositor.aggregate_foreground()
+        pipeline_signature = (scene["plants"], scene["look"]["presentation_brightness"], self._master_brightness)
+        pipeline_changed = pipeline_signature != self._last_pipeline_signature
+        changed = composed.changed or pipeline_changed or self._last_output is None
+        if changed:
+            final = self._validated_rgb(self._plant_optics(composed.pixels, scene["plants"]), "plant optics")
+            np.multiply(final, float(scene["look"]["presentation_brightness"]), out=self._scale_work)
+            np.multiply(self._scale_work, self._master_brightness, out=self._scale_work)
             np.rint(self._scale_work, out=self._scale_work)
             np.clip(self._scale_work, 0.0, 255.0, out=self._scale_work)
-            np.copyto(output, self._scale_work, casting="unsafe")
-            self._last_output = output
-            self._last_presentation_signature = presentation_signature
+            self._output_index = (self._output_index + 1) % len(self._output_buffers)
+            self._last_output = self._output_buffers[self._output_index]
+            np.copyto(self._last_output, self._scale_work, casting="unsafe")
+            self._last_pipeline_signature = pipeline_signature
         assert self._last_output is not None
         self._frame_count += 1
-        return RuntimeFrame(
-            pixels=self._last_output,
-            basis=canonical.identity,
-            changed=changed,
-            dirty_ranges=composed.dirty_ranges if changed and not presentation_changed else None,
-        )
+        return RuntimeFrame(self._last_output, canonical.identity, changed,
+                            composed.dirty_ranges if changed and not pipeline_changed else None, foreground)
 
     def _sync_slots(self, scene: Mapping[str, Any]) -> None:
-        background = scene["background"]
-        background_descriptor = self._require_component(background, ComponentRole.BACKGROUND)
-        if background_descriptor.component_id != AuroraCurtainsAnimation.COMPONENT_ID:
-            raise CanonicalSceneRuntimeError("only Python Aurora Curtains backgrounds are integrated")
-        parameters = _freeze_mapping(background["parameters"])
-        key = self._component_key(background)
-        seed = int(parameters["seed"])
-        if (
-            self._background is None
-            or self._background.component_key != key
-            or self._background.semantic_seed != seed
-        ):
-            self._background = _BackgroundSlot(
-                component_key=key,
-                semantic_seed=seed,
-                animation=self._background_factory(self.controller, parameters),
-                parameters=parameters,
-            )
-        elif self._background.parameters != parameters:
-            self._background.animation.update_parameters(parameters)
-            self._background.parameters = parameters
+        component = scene["animation"]
+        animation = self._candidate_slot(self._animation, self._descriptor(component), component["parameters"], self._animation_factory)
+        widgets: dict[str, _ComponentSlot] = {}
+        active: set[str] = set()
+        for widget in scene["widgets"]:
+            widget_id, component = widget["id"], widget["component"]
+            active.add(widget_id)
+            widgets[widget_id] = self._candidate_slot(self._widgets.get(widget_id), self._descriptor(component), component["parameters"], self._widget_factory)
+        # Nothing above mutates a published slot. Only exchange the complete
+        # candidate set after every constructor/validation path has succeeded.
+        self._animation = animation
+        self._widgets = widgets
 
-        active_slots: set[str] = set()
-        for overlay in scene["overlays"]:
-            slot_id = overlay["slot_id"]
-            active_slots.add(slot_id)
-            descriptor = self._require_component(overlay["component"], None)
-            parameters = _freeze_mapping(overlay["component"]["parameters"])
-            key = self._component_key(overlay["component"])
-            existing = self._overlays.get(slot_id)
-            if existing is None or existing.component_key != key:
-                if descriptor.component_id == ClockOverlayAnimation.COMPONENT_ID:
-                    animation = self._clock_factory(self.controller, parameters, self._wall_time_source)
-                elif descriptor.component_id == ConwayLifeAnimation.COMPONENT_ID:
-                    animation = self._conway_factory(self.controller, parameters)
-                else:
-                    raise CanonicalSceneRuntimeError("only Python Conway Life and Clock Overlay planes are integrated")
-                self._overlays[slot_id] = _OverlaySlot(
-                    component_key=key,
-                    component_id=descriptor.component_id,
-                    animation=animation,
-                    parameters=parameters,
-                )
-            elif existing.parameters != parameters:
-                existing.animation.update_parameters(parameters)
-                existing.parameters = parameters
-        for slot_id in set(self._overlays) - active_slots:
-            del self._overlays[slot_id]
+    def _candidate_slot(self, current: _ComponentSlot | None, descriptor: ComponentDescriptor,
+                        parameters: Mapping[str, Any], factory: ComponentFactory) -> _ComponentSlot:
+        frozen = _freeze_mapping(parameters)
+        key = (descriptor.provider.value, descriptor.component_id, descriptor.version, descriptor.role.value)
+        if current is not None and current.component_key == key and current.parameters == frozen:
+            return current
+        # Reconstruct changed components rather than live-mutating the active
+        # instance. That makes a later failing Widget factory unable to leak a
+        # partial Animation update into the last valid scene.
+        return _ComponentSlot(key, factory(descriptor, self.controller, frozen), frozen)
 
-    def _background_context(self, canonical: CanonicalScene, elapsed: float) -> ResolvedScene:
-        assert self._background is not None
-        scene = canonical.scene
-        descriptor = self._require_component(scene["background"], ComponentRole.BACKGROUND)
-        return ResolvedScene(
-            canonical_scene=_freeze_mapping(scene),
-            canonical_bytes=canonical.canonical_bytes,
-            digest=canonical.identity.digest,
-            descriptor=descriptor,
-            parameters=self._background.parameters,
-            palette=MappingProxyType({"palette_id": scene["palette_id"]}),
-            phase_time=elapsed * float(scene["wall_pace"]),
-            plant_inputs=MappingProxyType({}),
-        )
+    def _context(self, canonical: CanonicalScene, descriptor: ComponentDescriptor, parameters: Mapping[str, Any], elapsed: float) -> ResolvedScene:
+        supplied = self._plant_input_resolver(canonical.scene["plants"], descriptor)
+        if not isinstance(supplied, Mapping):
+            raise CanonicalSceneRuntimeError("plant input resolver must return a mapping")
+        plant_inputs: dict[str, float] = {}
+        for name in descriptor.required_simulation_inputs:
+            if name not in supplied:
+                raise CanonicalSceneRuntimeError(f"required plant simulation input {name!r} is missing")
+            value = supplied[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                raise CanonicalSceneRuntimeError(f"plant simulation input {name!r} must be finite")
+            plant_inputs[name] = float(value)
+        for name in descriptor.optional_simulation_inputs:
+            value = supplied.get(name, NEUTRAL_PLANT_INPUTS.get(name, 0.0))
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                raise CanonicalSceneRuntimeError(f"plant simulation input {name!r} must be finite")
+            plant_inputs[name] = float(value)
+        palette = _freeze_mapping({"palette_id": canonical.scene["look"]["palette_id"]}) if descriptor.palette_policy is PalettePolicy.SEMANTIC else None
+        return ResolvedScene(_freeze_mapping(canonical.scene), canonical.canonical_bytes, canonical.identity.digest,
+                             descriptor, parameters, palette, elapsed * float(canonical.scene["look"]["pace"]), _freeze_mapping(plant_inputs))
 
-    def _render_background(self, animation: AuroraCurtainsAnimation, context: ResolvedScene) -> BaseFrame:
-        animation.set_presentation_context(context)
-        rendered = animation.generate_frame(context.phase_time, self._frame_count)
-        pixels, changed, dirty_ranges = _rendered_rgb(rendered)
-        return BaseFrame(pixels, changed=changed, dirty_ranges=dirty_ranges)
+    def _render_plane(self, slot: _ComponentSlot, descriptor: ComponentDescriptor, context: ResolvedScene) -> OverlayFrame:
+        instance = slot.instance
+        set_context = getattr(instance, "set_presentation_context", None)
+        if set_context is not None:
+            set_context(context)
+        resolved_renderer = getattr(instance, "render_resolved_scene", None)
+        if resolved_renderer is not None:
+            rendered = resolved_renderer(context)
+        else:
+            generator = getattr(instance, "generate_frame", None)
+            if generator is None:
+                raise CanonicalSceneRuntimeError(f"{descriptor.component_id} has no frame renderer")
+            rendered = generator(context.phase_time if descriptor.timing_policy.value == "scaled_context" else 0.0, self._frame_count)
+        if isinstance(rendered, OverlayFrame):
+            if descriptor.alpha_behavior is AlphaBehavior.OPAQUE and np.any(rendered.pixels[:, 3] != 255):
+                raise CanonicalSceneRuntimeError("opaque Animation must produce alpha 255")
+            return rendered
+        pixels, changed, dirty = _rendered_pixels(rendered)
+        if descriptor.alpha_behavior is not AlphaBehavior.OPAQUE:
+            raise CanonicalSceneRuntimeError("premultiplied_rgba component must return OverlayFrame")
+        rgb = self._validated_rgb(pixels, descriptor.component_id)
+        if slot.opaque_pixels is None:
+            slot.opaque_pixels = np.empty((rgb.shape[0], 4), dtype=np.uint8)
+            refresh = True
+        else:
+            refresh = changed
+        if refresh:
+            slot.opaque_pixels[:, :3], slot.opaque_pixels[:, 3] = rgb, 255
+            slot.plane_revision += 1
+        return OverlayFrame(slot.opaque_pixels, revision=slot.plane_revision, changed=changed, dirty_ranges=dirty)
 
-    def _render_overlays(self, scene: Mapping[str, Any], elapsed: float) -> tuple[PlacedOverlay, ...]:
-        placed: list[PlacedOverlay] = []
-        for overlay in scene["overlays"]:
-            slot = self._overlays[overlay["slot_id"]]
-            if slot.component_id == ConwayLifeAnimation.COMPONENT_ID:
-                animation = slot.animation
-                if not isinstance(animation, ConwayLifeAnimation):
-                    raise CanonicalSceneRuntimeError("Conway Life slot has an incompatible animation")
-                descriptor = self._require_component(overlay["component"], None)
-                context = self._overlay_context(scene, descriptor, slot.parameters, elapsed)
-                animation.set_presentation_context(context)
-                frame = animation.generate_frame(context.phase_time, self._frame_count)
-            else:
-                frame = slot.animation.generate_frame(elapsed, self._frame_count)
-            if not isinstance(frame, OverlayFrame):
-                raise CanonicalSceneRuntimeError("integrated overlay must render an OverlayFrame")
-            placement = overlay["placement"]
-            placed.append(PlacedOverlay(
-                frame=frame,
-                strip_offset=placement["strip_translation"],
-                led_offset=placement["led_translation"],
-                opacity=overlay["opacity"],
-                enabled=overlay["enabled"],
-            ))
-        return tuple(placed)
+    def _placement(self, widget: Mapping[str, Any], index: int) -> tuple[int, int]:
+        placement = widget["placement"]
+        if placement["mode"] == "manual":
+            return placement["strip_translation"], placement["led_translation"]
+        resolved = self._widget_placement_resolver(widget, index, self.strip_count, self.leds_per_strip)
+        if not isinstance(resolved, tuple) or len(resolved) != 2 or any(isinstance(item, bool) or not isinstance(item, int) for item in resolved):
+            raise CanonicalSceneRuntimeError("widget placement resolver must return integer offsets")
+        return resolved
 
-    @staticmethod
-    def _overlay_context(
-        scene: Mapping[str, Any],
-        descriptor: ComponentDescriptor,
-        parameters: Mapping[str, Any],
-        elapsed: float,
-    ) -> ResolvedScene:
-        canonical_bytes = canonical_json_bytes(scene)
-        return ResolvedScene(
-            canonical_scene=_freeze_mapping(scene),
-            canonical_bytes=canonical_bytes,
-            digest=hashlib.sha256(canonical_bytes).hexdigest(),
-            descriptor=descriptor,
-            parameters=parameters,
-            palette=MappingProxyType({"palette_id": scene["palette_id"]}),
-            phase_time=elapsed * float(scene["wall_pace"]),
-            plant_inputs=MappingProxyType({}),
-        )
-
-    def _require_component(self, component: Mapping[str, Any], role: ComponentRole | None) -> ComponentDescriptor:
+    def _descriptor(self, component: Mapping[str, Any]) -> ComponentDescriptor:
         try:
-            descriptor = self.catalog.require(
-                provider=component["provider"], component_id=component["component_id"], version=component["version"],
-            )
+            return self.catalog.require(provider=component["provider"], component_id=component["component_id"], version=component["version"])
         except (KeyError, TypeError, ValueError) as exc:
             raise CanonicalSceneRuntimeError("canonical scene component is absent from this catalog") from exc
-        if descriptor.provider is not ComponentProvider.PYTHON or descriptor.role is not role:
-            raise CanonicalSceneRuntimeError("canonical scene component is outside the supported Python runtime")
-        if role is ComponentRole.BACKGROUND and descriptor.timing_policy is not TimingPolicy.SCALED_CONTEXT:
-            raise CanonicalSceneRuntimeError("canonical scene component is outside the supported Python runtime")
-        if role is None and (
-            (descriptor.component_id == ClockOverlayAnimation.COMPONENT_ID and descriptor.timing_policy is not TimingPolicy.WALL_CLOCK)
-            or (descriptor.component_id == ConwayLifeAnimation.COMPONENT_ID and descriptor.timing_policy is not TimingPolicy.SCALED_CONTEXT)
-            or descriptor.component_id not in {ClockOverlayAnimation.COMPONENT_ID, ConwayLifeAnimation.COMPONENT_ID}
-        ):
-            raise CanonicalSceneRuntimeError("canonical scene component is outside the supported Python runtime")
-        return descriptor
 
     @staticmethod
-    def _component_key(component: Mapping[str, Any]) -> tuple[str, str, int, str]:
-        return (component["provider"], component["component_id"], component["version"], component["role"])
+    def _default_component_factory(descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
+        if descriptor.component_id == "aurora_curtains":
+            from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
+            return AuroraCurtainsAnimation(controller, parameters)
+        if descriptor.component_id == "conway_life":
+            from animation.plugins.conway_life import ConwayLifeAnimation
+            return ConwayLifeAnimation(controller, parameters)
+        if descriptor.component_id == "clock_overlay":
+            from animation.plugins.clock_overlay import ClockOverlayAnimation
+            return ClockOverlayAnimation(controller, parameters)
+        raise CanonicalSceneRuntimeError(f"no runtime factory is registered for {descriptor.component_id}")
+
+    def _black_native_preview(self, context: ResolvedScene, frame_count: int) -> BaseFrame:
+        del context, frame_count
+        return BaseFrame(np.zeros((self.strip_count * self.leds_per_strip, 3), dtype=np.uint8), changed=False)
+
+    @staticmethod
+    def _neutral_plant_inputs(plants: Mapping[str, Any], descriptor: ComponentDescriptor) -> Mapping[str, float]:
+        del plants, descriptor
+        return NEUTRAL_PLANT_INPUTS
+
+    @staticmethod
+    def _identity_plant_optics(pixels: np.ndarray, plants: Mapping[str, Any]) -> np.ndarray:
+        del plants
+        return pixels
+
+    @staticmethod
+    def _default_widget_placement(widget: Mapping[str, Any], index: int, strips: int, leds: int) -> tuple[int, int]:
+        del widget, index, strips, leds
+        return (0, 0)
+
+    @staticmethod
+    def _factor(value: Any, name: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0.0 <= float(value) <= 2.0:
+            raise ValueError(f"{name} must be a finite number from 0 to 2")
+        return float(value)
+
+    def _require_geometry(self, pixels: np.ndarray, channels: int, name: str) -> None:
+        if pixels.dtype != np.uint8 or pixels.shape != (self.strip_count * self.leds_per_strip, channels) or not pixels.flags.c_contiguous:
+            raise CanonicalSceneRuntimeError(f"{name} must be C-contiguous uint8 ({self.strip_count * self.leds_per_strip}, {channels})")
+
+    def _validated_rgb(self, pixels: Any, name: str) -> np.ndarray:
+        if not isinstance(pixels, np.ndarray):
+            raise CanonicalSceneRuntimeError(f"{name} must render numpy pixels")
+        self._require_geometry(pixels, 3, name)
+        return pixels
 
     @staticmethod
     def _finite_nonnegative(value: Any, name: str) -> float:
@@ -360,25 +319,30 @@ class CanonicalSceneRuntime:
             raise ValueError(f"{name} must be finite and non-negative")
         return float(value)
 
-    @staticmethod
-    def _require_canonical_basis(canonical: CanonicalScene) -> None:
+    def _require_canonical_basis(self, canonical: CanonicalScene) -> None:
         if not isinstance(canonical, CanonicalScene):
             raise TypeError("canonical must be a CanonicalScene")
-        if canonical.identity.revision != 1:
-            raise CanonicalSceneRuntimeError("canonical scene revision is not current Scene v1")
+        if canonical.identity.revision != SCENE_V2_REVISION:
+            raise CanonicalSceneRuntimeError("canonical scene revision is not current Scene v2")
         bytes_value = canonical_json_bytes(canonical.scene)
         if bytes_value != canonical.canonical_bytes:
             raise CanonicalSceneRuntimeError("canonical scene bytes do not match its scene value")
         if hashlib.sha256(bytes_value).hexdigest() != canonical.identity.digest:
             raise CanonicalSceneRuntimeError("canonical scene digest does not match its bytes")
+        try:
+            normalized = normalize_composer_scene({"origin": "composer", "scene": canonical.scene}, self.catalog)
+        except (TypeError, ValueError) as exc:
+            raise CanonicalSceneRuntimeError("canonical scene no longer satisfies the Scene v2 catalog") from exc
+        if normalized.canonical_bytes != canonical.canonical_bytes or normalized.identity != canonical.identity:
+            raise CanonicalSceneRuntimeError("canonical scene is not a validated Scene v2 basis")
 
 
-def _rendered_rgb(rendered: Any) -> tuple[np.ndarray, bool, tuple[tuple[int, int], ...] | None]:
+def _rendered_pixels(rendered: Any) -> tuple[Any, bool, tuple[tuple[int, int], ...] | None]:
     if isinstance(rendered, RenderedFrame):
         return rendered.pixels, rendered.changed, rendered.dirty_ranges
     if isinstance(rendered, np.ndarray):
         return rendered, True, None
-    raise CanonicalSceneRuntimeError("Aurora Curtains must render RGB pixels")
+    raise CanonicalSceneRuntimeError("component renderer must return RGB pixels, RenderedFrame, or OverlayFrame")
 
 
 def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
