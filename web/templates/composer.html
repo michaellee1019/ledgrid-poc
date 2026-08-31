@@ -8,6 +8,7 @@
 </head>
 <body>
 <main class="composer" data-api-root="/api/composer">
+  <section id="recoveryCard" class="composer-card" hidden><p class="eyebrow">Working draft</p><p id="recoveryMessage">A saved local draft is available.</p><button id="restoreDraft" class="button secondary" type="button">Restore</button><button id="discardDraft" class="button text" type="button">Discard</button></section>
   <header class="composer-heading">
     <p class="eyebrow">Local Composer</p>
     <h1>Build a scene</h1>
@@ -33,7 +34,7 @@
   <section class="composer-card preview-card" aria-labelledby="preview-title">
     <div class="section-title"><div><p class="eyebrow">Local runtime</p><h2 id="preview-title">Current draft</h2></div><strong id="previewIdentity">Rendering…</strong></div>
     <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" aria-label="Current local Scene v1 preview"></canvas></div>
-    <p id="previewStatus" class="live-message" role="status" aria-live="polite">Rendering this local draft without changing the wall.</p>
+    <p id="previewStatus" class="live-message" role="status" aria-live="polite">Rendering this local draft without changing the wall.</p><p id="draftState" class="live-message" role="status" aria-live="polite">Choose a starter or saved look to establish a basis.</p>
   </section>
 
   <section class="composer-card" aria-labelledby="overlays-title">

@@ -37,7 +37,7 @@ from animation.core.scene_runtime import CanonicalSceneRuntime, CanonicalSceneRu
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
-from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_composer_scene
+from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_composer_scene, normalize_scene_identity
 from web.activation_token_store import (
     ActivationTokenError,
     ActivationTokenStale,
@@ -45,6 +45,7 @@ from web.activation_token_store import (
 )
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
+from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 
 
 PAINTER_MASK_TYPES = (
@@ -122,6 +123,7 @@ class AnimationWebInterface:
         self.composer_adapter = LocalSceneAdapter()
         self.composer_control = _ComposerLocalControlChannel()
         self.composer_looks = SceneLookStore(self.project_root / "run_state" / "composer_looks.json")
+        self.working_draft = WorkingDraftStore(self.project_root / 'run_state' / 'composer_draft.json')
         self._composer_checked = None
         self._composer_rejection: Optional[str] = None
         self._composer_retry = False
@@ -163,6 +165,41 @@ class AnimationWebInterface:
         def api_composer_status():
             """Read only local desired/observed Scene-v1 reconciliation state."""
             return jsonify(self._composer_status_payload())
+
+        @self.app.route('/api/composer/draft')
+        def api_composer_draft():
+            try:
+                value = self.working_draft.get()
+                if value is not None:
+                    canonical = self._composer_working_draft(value['draft'])
+                    if canonical.identity.to_dict() != value['basis']:
+                        raise WorkingDraftError('Working draft no longer matches its basis; discard it.')
+                    reference = self._composer_draft_reference(value['reference'], require_current=False)
+                    # A matching basis is stale bookkeeping, never a recovery offer.
+                    if canonical.identity.to_dict() == reference['basis']:
+                        value = None
+                return jsonify({'draft': value})
+            except (WorkingDraftError, SceneContractError, SceneLookStoreError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/draft', methods=['POST','DELETE'])
+        def api_composer_change_draft():
+            try:
+                if request.method == 'DELETE':
+                    self.working_draft.discard()
+                    return jsonify({'discarded': True})
+                payload = request.get_json(silent=True) or {}
+                if set(payload) != {'draft', 'reference'}:
+                    raise WorkingDraftError('Working draft is malformed.')
+                canonical = normalize_composer_scene(payload['draft'], self.composer_catalog)
+                reference = self._composer_draft_reference(payload['reference'], require_current=True)
+                if canonical.identity.to_dict() == reference['basis']:
+                    self.working_draft.discard()
+                    return jsonify({'draft': None})
+                return jsonify({'draft': self.working_draft.save(
+                    {'origin': 'composer', 'scene': canonical.scene}, canonical.identity.to_dict(), reference, time.time(),
+                )})
+            except (WorkingDraftError, SceneContractError, TypeError, ValueError) as exc: return jsonify({'error':str(exc)}),400
 
         @self.app.route('/api/composer/preview', methods=['POST'])
         def api_composer_preview():
@@ -1140,6 +1177,64 @@ class AnimationWebInterface:
         if canonical.scene != scene or canonical.identity.to_dict() != record['basis']:
             raise SceneLookStoreError('Saved look has changed or is corrupt; recreate it.')
         return {'id': record['id'], 'name': record['name'], 'basis': record['basis'], 'scene': scene}
+
+    def _composer_draft_reference(self, value: Any, *, require_current: bool) -> dict[str, Any]:
+        """Validate the typed saved/starter basis without inventing a fallback."""
+        if not isinstance(value, dict) or value.get('kind') not in {'starter', 'look'}:
+            raise WorkingDraftError('Working draft reference is unknown; discard it.')
+        expected = {'kind', 'id', 'basis', 'baseline'} if value['kind'] == 'starter' else {'kind', 'id', 'basis'}
+        if set(value) != expected or not isinstance(value['id'], str) or not value['id']:
+            raise WorkingDraftError('Working draft reference is malformed; discard it.')
+        reference = {'kind': value['kind'], 'id': value['id'], 'basis': normalize_scene_identity(value['basis']).to_dict()}
+        if reference['kind'] == 'starter':
+            starter = self._composer_starter(get_starter(reference['id']))
+            starter_canonical = normalize_composer_scene({'origin': 'composer', 'scene': {
+                'schema': 'ledgrid.scene.v1', 'vibe': 'quiet', 'master_brightness': 1,
+                'background': starter['background'], 'overlays': starter['overlays'],
+            }}, self.composer_catalog)
+            baseline = self._composer_draft_canonical(value['baseline'])
+            if baseline.identity.to_dict() != reference['basis']:
+                raise WorkingDraftError('Starter no longer matches this working draft; discard it.')
+            if (baseline.scene['background'] != starter_canonical.scene['background']
+                    or baseline.scene['overlays'] != starter_canonical.scene['overlays']):
+                raise WorkingDraftError('Starter content no longer matches this working draft; discard it.')
+            reference['baseline'] = {'origin': 'composer', 'scene': baseline.scene}
+            return reference
+        if not require_current:
+            return reference
+        look = self._composer_look_payload(self.composer_looks.get(reference['id']))
+        if look['basis'] != reference['basis']:
+            raise WorkingDraftError('Saved look no longer matches this working draft; discard it.')
+        return reference
+
+    def _composer_working_draft(self, value: Any):
+        """Revalidate the stored canonical scene through the authored boundary."""
+        if not isinstance(value, dict) or set(value) != {'origin', 'scene'} or value['origin'] != 'composer':
+            raise WorkingDraftError('Working draft is malformed; discard it.')
+        scene = value['scene']
+        if not isinstance(scene, dict) or set(scene) != {
+            'schema', 'background', 'overlays', 'vibe_source', 'palette_id',
+            'wall_pace', 'presentation_luminance', 'master_brightness',
+        }:
+            raise WorkingDraftError('Working draft is not current Scene v1; discard it.')
+        authored = {
+            'schema': scene['schema'], 'background': scene['background'],
+            'overlays': scene['overlays'], 'master_brightness': scene['master_brightness'],
+        }
+        if scene['vibe_source'] == 'custom':
+            authored['custom'] = {
+                'palette_id': scene['palette_id'], 'wall_pace': scene['wall_pace'],
+                'presentation_luminance': scene['presentation_luminance'],
+            }
+        else:
+            authored['vibe'] = scene['vibe_source']
+        return normalize_composer_scene({'origin': 'composer', 'scene': authored}, self.composer_catalog)
+
+    def _composer_draft_canonical(self, value: Any):
+        """Accept an authored reference baseline, or its stored canonical form."""
+        if isinstance(value, dict) and isinstance(value.get('scene'), dict) and 'vibe_source' in value['scene']:
+            return self._composer_working_draft(value)
+        return normalize_composer_scene(value, self.composer_catalog)
 
     def _composer_starter(self, starter: Dict[str, Any]) -> Dict[str, Any]:
         """Reject invalid built-in data before it can reach draft state."""
