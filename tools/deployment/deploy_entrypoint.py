@@ -1084,6 +1084,7 @@ class CoordinatorDeployment:
                     str(self.config.receiver_count),
                     "--timeout",
                     str(self.config.health_timeout),
+                    "--allow-legacy-status-fallback",
                 )
                 failure = ActivationFailureEvidence(
                     candidate_release=candidate,
@@ -1199,6 +1200,7 @@ class CoordinatorDeployment:
                 "--timeout",
                 str(self.config.health_timeout),
                 *self._receiver_health_args(),
+                *self._health_compatibility_args(),
             )
             bootstrap = self.target.run(
                 "complete-legacy-bootstrap", str(context.state["release_id"])
@@ -1211,6 +1213,9 @@ class CoordinatorDeployment:
             })
 
         return self._post_activation(execute)
+
+    def _health_compatibility_args(self) -> tuple[str, ...]:
+        return ()
 
     def _prune(self, _context: DeployContext) -> OperationResult:
         try:
@@ -1363,6 +1368,12 @@ class CoordinatorRollback(CoordinatorDeployment):
             "health.readiness": self._health,
             "release.prune": self._prune,
         }
+
+    def _health_compatibility_args(self) -> tuple[str, ...]:
+        # A selected historical immutable release can predate Composer
+        # operations telemetry. The target only consults its legacy status
+        # endpoint after telemetry explicitly reports 404.
+        return ("--allow-legacy-status-fallback",)
 
     def steps(self):
         return build_steps("rollback", self.operations())

@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 import unittest
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 
 from animation.core.plugin_loader import AnimationPluginLoader
 from tools.deployment import deploy_entrypoint, deploy_target
@@ -931,6 +932,59 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         self.assertEqual(sample.receiver_count, 4)
         self.assertEqual(sample.receiver_logical_ids, (0, 1, 2, 3))
         self.assertTrue(sample.ready)
+
+    def test_legacy_status_fallback_is_limited_to_explicit_telemetry_404(self) -> None:
+        telemetry_url = (
+            "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
+        )
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "updated_at": 100.25,
+            "release_id": "a" * 64,
+            "release_consistent": True,
+            "led_info": {"strip_count": 33, "leds_per_strip": 138},
+            "driver_stats": {"aggregate": {"num_devices": 5}},
+        }).encode()
+        missing_telemetry = HTTPError(
+            telemetry_url, 404, "Not Found", None, None,
+        )
+        with patch.object(
+            deploy_target, "urlopen", side_effect=(missing_telemetry, response),
+        ) as opener:
+            status = deploy_target._api_status(
+                telemetry_url, allow_legacy_status_fallback=True,
+            )
+
+        self.assertEqual(status["release_id"], "a" * 64)
+        self.assertEqual(status["driver_stats"], {"aggregate": {"num_devices": 5}})
+        self.assertEqual(
+            opener.call_args_list[1].args[0], "http://127.0.0.1:5000/api/status",
+        )
+
+    def test_legacy_status_fallback_does_not_mask_non_404_or_bad_telemetry(self) -> None:
+        telemetry_url = (
+            "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
+        )
+        unavailable = HTTPError(telemetry_url, 503, "Unavailable", None, None)
+        with (
+            patch.object(deploy_target, "urlopen", side_effect=unavailable) as opener,
+            self.assertRaisesRegex(RuntimeError, "HTTP Error 503"),
+        ):
+            deploy_target._api_status(
+                telemetry_url, allow_legacy_status_fallback=True,
+            )
+        self.assertEqual(opener.call_count, 1)
+
+        malformed = MagicMock()
+        malformed.__enter__.return_value.read.return_value = b'{}'
+        with (
+            patch.object(deploy_target, "urlopen", return_value=malformed) as opener,
+            self.assertRaisesRegex(RuntimeError, "contract is unsupported"),
+        ):
+            deploy_target._api_status(
+                telemetry_url, allow_legacy_status_fallback=True,
+            )
+        self.assertEqual(opener.call_count, 1)
 
     def test_sample_health_accepts_idle_controller_as_ready(self) -> None:
         active = subprocess.CompletedProcess(("systemctl",), 0, "", "")
@@ -4196,6 +4250,8 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "prune-releases",
             ],
         )
+        health_call = next(call for call in target.calls if call[0] == "health")
+        self.assertNotIn("--allow-legacy-status-fallback", health_call[1])
 
     def test_unchanged_full_deployment_does_not_activate_restart_restore_or_flash(self) -> None:
         deployment, context, _runner, target = self._deployment(unchanged=True)
@@ -4809,6 +4865,9 @@ class PostActivationCompensationTests(unittest.TestCase):
                 )
                 self.assertEqual(target.calls[-4][1], ("b" * 64,))
                 self.assertEqual(target.calls[-1][1][0], "b" * 64)
+                self.assertIn(
+                    "--allow-legacy-status-fallback", target.calls[-1][1]
+                )
                 self.assertNotIn(
                     "--receiver-contract-json", target.calls[-1][1]
                 )

@@ -28,8 +28,9 @@ import subprocess
 import tempfile
 import time
 from typing import Any, Iterable, Mapping, Optional, Sequence
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from urllib.parse import urlsplit, urlunsplit
 
 try:
     from tools.deployment.app_releases import AppReleaseManager
@@ -2532,12 +2533,53 @@ def _service_release(root: Path, unit: str) -> Optional[str]:
     return relative.parts[0] if len(relative.parts) == 1 else None
 
 
-def _api_status(api_url: str, timeout: float = 2.0) -> Mapping[str, Any]:
+def _legacy_status_url(api_url: str) -> str:
+    """Return the legacy status URL on the exact same HTTP origin."""
+    parsed = urlsplit(api_url)
+    return urlunsplit((parsed.scheme, parsed.netloc, "/api/status", "", ""))
+
+
+def _legacy_status_for_health(payload: Any) -> Mapping[str, Any]:
+    """Project the former status document onto the health reader's fields."""
+    if not isinstance(payload, dict):
+        raise RuntimeError("legacy controller status is not an object")
+    return {
+        "updated_at": payload.get("updated_at"),
+        "timestamp": payload.get("timestamp"),
+        "release_id": payload.get("release_id"),
+        "release_consistent": payload.get("release_consistent"),
+        "led_info": payload.get("led_info"),
+        "driver_stats": payload.get("driver_stats"),
+    }
+
+
+def _read_api_document(api_url: str, timeout: float) -> Any:
     try:
         with urlopen(api_url, timeout=timeout) as response:  # nosec: fixed/local operator URL
-            payload = json.loads(response.read().decode("utf-8"))
+            return json.loads(response.read().decode("utf-8"))
     except (OSError, URLError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"cannot read controller API status: {exc}") from exc
+
+
+def _api_status(
+    api_url: str,
+    timeout: float = 2.0,
+    *,
+    allow_legacy_status_fallback: bool = False,
+) -> Mapping[str, Any]:
+    try:
+        payload = _read_api_document(api_url, timeout)
+    except RuntimeError as exc:
+        cause = exc.__cause__
+        if not (
+            allow_legacy_status_fallback
+            and isinstance(cause, HTTPError)
+            and cause.code == 404
+        ):
+            raise
+        return _legacy_status_for_health(
+            _read_api_document(_legacy_status_url(api_url), timeout)
+        )
     if not isinstance(payload, dict):
         raise RuntimeError("controller operations telemetry is not an object")
     if (
@@ -2718,12 +2760,21 @@ def _full_frame_sampling_delta_rejection(
     return None
 
 
-def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample:
+def _sample_health(
+    root: Path,
+    *,
+    unit: str,
+    api_url: str,
+    allow_legacy_status_fallback: bool = False,
+) -> TargetHealthSample:
     active = _command(("systemctl", "is-active", "--quiet", unit), check=False)
     if active.returncode:
         raise RuntimeError(f"systemd unit is not active: {unit}")
     sampled_at = time.time()
-    status = _api_status(api_url)
+    status = _api_status(
+        api_url,
+        allow_legacy_status_fallback=allow_legacy_status_fallback,
+    )
     led_info = status.get("led_info") if isinstance(status.get("led_info"), dict) else {}
     driver = status.get("driver_stats") if isinstance(status.get("driver_stats"), dict) else {}
     aggregate = driver.get("aggregate") if isinstance(driver.get("aggregate"), dict) else {}
@@ -3562,6 +3613,7 @@ def fresh_health(
     unit: str,
     api_url: str,
     receiver_contract: Optional[Mapping[str, Any]] = None,
+    allow_legacy_status_fallback: bool = False,
 ) -> Mapping[str, Any]:
     if stable_samples < 1:
         raise ValueError("stable_samples must be positive")
@@ -3577,7 +3629,12 @@ def fresh_health(
         try:
             if contract is not None:
                 _request_receiver_status_refresh(api_url)
-            sample = _sample_health(root, unit=unit, api_url=api_url)
+            sample = _sample_health(
+                root,
+                unit=unit,
+                api_url=api_url,
+                allow_legacy_status_fallback=allow_legacy_status_fallback,
+            )
             rejection: Optional[str] = None
             if sample.release_id != release_id:
                 rejection = f"service release is {sample.release_id!r}, expected {release_id!r}"
@@ -3755,6 +3812,7 @@ def _parser() -> argparse.ArgumentParser:
     health.add_argument("--unit", default=DEFAULT_SYSTEMD_UNIT)
     health.add_argument("--api-url", default=DEFAULT_API_URL)
     health.add_argument("--receiver-contract-json")
+    health.add_argument("--allow-legacy-status-fallback", action="store_true")
     subparsers.add_parser("record-deploy")
     subparsers.add_parser("reboot")
     subparsers.add_parser("current-release")
@@ -3835,6 +3893,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             unit=args.unit,
             api_url=args.api_url,
             receiver_contract=receiver_contract,
+            allow_legacy_status_fallback=args.allow_legacy_status_fallback,
         )
     elif args.command == "record-deploy":
         result = record_deploy(root)
