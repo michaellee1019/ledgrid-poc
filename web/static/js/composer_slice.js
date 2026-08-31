@@ -3,10 +3,12 @@
   const root = document.querySelector('.composer');
   const api = root.dataset.apiRoot;
   const list = document.querySelector('#overlayList');
-  const state = { overlays: [], checked: null, activationKey: null, presentationMode: 'vibe', previewGeneration: 0, looks: [], library: { items: [], favorites: [], recents: [] }, libraryFilter: 'all', libraryQuery: '', deleteLookId: null, starterId: null, background: { seed: 4201, source_fps: 30 }, reference: null, recovery: null, committedPreview: null, components: [] };
+  const state = { overlays: [], checked: null, activationKey: null, presentationMode: 'vibe', previewGeneration: 0, previewScheduled: false, pendingPreview: null, autosaveChain: Promise.resolve(), selectedOverlaySlot: null, drag: null, looks: [], library: { items: [], favorites: [], recents: [] }, libraryFilter: 'all', libraryQuery: '', deleteLookId: null, starterId: null, background: { seed: 4201, source_fps: 30 }, reference: null, recovery: null, committedPreview: null, components: [] };
   // Filled exclusively by the qualified local component endpoint.
   const defaults = {};
   const componentLabels = { conway_life: 'Conway Life', clock_overlay: 'Clock Overlay' };
+  const TRANSLATION_MIN = -(2 ** 31);
+  const TRANSLATION_MAX = (2 ** 31) - 1;
   const $ = (selector) => document.querySelector(selector);
   const identity = (item) => item ? `r${item.revision} · ${item.digest}` : 'No acknowledgement';
   function draft() {
@@ -20,13 +22,14 @@
       } },
       overlays: state.overlays.map((overlay) => ({
         slot_id: overlay.slot_id, component: { component_id: overlay.component_id, version: 1, provider: 'python', role: 'overlay', parameters: overlay.parameters },
-        enabled: overlay.enabled, opacity: Number(overlay.opacity), placement: { strip_translation: Number(overlay.strip), led_translation: Number(overlay.led), clip_policy: 'clip_to_wall' },
+        enabled: overlay.enabled, opacity: Number(overlay.opacity), placement: { strip_translation: canonicalTranslation(overlay.strip), led_translation: canonicalTranslation(overlay.led), clip_policy: 'clip_to_wall' },
         stale_policy: overlay.stale === 'hold' ? { policy: 'hold' } : { policy: 'clear_after_lease', lease_ms: 1200 },
       })),
     } };
   }
+  function canonicalTranslation(value) { const number = Number(value); if (!Number.isFinite(number)) return 0; return Math.min(TRANSLATION_MAX, Math.max(TRANSLATION_MIN, Math.trunc(number))); }
   function markDraftLocal() { state.checked = null; state.activationKey = null; $('#desiredIdentity').textContent = 'Not checked'; $('#reconcileState').textContent = 'Pending'; $('#reconcileState').dataset.state = 'pending'; $('#liveMessage').textContent = 'Draft is local.'; }
-  function edit() { markDraftLocal(); queuePreview(); }
+  function edit() { markDraftLocal(); schedulePreview(); }
   function componentChoice(componentId) { return state.components.find((choice) => choice.component_id === componentId); }
   function colorToHex(value) { return `#${value.map((channel) => Number(channel).toString(16).padStart(2, '0')).join('')}`; }
   function hexToColor(value) { return [1, 3, 5].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16)); }
@@ -62,16 +65,76 @@
   function setReference(value) { state.reference = value; state.starterId = value && value.kind === 'starter' ? value.id : null; }
   function commitPreview(body) { drawPreview(body.frame); state.committedPreview = body; $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Current local runtime frame · no wall change.'; }
   async function draftRequest(path, options) { const response = await fetch(`${api}/draft${path}`, options); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Working draft could not be updated.'); return body; }
-  async function autosave(body, candidate) {
-    if (!state.reference) return;
-    if (sameBasis(body.basis, state.reference.basis)) { await draftRequest('', {method:'DELETE'}); setUnsaved(false); return; }
-    const saved=await draftRequest('', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({draft:candidate, reference:state.reference})}); if (saved.draft) setReference(saved.draft.reference);
-    setUnsaved(true);
+  async function autosave(body, candidate, generation) {
+    // Serialize writes so an older local preview cannot finish after a newer drag edit.
+    state.autosaveChain = state.autosaveChain.then(async () => {
+      if (generation !== state.previewGeneration || !state.reference) return;
+      if (sameBasis(body.basis, state.reference.basis)) { await draftRequest('', {method:'DELETE'}); if (generation === state.previewGeneration) setUnsaved(false); return; }
+      const saved=await draftRequest('', {method:'POST', headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:candidate,reference:state.reference})});
+      if (generation !== state.previewGeneration) return;
+      if (saved.draft) setReference(saved.draft.reference);
+      setUnsaved(true);
+    }).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message || 'Working draft could not be updated.'; });
+    return state.autosaveChain;
   }
   async function queuePreview(candidate = draft(), options = {}) {
-    const generation = ++state.previewGeneration; $('#previewStatus').textContent = 'Rendering this local draft…';
-    try { const body = await validatePreview(candidate); if (generation !== state.previewGeneration) return null; commitPreview(body); if (options.autosave !== false) await autosave(body, candidate); return body; }
+    const generation = options.generation || ++state.previewGeneration; $('#previewStatus').textContent = 'Rendering this local draft…';
+    try { const body = await validatePreview(candidate); if (generation !== state.previewGeneration) return null; commitPreview(body); if (options.autosave !== false) await autosave(body, candidate, generation); return body; }
     catch (error) { if (generation === state.previewGeneration) { $('#previewIdentity').textContent = 'Preview unavailable'; $('#previewStatus').textContent = error.message || 'Preview could not render.'; } }
+  }
+  function schedulePreview() {
+    const generation = ++state.previewGeneration;
+    state.pendingPreview = {candidate:draft(), generation};
+    if (state.previewScheduled) return;
+    state.previewScheduled = true;
+    requestAnimationFrame(() => { const pending=state.pendingPreview; state.pendingPreview=null; state.previewScheduled=false; if (pending) queuePreview(pending.candidate, {generation:pending.generation}); });
+  }
+  function selectedOverlay() { return state.overlays.find((overlay) => overlay.slot_id === state.selectedOverlaySlot) || null; }
+  function clearDrag(overlay = null) {
+    if (!state.drag || (overlay && state.drag.overlay !== overlay)) return;
+    const canvas = $('#scenePreview');
+    if (canvas.hasPointerCapture && canvas.hasPointerCapture(state.drag.pointerId)) canvas.releasePointerCapture(state.drag.pointerId);
+    state.drag = null; canvas.classList.remove('is-dragging');
+  }
+  function selectOverlay(slotId) {
+    state.selectedOverlaySlot = state.overlays.some((overlay) => overlay.slot_id === slotId) ? slotId : null;
+    render();
+  }
+  function setOverlayPlacement(overlay, strip, led) {
+    const nextStrip = canonicalTranslation(strip); const nextLed = canonicalTranslation(led);
+    if (overlay.strip === nextStrip && overlay.led === nextLed) return false;
+    overlay.strip = nextStrip; overlay.led = nextLed;
+    render(); edit();
+    return true;
+  }
+  function moveSelectedOverlay(stripDelta, ledDelta) {
+    const overlay = selectedOverlay();
+    if (!overlay || !overlay.enabled) return false;
+    return setOverlayPlacement(overlay, canonicalTranslation(overlay.strip) + stripDelta, canonicalTranslation(overlay.led) + ledDelta);
+  }
+  function beginPreviewDrag(event) {
+    if (event.button !== 0 && event.pointerType !== 'touch') return;
+    const overlay = selectedOverlay();
+    if (!overlay || !overlay.enabled) return;
+    const canvas = $('#scenePreview');
+    state.drag = {pointerId:event.pointerId, overlay, startX:event.clientX, startY:event.clientY, strip:canonicalTranslation(overlay.strip), led:canonicalTranslation(overlay.led)};
+    canvas.setPointerCapture(event.pointerId); canvas.classList.add('is-dragging'); event.preventDefault();
+  }
+  function continuePreviewDrag(event) {
+    const drag = state.drag; if (!drag || drag.pointerId !== event.pointerId) return;
+    // Object identity prevents a cancelled/removed/re-added slot from receiving a stale gesture.
+    if (!state.overlays.includes(drag.overlay) || selectedOverlay() !== drag.overlay || !drag.overlay.enabled) { clearDrag(); return; }
+    const rect = $('#scenePreview').getBoundingClientRect(); if (!rect.width || !rect.height) return;
+    const strips = Math.round((event.clientX - drag.startX) / (rect.width / 33));
+    const leds = -Math.round((event.clientY - drag.startY) / (rect.height / 138));
+    if (setOverlayPlacement(drag.overlay, drag.strip + strips, drag.led + leds)) event.preventDefault();
+  }
+  function endPreviewDrag(event) { if (state.drag && state.drag.pointerId === event.pointerId) clearDrag(); }
+  function nudgeSelectedOverlay(event) {
+    const step = event.shiftKey ? 5 : 1;
+    const deltas = {ArrowLeft:[-step, 0], ArrowRight:[step, 0], ArrowUp:[0, step], ArrowDown:[0, -step]};
+    const delta = deltas[event.key]; if (!delta || !moveSelectedOverlay(...delta)) return;
+    event.preventDefault();
   }
   function render() {
     list.replaceChildren(); $('#overlayEmpty').hidden = state.overlays.length > 0;
@@ -80,20 +143,21 @@
     available.forEach((choice) => { const option = document.createElement('option'); option.value = choice.slot_id; option.textContent = choice.label; picker.append(option); });
     picker.disabled = available.length === 0; $('#addOverlay').disabled = available.length === 0;
     state.overlays.forEach((overlay, index) => {
-      const row = document.createElement('li'); row.className = 'overlay';
+      const row = document.createElement('li'); row.className = `overlay${state.selectedOverlaySlot === overlay.slot_id ? ' is-selected' : ''}`; row.dataset.overlaySlot = overlay.slot_id; row.tabIndex = 0; row.setAttribute('aria-selected', String(state.selectedOverlaySlot === overlay.slot_id));
       const choice = componentChoice(overlay.component_id); const title = choice ? choice.label : (componentLabels[overlay.component_id] || overlay.component_id);
-      row.innerHTML = `<div class="overlay-top"><div><span class="overlay-title">${title}</span><span class="overlay-slot"> · slot: ${overlay.slot_id}</span></div><div><button class="button text" data-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="button text" data-action="down" ${index === state.overlays.length - 1 ? 'disabled' : ''}>Down</button><button class="button text" data-action="remove">Remove</button></div></div><div class="overlay-controls"><label class="enabled"><input data-field="enabled" type="checkbox" ${overlay.enabled ? 'checked' : ''}> Enabled</label><label>Opacity <input data-field="opacity" type="number" min="0" max="255" value="${overlay.opacity}"></label><label>Across <input data-field="strip" type="number" value="${overlay.strip}"></label><label>Down <input data-field="led" type="number" value="${overlay.led}"></label><label>Stale frames <select data-field="stale"><option value="hold" ${overlay.stale === 'hold' ? 'selected' : ''}>Hold</option><option value="clear" ${overlay.stale === 'clear' ? 'selected' : ''}>Clear after lease</option></select></label>${componentControls(overlay)}</div>`;
-      const update = (event) => { const field = event.target.dataset.field; const parameter = event.target.dataset.param; if (field) overlay[field] = field === 'enabled' ? event.target.checked : event.target.value; if (parameter) { const control = choice.controls.find((item) => item.id === parameter); overlay.parameters[parameter] = readParameter(control, event.target); } if (field || parameter) edit(); };
+      row.innerHTML = `<div class="overlay-top"><div><span class="overlay-title">${title}</span><span class="overlay-slot"> · slot: ${overlay.slot_id}</span></div><div><button class="button text" data-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="button text" data-action="down" ${index === state.overlays.length - 1 ? 'disabled' : ''}>Down</button><button class="button text" data-action="remove">Remove</button></div></div><div class="overlay-controls"><label class="enabled"><input data-field="enabled" type="checkbox" ${overlay.enabled ? 'checked' : ''}> Enabled</label><label>Opacity <input data-field="opacity" type="number" min="0" max="255" value="${overlay.opacity}"></label><label>Across <input data-field="strip" type="number" min="${TRANSLATION_MIN}" max="${TRANSLATION_MAX}" step="1" value="${canonicalTranslation(overlay.strip)}"></label><label>Down <input data-field="led" type="number" min="${TRANSLATION_MIN}" max="${TRANSLATION_MAX}" step="1" value="${canonicalTranslation(overlay.led)}"></label><label>Stale frames <select data-field="stale"><option value="hold" ${overlay.stale === 'hold' ? 'selected' : ''}>Hold</option><option value="clear" ${overlay.stale === 'clear' ? 'selected' : ''}>Clear after lease</option></select></label>${componentControls(overlay)}</div>`;
+      const update = (event) => { const field = event.target.dataset.field; const parameter = event.target.dataset.param; if (field) { overlay[field] = field === 'enabled' ? event.target.checked : (field === 'strip' || field === 'led' ? canonicalTranslation(event.target.value) : event.target.value); if (field === 'strip' || field === 'led') event.target.value = overlay[field]; } if (parameter) { const control = choice.controls.find((item) => item.id === parameter); overlay.parameters[parameter] = readParameter(control, event.target); } if (field || parameter) edit(); };
       row.addEventListener('input', update);
       row.addEventListener('change', update);
-      row.addEventListener('click', (event) => { const action = event.target.dataset.action; if (!action) return; if (action === 'remove') state.overlays.splice(index, 1); if (action === 'up') [state.overlays[index - 1], state.overlays[index]] = [state.overlays[index], state.overlays[index - 1]]; if (action === 'down') [state.overlays[index + 1], state.overlays[index]] = [state.overlays[index], state.overlays[index + 1]]; edit(); render(); });
+      row.addEventListener('click', (event) => { const action = event.target.dataset.action; if (!action) { if (!event.target.closest('input, select, button')) selectOverlay(overlay.slot_id); return; } if (action === 'remove') { clearDrag(overlay); if (state.selectedOverlaySlot === overlay.slot_id) state.selectedOverlaySlot = null; state.overlays.splice(index, 1); } if (action === 'up') [state.overlays[index - 1], state.overlays[index]] = [state.overlays[index], state.overlays[index - 1]]; if (action === 'down') [state.overlays[index + 1], state.overlays[index]] = [state.overlays[index], state.overlays[index + 1]]; edit(); render(); });
+      row.addEventListener('keydown', (event) => { if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('input, select, button')) { selectOverlay(overlay.slot_id); event.preventDefault(); } });
       list.append(row);
     });
   }
   function authoredLook(look) { const scene=look.scene; const authored={schema:'ledgrid.scene.v1',background:scene.background,overlays:scene.overlays,master_brightness:scene.master_brightness}; if(scene.vibe_source==='custom') authored.custom={palette_id:scene.palette_id,wall_pace:scene.wall_pace,presentation_luminance:scene.presentation_luminance}; else authored.vibe=scene.vibe_source; return {origin:'composer',scene:authored}; }
   function recoveryDraft(value) { return value.scene.vibe_source ? authoredLook({scene:value.scene}) : value; }
   function starterDraft(value, preservePresentation = false) { const candidate=preservePresentation ? draft() : {origin:'composer',scene:{schema:'ledgrid.scene.v1',vibe:'quiet',master_brightness:1}}; candidate.scene.background=value.background; candidate.scene.overlays=value.overlays; return candidate; }
-  function assignDraft(value) { const scene=value.scene; const p=scene.background.parameters; $('#curtainDensity').value=p.curtain_density; $('#foldDepth').value=p.fold_depth; $('#glowIntensity').value=p.glow_intensity; state.background={seed:p.seed,source_fps:p.source_fps}; state.presentationMode=scene.vibe ? 'vibe':'custom'; if(scene.vibe){$('#vibe').value=scene.vibe;setVibeDefaults();} if(scene.custom){$('#previewPalette').value=scene.custom.palette_id;$('#wallPace').value=scene.custom.wall_pace;$('#sceneLuminance').value=scene.custom.presentation_luminance;} state.overlays=scene.overlays.map((o)=>({slot_id:o.slot_id,component_id:o.component.component_id,enabled:o.enabled,opacity:o.opacity,strip:o.placement.strip_translation,led:o.placement.led_translation,stale:o.stale_policy.policy==='hold'?'hold':'clear',parameters:{...o.component.parameters}})); render(); }
+  function assignDraft(value) { const scene=value.scene; const p=scene.background.parameters; clearDrag(); state.selectedOverlaySlot=null; $('#curtainDensity').value=p.curtain_density; $('#foldDepth').value=p.fold_depth; $('#glowIntensity').value=p.glow_intensity; state.background={seed:p.seed,source_fps:p.source_fps}; state.presentationMode=scene.vibe ? 'vibe':'custom'; if(scene.vibe){$('#vibe').value=scene.vibe;setVibeDefaults();} if(scene.custom){$('#previewPalette').value=scene.custom.palette_id;$('#wallPace').value=scene.custom.wall_pace;$('#sceneLuminance').value=scene.custom.presentation_luminance;} state.overlays=scene.overlays.map((o)=>({slot_id:o.slot_id,component_id:o.component.component_id,enabled:o.enabled,opacity:o.opacity,strip:canonicalTranslation(o.placement.strip_translation),led:canonicalTranslation(o.placement.led_translation),stale:o.stale_policy.policy==='hold'?'hold':'clear',parameters:{...o.component.parameters}})); render(); }
   async function applyDraft(value, options = {}) { assignDraft(value); const preview=await queuePreview(value, options); if(!preview) throw new Error('Draft could not restore.'); return preview; }
   function status(payload) { const data = payload.status || payload; $('#desiredIdentity').textContent = data.desired ? identity(data.desired) : 'Not checked'; $('#observedIdentity').textContent = identity(data.observed); $('#reconcileState').textContent = data.state[0].toUpperCase() + data.state.slice(1); $('#reconcileState').dataset.state = data.state; if (data.rejection) $('#liveMessage').textContent = data.rejection; }
   async function stopScene() { const button=$('#stopScene'); button.disabled=true; $('#liveMessage').textContent='Stopping the observed scene…'; try { const statusBody=await (await fetch(`${api}/status`)).json(); if (!statusBody.observed) throw new Error('Nothing is live to stop.'); const response=await fetch(`${api}/stop`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({basis:statusBody.observed})}); const body=await response.json(); status(body); if (!response.ok) throw new Error(body.error); state.checked=null; state.activationKey=null; $('#liveMessage').textContent='Stopped safely in the local adapter.'; } catch(error) { $('#liveMessage').textContent=`${error.message || 'Stop was not acknowledged.'} Retry once.`; } finally { button.disabled=false; } }
@@ -172,5 +236,12 @@
   }
   document.querySelectorAll('.composer-nav a').forEach((link) => link.addEventListener('click', () => requestAnimationFrame(focusComposerSection)));
   window.addEventListener('hashchange', focusComposerSection);
+  const previewCanvas = $('#scenePreview');
+  previewCanvas.addEventListener('pointerdown', beginPreviewDrag);
+  previewCanvas.addEventListener('pointermove', continuePreviewDrag);
+  previewCanvas.addEventListener('pointerup', endPreviewDrag);
+  previewCanvas.addEventListener('pointercancel', endPreviewDrag);
+  previewCanvas.addEventListener('lostpointercapture', () => clearDrag());
+  previewCanvas.addEventListener('keydown', nudgeSelectedOverlay);
   $('#goLive').addEventListener('click', goLive); $('#stopScene').addEventListener('click', stopScene); render(); queuePreview(); fetch(`${api}/status`).then((response)=>response.json()).then(status); fetch(`${api}/draft`).then(async (response)=>{ const body=await response.json(); if(body.draft){state.recovery=body.draft; $('#restoreDraft').disabled=false; $('#recoveryCard').hidden=false;} else if(!response.ok){$('#restoreDraft').disabled=true;$('#recoveryCard').hidden=false;$('#recoveryMessage').textContent=body.error || 'Working draft can only be discarded.';} }); looks().then((result) => { state.looks=result.looks; renderLooks(); }).catch((error) => { $('#lookMessage').textContent=error.message; }); refreshLibrary().catch((error)=>{ $('#starterMessage').textContent=error.message; }); fetch(`${api}/components`).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Overlay choices are unavailable.'); return body; }).then((body) => { state.components = body.choices; body.choices.forEach((choice) => { defaults[choice.slot_id] = { slot_id: choice.slot_id, component_id: choice.component_id, enabled: true, opacity: choice.component_id === 'conway_life' ? 190 : 208, strip: 0, led: choice.component_id === 'clock_overlay' ? -8 : 0, stale: 'hold', parameters: structuredClone(choice.parameters) }; }); render(); }).catch((error) => { $('#previewStatus').textContent = error.message; });
 })();
