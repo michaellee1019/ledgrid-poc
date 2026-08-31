@@ -30,7 +30,7 @@ generate-ai-ssh-key key_path=ai_ssh_key:
 	echo "Then deploy without the SSH agent using:"
 	printf '  SSH_KEY=%q just deploy\n' "$key"
 
-# Run the complete local gate before a provision/firmware deployment.
+# Run the focused product gate before a provision/firmware deployment.
 # Set TEST=false for an explicitly requested fast deployment.
 deploy:
 	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean
