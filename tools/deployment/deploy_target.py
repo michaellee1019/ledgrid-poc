@@ -2668,10 +2668,12 @@ FULL_FRAME_SAMPLING_STATE_FIELDS = (
     "full_frame_write_only_supported",
 )
 MAX_FULL_FRAME_STATUS_SAMPLE_GAP = 256
+DEMO_RECEIVER_3_MAX_FULL_FRAME_STATUS_SAMPLE_GAP = 512
 
 
 def _full_frame_sampling_snapshot_rejection(
-    item: Mapping[str, Any], *, label: str, minimum_buffer_size: int
+    item: Mapping[str, Any], *, label: str, minimum_buffer_size: int,
+    maximum_status_sample_gap: int = MAX_FULL_FRAME_STATUS_SAMPLE_GAP,
 ) -> Optional[str]:
     integer_fields = ("full_frame_transfers", *FULL_FRAME_SAMPLING_COUNTERS)
     if any(
@@ -2700,11 +2702,11 @@ def _full_frame_sampling_snapshot_rejection(
     if (
         current_gap < 0
         or current_gap > maximum_gap
-        or maximum_gap > MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+        or maximum_gap > maximum_status_sample_gap
     ):
         return (
             f"{label} full-frame status sample gap is outside 0.."
-            f"{MAX_FULL_FRAME_STATUS_SAMPLE_GAP} "
+            f"{maximum_status_sample_gap} "
             f"(current={current_gap}, maximum={maximum_gap}; "
             "expected current <= maximum)"
         )
@@ -3172,6 +3174,11 @@ def _receiver_health_rejection(
             minimum_buffer_size=(
                 4088 if expected_fec else 3320 if logical_id < 4 else 424
             ),
+            maximum_status_sample_gap=(
+                DEMO_RECEIVER_3_MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+                if allow_demo_receiver_3_fec_degradation and logical_id == 3
+                else MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+            ),
         )
         if sampling_rejection is not None:
             return sampling_rejection
@@ -3231,6 +3238,11 @@ def _receiver_health_rejection(
         sample.receiver_aggregate,
         label="aggregate",
         minimum_buffer_size=4088,
+        maximum_status_sample_gap=(
+            DEMO_RECEIVER_3_MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+            if allow_demo_receiver_3_fec_degradation
+            else MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+        ),
     )
     if aggregate_sampling_rejection is not None:
         return aggregate_sampling_rejection
@@ -3274,15 +3286,21 @@ def _receiver_health_rejection(
     return None
 
 
-def _demo_receiver_3_fec_warning(
+def _demo_receiver_3_degradation_warning(
     sample: TargetHealthSample,
 ) -> Optional[Mapping[str, int | str]]:
-    """Describe the only readiness degradation accepted by the demo policy."""
+    """Describe the bounded receiver-3 degradations accepted for demos."""
     for status in sample.receiver_statuses:
         if status.get("receiver_logical_device") != 3:
             continue
         delta = status.get("receiver_fec_uncorrectable_packets_process_delta")
-        if type(delta) is not int or delta <= 0:
+        maximum_gap = status.get("full_frame_max_status_sample_gap")
+        fec_degraded = type(delta) is int and delta > 0
+        gap_degraded = (
+            type(maximum_gap) is int
+            and maximum_gap > MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+        )
+        if not fec_degraded and not gap_degraded:
             return None
         if (
             status.get("receiver_fec_semantic_crc_errors_process_delta") != 0
@@ -3293,14 +3311,25 @@ def _demo_receiver_3_fec_warning(
         baseline = status.get("receiver_fec_uncorrectable_packets_process_baseline")
         if type(lifetime) is not int or type(baseline) is not int:
             return None
-        return {
+        warning: dict[str, int | str] = {
             "policy": "demo-degraded-receiver-3-fec",
             "receiver_logical_device": 3,
-            "counter": "receiver_fec_uncorrectable_packets",
-            "lifetime": lifetime,
-            "process_baseline": baseline,
-            "process_delta": delta,
         }
+        if fec_degraded:
+            warning.update({
+                "counter": "receiver_fec_uncorrectable_packets",
+                "lifetime": lifetime,
+                "process_baseline": baseline,
+                "process_delta": delta,
+            })
+        if gap_degraded:
+            warning.update({
+                "full_frame_max_status_sample_gap": maximum_gap,
+                "maximum_full_frame_status_sample_gap": (
+                    DEMO_RECEIVER_3_MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+                ),
+            })
+        return warning
     return None
 
 
@@ -3776,7 +3805,7 @@ def fresh_health(
                                 "aligned_transport_evidence"
                             ] = _transport_accounting_evidence(accepted[0], sample)
                         if allow_demo_receiver_3_fec_degradation:
-                            warning = _demo_receiver_3_fec_warning(sample)
+                            warning = _demo_receiver_3_degradation_warning(sample)
                             if warning is not None:
                                 health["warnings"] = [warning]
                     return health

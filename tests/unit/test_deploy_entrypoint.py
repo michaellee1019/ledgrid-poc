@@ -1389,6 +1389,8 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             receiver_3[
                 "receiver_fec_uncorrectable_packets_process_delta"
             ] = 14
+            receiver_3["full_frame_frames_since_status_sample"] = 78
+            receiver_3["full_frame_max_status_sample_gap"] = 383
             return tuple(statuses)
 
         strict = degraded_statuses(2)
@@ -1449,7 +1451,48 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             "lifetime": 55,
             "process_baseline": 41,
             "process_delta": 14,
+            "full_frame_max_status_sample_gap": 383,
+            "maximum_full_frame_status_sample_gap": 512,
         }])
+
+        above_demo_bound = [dict(item) for item in degraded_statuses(4)]
+        above_demo_bound[3]["full_frame_max_status_sample_gap"] = 513
+        self.assertIn(
+            "receiver 3 full-frame status sample gap is outside 0..512",
+            deploy_target._receiver_health_rejection(
+                self._health_sample(
+                    responses=4,
+                    statuses=tuple(above_demo_bound),
+                    receiver_aggregate=self._receiver_aggregate(above_demo_bound),
+                ),
+                minimum_version=int(contract["minimum_status_version"]),
+                required_capabilities=int(contract["required_capabilities"]),
+                fec_receiver_ids=tuple(contract["fec_receiver_ids"]),
+                expected_devices=tuple(contract["devices"]),
+                allow_demo_receiver_3_fec_degradation=True,
+            ),
+        )
+
+        wrong_receiver = [dict(item) for item in degraded_statuses(4)]
+        wrong_receiver[0].update({
+            "full_frame_frames_since_status_sample": 78,
+            "full_frame_max_status_sample_gap": 383,
+        })
+        self.assertIn(
+            "receiver 0 full-frame status sample gap is outside 0..256",
+            deploy_target._receiver_health_rejection(
+                self._health_sample(
+                    responses=4,
+                    statuses=tuple(wrong_receiver),
+                    receiver_aggregate=self._receiver_aggregate(wrong_receiver),
+                ),
+                minimum_version=int(contract["minimum_status_version"]),
+                required_capabilities=int(contract["required_capabilities"]),
+                fec_receiver_ids=tuple(contract["fec_receiver_ids"]),
+                expected_devices=tuple(contract["devices"]),
+                allow_demo_receiver_3_fec_degradation=True,
+            ),
+        )
 
     def test_receiver_health_contract_v2_requires_explicit_receiver_3_fec_policy(self) -> None:
         contract = dict(self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT))
