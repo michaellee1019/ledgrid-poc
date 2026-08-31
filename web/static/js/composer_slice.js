@@ -9,22 +9,21 @@
   const componentLabels = { conway_life: 'Conway Life', clock_overlay: 'Clock Overlay' };
   const TRANSLATION_MIN = -(2 ** 31);
   const TRANSLATION_MAX = (2 ** 31) - 1;
+  const NATIVE_AURORA_DIGEST = 'd0b8c0f9c7d55a8f58b6156e20c59afe6e4c5a7e2821cb6b3a29d9af81c296bf';
   const $ = (selector) => document.querySelector(selector);
   const identity = (item) => item ? `r${item.revision} · ${item.digest}` : 'No acknowledgement';
   function draft() {
-    const presentation = state.presentationMode === 'vibe'
-      ? { vibe: $('#vibe').value }
-      : { custom: { palette_id: $('#previewPalette').value, wall_pace: Number($('#wallPace').value), presentation_luminance: Number($('#sceneLuminance').value) } };
+    const conway = state.overlays.find((overlay) => overlay.component_id === 'conway_life' && overlay.enabled);
+    const clock = state.overlays.find((overlay) => overlay.component_id === 'clock_overlay');
     return { origin: 'composer', scene: {
-      schema: 'ledgrid.scene.v1', ...presentation, master_brightness: 1,
-      background: { slot_id: 'background', component_id: 'aurora_curtains', version: 1, provider: 'python', role: 'background', parameters: {
-        curtain_density: Number($('#curtainDensity').value), fold_depth: Number($('#foldDepth').value), glow_intensity: Number($('#glowIntensity').value), source_fps: state.background.source_fps, seed: state.background.seed,
-      } },
-      overlays: state.overlays.map((overlay) => ({
-        slot_id: overlay.slot_id, component: { component_id: overlay.component_id, version: 1, provider: 'python', role: 'overlay', parameters: overlay.parameters },
-        enabled: overlay.enabled, opacity: Number(overlay.opacity), placement: { strip_translation: canonicalTranslation(overlay.strip), led_translation: canonicalTranslation(overlay.led), clip_policy: 'clip_to_wall' },
-        stale_policy: overlay.stale === 'hold' ? { policy: 'hold' } : { policy: 'clear_after_lease', lease_ms: 1200 },
-      })),
+      schema: 'ledgrid.scene.v2',
+      background: { component_id: 'native_aurora', version: 1, provider: 'receiver_native', role: 'background', bundle_digest: NATIVE_AURORA_DIGEST, parameters: { gain: Number($('#glowIntensity').value), source_fps: state.background.source_fps, seed: state.background.seed } },
+      animation: conway
+        ? { component_id: 'conway_life', version: 1, provider: 'python', role: 'animation', parameters: conway.parameters }
+        : { component_id: 'aurora_curtains', version: 1, provider: 'python', role: 'animation', parameters: { curtain_density: Number($('#curtainDensity').value), fold_depth: Number($('#foldDepth').value), glow_intensity: Number($('#glowIntensity').value), source_fps: state.background.source_fps, seed: state.background.seed } },
+      widgets: clock ? [{ id: 'clock', component: { component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget', parameters: clock.parameters }, visible: Boolean(clock.enabled), placement: { mode: 'manual', strip_translation: canonicalTranslation(clock.strip), led_translation: canonicalTranslation(clock.led) } }] : [],
+      plants: { effects: { version: 1, active: [], strengths: {} } },
+      look: { palette_id: $('#previewPalette').value, pace: Number($('#wallPace').value), presentation_brightness: Number($('#sceneLuminance').value) },
     } };
   }
   function canonicalTranslation(value) { const number = Number(value); if (!Number.isFinite(number)) return 0; return Math.min(TRANSLATION_MAX, Math.max(TRANSLATION_MIN, Math.trunc(number))); }
@@ -61,12 +60,12 @@
     context.putImageData(image, 0, 0);
   }
   function drawPreview(frame) { drawFrame($('#scenePreview'), frame); }
-  async function validatePreview(candidate) { const response = await fetch(`${api}/preview`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(candidate) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Preview could not render.'); return body; }
+  async function validatePreview(candidate) { let response; try { response = await fetch(`${api}/preview`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(candidate) }); } catch (cause) { const error = new Error('Local Composer server unavailable.'); error.previewUnavailable = true; throw error; } const body = await response.json(); if (!response.ok) { const error = new Error(body.error || 'Preview could not render.'); error.previewUnavailable = response.status >= 500; throw error; } return body; }
   function sameBasis(left, right) { return Boolean(left && right && left.revision === right.revision && left.digest === right.digest); }
   function setUnsaved(unsaved) { $('#draftState').textContent = unsaved ? 'Unsaved local draft.' : (state.reference ? 'Saved basis.' : 'Choose a starter or saved look to establish a basis.'); publishComposerExplanation(); }
   function reference(kind, id, basis, baseline = null) { const value={ kind, id, basis }; if (kind === 'starter') value.baseline=baseline; return value; }
   function setReference(value) { state.reference = value; state.starterId = value && value.kind === 'starter' ? value.id : null; publishComposerExplanation(); }
-  function commitPreview(body) { drawPreview(body.frame); state.committedPreview = body; $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Current local runtime frame · no wall change.'; publishComposerExplanation(); }
+  function commitPreview(body) { drawPreview(body.frame); state.committedPreview = body; $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Installed final runtime frame · output unchanged.'; publishComposerExplanation(); }
   async function draftRequest(path, options) { const response = await fetch(`${api}/draft${path}`, options); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Working draft could not be updated.'); return body; }
   async function autosave(body, candidate, generation) {
     // Serialize writes so an older local preview cannot finish after a newer drag edit.
@@ -80,11 +79,32 @@
     }).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message || 'Working draft could not be updated.'; });
     return state.autosaveChain;
   }
+  const previewScheduler = new window.ComposerPreviewScheduler({
+    request: validatePreview,
+    isVisible: () => !document.hidden,
+    onFrame: (body, task) => {
+      if (task.kind === 'authored' && task.generation !== state.previewGeneration) return;
+      commitPreview(body);
+      if (task.kind === 'authored' && task.autosave) void autosave(body, task.candidate, task.generation);
+    },
+    onError: (error, task) => {
+      if (task.kind === 'authored' && task.generation !== state.previewGeneration) return;
+      $('#previewIdentity').textContent = 'Preview unavailable';
+      $('#previewStatus').textContent = error.message || 'Preview could not render.';
+      publishComposerExplanation();
+      if (error.previewUnavailable) serverUnavailable();
+    },
+  });
   async function queuePreview(candidate = draft(), options = {}) {
-    const generation = options.generation || ++state.previewGeneration; $('#previewStatus').textContent = 'Rendering this local draft…'; publishComposerExplanation();
-    try { const body = await validatePreview(candidate); if (generation !== state.previewGeneration) return null; commitPreview(body); if (options.autosave !== false) await autosave(body, candidate, generation); return body; }
-    catch (error) { if (generation === state.previewGeneration) { $('#previewIdentity').textContent = 'Preview unavailable'; $('#previewStatus').textContent = error.message || 'Preview could not render.'; publishComposerExplanation(); } }
+    const generation = options.generation || ++state.previewGeneration;
+    $('#previewStatus').textContent = 'Rendering installed final composition…'; publishComposerExplanation();
+    try { return await previewScheduler.submitAuthored(candidate, {generation, autosave: options.autosave !== false}); }
+    catch (_) { return null; }
   }
+  function startFinalPreview() { previewScheduler.start(() => draft()); }
+  const previewVisibilityChange = () => { if (!document.hidden) previewScheduler.poll(); };
+  window.addEventListener('visibilitychange', previewVisibilityChange);
+  window.addEventListener('pagehide', () => window.removeEventListener('visibilitychange', previewVisibilityChange), {once:true});
   function schedulePreview() {
     const generation = ++state.previewGeneration;
     state.pendingPreview = {candidate:draft(), generation};
@@ -286,5 +306,5 @@
   previewCanvas.addEventListener('lostpointercapture', () => clearDrag());
   previewCanvas.addEventListener('keydown', nudgeSelectedOverlay);
   function serverUnavailable() { window.dispatchEvent(new Event('composer-server-unavailable')); }
-  $('#goLive').addEventListener('click', goLive); $('#stopScene').addEventListener('click', stopScene); render(); if (!window.__composerShellUnavailable) { queuePreview(); fetch(`${api}/status`).then(async (response)=>{ if (!response.ok) throw new Error('Local Composer server unavailable.'); return response.json(); }).then(status).catch(serverUnavailable); fetch(`${api}/draft`).then(async (response)=>{ const body=await response.json(); if(body.draft){state.recovery=body.draft; $('#restoreDraft').disabled=false; $('#recoveryCard').hidden=false; publishComposerExplanation();} else if(!response.ok){$('#restoreDraft').disabled=true;$('#recoveryCard').hidden=false;$('#recoveryMessage').textContent=body.error || 'Working draft can only be discarded.'; publishComposerExplanation();} }).catch(serverUnavailable); looks().then((result) => { state.looks=result.looks; renderLooks(); }).catch((error) => { $('#lookMessage').textContent=error.message; serverUnavailable(); }); refreshLibrary().catch((error)=>{ $('#starterMessage').textContent=error.message; serverUnavailable(); }); fetch(`${api}/components`).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Overlay choices are unavailable.'); return body; }).then((body) => { state.components = body.choices; body.choices.forEach((choice) => { defaults[choice.slot_id] = { slot_id: choice.slot_id, component_id: choice.component_id, enabled: true, opacity: choice.component_id === 'conway_life' ? 190 : 208, strip: 0, led: choice.component_id === 'clock_overlay' ? -8 : 0, stale: 'hold', parameters: structuredClone(choice.parameters) }; }); render(); }).catch((error) => { $('#previewStatus').textContent = error.message; publishComposerExplanation(); serverUnavailable(); }); }
+  $('#goLive').addEventListener('click', goLive); $('#stopScene').addEventListener('click', stopScene); render(); if (!window.__composerShellUnavailable) { queuePreview(); startFinalPreview(); fetch(`${api}/status`).then(async (response)=>{ if (!response.ok) throw new Error('Local Composer server unavailable.'); return response.json(); }).then(status).catch(serverUnavailable); fetch(`${api}/draft`).then(async (response)=>{ const body=await response.json(); if(body.draft){state.recovery=body.draft; $('#restoreDraft').disabled=false; $('#recoveryCard').hidden=false; publishComposerExplanation();} else if(!response.ok){$('#restoreDraft').disabled=true;$('#recoveryCard').hidden=false;$('#recoveryMessage').textContent=body.error || 'Working draft can only be discarded.'; publishComposerExplanation();} }).catch(serverUnavailable); looks().then((result) => { state.looks=result.looks; renderLooks(); }).catch((error) => { $('#lookMessage').textContent=error.message; serverUnavailable(); }); refreshLibrary().catch((error)=>{ $('#starterMessage').textContent=error.message; serverUnavailable(); }); fetch(`${api}/components`).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Overlay choices are unavailable.'); return body; }).then((body) => { state.components = body.choices; body.choices.forEach((choice) => { defaults[choice.slot_id] = { slot_id: choice.slot_id, component_id: choice.component_id, enabled: true, opacity: choice.component_id === 'conway_life' ? 190 : 208, strip: 0, led: choice.component_id === 'clock_overlay' ? -8 : 0, stale: 'hold', parameters: structuredClone(choice.parameters) }; }); render(); }).catch((error) => { $('#previewStatus').textContent = error.message; publishComposerExplanation(); serverUnavailable(); }); }
 })();

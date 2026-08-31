@@ -3,6 +3,7 @@ const ROOT_SHELL = '/';
 const SHELL = [
   ROOT_SHELL,
   '/static/css/composer_slice.css?v=composer-shell-v1',
+  '/static/js/composer_preview_scheduler.js?v=composer-shell-v1',
   '/static/js/composer_slice.js?v=composer-shell-v1',
   '/static/js/composer_navigation.js?v=composer-shell-v1',
   '/static/js/composer_state_explanation.js?v=composer-shell-v1',

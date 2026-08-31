@@ -32,17 +32,18 @@ from drivers.frame_codec import (
 )
 from web.preview_worker import RuntimePreviewWorker
 from animation.core.component_catalog import ComponentCatalog
-from animation.core.scene_runtime import CanonicalSceneRuntime, CanonicalSceneRuntimeError
+from animation.core.scene_runtime import CanonicalSceneRuntimeError
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_composer_scene, normalize_scene_identity
-from web.composer_component_editor import editor_catalog, validate_editor_scene
+from web.composer_component_editor import editor_catalog
 from web.live_scene_state import LiveSceneBlocked, LiveSceneStale, LiveSceneState
 from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
 from web.working_draft_store import WorkingDraftStore, WorkingDraftError
+from web.composer_final_preview import ComposerFinalPreview, native_aurora_descriptor
 
 
 COMPOSER_SHELL_VERSION = "composer-shell-v1"
@@ -111,9 +112,10 @@ class AnimationWebInterface:
             self.project_root / "web" / "static" / "generated" / "animation-previews"
         )
         self.runtime_preview_dir = self.project_root / "run_state" / "animation_previews"
-        # Composer is an intentionally local-only Scene-v1 demonstration.  It
-        # has its own inert control sink rather than borrowing the wall channel.
+        # Composer preview and publication use the same current Scene v2
+        # catalog.  Preview owns no wall channel and therefore remains inert.
         self.composer_catalog = ComponentCatalog([
+            native_aurora_descriptor(),
             AuroraCurtainsAnimation.component_descriptor(),
             ConwayLifeAnimation.component_descriptor(),
             ClockOverlayAnimation.component_descriptor(),
@@ -129,6 +131,7 @@ class AnimationWebInterface:
         # A saved look is editable only while it remains the opened user look.
         # Built-ins have no id here, which makes Save require Save As.
         self._composer_opened_look_id: str | None = None
+        self.composer_preview = ComposerFinalPreview(self.composer_catalog, self.project_root)
         if self.local_mode:
             self.generated_preview_dir = (
                 self.project_root / "run_state" / "mac_animation_previews"
@@ -207,7 +210,7 @@ class AnimationWebInterface:
 
         @self.app.route('/api/composer/preview', methods=['POST'])
         def api_composer_preview():
-            """Render one isolated local Scene-v1 draft without activating it."""
+            """Render one inert, installed-final Scene v2 frame."""
             try:
                 return jsonify(self._composer_preview_payload(request.get_json(silent=True)))
             except (CanonicalSceneRuntimeError, SceneContractError, TypeError, ValueError) as exc:
@@ -1321,12 +1324,7 @@ class AnimationWebInterface:
                 raise SceneContractError('preview wall_time must include a timezone')
         else:
             raise SceneContractError('preview wall_time must be ISO-8601')
-        controller = PreviewLEDController(strips=33, leds_per_strip=138)
-        runtime = CanonicalSceneRuntime(
-            controller, self.composer_catalog, wall_time_source=lambda: wall_time,
-        )
-        runtime.activate(canonical)
-        frame = runtime.render(float(elapsed))
+        frame = self.composer_preview.render(canonical, float(elapsed), wall_time)
         return {
             'basis': frame.basis.to_dict(),
             'frame': {
@@ -1465,13 +1463,7 @@ class AnimationWebInterface:
         return starter
 
     def _composer_canonical(self, request_value: Any):
-        """Apply the local chooser's stable-slot guard before Scene-v1 normalization.
-
-        This is the sole Composer-only compatibility seam: generic Scene-v1
-        remains catalog-based, while this product UI has exactly one instance
-        each of Conway and Clock and preserves their stable slots.
-        """
-        validate_editor_scene(request_value, self.composer_catalog)
+        """Canonicalize the one current Scene v2 representation for Composer."""
         return normalize_composer_scene(request_value, self.composer_catalog)
 
     def _fallback_led_info(self) -> Dict[str, int]:

@@ -1,12 +1,18 @@
-"""Focused proof that Composer preview consumes the canonical local runtime."""
+"""Focused installed-final parity coverage for the Composer preview seam."""
 
 from __future__ import annotations
 
 import base64
+from datetime import datetime
 import unittest
-from pathlib import Path
+
+import numpy as np
 
 from web.app import AnimationWebInterface
+from web.composer_final_preview import (
+    ComposerFinalPreview, NATIVE_AURORA_BUNDLE_DIGEST,
+    NATIVE_AURORA_COMPONENT_ID,
+)
 
 
 class _Controller:
@@ -28,57 +34,53 @@ class _WallChannel:
         self.commands.append({"action": action, **data})
 
 
-def _overlay(slot_id: str, color: list[int]) -> dict:
+def _component(component_id: str, role: str, parameters: dict | None = None) -> dict:
+    value = {
+        "component_id": component_id,
+        "version": 1,
+        "provider": "receiver_native" if role == "background" else "python",
+        "role": role,
+        "parameters": parameters or {},
+    }
+    if role == "background":
+        value["bundle_digest"] = NATIVE_AURORA_BUNDLE_DIGEST
+    return value
+
+
+def _scene(*, animation: str = "conway_life", widgets: list[dict] | None = None,
+           palette: str = "mist", pace: float = 1.0, brightness: float = 1.0,
+           plants: dict | None = None) -> dict:
     return {
-        "slot_id": slot_id,
-        "component": {
-            "component_id": "clock_overlay", "version": 1,
-            "provider": "python", "role": "overlay",
-            "parameters": {"color": color, "show_seconds": True},
-        },
-        "enabled": True,
-        "opacity": 255,
-        "placement": {
-            "strip_translation": 0, "led_translation": 0,
-            "clip_policy": "clip_to_wall",
-        },
-        "stale_policy": {"policy": "hold"},
+        "schema": "ledgrid.scene.v2",
+        "background": _component(NATIVE_AURORA_COMPONENT_ID, "background", {
+            "seed": 812, "source_fps": 30.0, "gain": 0.72,
+        }),
+        "animation": _component(animation, "animation", {
+            "seed": 1971, "rule": "B3/S23", "initial_density": 0.14,
+            "generations_per_second": 5.0,
+        } if animation == "conway_life" else {
+            "seed": 4201, "source_fps": 30.0, "curtain_density": .56,
+            "fold_depth": .58, "glow_intensity": .62,
+        }),
+        "widgets": widgets or [],
+        "plants": plants or {"effects": {"version": 1, "active": [], "strengths": {}}},
+        "look": {"palette_id": palette, "pace": pace, "presentation_brightness": brightness},
     }
 
 
-def _conway(slot_id: str = "conway_lower") -> dict:
+def _clock(widget_id: str, color: list[int], *, led: int = 0) -> dict:
     return {
-        "slot_id": slot_id,
-        "component": {
-            "component_id": "conway_life", "version": 1,
-            "provider": "python", "role": "overlay",
-            "parameters": {"seed": 1971, "rule": "B3/S23"},
-        },
-        "enabled": True,
-        "opacity": 190,
-        "placement": {"strip_translation": 0, "led_translation": 0, "clip_policy": "clip_to_wall"},
-        "stale_policy": {"policy": "hold"},
+        "id": widget_id,
+        "component": _component("clock_overlay", "widget", {"color": color, "show_seconds": True}),
+        "visible": True,
+        "placement": {"mode": "manual", "strip_translation": 0, "led_translation": led},
     }
 
 
-def _preview(overlays: list[dict] | None = None) -> dict:
+def _request(scene: dict, elapsed: float = 1.25) -> dict:
     return {
-        "origin": "composer",
-        "scene": {
-            "schema": "ledgrid.scene.v1",
-            "background": {
-                "slot_id": "background", "component_id": "aurora_curtains",
-                "version": 1, "provider": "python", "role": "background",
-                "parameters": {"seed": 812, "source_fps": 20.0},
-            },
-            "overlays": overlays or [],
-            "vibe": "quiet",
-            "master_brightness": 1.0,
-        },
-        "preview": {
-            "monotonic_elapsed": 1.25,
-            "wall_time": "2026-08-31T13:47:10+00:00",
-        },
+        "origin": "composer", "scene": scene,
+        "preview": {"monotonic_elapsed": elapsed, "wall_time": "2026-08-31T13:47:10+00:00"},
     }
 
 
@@ -88,56 +90,87 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         self.interface = AnimationWebInterface(self.wall, _PreviewManager(), local_mode=True)
         self.client = self.interface.app.test_client()
 
-    def test_preview_is_deterministic_canonical_33_by_138_and_has_no_control_side_effect(self) -> None:
-        request = _preview([_conway(), _overlay("clock_upper", [255, 224, 128])])
-        first = self.client.post("/api/composer/preview", json=request)
-        second = self.client.post("/api/composer/preview", json=request)
-        self.assertEqual((first.status_code, second.status_code), (200, 200))
-        first_body, second_body = first.get_json(), second.get_json()
-        self.assertEqual(first_body["basis"], second_body["basis"])
-        self.assertEqual(first_body["frame"]["pixels"], second_body["frame"]["pixels"])
-        self.assertEqual({
-            key: first_body["frame"][key]
-            for key in ("width", "height", "encoding", "orientation")
-        }, {
-            "width": 33,
-            "height": 138,
-            "encoding": "rgb_u8_base64",
-            "orientation": "strip_major_led_zero_bottom",
+    def _pixels(self, response) -> np.ndarray:
+        self.assertEqual(response.status_code, 200, response.get_json())
+        frame = response.get_json()["frame"]
+        return np.frombuffer(base64.b64decode(frame["pixels"]), dtype=np.uint8).reshape((33 * 138, 3))
+
+    def test_preview_matches_the_host_final_runtime_at_real_wall_geometry(self) -> None:
+        payload = _request(_scene(widgets=[_clock("clock", [255, 224, 128])], plants={
+            "effects": {"version": 1, "active": ["illuminate"], "strengths": {"illuminate": .45}},
+        }), elapsed=1.25)
+        response = self.client.post("/api/composer/preview", json=payload)
+        pixels = self._pixels(response)
+        canonical = self.interface._composer_canonical({"origin": "composer", "scene": payload["scene"]})
+        independent = ComposerFinalPreview(self.interface.composer_catalog, self.interface.project_root)
+        expected = independent.render(canonical, 1.25, datetime.fromisoformat("2026-08-31T13:47:10+00:00")).pixels
+        np.testing.assert_array_equal(pixels, expected)
+        body = response.get_json()
+        self.assertEqual(body["basis"], canonical.identity.to_dict())
+        self.assertEqual({key: body["frame"][key] for key in ("width", "height", "encoding", "orientation")}, {
+            "width": 33, "height": 138, "encoding": "rgb_u8_base64", "orientation": "strip_major_led_zero_bottom",
         })
-        self.assertEqual(len(base64.b64decode(first_body["frame"]["pixels"])), 33 * 138 * 3)
-        self.assertEqual(first_body["wall_mutations"], 0)
+        self.assertEqual(body["wall_mutations"], 0)
         self.assertEqual(self.wall.commands, [])
         self.assertEqual(self.interface.composer_control.commands, [])
 
-    def test_reordered_overlapping_conway_and_clock_change_canonical_identity_and_pixels(self) -> None:
-        conway = _conway()
-        clock = _overlay("clock_upper", [255, 0, 0])
-        first = self.client.post("/api/composer/preview", json=_preview([conway, clock])).get_json()
-        second = self.client.post("/api/composer/preview", json=_preview([clock, conway])).get_json()
-        self.assertNotEqual(first["basis"]["digest"], second["basis"]["digest"])
-        self.assertNotEqual(first["frame"]["pixels"], second["frame"]["pixels"])
+    def test_alpha_and_opaque_animation_paths_are_both_final_compositions(self) -> None:
+        alpha = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(animation="conway_life"))))
+        opaque = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(animation="aurora_curtains"))))
+        self.assertFalse(np.array_equal(alpha, opaque))
+        native_only = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(animation="conway_life", pace=0.0))))
+        self.assertTrue(np.any(alpha == native_only))
+        self.assertFalse(np.array_equal(opaque, native_only))
 
-    def test_preview_failure_leaves_composer_reconciliation_and_wall_channels_unchanged(self) -> None:
-        bad = _preview([_overlay("clock_upper", [255, 0, 0])])
-        bad["preview"] = {"wall_time": "not-a-time"}
-        response = self.client.post("/api/composer/preview", json=bad)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("wall_time", response.get_json()["error"])
+    def test_widget_order_plant_effects_and_look_presentation_change_final_pixels(self) -> None:
+        first = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(widgets=[
+            _clock("red", [255, 0, 0]), _clock("blue", [0, 0, 255]),
+        ]))))
+        second = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(widgets=[
+            _clock("blue", [0, 0, 255]), _clock("red", [255, 0, 0]),
+        ]))))
+        planted = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(plants={
+            "effects": {"version": 1, "active": ["illuminate", "shadow"], "strengths": {"illuminate": .7, "shadow": .4}},
+        }, palette="ember", pace=.7, brightness=.5))))
+        self.assertFalse(np.array_equal(first, second))
+        self.assertFalse(np.array_equal(first, planted))
+
+    def test_native_cadence_advances_continuously_without_live_side_effects(self) -> None:
+        scene = _scene(animation="conway_life")
+        first = self._pixels(self.client.post("/api/composer/preview", json=_request(scene, elapsed=.001)))
+        inside_native_tick = self._pixels(self.client.post("/api/composer/preview", json=_request(scene, elapsed=.010)))
+        next_native_tick = self._pixels(self.client.post("/api/composer/preview", json=_request(scene, elapsed=.040)))
+        np.testing.assert_array_equal(first, inside_native_tick)
+        self.assertFalse(np.array_equal(inside_native_tick, next_native_tick))
         status = self.client.get("/api/composer/status").get_json()
-        self.assertEqual(status["state"], "pending")
         self.assertIsNone(status["desired"])
         self.assertIsNone(status["observed"])
+
+    def test_invalid_preview_rejects_without_replacing_the_current_frame_or_state(self) -> None:
+        good = _request(_scene())
+        before = self.client.post("/api/composer/preview", json=good).get_json()
+        bad = _request(_scene())
+        bad["preview"] = {"wall_time": "not-a-time"}
+        rejected = self.client.post("/api/composer/preview", json=bad)
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn("wall_time", rejected.get_json()["error"])
+        after = self.client.post("/api/composer/preview", json=good).get_json()
+        self.assertEqual(before["basis"], after["basis"])
         self.assertEqual(self.wall.commands, [])
         self.assertEqual(self.interface.composer_control.commands, [])
 
-    def test_root_exposes_one_local_preview_canvas_and_script_maps_bottom_origin(self) -> None:
+    def test_preview_surface_has_no_modes_or_simulation_controls_and_refreshes_at_component_cadence(self) -> None:
         html = self.client.get("/").get_data(as_text=True)
-        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        self.assertIn('id="scenePreview"', html)
-        self.assertIn("`${api}/preview`", script)
+        script = (self.interface.project_root / "web" / "static" / "js" / "composer_slice.js").read_text(encoding="utf-8")
+        scheduler = (self.interface.project_root / "web" / "static" / "js" / "composer_preview_scheduler.js").read_text(encoding="utf-8")
+        preview = html[html.index('id="preview"'):html.index('id="live"')]
+        for obsolete in ("Draft", "Original", "Split", "timeline", "FPS", "plant simulation"):
+            self.assertNotIn(obsolete, preview)
+        self.assertIn("Installed final scene", preview)
+        self.assertIn("startFinalPreview()", script)
+        self.assertIn("ComposerPreviewScheduler", script)
+        self.assertIn("setIntervalFn", scheduler)
         self.assertIn("frame.height - 1 - led", script)
-        self.assertIn("Preview unavailable", script)
 
 
 if __name__ == "__main__":

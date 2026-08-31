@@ -35,7 +35,7 @@ class ComposerOfflineShellTests(unittest.TestCase):
 
     def test_worker_precaches_only_versioned_shell_assets_and_never_api_state(self) -> None:
         self.assertIn("const CACHE_NAME = 'composer-shell-v1'", self.worker)
-        for asset in ('composer_slice.js', 'composer_navigation.js', 'composer_state_explanation.js', 'composer_shell.js', 'manifest.webmanifest', 'icon.svg', 'offline.html'):
+        for asset in ('composer_preview_scheduler.js', 'composer_slice.js', 'composer_navigation.js', 'composer_state_explanation.js', 'composer_shell.js', 'manifest.webmanifest', 'icon.svg', 'offline.html'):
             self.assertIn(asset, self.worker)
         self.assertIn("url.pathname.startsWith('/api/')", self.worker)
         self.assertIn("'Cache-Control':'no-store'", self.worker)

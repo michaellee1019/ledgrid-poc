@@ -72,11 +72,11 @@
   </section>
   </div>
 
-  <aside class="composer-rail" aria-label="Draft preview and live status">
+  <aside class="composer-rail" aria-label="Installed preview and live status">
   <section id="preview" class="composer-card preview-card" aria-labelledby="preview-title" tabindex="-1">
-    <div class="section-title"><div><p class="eyebrow">Preview</p><h2 id="preview-title">Current draft</h2></div><strong id="previewIdentity">Rendering…</strong></div>
-    <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" tabindex="0" aria-label="Current local Scene v1 preview; select an overlay row, then drag or use arrow keys to move it"></canvas></div>
-    <p id="previewStatus" class="live-message" role="status" aria-live="polite">Rendering this local draft without changing the wall.</p><p id="draftState" class="live-message" role="status" aria-live="polite">Choose a starter or saved look to establish a basis.</p>
+    <div class="section-title"><div><p class="eyebrow">Preview</p><h2 id="preview-title">Installed final scene</h2></div><strong id="previewIdentity">Rendering…</strong></div>
+    <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" tabindex="0" aria-label="Installed final Scene v2 preview; select a widget row, then drag or use arrow keys to move it"></canvas></div>
+    <p id="previewStatus" class="live-message" role="status" aria-live="polite">Rendering the installed final composition at component cadence.</p><p id="draftState" class="live-message" role="status" aria-live="polite">Changes are reflected here without changing output.</p>
   </section>
 
   <section id="live" class="composer-card live-card" aria-labelledby="live-title" tabindex="-1">
@@ -93,6 +93,7 @@
   </div>
 </main>
 <script src="{{ url_for('static', filename='js/composer_shell.js', v=shell_version) }}"></script>
+<script src="{{ url_for('static', filename='js/composer_preview_scheduler.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_slice.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_state_explanation.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_navigation.js', v=shell_version) }}"></script>
