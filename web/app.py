@@ -43,6 +43,7 @@ from web.activation_token_store import (
     ActivationTokenStale,
     ActivationTokenStore,
 )
+from web.composer_component_editor import editor_catalog, validate_editor_scene
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
 from web.working_draft_store import WorkingDraftStore, WorkingDraftError
@@ -166,6 +167,11 @@ class AnimationWebInterface:
             """Read only local desired/observed Scene-v1 reconciliation state."""
             return jsonify(self._composer_status_payload())
 
+        @self.app.route('/api/composer/components')
+        def api_composer_components():
+            """Return the closed local chooser from qualified descriptors."""
+            return jsonify(editor_catalog(self.composer_catalog))
+
         @self.app.route('/api/composer/draft')
         def api_composer_draft():
             try:
@@ -191,7 +197,7 @@ class AnimationWebInterface:
                 payload = request.get_json(silent=True) or {}
                 if set(payload) != {'draft', 'reference'}:
                     raise WorkingDraftError('Working draft is malformed.')
-                canonical = normalize_composer_scene(payload['draft'], self.composer_catalog)
+                canonical = self._composer_canonical(payload['draft'])
                 reference = self._composer_draft_reference(payload['reference'], require_current=True)
                 if canonical.identity.to_dict() == reference['basis']:
                     self.working_draft.discard()
@@ -230,7 +236,7 @@ class AnimationWebInterface:
             try:
                 self._composer_starter(get_starter(starter_id))
                 if set(payload) != {'name', 'draft'}: raise SceneLookStoreError('A remix needs a name and current draft.')
-                canonical = normalize_composer_scene(payload['draft'], self.composer_catalog)
+                canonical = self._composer_canonical(payload['draft'])
                 return jsonify({'look': self._composer_look_payload(self.composer_looks.save(payload['name'], canonical))})
             except (ValueError, SceneLookStoreError, SceneContractError, TypeError) as exc: return jsonify({'error': str(exc)}), 400
 
@@ -240,7 +246,7 @@ class AnimationWebInterface:
             try:
                 if set(payload) != {'name', 'draft'}:
                     raise SceneLookStoreError('A look needs a name and current draft.')
-                canonical = normalize_composer_scene(payload['draft'], self.composer_catalog)
+                canonical = self._composer_canonical(payload['draft'])
                 return jsonify({'look': self._composer_look_payload(self.composer_looks.save(payload['name'], canonical))})
             except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
@@ -280,6 +286,7 @@ class AnimationWebInterface:
             """Check an authored scene before the separate intentional Go Live."""
             payload = request.get_json(silent=True)
             try:
+                validate_editor_scene(payload, self.composer_catalog)
                 checked = self.composer_tokens.check(payload, self.composer_catalog)
             except (SceneContractError, ValueError, TypeError) as exc:
                 self._composer_rejection = str(exc)
@@ -1120,7 +1127,7 @@ class AnimationWebInterface:
         if not isinstance(preview, dict) or set(preview) - {'monotonic_elapsed', 'wall_time'}:
             raise SceneContractError('preview time is malformed')
         request_scene = {'origin': payload.get('origin'), 'scene': payload.get('scene')}
-        canonical = normalize_composer_scene(request_scene, self.composer_catalog)
+        canonical = self._composer_canonical(request_scene)
         elapsed = preview.get('monotonic_elapsed', time.monotonic())
         if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)):
             raise SceneContractError('preview monotonic_elapsed must be numeric')
@@ -1173,7 +1180,7 @@ class AnimationWebInterface:
             }
         else:
             authored_scene['vibe'] = scene['vibe_source']
-        canonical = normalize_composer_scene({'origin': 'composer', 'scene': authored_scene}, self.composer_catalog)
+        canonical = self._composer_canonical({'origin': 'composer', 'scene': authored_scene})
         if canonical.scene != scene or canonical.identity.to_dict() != record['basis']:
             raise SceneLookStoreError('Saved look has changed or is corrupt; recreate it.')
         return {'id': record['id'], 'name': record['name'], 'basis': record['basis'], 'scene': scene}
@@ -1188,10 +1195,10 @@ class AnimationWebInterface:
         reference = {'kind': value['kind'], 'id': value['id'], 'basis': normalize_scene_identity(value['basis']).to_dict()}
         if reference['kind'] == 'starter':
             starter = self._composer_starter(get_starter(reference['id']))
-            starter_canonical = normalize_composer_scene({'origin': 'composer', 'scene': {
+            starter_canonical = self._composer_canonical({'origin': 'composer', 'scene': {
                 'schema': 'ledgrid.scene.v1', 'vibe': 'quiet', 'master_brightness': 1,
                 'background': starter['background'], 'overlays': starter['overlays'],
-            }}, self.composer_catalog)
+            }})
             baseline = self._composer_draft_canonical(value['baseline'])
             if baseline.identity.to_dict() != reference['basis']:
                 raise WorkingDraftError('Starter no longer matches this working draft; discard it.')
@@ -1228,21 +1235,31 @@ class AnimationWebInterface:
             }
         else:
             authored['vibe'] = scene['vibe_source']
-        return normalize_composer_scene({'origin': 'composer', 'scene': authored}, self.composer_catalog)
+        return self._composer_canonical({'origin': 'composer', 'scene': authored})
 
     def _composer_draft_canonical(self, value: Any):
         """Accept an authored reference baseline, or its stored canonical form."""
         if isinstance(value, dict) and isinstance(value.get('scene'), dict) and 'vibe_source' in value['scene']:
             return self._composer_working_draft(value)
-        return normalize_composer_scene(value, self.composer_catalog)
+        return self._composer_canonical(value)
 
     def _composer_starter(self, starter: Dict[str, Any]) -> Dict[str, Any]:
         """Reject invalid built-in data before it can reach draft state."""
-        normalize_composer_scene({'origin': 'composer', 'scene': {
+        self._composer_canonical({'origin': 'composer', 'scene': {
             'schema': 'ledgrid.scene.v1', 'vibe': 'quiet', 'master_brightness': 1,
             'background': starter['background'], 'overlays': starter['overlays'],
-        }}, self.composer_catalog)
+        }})
         return starter
+
+    def _composer_canonical(self, request_value: Any):
+        """Apply the local chooser's stable-slot guard before Scene-v1 normalization.
+
+        This is the sole Composer-only compatibility seam: generic Scene-v1
+        remains catalog-based, while this product UI has exactly one instance
+        each of Conway and Clock and preserves their stable slots.
+        """
+        validate_editor_scene(request_value, self.composer_catalog)
+        return normalize_composer_scene(request_value, self.composer_catalog)
 
     def _fallback_led_info(self) -> Dict[str, int]:
         """Current preview-manager dimensions used as a fallback layout."""

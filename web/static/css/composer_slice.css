@@ -15,6 +15,7 @@ body { background: #081316; color: #edf4f5; font-family: system-ui, -apple-syste
 .overlay-list { display: grid; gap: .75rem; padding: 0; list-style: none; }
 .overlay { border: 1px solid #39565c; border-radius: 10px; padding: .85rem; }
 .overlay-top { display: flex; justify-content: space-between; align-items: center; gap: .7rem; }
+.overlay-picker { align-items: end; display: flex; gap: .6rem; }.overlay-picker label { min-width: 150px; }
 .overlay-title { font-weight: 700; }.overlay-slot { color: #8eaeb3; font-size: .8rem; }
 .overlay-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: .65rem; margin-top: .8rem; }
 .enabled { display: flex !important; grid-template-columns: auto 1fr; align-items: center; }.enabled input { width: 1rem; }
@@ -25,4 +26,4 @@ body { background: #081316; color: #edf4f5; font-family: system-ui, -apple-syste
 #reconcileState[data-state="converged"] { color: #83e2bb; } #reconcileState[data-state="rejected"], #reconcileState[data-state="stale"], #reconcileState[data-state="diverged"] { color: #ffb49c; } #reconcileState[data-state="retry"] { color: #ffd681; }
 .live-message { min-height: 1.5rem; color: #bfdbde; }
 .preview-card { overflow: hidden; }.preview-stage { align-items: center; background: #050a0c; border-radius: 9px; display: flex; justify-content: center; margin-top: 1rem; min-height: 360px; padding: 1rem; }.preview-canvas { border: 1px solid #38545a; box-shadow: 0 0 28px #65d5c344; height: auto; image-rendering: pixelated; max-height: 520px; width: min(100%, 154px); }
-@media (max-width: 560px) { .identity-grid { grid-template-columns: 1fr; }.section-title { align-items: flex-start; }.qualified { white-space: normal; text-align: right; } }
+@media (max-width: 560px) { .identity-grid { grid-template-columns: 1fr; }.section-title { align-items: flex-start; }.qualified { white-space: normal; text-align: right; }.overlay-picker { align-items: stretch; flex-direction: column; } }

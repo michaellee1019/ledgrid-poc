@@ -38,8 +38,8 @@
   </section>
 
   <section class="composer-card" aria-labelledby="overlays-title">
-    <div class="section-title"><div><p class="eyebrow">Overlays</p><h2 id="overlays-title">Layer order</h2></div><button id="addOverlay" class="button secondary" type="button">Add overlay</button></div>
-    <p class="muted">Add Conway Life first and Clock Overlay second. Order and slot names are part of the scene identity.</p>
+    <div class="section-title"><div><p class="eyebrow">Overlays</p><h2 id="overlays-title">Layer order</h2></div><div class="overlay-picker"><label>Choose overlay <select id="overlayChoice" aria-label="Choose overlay" disabled></select></label><button id="addOverlay" class="button secondary" type="button" disabled>Add overlay</button></div></div>
+    <p class="muted">Choose Conway Life or Clock Overlay in either order. Each keeps its stable Scene v1 slot.</p>
     <ol id="overlayList" class="overlay-list" aria-live="polite"></ol>
     <p id="overlayEmpty" class="empty">No overlays yet.</p>
   </section>

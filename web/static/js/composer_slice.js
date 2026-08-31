@@ -3,11 +3,10 @@
   const root = document.querySelector('.composer');
   const api = root.dataset.apiRoot;
   const list = document.querySelector('#overlayList');
-  const state = { overlays: [], checked: null, activationKey: null, presentationMode: 'vibe', previewGeneration: 0, looks: [], deleteLookId: null, starterId: null, background: { seed: 4201, source_fps: 30 }, reference: null, recovery: null, committedPreview: null };
-  const defaults = {
-    conway_lower: { slot_id: 'conway_lower', component_id: 'conway_life', enabled: true, opacity: 190, strip: 0, led: 0, stale: 'hold', parameters: { seed: 1971, rule: 'B3/S23', initial_density: 0.14, generations_per_second: 5.0 } },
-    clock_upper: { slot_id: 'clock_upper', component_id: 'clock_overlay', enabled: true, opacity: 208, strip: 0, led: -8, stale: 'hold', parameters: { show_seconds: true, color: [255, 224, 128] } },
-  };
+  const state = { overlays: [], checked: null, activationKey: null, presentationMode: 'vibe', previewGeneration: 0, looks: [], deleteLookId: null, starterId: null, background: { seed: 4201, source_fps: 30 }, reference: null, recovery: null, committedPreview: null, components: [] };
+  // Filled exclusively by the qualified local component endpoint.
+  const defaults = {};
+  const componentLabels = { conway_life: 'Conway Life', clock_overlay: 'Clock Overlay' };
   const $ = (selector) => document.querySelector(selector);
   const identity = (item) => item ? `r${item.revision} · ${item.digest}` : 'No acknowledgement';
   function draft() {
@@ -28,6 +27,25 @@
   }
   function markDraftLocal() { state.checked = null; state.activationKey = null; $('#desiredIdentity').textContent = 'Not checked'; $('#reconcileState').textContent = 'Pending'; $('#reconcileState').dataset.state = 'pending'; $('#liveMessage').textContent = 'Draft is local.'; }
   function edit() { markDraftLocal(); queuePreview(); }
+  function componentChoice(componentId) { return state.components.find((choice) => choice.component_id === componentId); }
+  function colorToHex(value) { return `#${value.map((channel) => Number(channel).toString(16).padStart(2, '0')).join('')}`; }
+  function hexToColor(value) { return [1, 3, 5].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16)); }
+  function componentControls(overlay) {
+    const choice = componentChoice(overlay.component_id);
+    if (!choice) return '';
+    return choice.controls.map((control) => {
+      const value = overlay.parameters[control.id];
+      if (control.type === 'checkbox') return `<label class="enabled"><input data-param="${control.id}" type="checkbox" ${value ? 'checked' : ''}> ${control.label}</label>`;
+      if (control.type === 'color') return `<label>${control.label} <input data-param="${control.id}" type="color" value="${colorToHex(value)}"></label>`;
+      if (control.type === 'select') return `<label>${control.label} <select data-param="${control.id}">${control.options.map((option) => `<option value="${option}" ${value === option ? 'selected' : ''}>${option}</option>`).join('')}</select></label>`;
+      return `<label>${control.label} <input data-param="${control.id}" type="number" min="${control.min}" max="${control.max}" step="${control.step}" value="${value}"></label>`;
+    }).join('');
+  }
+  function readParameter(control, input) {
+    if (control.type === 'checkbox') return input.checked;
+    if (control.type === 'color') return hexToColor(input.value);
+    return control.type === 'number' ? Number(input.value) : input.value;
+  }
   function setVibeDefaults() { const values = { quiet: ['mist', .70, .82], neutral: ['neutral', 1, 1], vivid: ['spectrum', 1.25, 1.15] }[$('#vibe').value]; $('#previewPalette').value = values[0]; $('#wallPace').value = values[1]; $('#sceneLuminance').value = values[2]; }
   function drawPreview(frame) {
     if (!frame || frame.encoding !== 'rgb_u8_base64' || frame.width !== 33 || frame.height !== 138 || frame.orientation !== 'strip_major_led_zero_bottom') throw new Error('Preview returned an unsupported frame.');
@@ -56,16 +74,18 @@
     catch (error) { if (generation === state.previewGeneration) { $('#previewIdentity').textContent = 'Preview unavailable'; $('#previewStatus').textContent = error.message || 'Preview could not render.'; } }
   }
   function render() {
-    list.replaceChildren(); $('#overlayEmpty').hidden = state.overlays.length > 0; $('#addOverlay').disabled = state.overlays.length >= 2;
+    list.replaceChildren(); $('#overlayEmpty').hidden = state.overlays.length > 0;
+    const available = state.components.filter((choice) => !state.overlays.some((overlay) => overlay.component_id === choice.component_id));
+    const picker = $('#overlayChoice'); picker.replaceChildren();
+    available.forEach((choice) => { const option = document.createElement('option'); option.value = choice.slot_id; option.textContent = choice.label; picker.append(option); });
+    picker.disabled = available.length === 0; $('#addOverlay').disabled = available.length === 0;
     state.overlays.forEach((overlay, index) => {
       const row = document.createElement('li'); row.className = 'overlay';
-      const title = overlay.component_id === 'conway_life' ? 'Conway Life' : 'Clock Overlay';
-      const lifeControls = overlay.component_id === 'conway_life'
-        ? `<label>Seed <input data-param="seed" type="number" min="0" max="999999" value="${overlay.parameters.seed}"></label><label>Rule <select data-param="rule"><option value="B3/S23" ${overlay.parameters.rule === 'B3/S23' ? 'selected' : ''}>B3/S23</option><option value="B36/S23" ${overlay.parameters.rule === 'B36/S23' ? 'selected' : ''}>B36/S23</option></select></label>`
-        : '';
-      row.innerHTML = `<div class="overlay-top"><div><span class="overlay-title">${title}</span><span class="overlay-slot"> · slot: ${overlay.slot_id}</span></div><div><button class="button text" data-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="button text" data-action="down" ${index === state.overlays.length - 1 ? 'disabled' : ''}>Down</button><button class="button text" data-action="remove">Remove</button></div></div><div class="overlay-controls"><label class="enabled"><input data-field="enabled" type="checkbox" ${overlay.enabled ? 'checked' : ''}> Enabled</label><label>Opacity <input data-field="opacity" type="number" min="0" max="255" value="${overlay.opacity}"></label><label>Across <input data-field="strip" type="number" value="${overlay.strip}"></label><label>Down <input data-field="led" type="number" value="${overlay.led}"></label><label>Stale frames <select data-field="stale"><option value="hold" ${overlay.stale === 'hold' ? 'selected' : ''}>Hold</option><option value="clear" ${overlay.stale === 'clear' ? 'selected' : ''}>Clear after lease</option></select></label>${lifeControls}</div>`;
-      row.addEventListener('input', (event) => { const field = event.target.dataset.field; const parameter = event.target.dataset.param; if (field) overlay[field] = field === 'enabled' ? event.target.checked : event.target.value; if (parameter) overlay.parameters[parameter] = parameter === 'seed' ? Number(event.target.value) : event.target.value; if (!field && !parameter) return; edit(); });
-      row.addEventListener('change', (event) => { const field = event.target.dataset.field; const parameter = event.target.dataset.param; if (field) overlay[field] = field === 'enabled' ? event.target.checked : event.target.value; if (parameter) overlay.parameters[parameter] = parameter === 'seed' ? Number(event.target.value) : event.target.value; if (field || parameter) edit(); });
+      const choice = componentChoice(overlay.component_id); const title = choice ? choice.label : (componentLabels[overlay.component_id] || overlay.component_id);
+      row.innerHTML = `<div class="overlay-top"><div><span class="overlay-title">${title}</span><span class="overlay-slot"> · slot: ${overlay.slot_id}</span></div><div><button class="button text" data-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button class="button text" data-action="down" ${index === state.overlays.length - 1 ? 'disabled' : ''}>Down</button><button class="button text" data-action="remove">Remove</button></div></div><div class="overlay-controls"><label class="enabled"><input data-field="enabled" type="checkbox" ${overlay.enabled ? 'checked' : ''}> Enabled</label><label>Opacity <input data-field="opacity" type="number" min="0" max="255" value="${overlay.opacity}"></label><label>Across <input data-field="strip" type="number" value="${overlay.strip}"></label><label>Down <input data-field="led" type="number" value="${overlay.led}"></label><label>Stale frames <select data-field="stale"><option value="hold" ${overlay.stale === 'hold' ? 'selected' : ''}>Hold</option><option value="clear" ${overlay.stale === 'clear' ? 'selected' : ''}>Clear after lease</option></select></label>${componentControls(overlay)}</div>`;
+      const update = (event) => { const field = event.target.dataset.field; const parameter = event.target.dataset.param; if (field) overlay[field] = field === 'enabled' ? event.target.checked : event.target.value; if (parameter) { const control = choice.controls.find((item) => item.id === parameter); overlay.parameters[parameter] = readParameter(control, event.target); } if (field || parameter) edit(); };
+      row.addEventListener('input', update);
+      row.addEventListener('change', update);
       row.addEventListener('click', (event) => { const action = event.target.dataset.action; if (!action) return; if (action === 'remove') state.overlays.splice(index, 1); if (action === 'up') [state.overlays[index - 1], state.overlays[index]] = [state.overlays[index], state.overlays[index - 1]]; if (action === 'down') [state.overlays[index + 1], state.overlays[index]] = [state.overlays[index], state.overlays[index + 1]]; edit(); render(); });
       list.append(row);
     });
@@ -100,7 +120,7 @@
     finally { button.disabled = false; }
   }
   function renderStarterChoices(items) { const target=$('#starterList'); target.replaceChildren(); items.forEach((starter)=>{ const button=document.createElement('button'); button.className='button secondary'; button.textContent=starter.name; button.addEventListener('click',async()=>{ const generation=++state.previewGeneration; try { const value=(await starters(`/${starter.id}`)).starter; const candidate=starterDraft(value, true); const preview=await validatePreview(candidate); if (generation !== state.previewGeneration) return; assignDraft(candidate); setReference(reference('starter', value.id, preview.basis, candidate)); markDraftLocal(); commitPreview(preview); await autosave(preview, candidate); $('#starterMessage').textContent=`Previewing ${value.name}.`; } catch(error) { if (generation === state.previewGeneration) $('#starterMessage').textContent=error.message; } }); target.append(button); }); }
-  $('#addOverlay').addEventListener('click', () => { const slot = Object.keys(defaults).find((candidate) => !state.overlays.some((item) => item.slot_id === candidate)); if (!slot) return; state.overlays.push({...defaults[slot], parameters: {...defaults[slot].parameters}}); edit(); render(); });
+  $('#addOverlay').addEventListener('click', () => { const slot = $('#overlayChoice').value || Object.keys(defaults).find((candidate) => !state.overlays.some((item) => item.slot_id === candidate)); if (!slot || !defaults[slot]) return; state.overlays.push({...defaults[slot], parameters: structuredClone(defaults[slot].parameters)}); edit(); render(); });
   async function makeSavedReference(result, candidate) { setReference(reference('look', result.look.id, result.look.basis)); if (!state.committedPreview || !sameBasis(state.committedPreview.basis, result.look.basis)) await queuePreview(candidate); else await autosave(state.committedPreview, candidate); }
   $('#saveLook').addEventListener('click', async () => { try { const candidate=draft(); const result=await looks('', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('#lookName').value,draft:candidate})}); await makeSavedReference(result, candidate); $('#lookName').value=''; state.looks=(await looks()).looks; renderLooks(); $('#lookMessage').textContent=`Saved ${result.look.name}.`; } catch (error) { $('#lookMessage').textContent=error.message || 'Saved look could not be created.'; } });
   $('#remixStarter').addEventListener('click', async () => { if (!state.starterId || !$('#remixName').value) return; try { const candidate=draft(); const result=await starters(`/${state.starterId}/remix`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('#remixName').value,draft:candidate})}); await makeSavedReference(result, candidate); $('#remixName').value=''; state.looks=(await looks()).looks; renderLooks(); $('#starterMessage').textContent='Saved your remix.'; } catch(error) { $('#starterMessage').textContent=error.message; } });
@@ -111,5 +131,5 @@
   async function discardTarget(record) { const ref=record.reference; if (ref.kind === 'look') { try { const result=await looks(`/${ref.id}`); return {candidate:authoredLook(result.look), reference:reference('look', result.look.id, result.look.basis)}; } catch (_) {} } if (ref.kind === 'starter' && ref.baseline) { const candidate=recoveryDraft(ref.baseline); const preview=await validatePreview(candidate); return {candidate, reference:ref, preview}; } return auroraFallback(); }
   $('#restoreDraft').addEventListener('click', async () => { try { if (!state.recovery) throw new Error('This recovery can only be discarded.'); setReference(state.recovery.reference); await applyDraft(recoveryDraft(state.recovery.draft), {autosave:false}); setUnsaved(true); $('#recoveryCard').hidden=true; } catch(error) { $('#recoveryMessage').textContent=error.message; } });
   $('#discardDraft').addEventListener('click', async () => { try { const next=state.recovery ? await discardTarget(state.recovery) : await auroraFallback(); const preview=next.preview || await validatePreview(next.candidate); if (!sameBasis(preview.basis, next.reference.basis)) throw new Error('Referenced look no longer matches; use Aurora only.'); assignDraft(next.candidate); commitPreview(preview); setReference(next.reference); setUnsaved(false); await draftRequest('', {method:'DELETE'}); state.recovery=null; $('#recoveryCard').hidden=true; } catch(error) { $('#recoveryMessage').textContent=error.message; } });
-  $('#goLive').addEventListener('click', goLive); $('#stopScene').addEventListener('click', stopScene); render(); queuePreview(); fetch(`${api}/status`).then((response)=>response.json()).then(status); fetch(`${api}/draft`).then(async (response)=>{ const body=await response.json(); if(body.draft){state.recovery=body.draft; $('#restoreDraft').disabled=false; $('#recoveryCard').hidden=false;} else if(!response.ok){$('#restoreDraft').disabled=true;$('#recoveryCard').hidden=false;$('#recoveryMessage').textContent=body.error || 'Working draft can only be discarded.';} }); looks().then((result) => { state.looks=result.looks; renderLooks(); }).catch((error) => { $('#lookMessage').textContent=error.message; }); starters().then((result)=>renderStarters(result.starters)).catch((error)=>{ $('#starterMessage').textContent=error.message; });
+  $('#goLive').addEventListener('click', goLive); $('#stopScene').addEventListener('click', stopScene); render(); queuePreview(); fetch(`${api}/status`).then((response)=>response.json()).then(status); fetch(`${api}/draft`).then(async (response)=>{ const body=await response.json(); if(body.draft){state.recovery=body.draft; $('#restoreDraft').disabled=false; $('#recoveryCard').hidden=false;} else if(!response.ok){$('#restoreDraft').disabled=true;$('#recoveryCard').hidden=false;$('#recoveryMessage').textContent=body.error || 'Working draft can only be discarded.';} }); looks().then((result) => { state.looks=result.looks; renderLooks(); }).catch((error) => { $('#lookMessage').textContent=error.message; }); starters().then((result)=>renderStarters(result.starters)).catch((error)=>{ $('#starterMessage').textContent=error.message; }); fetch(`${api}/components`).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Overlay choices are unavailable.'); return body; }).then((body) => { state.components = body.choices; body.choices.forEach((choice) => { defaults[choice.slot_id] = { slot_id: choice.slot_id, component_id: choice.component_id, enabled: true, opacity: choice.component_id === 'conway_life' ? 190 : 208, strip: 0, led: choice.component_id === 'clock_overlay' ? -8 : 0, stale: 'hold', parameters: structuredClone(choice.parameters) }; }); render(); }).catch((error) => { $('#previewStatus').textContent = error.message; });
 })();
