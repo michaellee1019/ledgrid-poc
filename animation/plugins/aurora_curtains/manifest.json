@@ -1,1 +1,18 @@
-{"plugin_id":"aurora_curtains","class":"AuroraCurtainsAnimation","icon":"🌌","gallery":"show"}
+{
+  "plugin_id": "aurora_curtains",
+  "class": "AuroraCurtainsAnimation",
+  "icon": "🌌",
+  "gallery": "show",
+  "component": {
+    "id": "aurora_curtains",
+    "version": 1,
+    "provider": "python",
+    "role": "background",
+    "frame_format": "rgb_uint8_strip_major",
+    "cadence": "source_rate_cached",
+    "timing": "scaled_context",
+    "palette_policy": "semantic",
+    "palette_roles": ["background_low", "primary", "accent"],
+    "capabilities": ["semantic_palette_roles", "source_cadence", "scaled_context"]
+  }
+}
