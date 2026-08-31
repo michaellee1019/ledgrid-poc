@@ -44,6 +44,7 @@ from web.activation_token_store import (
     ActivationTokenStore,
 )
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
+from web.starter_looks import get_starter, list_starters
 
 
 PAINTER_MASK_TYPES = (
@@ -177,6 +178,24 @@ class AnimationWebInterface:
                 return jsonify({'looks': self.composer_looks.list()})
             except SceneLookStoreError as exc:
                 return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/starters')
+        def api_composer_starters(): return jsonify({'starters': list_starters()})
+
+        @self.app.route('/api/composer/starters/<starter_id>')
+        def api_composer_starter(starter_id):
+            try: return jsonify({'starter': self._composer_starter(get_starter(starter_id))})
+            except ValueError as exc: return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/starters/<starter_id>/remix', methods=['POST'])
+        def api_composer_remix_starter(starter_id):
+            payload = request.get_json(silent=True) or {}
+            try:
+                self._composer_starter(get_starter(starter_id))
+                if set(payload) != {'name', 'draft'}: raise SceneLookStoreError('A remix needs a name and current draft.')
+                canonical = normalize_composer_scene(payload['draft'], self.composer_catalog)
+                return jsonify({'look': self._composer_look_payload(self.composer_looks.save(payload['name'], canonical))})
+            except (ValueError, SceneLookStoreError, SceneContractError, TypeError) as exc: return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/looks', methods=['POST'])
         def api_composer_save_look():
@@ -1121,6 +1140,14 @@ class AnimationWebInterface:
         if canonical.scene != scene or canonical.identity.to_dict() != record['basis']:
             raise SceneLookStoreError('Saved look has changed or is corrupt; recreate it.')
         return {'id': record['id'], 'name': record['name'], 'basis': record['basis'], 'scene': scene}
+
+    def _composer_starter(self, starter: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject invalid built-in data before it can reach draft state."""
+        normalize_composer_scene({'origin': 'composer', 'scene': {
+            'schema': 'ledgrid.scene.v1', 'vibe': 'quiet', 'master_brightness': 1,
+            'background': starter['background'], 'overlays': starter['overlays'],
+        }}, self.composer_catalog)
+        return starter
 
     def _fallback_led_info(self) -> Dict[str, int]:
         """Current preview-manager dimensions used as a fallback layout."""
