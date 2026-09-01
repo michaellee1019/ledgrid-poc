@@ -45,7 +45,7 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.assertIn("function nestComponentControls()", self.script)
         self.assertIn("animationInspector.append(region);", self.script)
         self.assertIn("region.dataset.animationComponents = componentIds;", self.script)
-        self.assertIn(".desktop-workspace > .inspector[data-animation-components]", self.script)
+        self.assertIn(".control-workspace > .inspector[data-animation-components]", self.script)
         self.assertIn("document.querySelectorAll('[data-animation-components]')", self.script)
 
         workspace = re.search(r'<div class="desktop-workspace">(?P<body>.*?)</div>\s*</main>', self.html, re.DOTALL)
