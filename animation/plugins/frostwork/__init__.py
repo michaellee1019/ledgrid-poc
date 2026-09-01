@@ -59,23 +59,8 @@ class FrostworkAnimation(CadencedSculpture):
     def reset_simulation(self):
         super().reset_simulation(); self.occupied.fill(False); self.age.fill(0); self.occupied[:, -1] = True
 
-    def palette(self, mood: str):
-        authored = super().palette(mood)
-        context = self.presentation_context
-        if (
-            context is None
-            or context.vibe_id == "neutral"
-            or self.VIBE_COLOR_POLICY != "semantic"
-            or "palette_roles" not in self.VIBE_CAPABILITIES
-        ):
-            return authored
-        return np.asarray(
-            [
-                context.palette_roles.get(role, authored[index])
-                for index, role in enumerate(SEMANTIC_PALETTE_ROLES)
-            ],
-            dtype=np.float32,
-        )
+    def palette(self, mood: str | None = None):
+        return super().palette(mood)
 
     def on_presentation_context_changed(self, old_context, new_context) -> None:
         """Repaint at the same source tick without advancing frost growth."""

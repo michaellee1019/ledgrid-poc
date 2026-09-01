@@ -8,6 +8,8 @@ body { margin: 0; overflow-x: hidden; background: #081316; color: #edf4f5; font-
 .preview-pane { position: sticky; top: 1rem; }
 .operations-pane { border-color: #4d796f; }
 .inspectors { display: grid; grid-template-columns: repeat(5, minmax(170px, 1fr)); gap: 1rem; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; padding-bottom: .35rem; }
+.component-controls { display: grid; gap: .65rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #29434a; }
+.component-controls[hidden] { display: none !important; }
 .pane-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .7rem; margin-bottom: .8rem; }
 h1, h2 { margin: 0; font-size: 1.05rem; }
 p { margin: .35rem 0; }

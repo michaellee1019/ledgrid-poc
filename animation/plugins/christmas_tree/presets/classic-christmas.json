@@ -1,1 +1,14 @@
-{"preset_id":"classic-christmas","name":"Classic Christmas","description":"A warm traditional evergreen.","animation":"christmas_tree","params":{"season":"classic","tree_height":62,"snowfall":0.35,"twinkle_hz":0.85,"seed":1225}}
+{
+  "preset_id": "classic-christmas",
+  "name": "Classic Christmas",
+  "description": "A warm traditional evergreen.",
+  "animation": "christmas_tree",
+  "params": {
+    "season": "classic",
+    "tree_height": 62,
+    "snowfall": 0.35,
+    "twinkle_hz": 0.85,
+    "seed": 1225
+  },
+  "version": 2
+}

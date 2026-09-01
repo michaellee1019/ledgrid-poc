@@ -21,7 +21,9 @@ from animation.core.component_catalog import ComponentCatalog, ComponentDescript
 from animation.core.compositing import BaseFrame
 from animation.core.manager import PreviewLEDController
 from animation.core.plant_awareness import PlantMaskCache
-from animation.core.scene_runtime import CanonicalSceneRuntime, RuntimeFrame
+from animation.core.scene_runtime import (
+    CanonicalSceneRuntime, RuntimeFrame, ScenePresentationContext,
+)
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.canopy_cup import CanopyCupAnimation
 from animation.plugins.ascii_drop import AsciiDropAnimation
@@ -224,16 +226,19 @@ class _PlantGeometryOwner:
         return self.strip_count * self.leds_per_strip
 
 
-class ComposerFinalPreview:
-    """A preview-only Scene v2 runtime retained across animation frames.
+class InstalledFinalSceneRuntime:
+    """The shared installed-final Scene v2 host runtime.
 
-    ``render`` is synchronous and lock-protected because Flask can serve two
-    canvas refreshes at once.  It does not interact with Composer publication,
-    desired/observed state, controller output, or recovery persistence.
+    Both a live host and Composer Preview create independent instances of this
+    runtime.  They consume the same :class:`ScenePresentationContext`, which
+    fixes the canonical basis, monotonic time, wall clock, component ordering,
+    calibrated plant inputs, and final optics in one boundary.
     """
 
-    def __init__(self, catalog: Any, project_root: Path) -> None:
-        self.controller = PreviewLEDController(strips=33, leds_per_strip=138)
+    def __init__(self, catalog: Any, project_root: Path, *, controller: Any | None = None) -> None:
+        self.controller = controller or PreviewLEDController(strips=33, leds_per_strip=138)
+        if (getattr(self.controller, "strip_count", None), getattr(self.controller, "leds_per_strip", None)) != (33, 138):
+            raise ValueError("installed Scene v2 presentation requires a 33x138 controller")
         self._wall_time = datetime.now().astimezone()
         self._native = _NativeAuroraPreview(33, 138)
         self._geometry = PlantMaskCache(_PlantGeometryOwner(33, 138, project_root))
@@ -246,17 +251,27 @@ class ComposerFinalPreview:
             plant_input_resolver=self._plant_inputs,
             plant_optics=self._plant_optics,
             widget_safe_geometry=self._widget_safe_geometry,
+            wall_time_consumer=self._set_wall_time,
         )
         self._active_digest: str | None = None
         self._lock = RLock()
 
-    def render(self, canonical: CanonicalScene, elapsed: float, wall_time: datetime) -> RuntimeFrame:
+    def render(self, presentation: ScenePresentationContext) -> RuntimeFrame:
+        """Render one installed-final frame without mutating publication state."""
+
+        if not isinstance(presentation, ScenePresentationContext):
+            raise TypeError("presentation must be a ScenePresentationContext")
         with self._lock:
-            self._wall_time = wall_time
+            canonical = presentation.canonical
             if canonical.identity.digest != self._active_digest:
                 self._runtime.activate(canonical)
                 self._active_digest = canonical.identity.digest
-            return self._runtime.render(elapsed)
+            return self._runtime.render_presentation(presentation)
+
+    def _set_wall_time(self, wall_time: Any) -> None:
+        if not isinstance(wall_time, datetime) or wall_time.tzinfo is None:
+            raise ValueError("Scene v2 presentation wall_time must be a timezone-aware datetime")
+        self._wall_time = wall_time
 
     def dispatch_animation_interaction(
         self, canonical: CanonicalScene, kind: str, x: float, y: float,
@@ -407,8 +422,15 @@ class ComposerFinalPreview:
         return output
 
 
+class ComposerFinalPreview(InstalledFinalSceneRuntime):
+    """Inert Composer adapter over the shared installed-final host runtime."""
+
+    def render(self, canonical: CanonicalScene, elapsed: float, wall_time: datetime) -> RuntimeFrame:
+        return super().render(ScenePresentationContext(canonical, elapsed, wall_time))
+
+
 __all__ = [
-    "ComposerFinalPreview", "NATIVE_AURORA_BUNDLE_DIGEST",
+    "ComposerFinalPreview", "InstalledFinalSceneRuntime", "NATIVE_AURORA_BUNDLE_DIGEST",
     "NATIVE_AURORA_COMPONENT_ID", "current_component_catalog",
     "current_component_descriptors", "native_aurora_descriptor",
 ]

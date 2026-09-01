@@ -1,1 +1,14 @@
-{"preset_id":"golden-smile","name":"Golden Smile","description":"A sunny face with a patient pulse.","animation":"emoji","params":{"face":"smile","mood":"golden","pulse_hz":0.7,"scale":1.0,"seed":7}}
+{
+  "preset_id": "golden-smile",
+  "name": "Golden Smile",
+  "description": "A sunny face with a patient pulse.",
+  "animation": "emoji",
+  "params": {
+    "face": "smile",
+    "mood": "golden",
+    "pulse_hz": 0.7,
+    "scale": 1.0,
+    "seed": 7
+  },
+  "version": 2
+}

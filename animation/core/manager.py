@@ -4352,6 +4352,34 @@ class AnimationManager:
         pixels, changed, dirty_ranges = self._render_composed_scene_frame(now=now)
         return BaseFrame(pixels, changed=changed, dirty_ranges=dirty_ranges)
 
+    def render_scene_v2_presentation(
+        self, presentation_runtime: Any, canonical: Any, *,
+        monotonic_elapsed: float, wall_time: Any,
+    ) -> BaseFrame:
+        """Adapt one current Scene v2 presentation into the live host loop.
+
+        The installed runtime owns canonical composition and final optics.  The
+        manager deliberately only consumes its returned pixels here, so it
+        cannot add a second grade, brightness, plant, or timing pass.
+        """
+        from animation.core.scene_runtime import ScenePresentationContext
+
+        render = getattr(presentation_runtime, "render", None)
+        if not callable(render):
+            raise TypeError("presentation_runtime must render Scene v2 contexts")
+        frame = render(ScenePresentationContext(canonical, monotonic_elapsed, wall_time))
+        pixels = getattr(frame, "pixels", None)
+        if not isinstance(pixels, np.ndarray) or pixels.shape != (
+            self.controller.total_leds, 3
+        ) or pixels.dtype != np.uint8:
+            raise ValueError("Scene v2 presentation returned invalid host RGB pixels")
+        self.current_frame_data = pixels
+        return BaseFrame(
+            pixels,
+            changed=bool(getattr(frame, "changed", True)),
+            dirty_ranges=getattr(frame, "dirty_ranges", None),
+        )
+
     def _render_compatibility_frame(
         self, time_elapsed: float
     ) -> tuple[Any, bool, Optional[tuple[tuple[int, int], ...]]]:

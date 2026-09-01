@@ -1,1 +1,14 @@
-{"preset_id":"blizzard-lights","name":"Blizzard Lights","description":"Blue snow and lively winter lights.","animation":"christmas_tree","params":{"season":"blizzard","tree_height":68,"snowfall":0.9,"twinkle_hz":1.5,"seed":303}}
+{
+  "preset_id": "blizzard-lights",
+  "name": "Blizzard Lights",
+  "description": "Blue snow and lively winter lights.",
+  "animation": "christmas_tree",
+  "params": {
+    "season": "blizzard",
+    "tree_height": 68,
+    "snowfall": 0.9,
+    "twinkle_hz": 1.5,
+    "seed": 303
+  },
+  "version": 2
+}

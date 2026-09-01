@@ -1,1 +1,14 @@
-{"preset_id":"tiny-tree-party","name":"Tiny Tree Party","description":"A small bright party evergreen.","animation":"christmas_tree","params":{"season":"party","tree_height":38,"snowfall":0.18,"twinkle_hz":2.2,"seed":77}}
+{
+  "preset_id": "tiny-tree-party",
+  "name": "Tiny Tree Party",
+  "description": "A small bright party evergreen.",
+  "animation": "christmas_tree",
+  "params": {
+    "season": "party",
+    "tree_height": 38,
+    "snowfall": 0.18,
+    "twinkle_hz": 2.2,
+    "seed": 77
+  },
+  "version": 2
+}

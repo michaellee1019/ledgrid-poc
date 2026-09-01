@@ -1,1 +1,14 @@
-{"preset_id":"ice-heart","name":"Ice Heart","description":"A frosty affectionate emblem.","animation":"emoji","params":{"face":"heart","mood":"ice","pulse_hz":0.55,"scale":1.15,"seed":102}}
+{
+  "preset_id": "ice-heart",
+  "name": "Ice Heart",
+  "description": "A frosty affectionate emblem.",
+  "animation": "emoji",
+  "params": {
+    "face": "heart",
+    "mood": "ice",
+    "pulse_hz": 0.55,
+    "scale": 1.15,
+    "seed": 102
+  },
+  "version": 2
+}

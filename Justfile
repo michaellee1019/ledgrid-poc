@@ -228,8 +228,11 @@ test-demo:
 		tests/unit/test_deploy_entrypoint.py \
 		tests/unit/test_deploy_manifest.py
 
-# Required gate before a normal wall deployment.
-deploy-precheck: test-demo
+# Required gate before a normal wall deployment.  This uses only the in-memory
+# preview controller, so it cannot contact receivers or mutate wall state.
+deploy-precheck:
+	{{python_env}} python tools/deployment/plugin_startup_precheck.py
+	just test-demo
 
 # Run the receiver-side timed hardware gates against one controller.
 receiver-acceptance expected_scene_digest device="0" duration="60" min_fps="150" target_fps="160":

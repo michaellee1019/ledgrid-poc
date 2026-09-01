@@ -1,1 +1,14 @@
-{"preset_id":"synthwave-commuter","name":"Synthwave Commuter","description":"A vivid neon commute through the night.","animation":"night_train_windows","params":{"route":"synthwave","travel_speed":1.8,"window_glow":0.92,"star_density":0.48,"seed":808}}
+{
+  "preset_id": "synthwave-commuter",
+  "name": "Synthwave Commuter",
+  "description": "A vivid neon commute through the night.",
+  "animation": "night_train_windows",
+  "params": {
+    "route": "synthwave",
+    "travel_speed": 1.8,
+    "window_glow": 0.92,
+    "star_density": 0.48,
+    "seed": 808
+  },
+  "version": 2
+}

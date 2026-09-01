@@ -1,1 +1,14 @@
-{"preset_id":"neon-grin","name":"Neon Grin","description":"An electric late-night smile.","animation":"emoji","params":{"face":"smile","mood":"neon","pulse_hz":1.45,"scale":1.1,"seed":88}}
+{
+  "preset_id": "neon-grin",
+  "name": "Neon Grin",
+  "description": "An electric late-night smile.",
+  "animation": "emoji",
+  "params": {
+    "face": "smile",
+    "mood": "neon",
+    "pulse_hz": 1.45,
+    "scale": 1.1,
+    "seed": 88
+  },
+  "version": 2
+}

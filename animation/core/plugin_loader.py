@@ -49,6 +49,29 @@ class AnimationPluginLoader:
     VIBE_COLOR_POLICIES = CANONICAL_VIBE_COLOR_POLICIES
     VIBE_SEMANTIC_ROLES = frozenset(VIBE_PALETTE_ROLES)
 
+    @staticmethod
+    def _is_concrete_animation_class(candidate: object, module_name: str) -> bool:
+        """Return whether one module export is a loadable animation class.
+
+        ``inspect.isclass`` deliberately accepts several typing constructs
+        (including ``typing.Any``).  Those are not runtime classes, however,
+        and passing one to ``issubclass`` raises ``TypeError`` during discovery.
+        Normalize exports to actual ``type`` instances before asking their
+        inheritance question so a typing helper can never break a plugin load.
+        """
+        # Inspect membership first. ``typing.Any`` presents as a ``type`` on
+        # Python 3.12, but it is imported from ``typing`` rather than owned by
+        # the plugin module and must never reach ``issubclass``.
+        if getattr(candidate, "__module__", None) != module_name:
+            return False
+        if not isinstance(candidate, type):
+            return False
+        return (
+            issubclass(candidate, AnimationBase)
+            and candidate is not AnimationBase
+            and not inspect.isabstract(candidate)
+        )
+
     def __init__(
         self,
         plugins_dir: Optional[str] = None,
@@ -468,13 +491,7 @@ class AnimationPluginLoader:
             animation_classes = [
                 obj
                 for _, obj in inspect.getmembers(module)
-                if (
-                    inspect.isclass(obj)
-                    and issubclass(obj, AnimationBase)
-                    and obj is not AnimationBase
-                    and obj.__module__ == module.__name__
-                    and not inspect.isabstract(obj)
-                )
+                if self._is_concrete_animation_class(obj, module.__name__)
             ]
             if len(animation_classes) != 1:
                 raise ValueError(

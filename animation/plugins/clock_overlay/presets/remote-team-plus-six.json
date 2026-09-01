@@ -7,5 +7,6 @@
     "format_24h": true,
     "show_seconds": false,
     "clock_offset_minutes": 360
-  }
+  },
+  "version": 2
 }
