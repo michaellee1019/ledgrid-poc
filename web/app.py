@@ -24,6 +24,7 @@ from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
+from animation.plugins.canopy_cup import CanopyCupAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
@@ -125,6 +126,7 @@ class AnimationWebInterface:
             self.project_root,
             {
                 AuroraCurtainsAnimation.COMPONENT_ID: AuroraCurtainsAnimation._normalized_parameters,
+                CanopyCupAnimation.COMPONENT_ID: CanopyCupAnimation._normalized_parameters,
                 ConwayLifeAnimation.COMPONENT_ID: ConwayLifeAnimation._normalized_parameters,
                 TetrisAnimation.COMPONENT_ID: TetrisAnimation._normalized_parameters,
                 FireflySynchronyAnimation.COMPONENT_ID: FireflySynchronyAnimation._normalized_parameters,
@@ -1457,6 +1459,8 @@ class AnimationWebInterface:
                 EmojiArrangerAnimation._normalized_parameters(component["parameters"])
         if canonical.scene["animation"]["component_id"] == AuroraCurtainsAnimation.COMPONENT_ID:
             AuroraCurtainsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == CanopyCupAnimation.COMPONENT_ID:
+            CanopyCupAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == ConwayLifeAnimation.COMPONENT_ID:
             ConwayLifeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == TetrisAnimation.COMPONENT_ID:

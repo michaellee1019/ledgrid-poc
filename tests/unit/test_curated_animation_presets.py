@@ -12,7 +12,7 @@ from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 SCENE_V2_COMPONENT_PRESETS = {
     "aurora_curtains", "conway_life", "tetris", "firefly_synchrony",
-    "fireworks", "lava_lamp", "snake", "cyclic_reef",
+    "fireworks", "lava_lamp", "snake", "cyclic_reef", "canopy_cup",
 }
 
 

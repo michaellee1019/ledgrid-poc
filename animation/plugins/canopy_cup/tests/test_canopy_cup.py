@@ -29,11 +29,11 @@ class CanopyCupAnimationTests(unittest.TestCase):
                 self.assertGreater(np.count_nonzero(rendered.pixels), strips * leds)
 
     def test_source_rate_uses_ticks_and_reuses_cached_frame(self):
-        animation = self.make_animation(render_fps=60)
+        animation = self.make_animation()
         results = [animation.generate_frame(index / 200.0, index) for index in range(200)]
         changed = sum(result.changed for result in results)
-        self.assertGreaterEqual(changed, 59)
-        self.assertLessEqual(changed, 61)
+        self.assertGreaterEqual(changed, 29)
+        self.assertLessEqual(changed, 31)
         self.assertIs(results[1].pixels, results[0].pixels)
 
     def test_late_first_call_and_stall_have_bounded_catchup(self):

@@ -23,6 +23,7 @@ from animation.core.manager import PreviewLEDController
 from animation.core.plant_awareness import PlantMaskCache
 from animation.core.scene_runtime import CanonicalSceneRuntime, RuntimeFrame
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
+from animation.plugins.canopy_cup import CanopyCupAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
@@ -73,6 +74,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
     return (
         native_aurora_descriptor(),
         AuroraCurtainsAnimation.component_descriptor(),
+        CanopyCupAnimation.component_descriptor(),
         ConwayLifeAnimation.component_descriptor(),
         TetrisAnimation.component_descriptor(),
         FireflySynchronyAnimation.component_descriptor(),
@@ -203,6 +205,8 @@ class ComposerFinalPreview:
             return ConwayLifeAnimation(controller, parameters)
         if descriptor.component_id == TetrisAnimation.COMPONENT_ID:
             return TetrisAnimation(controller, parameters)
+        if descriptor.component_id == CanopyCupAnimation.COMPONENT_ID:
+            return CanopyCupAnimation(controller, parameters)
         if descriptor.component_id == FireflySynchronyAnimation.COMPONENT_ID:
             return FireflySynchronyAnimation(controller, parameters)
         if descriptor.component_id == FireworksAnimation.COMPONENT_ID:
