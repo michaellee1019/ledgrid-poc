@@ -26,6 +26,7 @@ from animation.core.preview_assets import load_catalog, merge_catalogs
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
+from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.snake import SnakeAnimation
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
@@ -120,6 +121,7 @@ class AnimationWebInterface:
             self.project_root,
             {
                 FireworksAnimation.COMPONENT_ID: FireworksAnimation._normalized_parameters,
+                LavaLampAnimation.COMPONENT_ID: LavaLampAnimation._normalized_parameters,
                 SnakeAnimation.COMPONENT_ID: SnakeAnimation._normalized_parameters,
             },
         )
@@ -1448,6 +1450,8 @@ class AnimationWebInterface:
             FireflySynchronyAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == FireworksAnimation.COMPONENT_ID:
             FireworksAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == LavaLampAnimation.COMPONENT_ID:
+            LavaLampAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == SnakeAnimation.COMPONENT_ID:
             SnakeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         return canonical

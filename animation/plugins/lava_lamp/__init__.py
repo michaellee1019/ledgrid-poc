@@ -5,12 +5,15 @@ from __future__ import annotations
 import math
 import threading
 from collections import deque
-from typing import Any, Dict, Optional
+from types import MappingProxyType
+from typing import Any, Dict, Mapping, Optional
 
 import numpy as np
 
-from animation import AnimationBase
+from animation import AnimationBase, RenderedFrame
+from animation.core.component_catalog import ComponentDescriptor
 from animation.core.plant_awareness import GLOBE_REGION_ORDER
+from animation.core.presentation_contracts import ResolvedScene
 
 
 PALETTES = {
@@ -29,41 +32,49 @@ class LavaLampAnimation(AnimationBase):
     ANIMATION_NAME = "Lava Lamp"
     ANIMATION_DESCRIPTION = "Thermal wax blobs rise, merge, cool, and flow around the living wall"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "2.0"
+    COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "lava_lamp", 1, "python", "animation"
+    FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
+    CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
     SOURCE_FPS = 100.0
     PHYSICS_DT = 0.01
     MAX_BLOBS = 16
     INTERACTION_TYPES = frozenset(("primary",))
-    PLANT_MODIFIER_SUPPORT = frozenset((
-        "illuminate", "shadow", "refract", "attractor", "repulsor",
-        "slow_zone", "obstacle", "bumper", "portal", "hazard",
-        "habitat", "emitter",
-    ))
+    # Scene v2 owns installation optics and plant effects at composition.  The
+    # lamp remains an opaque thermal instrument, never a second authority for
+    # masks, output calibration, or brightness.
+    PLANT_MODIFIER_SUPPORT = frozenset()
+    DEFAULTS = MappingProxyType({
+        "blob_count": 7, "blob_scale": 1.0, "viscosity": .68,
+        "heat": .72, "turbulence": .24, "glow": .58, "seed": 1977,
+        "interaction_radius": 8.0, "interaction_strength": 1.0,
+    })
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER,
+        role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="opaque",
+        palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",),
+        fidelity_exceptions=(), defaults=DEFAULTS,
+    )
+    SCENE_PALETTES = MappingProxyType({
+        "neutral": "classic", "mist": "ocean", "spectrum": "violet", "ember": "solar",
+    })
 
-    def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
-        super().__init__(controller, config)
-        self.default_params.update({
-            "speed": 1.0,
-            "brightness": 0.72,
-            "blob_count": 7,
-            "blob_scale": 1.0,
-            "viscosity": 0.68,
-            "heat": 0.72,
-            "turbulence": 0.24,
-            "glow": 0.58,
-            "palette": "classic",
-            "background": "glass",
-            "seed": 1977,
-            "interaction_radius": 8.0,
-            "interaction_strength": 1.0,
-        })
-        self.params = {**self.default_params, **(config or {})}
+    def __init__(self, controller, config: Optional[Mapping[str, Any]] = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
         self.width, self.height = self.get_strip_info()
         self.rng = np.random.default_rng(int(self.params["seed"]))
         self._interaction_lock = threading.Lock()
         self._interactions = deque(maxlen=16)
+        self._presentation_context: ResolvedScene | None = None
         self._allocate_geometry()
         self._reset_simulation()
+
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
 
     def _allocate_geometry(self) -> None:
         self._rows, self._cols = np.indices((self.height, self.width), dtype=np.float32)
@@ -140,10 +151,7 @@ class LavaLampAnimation(AnimationBase):
         self._reset_simulation()
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        schema.update({
-            "speed": {"type": "float", "min": 0.1, "max": 4.0, "default": 1.0,
-                      "description": "Simulation-time scale; render cadence remains 100 FPS."},
+        return {
             "blob_count": {"type": "int", "min": 3, "max": 12, "default": 7,
                            "description": "Target number of thermal wax bodies."},
             "blob_scale": {"type": "float", "min": 0.6, "max": 1.8, "default": 1.0,
@@ -156,34 +164,38 @@ class LavaLampAnimation(AnimationBase):
                            "description": "Slow lateral thermal currents."},
             "glow": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.58,
                      "description": "Wax halo and glass bloom."},
-            "palette": {"type": "str", "options": list(PALETTES), "default": "classic",
-                        "description": "Hot/cool wax color family."},
-            "background": {"type": "str", "options": ["black", "glass", "gradient", "ember"],
-                           "default": "glass", "description": "Lamp vessel atmosphere."},
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 1977,
                      "description": "Repeatable initial blob arrangement."},
             "interaction_radius": {"type": "float", "min": 2.0, "max": 16.0, "default": 8.0,
                                    "description": "Click-to-stir influence radius."},
             "interaction_strength": {"type": "float", "min": 0.1, "max": 2.0, "default": 1.0,
                                      "description": "Vortex and heat impulse multiplier."},
-        })
-        return schema
+        }
 
-    def update_parameters(self, new_params: Dict[str, Any]):
-        old_seed = int(self.params.get("seed", 1977))
-        old_count = int(self.params.get("blob_count", 7))
-        super().update_parameters(new_params)
-        if {
-            "plant_aware", "plant_modifiers", "plant_clearance",
-            "plant_mask_path", "plant_globe_mask_path",
-        } & new_params.keys():
-            self._plant_key = None
+    def update_parameters(self, new_params: Mapping[str, Any]):
+        candidate = self._normalized_parameters({**self.params, **dict(new_params)})
+        old_seed = int(self.params["seed"])
+        old_count = int(self.params["blob_count"])
+        self.params = candidate
         if int(self.params.get("seed", 1977)) != old_seed:
             self.rng = np.random.default_rng(int(self.params["seed"]))
             self._reset_simulation()
         elif "blob_count" in new_params and int(self.params["blob_count"]) != old_count:
             self._reconcile_blob_count()
         self._last_render_tick = None
+
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        del old
+        descriptor = new.descriptor
+        identity = (descriptor.component_id, descriptor.version, descriptor.provider.value, descriptor.role.value)
+        if identity != (self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE):
+            raise ValueError("Lava Lamp received a context for another component")
+        if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Lava Lamp requires a semantic Scene v2 palette")
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
 
     def _reconcile_blob_count(self) -> None:
         target = max(3, min(12, int(self.params.get("blob_count", 7))))
@@ -523,7 +535,7 @@ class LavaLampAnimation(AnimationBase):
             self._canvas_float[:, :, 0] = 3.0 + 13.0 * normalized_y * pulse
             self._canvas_float[:, :, 1] = 1.0 + 3.0 * normalized_y
 
-    def _render(self, elapsed: float, alpha: float) -> np.ndarray:
+    def _render(self, elapsed: float, alpha: float, palette_id: str) -> np.ndarray:
         self._field.fill(0.0)
         self._temperature_field.fill(0.0)
         interp_x = self.previous_x + (self.x - self.previous_x) * alpha
@@ -543,9 +555,10 @@ class LavaLampAnimation(AnimationBase):
         wax *= wax * (3.0 - 2.0 * wax)
         glow_strength = float(self.params.get("glow", 0.58))
         halo = np.clip((self._field - 0.12) / 0.52, 0.0, 1.0) * glow_strength
+        palette = self.SCENE_PALETTES.get(palette_id, self.SCENE_PALETTES["neutral"])
         cool, warm, hot, glow_color = (
             np.asarray(color, dtype=np.float32)
-            for color in PALETTES[str(self.params.get("palette", "classic"))]
+            for color in PALETTES[palette]
         )
         heat_mix = np.clip(temperature, 0.0, 1.0)[..., None]
         wax_color = cool + (warm - cool) * np.minimum(1.0, heat_mix * 1.5)
@@ -556,47 +569,33 @@ class LavaLampAnimation(AnimationBase):
         self._canvas_float *= 1.0 - wax[..., None]
         self._canvas_float += wax_color * wax[..., None]
 
-        if self._plant_effects_active():
-            self._refresh_plant_geometry()
-            refract = self._active_modifier("refract")
-            if refract:
-                displacement = 1.0 + 2.0 * refract
-                source_rows = np.clip(
-                    np.rint(self._rows + self._normal_y * displacement), 0, self.height - 1
-                ).astype(np.intp)
-                source_cols = np.clip(
-                    np.rint(self._cols + self._normal_x * displacement), 0, self.width - 1
-                ).astype(np.intp)
-                influence = np.clip(1.0 - self._distance / 6.0, 0.0, 1.0)[..., None] * refract
-                sampled = self._canvas_float[source_rows, source_cols]
-                self._canvas_float[:] = self._canvas_float * (1.0 - influence) + sampled * influence
-            shadow = self._active_modifier("shadow")
-            if shadow:
-                self._canvas_float[self._foliage] *= 1.0 - 0.58 * shadow
-                self._canvas_float[self._globes] *= 1.0 - 0.78 * shadow
-            illuminate = self._active_modifier("illuminate")
-            if illuminate:
-                self._canvas_float[self._obstacle_edge] += hot * (0.28 + 0.72 * illuminate)
-
         np.clip(self._canvas_float, 0.0, 255.0, out=self._canvas_float)
         np.copyto(self._canvas_u8, self._canvas_float, casting="unsafe")
         frame = self.next_frame_buffer(clear=False)
         logical = frame.reshape(self.width, self.height, 3)
         logical[:] = self._canvas_u8[::-1].transpose(1, 0, 2)
-        self.apply_brightness_array(frame, out=frame)
         return frame
 
-    def generate_frame(self, time_elapsed: float, frame_count: int):
-        source_tick = int(math.floor(max(0.0, time_elapsed) * self.SOURCE_FPS + 1e-9))
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
+        del frame_count
+        if self._presentation_context is None:
+            phase_time, palette_id, parameters = max(0.0, float(time_elapsed)), "neutral", self.params
+        else:
+            phase_time = max(0.0, float(self._presentation_context.phase_time))
+            palette_id = str(self._presentation_context.palette["palette_id"])
+            parameters = self._presentation_context.parameters
+        candidate = self._normalized_parameters(parameters)
+        if candidate != self.params:
+            self.update_parameters(candidate)
+        source_tick = int(math.floor(phase_time * self.SOURCE_FPS + 1e-9))
         if self._last_render_tick == source_tick and self._cached_frame is not None:
             return self.rendered_frame(self._cached_frame, changed=False)
         if self._last_source_time is None:
             real_delta = self.PHYSICS_DT
         else:
-            real_delta = max(0.0, min(0.1, time_elapsed - self._last_source_time))
-        self._last_source_time = time_elapsed
-        speed = max(0.1, min(4.0, float(self.params.get("speed", 1.0))))
-        self._accumulator += real_delta * speed
+            real_delta = max(0.0, min(0.1, phase_time - self._last_source_time))
+        self._last_source_time = phase_time
+        self._accumulator += real_delta
         steps = 0
         while self._accumulator + 1e-12 >= self.PHYSICS_DT and steps < 8:
             self._step(self.PHYSICS_DT)
@@ -606,16 +605,14 @@ class LavaLampAnimation(AnimationBase):
             self._dropped_steps += int(self._accumulator / self.PHYSICS_DT)
             self._accumulator = math.fmod(self._accumulator, self.PHYSICS_DT)
         alpha = max(0.0, min(1.0, self._accumulator / self.PHYSICS_DT))
-        self._cached_frame = self._render(time_elapsed, alpha)
+        self._cached_frame = self._render(phase_time, alpha, palette_id)
         self._last_render_tick = source_tick
         return self.rendered_frame(self._cached_frame, changed=True)
 
     def get_runtime_stats(self) -> Dict[str, Any]:
-        masks = self.get_plant_masks() if self._plant_effects_active() else None
         return {
             "source_fps": self.SOURCE_FPS,
             "simulation_time": self.simulation_time,
-            "simulation_speed": float(self.params.get("speed", 1.0)),
             "physics_steps": self._steps,
             "dropped_physics_steps": self._dropped_steps,
             "blob_count": int(np.count_nonzero(self.active)),
@@ -626,9 +623,29 @@ class LavaLampAnimation(AnimationBase):
             "splits": self._splits,
             "merges": self._merges,
             "interactions_applied": self._interactions_applied,
-            "plant_contacts": self._plant_contacts,
-            "portal_transfers": self._portal_transfers,
-            "hazard_recycles": self._hazard_recycles,
-            "emissions": self._emissions,
-            "plant_mask_error": masks.error if masks is not None else "",
         }
+
+    def cadence_snapshot(self) -> Mapping[str, Any]:
+        return MappingProxyType({"simulation_hz": 1.0 / self.PHYSICS_DT, "source_fps": self.SOURCE_FPS, "tick": self._last_render_tick})
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        # The generic legacy preview manager still attaches its empty plant
+        # bridge.  Consume that transport residue here without treating it as a
+        # Lava Lamp control or allowing it into Scene v2 state.
+        values = {key: value for key, value in values.items() if key not in {"plant_aware", "plant_modifiers"}}
+        unknown = set(values) - set(cls.DEFAULTS)
+        if unknown:
+            raise ValueError(f"Lava Lamp does not accept non-local parameters: {sorted(unknown)!r}")
+        result = dict(cls.DEFAULTS); result.update(values)
+        count, seed = result["blob_count"], result["seed"]
+        if isinstance(count, bool) or not isinstance(count, int) or not 3 <= count <= 12:
+            raise ValueError("blob_count must be an integer from 3 to 12")
+        if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 999999:
+            raise ValueError("seed must be an integer from 0 to 999999")
+        for name, low, high in (("blob_scale", .6, 1.8), ("viscosity", 0., 1.), ("heat", 0., 1.), ("turbulence", 0., 1.), ("glow", 0., 1.), ("interaction_radius", 2., 16.), ("interaction_strength", .1, 2.)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not low <= float(value) <= high:
+                raise ValueError(f"{name} must be a finite number from {low} to {high}")
+            result[name] = float(value)
+        return result
