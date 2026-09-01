@@ -143,6 +143,100 @@
       animationInspector.append(region);
     });
   }
+  const semanticControls = [];
+  const PALETTE_SWATCHES = Object.freeze({
+    mist: ['#172034', '#7193c7', '#e2efff'], neutral: ['#151515', '#777', '#eee'],
+    spectrum: ['#d6275c', '#36c5f0', '#f6d743'], ember: ['#2a0c07', '#e0522d', '#ffca70'],
+  });
+  function semanticScope() { return [...document.querySelectorAll('.look-inspector, #animationControls, [data-animation-components]')]; }
+  function isSemanticControl(control) { return control.matches('input:not([type="hidden"]), select, textarea') && !control.dataset.semanticInstrument; }
+  function dispatchSemanticEdit(control, previous = null) { void edit({target: control}, previous); }
+  function finiteControlValue(control) { return String(control.value).trim() !== '' && Number.isFinite(Number(control.value)); }
+  function normalControlValue(control, value) {
+    let next = Number(value); const min = Number(control.min); const max = Number(control.max); const step = Number(control.step);
+    if (!Number.isFinite(next)) return null;
+    if (Number.isFinite(min)) next = Math.max(min, next);
+    if (Number.isFinite(max)) next = Math.min(max, next);
+    if (Number.isFinite(step) && step > 0) { const origin = Number.isFinite(min) ? min : 0; next = origin + Math.round((next - origin) / step) * step; }
+    return control.step === '1' ? Math.round(next) : Number(next.toFixed(6));
+  }
+  function controlDefault(control) { return control.dataset.semanticDefault; }
+  function controlWords(control) { return String(control.id || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^a-z0-9]+/i).filter(Boolean).map((word) => word.toLowerCase()); }
+  function isSeedControl(control) { return controlWords(control).includes('seed'); }
+  function addControlMeta(label, control) {
+    const defaults = controlDefault(control); if (defaults == null) return;
+    const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'semantic-reset'; reset.textContent = 'Reset'; reset.setAttribute('aria-label', `Reset ${label.firstChild.textContent.trim()} to default`);
+    reset.addEventListener('click', () => { control.value = defaults; control.checked = defaults === 'true'; syncSemanticControls(); dispatchSemanticEdit(control); });
+    const meta = document.createElement('small'); meta.className = 'semantic-default'; meta.textContent = `Default ${defaults}`;
+    label.append(meta, reset);
+  }
+  function decorateNumeric(label, control) {
+    if (control.min === '' || control.max === '') return;
+    const range = document.createElement('input'); range.type = 'range'; range.className = 'semantic-range'; range.min = control.min; range.max = control.max; range.step = control.step && control.step !== 'any' ? control.step : '0.01'; range.setAttribute('aria-label', `${label.firstChild.textContent.trim()} adjustment`);
+    const wrap = document.createElement('span'); wrap.className = 'semantic-number'; control.classList.add('semantic-exact'); control.before(wrap); wrap.append(range, control);
+    const record = {kind: 'number', control, range, lastValue: control.value, dragPrevious: null, dragChanged: false}; semanticControls.push(record);
+    const commitRangeGesture = () => {
+      if (!record.dragPrevious) return;
+      const previous = record.dragPrevious; const changed = record.dragChanged; record.dragPrevious = null; record.dragChanged = false;
+      if (!changed) return;
+      dispatchSemanticEdit(control, previous);
+    };
+    range.addEventListener('pointerdown', () => { record.dragPrevious = structuredClone(state.scene || defaultScene()); record.dragChanged = false; });
+    range.addEventListener('pointerup', () => { const gesture = record.dragPrevious; setTimeout(() => { if (record.dragPrevious === gesture) commitRangeGesture(); }, 0); });
+    range.addEventListener('pointercancel', commitRangeGesture);
+    range.addEventListener('change', commitRangeGesture);
+    range.addEventListener('input', () => {
+      const value = normalControlValue(control, range.value); if (value == null) return; const changed = String(value) !== control.value; control.value = String(value); record.lastValue = control.value;
+      if (record.dragPrevious) { record.dragChanged ||= changed; state.dirty = true; schedulePreview(); }
+      else dispatchSemanticEdit(control);
+    });
+    const protect = (event) => { if (finiteControlValue(control)) { control.removeAttribute('aria-invalid'); record.lastValue = control.value; range.value = control.value; return; } control.setAttribute('aria-invalid', 'true'); event.stopImmediatePropagation(); };
+    control.addEventListener('input', protect); control.addEventListener('change', protect); control.addEventListener('blur', () => { if (!finiteControlValue(control)) control.value = record.lastValue; });
+    if (isSeedControl(control)) {
+      const randomize = document.createElement('button'); randomize.type = 'button'; randomize.className = 'semantic-randomize'; randomize.textContent = 'Randomize';
+      randomize.addEventListener('click', () => { const min = Math.ceil(Number(control.min)); const max = Math.floor(Number(control.max)); const bytes = new Uint32Array(1); crypto.getRandomValues(bytes); control.value = String(min + (bytes[0] % Math.max(1, max - min + 1))); range.value = control.value; record.lastValue = control.value; dispatchSemanticEdit(control); });
+      wrap.after(randomize);
+    }
+    addControlMeta(label, control);
+  }
+  function decorateChoices(label, control) {
+    const options = [...control.options]; const palette = control.id === 'previewPalette';
+    if (!palette && options.length > 5) { addControlMeta(label, control); return; }
+    const choices = document.createElement('span'); choices.className = palette ? 'semantic-palettes' : 'semantic-choices'; choices.setAttribute('role', 'radiogroup'); choices.setAttribute('aria-label', label.firstChild.textContent.trim());
+    const buttons = options.map((option, index) => { const button = document.createElement('button'); button.type = 'button'; button.className = palette ? 'semantic-palette' : 'semantic-choice'; button.dataset.value = option.value; button.setAttribute('role', 'radio');
+      if (palette) { const swatch = document.createElement('span'); swatch.className = 'semantic-swatch'; (PALETTE_SWATCHES[option.value] || ['#1b2d35', '#4f8290', '#b9e9dc']).forEach((color) => { const stripe = document.createElement('i'); stripe.style.background = color; swatch.append(stripe); }); button.append(swatch, document.createTextNode(option.textContent)); } else button.textContent = option.textContent;
+      button.addEventListener('click', () => { control.value = option.value; syncSemanticControls(); dispatchSemanticEdit(control); });
+      button.addEventListener('keydown', (event) => { if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; event.preventDefault(); const direction = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1; const next = buttons[(index + direction + buttons.length) % buttons.length]; next.focus(); next.click(); }); choices.append(button); return button; });
+    control.classList.add('semantic-source'); control.after(choices); semanticControls.push({kind: 'choices', control, buttons}); addControlMeta(label, control);
+  }
+  function decorateSwitch(label, control) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'semantic-switch'; button.setAttribute('role', 'switch'); button.setAttribute('aria-label', label.firstChild.textContent.trim()); button.addEventListener('click', () => { control.checked = !control.checked; syncSemanticControls(); dispatchSemanticEdit(control); }); control.classList.add('semantic-source'); control.after(button); semanticControls.push({kind: 'switch', control, button}); addControlMeta(label, control);
+  }
+  function decorateExactNumber(label, control) {
+    const record = {kind: 'exact', control, lastValue: control.value}; semanticControls.push(record);
+    const protect = (event) => { if (finiteControlValue(control)) { control.removeAttribute('aria-invalid'); record.lastValue = control.value; return; } control.setAttribute('aria-invalid', 'true'); event.stopImmediatePropagation(); };
+    control.addEventListener('input', protect); control.addEventListener('change', protect); control.addEventListener('blur', () => { if (!finiteControlValue(control)) control.value = record.lastValue; });
+    addControlMeta(label, control);
+  }
+  function decorateText(label, control) { control.classList.add('semantic-text'); addControlMeta(label, control); }
+  function installSemanticControls() {
+    semanticScope().forEach((scope) => scope.querySelectorAll('input,select,textarea').forEach((control) => {
+      if (!isSemanticControl(control)) return; control.dataset.semanticInstrument = 'true'; control.dataset.semanticDefault = control.type === 'checkbox' ? String(control.checked) : control.value;
+      const label = control.closest('label'); if (!label) return; label.classList.add('semantic-control');
+      if (control.type === 'checkbox') decorateSwitch(label, control);
+      else if (control.tagName === 'SELECT') decorateChoices(label, control);
+      else if (control.type === 'number' && control.min !== '' && control.max !== '') decorateNumeric(label, control);
+      else if (control.type === 'number') decorateExactNumber(label, control);
+      else decorateText(label, control);
+    }));
+    syncSemanticControls();
+  }
+  function syncSemanticControls() { semanticControls.forEach((record) => {
+    if (record.kind === 'number') { if (finiteControlValue(record.control)) { record.range.value = record.control.value; record.lastValue = record.control.value; record.control.removeAttribute('aria-invalid'); } }
+    else if (record.kind === 'exact' && finiteControlValue(record.control)) { record.lastValue = record.control.value; record.control.removeAttribute('aria-invalid'); }
+    else if (record.kind === 'choices') record.buttons.forEach((button) => { const selected = button.dataset.value === record.control.value; button.setAttribute('aria-checked', String(selected)); button.tabIndex = selected ? 0 : -1; });
+    else if (record.kind === 'switch') record.button.setAttribute('aria-checked', String(record.control.checked));
+  }); }
   function presetStatus() {
     let target = $('#animationPresetState');
     if (!target) {
@@ -340,6 +434,7 @@
     renderPlantOpticsStatus();
     if (clocks.length <= 1) placementWarning(); syncClockPresetUI();
     syncComponentPresetUI();
+    syncSemanticControls();
   }
   function placementWarning(placement = null) { const warning = $('#widgetWarning'); warning.hidden = !placement?.warning; warning.textContent = placement?.warning || ''; }
   function drawFrame(frame) {
@@ -368,15 +463,15 @@
   async function acknowledgeUndo(revision) { state.history = []; state.redo = []; await fetch(`${api}/undo-ack`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, revision})}); }
   function schedulePreview() { const generation = ++state.previewGeneration; const candidate = sceneFromControls(); state.scene = candidate; previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
   function remember(previous) { state.history.push(previous); if (state.history.length > 40) state.history.shift(); state.redo = []; }
-  async function submit(scene, {builtin = false, rememberEdit = false} = {}) {
-    if (rememberEdit) remember(structuredClone(state.scene || defaultScene()));
+  async function submit(scene, {builtin = false, rememberEdit = false, previous = null} = {}) {
+    if (rememberEdit) remember(previous || structuredClone(state.scene || defaultScene()));
     state.scene = scene; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
     const endpoint = builtin ? '/built-ins/open' : '/scene';
     const body = builtin ? {scene, client_id: clientId, mutation_id: crypto.randomUUID(), client_sequence: ++state.sequence} : {origin: 'composer', scene, client_id: clientId, mutation_id: crypto.randomUUID(), client_sequence: ++state.sequence};
     try { const response = await fetch(`${api}${endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const result = await response.json(); state.authoredValidationError = response.ok ? null : (result.error || 'Current scene could not be accepted.'); renderStatus(result); if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result}); return result; }
     finally { state.submitting = false; }
   }
-  async function edit(event) { state.lastControl = event?.target?.id || null; const previous = structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }
+  async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true, previous}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }
   async function loadFireworksPresets() {
     try {
       const response = await fetch(`${api}/components/fireworks/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
@@ -500,7 +595,7 @@
   function syncSecondaryOperations() { $('#secondaryOperations').open = !window.matchMedia('(max-width: 760px)').matches; }
   const phoneLayout = window.matchMedia('(max-width: 760px)');
   phoneLayout.addEventListener('change', syncSecondaryOperations);
-  syncSecondaryOperations(); installPixelStoryControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); wire(); applyScene(defaultScene());
+  syncSecondaryOperations(); installPixelStoryControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); applyScene(defaultScene());
   if (![...$('#animationChoice').options].some((option) => option.value === 'snake')) $('#animationChoice').append(new Option('Snake Garden', 'snake'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'canopy_cup')) $('#animationChoice').append(new Option('Canopy Cup', 'canopy_cup'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'maze_chase')) $('#animationChoice').append(new Option('Maze Chase', 'maze_chase'));
