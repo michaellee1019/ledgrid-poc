@@ -77,7 +77,7 @@
   const componentPresetTargets = Object.freeze({aurora_curtains: 'aurora-curtains-preset-cards', conway_life: 'conway-life-preset-cards', tetris: 'tetris-preset-cards', firefly_synchrony: 'firefly-synchrony-preset-cards', fireworks: 'fireworksPresetCards', flame_burst: 'flame-burst-preset-cards', fluid_tank: 'fluid-tank-preset-cards', lava_lamp: 'lavaPresetCards', snake: 'snakePresetCards', cyclic_reef: 'reefPresetCards', canopy_cup: 'canopyPresetCards', maze_chase: 'mazePresetCards', pinball: 'pinballPresetCards', pixel_quest: 'questPresetCards', ascii_drop: 'asciiDropPresetCards', emoji: 'emojiAnimationPresetCards', christmas_tree: 'christmasTreePresetCards', night_train_windows: 'nightTrainPresetCards', gradient: 'gradient-preset-cards', rainbow: 'rainbow-preset-cards', solid: 'solid-preset-cards', sparkle: 'sparkle-preset-cards', wave: 'wave-preset-cards'});
   const atmospherePresetTargets = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
   const sculpturePresetTargets = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
-  const componentControls = Object.freeze({aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], flame_burst: ['#flameCadence', '#flameSize', '#flameEmbers', '#flameFlicker'], fluid_tank: ['#fluidFlow', '#fluidCurrent', '#fluidBubbles', '#fluidSurface'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed'], maze_chase: ['#mazeCadence', '#mazeDifficulty', '#mazeRadar'], pinball: ['#pinballTicks', '#pinballChaos'], pixel_quest: ['#questCadence', '#questDifficulty', '#questHud'], ascii_drop: ['#asciiPhrase', '#asciiStory', '#asciiSpeed', '#asciiDensity'], emoji: ['#emojiFace', '#emojiMood', '#emojiAnimationPulse', '#emojiAnimationScale'], christmas_tree: ['#treeSeason', '#treeHeight', '#treeSnowfall'], night_train_windows: ['#trainRoute', '#trainSpeed', '#trainGlow'], gradient: ['#gradientDirection','#gradientDrift','#gradientMotion','#gradientSeed'], rainbow: ['#rainbowBands','#rainbowTravel','#rainbowDirection','#rainbowSeed'], solid: ['#solidGlow','#solidBreath','#solidSeed'], sparkle: ['#sparkleDensity','#sparkleLinger','#sparkleTwinkle','#sparkleNight','#sparkleSeed'], wave: ['#waveAxis','#waveFrequency','#waveTravel','#waveShape','#waveDirection','#waveSeed']});
+  const componentControls = Object.freeze({aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], flame_burst: ['#flameCadence', '#flameSize', '#flameEmbers', '#flameFlicker'], fluid_tank: ['#fluidFlow', '#fluidCurrent', '#fluidBubbles', '#fluidSurface'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed'], snake: ['#snakeCadence', '#snakeCount', '#snakeFood', '#snakeGrowth', '#snakeRules', '#snakeObstacles', '#snakeTrails', '#snakeGlow', '#snakeSeed'], canopy_cup: ['#canopyWorld', '#canopyHeats', '#canopyCourse', '#canopyDensity', '#canopyRivalry', '#canopyPowerups'], cyclic_reef: ['#reefSpecies', '#reefThreshold', '#reefMutation', '#reefGrazers', '#reefGlow', '#reefTopology', '#reefPace', '#reefSeed'], maze_chase: ['#mazeCadence', '#mazeDifficulty', '#mazeRadar'], pinball: ['#pinballTicks', '#pinballChaos'], pixel_quest: ['#questCadence', '#questDifficulty', '#questHud'], ascii_drop: ['#asciiPhrase', '#asciiStory', '#asciiSpeed', '#asciiDensity'], emoji: ['#emojiFace', '#emojiMood', '#emojiAnimationPulse', '#emojiAnimationScale'], christmas_tree: ['#treeSeason', '#treeHeight', '#treeSnowfall'], night_train_windows: ['#trainRoute', '#trainSpeed', '#trainGlow'], gradient: ['#gradientDirection','#gradientDrift','#gradientMotion','#gradientSeed'], rainbow: ['#rainbowBands','#rainbowTravel','#rainbowDirection','#rainbowSeed'], solid: ['#solidGlow','#solidBreath','#solidSeed'], sparkle: ['#sparkleDensity','#sparkleLinger','#sparkleTwinkle','#sparkleNight','#sparkleSeed'], wave: ['#waveAxis','#waveFrequency','#waveTravel','#waveShape','#waveDirection','#waveSeed']});
   const atmosphereControls = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, atmosphereSpecs[id].fields.map(([name]) => `#${atmosphereControlId(id, name)}`)])));
   const sculptureControls = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, sculptureSpecs[id].fields.map(([name]) => `#${sculptureControlId(id, name)}`)])));
 
@@ -245,6 +245,67 @@
     }
     return target;
   }
+  // These are presentation choices only.  The scene continues to retain every
+  // authored value, while the first encounter with a renderer reads as a small
+  // playable instrument instead of an undifferentiated settings form.
+  const advancedControlSuffixes = Object.freeze({
+    conway_life: ['#lifeSeed'],
+    fireworks: ['#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'],
+    lava_lamp: ['#lavaTurbulence', '#lavaGlow', '#lavaSeed'],
+    snake: ['#snakeTrails', '#snakeGlow', '#snakeSeed'],
+    cyclic_reef: ['#reefPace', '#reefSeed'],
+    gradient: ['#gradientSeed'], rainbow: ['#rainbowSeed'], solid: ['#solidSeed'],
+    sparkle: ['#sparkleSeed'], wave: ['#waveSeed'],
+  });
+  function allComponentControlSelectors(componentId) {
+    return componentControls[componentId] || atmosphereControls[componentId] || sculptureControls[componentId] || [];
+  }
+  function disclosureHost(componentId) {
+    if (componentControls[componentId] || atmosphereControls[componentId] || sculptureControls[componentId]) {
+      const control = $(allComponentControlSelectors(componentId)[0]);
+      return control?.closest('.field-grid');
+    }
+    return null;
+  }
+  function clearControlDisclosure() {
+    document.querySelectorAll('.control-disclosure').forEach((disclosure) => {
+      const host = disclosure.parentElement;
+      [...disclosure.querySelectorAll(':scope label')].forEach((label) => host.append(label));
+      disclosure.remove();
+    });
+  }
+  function buildControlDisclosure(componentId) {
+    clearControlDisclosure();
+    const selectors = allComponentControlSelectors(componentId);
+    const host = disclosureHost(componentId);
+    if (!host || !selectors.length) return;
+    const controls = selectors.map((selector) => ({selector, label: $(selector)?.closest('label')})).filter(({label}) => label);
+    if (!controls.length) return;
+    const advanced = new Set(advancedControlSuffixes[componentId] || selectors.filter((selector) => /seed|offset|path|diagnostic|runtime/i.test(selector)));
+    const primaryLabels = controls.filter(({selector}) => !advanced.has(selector)).map(({label}) => label);
+    const advancedLabels = controls.filter(({selector}) => advanced.has(selector)).map(({label}) => label);
+    const disclosure = document.createElement('section');
+    disclosure.className = 'control-disclosure';
+    disclosure.setAttribute('aria-label', `${componentLabel(componentId)} controls`);
+    const primary = document.createElement('div');
+    primary.className = 'primary-control-grid';
+    primary.setAttribute('aria-label', 'Primary controls');
+    primaryLabels.forEach((label) => primary.append(label));
+    disclosure.append(primary);
+    if (advancedLabels.length) {
+      const details = document.createElement('details');
+      details.className = 'advanced-controls';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Advanced tuning';
+      const grid = document.createElement('div');
+      grid.className = 'advanced-control-grid';
+      grid.setAttribute('aria-label', 'Advanced controls');
+      advancedLabels.forEach((label) => grid.append(label));
+      details.append(summary, grid);
+      disclosure.append(details);
+    }
+    host.prepend(disclosure);
+  }
   function syncComponentPresetUI() {
     const componentId = state.scene?.animation?.component_id;
     [...Object.entries(componentPresetTargets), ...Object.entries(atmospherePresetTargets), ...Object.entries(sculpturePresetTargets)].forEach(([id, targetId]) => setComponentRegion(document.getElementById(targetId), id === componentId));
@@ -264,6 +325,7 @@
     });
     const status = presetStatus();
     status.textContent = selected ? `Preset: ${selected.name}.` : choices.length ? `Custom remix — ${componentLabel(componentId)} parameters differ from every authored preset.` : `No authored presets for ${componentLabel(componentId)}.`;
+    buildControlDisclosure(componentId);
   }
   function rememberComponentPresets(componentId, presets) { state.componentPresets[componentId] = presets; syncComponentPresetUI(); }
   function clockWidgets(scene = state.scene) { return (scene?.widgets || []).filter((widget) => widget.component?.component_id === 'clock_overlay'); }

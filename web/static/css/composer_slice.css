@@ -43,6 +43,12 @@ input, select { min-width: 0; padding: .52rem; border: 1px solid #44656a; border
 .semantic-text { width: 100%; }
 .semantic-control:focus-within, .semantic-choice:focus-visible, .semantic-palette:focus-visible, .semantic-switch:focus-visible, .semantic-reset:focus-visible { outline: 2px solid #83d7c5; outline-offset: 2px; }
 .field-grid { display: grid; gap: .65rem; }
+.control-disclosure { display: grid; gap: .65rem; }
+.primary-control-grid, .advanced-control-grid { display: grid; gap: .65rem; }
+.advanced-controls { overflow: clip; border: 1px solid #29434a; border-radius: 9px; background: #102025; }
+.advanced-controls > summary { min-height: 2.5rem; padding: .65rem .75rem; cursor: pointer; color: #b9e9dc; font-size: .82rem; font-weight: 720; }
+.advanced-controls[open] > summary { border-bottom: 1px solid #29434a; }
+.advanced-control-grid { padding: .65rem; }
 .button { min-height: 2.35rem; padding: .5rem .7rem; border: 0; border-radius: 7px; cursor: pointer; font-weight: 720; }
 .button.primary { background: #7ee0c8; color: #09201d; }
 .button.secondary { background: #29464c; color: #f1ffff; }
@@ -126,6 +132,7 @@ dialog li { margin: .6rem 0; }
   .preview-canvas { max-height: 55vh; }
   .button, input:not([type="checkbox"]) { min-height: 44px; }
   .semantic-control { padding: .65rem; }
+  .advanced-controls > summary { min-height: 44px; padding: .75rem; }
   .semantic-range { min-height: 44px; }
   .semantic-choice, .semantic-palette, .semantic-switch, .semantic-reset, .semantic-randomize { min-height: 44px; }
   .semantic-switch { width: 3.5rem; height: 2rem; }
