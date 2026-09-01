@@ -35,6 +35,10 @@ from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.flame_burst import FlameBurstAnimation
 from animation.plugins.fluid_tank import FluidTankAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
+from animation.plugins.living_ecosystem import LivingEcosystemAnimation
+from animation.plugins.physarum_network import PhysarumNetworkAnimation
+from animation.plugins.reaction_diffusion_garden import ReactionDiffusionGardenAnimation
+from animation.plugins.wind_in_the_reeds import WindInTheReedsAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.maze_chase import MazeChaseAnimation
 from animation.plugins.night_train_windows import NightTrainWindowsAnimation
@@ -186,6 +190,10 @@ class AnimationWebInterface:
                 FrostworkAnimation.COMPONENT_ID: FrostworkAnimation._normalized_parameters,
                 LivingStainedGlassAnimation.COMPONENT_ID: LivingStainedGlassAnimation._normalized_parameters,
                 QuasicrystalBloomAnimation.COMPONENT_ID: QuasicrystalBloomAnimation._normalized_parameters,
+                LivingEcosystemAnimation.COMPONENT_ID: LivingEcosystemAnimation._normalized_parameters,
+                PhysarumNetworkAnimation.COMPONENT_ID: PhysarumNetworkAnimation._normalized_parameters,
+                ReactionDiffusionGardenAnimation.COMPONENT_ID: ReactionDiffusionGardenAnimation._normalized_parameters,
+                WindInTheReedsAnimation.COMPONENT_ID: WindInTheReedsAnimation._normalized_parameters,
             },
         )
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
@@ -1544,6 +1552,14 @@ class AnimationWebInterface:
             LivingStainedGlassAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == QuasicrystalBloomAnimation.COMPONENT_ID:
             QuasicrystalBloomAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == LivingEcosystemAnimation.COMPONENT_ID:
+            LivingEcosystemAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == PhysarumNetworkAnimation.COMPONENT_ID:
+            PhysarumNetworkAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == ReactionDiffusionGardenAnimation.COMPONENT_ID:
+            ReactionDiffusionGardenAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == WindInTheReedsAnimation.COMPONENT_ID:
+            WindInTheReedsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == ConwayLifeAnimation.COMPONENT_ID:
             ConwayLifeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == TetrisAnimation.COMPONENT_ID:

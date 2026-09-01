@@ -34,6 +34,9 @@ class CadencedSculpture(AnimationBase, ABC):
     SOURCE_FPS = 24.0
     COMPONENT_ID = ""
     COMPONENT_DEFAULTS: Mapping[str, Any] = {}
+    # A one-way importer for checked historical preset rows.  Components do
+    # not expose or retain these fields after normalisation.
+    LEGACY_PRESET_KEYS = frozenset()
 
     def __init__(self, controller, config: Dict[str, Any] | None = None):
         self._authored_config = dict(config or {})
@@ -55,11 +58,11 @@ class CadencedSculpture(AnimationBase, ABC):
     def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(values, Mapping): raise ValueError(f"{cls.COMPONENT_ID} parameters must be an object")
         legacy = {"brightness", "mood", "background", "plant_aware", "plant_modifiers"}
-        unknown = set(values) - set(cls.COMPONENT_DEFAULTS) - legacy
+        unknown = set(values) - set(cls.COMPONENT_DEFAULTS) - legacy - set(cls.LEGACY_PRESET_KEYS)
         if unknown: raise ValueError(f"{cls.COMPONENT_ID} does not accept non-local parameters: {sorted(unknown)!r}")
         result = dict(cls.COMPONENT_DEFAULTS)
         for name, value in values.items():
-            if name in legacy: continue
+            if name in legacy or name in cls.LEGACY_PRESET_KEYS: continue
             default = result[name]
             if isinstance(default, bool):
                 if type(value) is not bool: raise ValueError(f"{name} must be boolean")
@@ -78,14 +81,14 @@ class CadencedSculpture(AnimationBase, ABC):
 
     @classmethod
     def _validate_local_parameters(cls, values: Mapping[str, Any]) -> None:
-        for name, low, high in (("motion", 0., 1.), ("density", .05, 1.), ("background_level", 0., 1.)):
+        for name, low, high in (("motion", 0., 2.), ("density", .05, 2.), ("background_level", 0., 1.)):
             if not low <= float(values[name]) <= high: raise ValueError(f"{name} is out of range")
         if not 0 <= int(values["seed"]) <= 999999: raise ValueError("seed is out of range")
 
     def get_parameter_schema(self):
         return {
-            "motion": {"type":"float", "min":0., "max":1., "default":self.COMPONENT_DEFAULTS["motion"], "description":"Local structural motion"},
-            "density": {"type":"float", "min":.05, "max":1., "default":self.COMPONENT_DEFAULTS["density"], "description":"Local structural density"},
+            "motion": {"type":"float", "min":0., "max":2., "default":self.COMPONENT_DEFAULTS["motion"], "description":"Local structural motion"},
+            "density": {"type":"float", "min":.05, "max":2., "default":self.COMPONENT_DEFAULTS["density"], "description":"Local structural density"},
             "background_level": {"type":"float", "min":0., "max":1., "default":self.COMPONENT_DEFAULTS["background_level"], "description":"Local field depth"},
             "seed": {"type":"int", "min":0, "max":999999, "default":self.COMPONENT_DEFAULTS["seed"], "description":"Deterministic arrangement seed"},
         }

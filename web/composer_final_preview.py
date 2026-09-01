@@ -59,6 +59,10 @@ from animation.plugins.flow_field_silk import FlowFieldSilkAnimation
 from animation.plugins.frostwork import FrostworkAnimation
 from animation.plugins.living_stained_glass import LivingStainedGlassAnimation
 from animation.plugins.quasicrystal_bloom import QuasicrystalBloomAnimation
+from animation.plugins.living_ecosystem import LivingEcosystemAnimation
+from animation.plugins.physarum_network import PhysarumNetworkAnimation
+from animation.plugins.reaction_diffusion_garden import ReactionDiffusionGardenAnimation
+from animation.plugins.wind_in_the_reeds import WindInTheReedsAnimation
 from ipc.scene_contract import CanonicalScene
 
 
@@ -134,6 +138,10 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         FrostworkAnimation.component_descriptor(),
         LivingStainedGlassAnimation.component_descriptor(),
         QuasicrystalBloomAnimation.component_descriptor(),
+        LivingEcosystemAnimation.component_descriptor(),
+        PhysarumNetworkAnimation.component_descriptor(),
+        ReactionDiffusionGardenAnimation.component_descriptor(),
+        WindInTheReedsAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
         EmojiArrangerAnimation.component_descriptor(),
     )
@@ -333,6 +341,14 @@ class ComposerFinalPreview:
             return LivingStainedGlassAnimation(controller, parameters)
         if descriptor.component_id == QuasicrystalBloomAnimation.COMPONENT_ID:
             return QuasicrystalBloomAnimation(controller, parameters)
+        if descriptor.component_id == LivingEcosystemAnimation.COMPONENT_ID:
+            return LivingEcosystemAnimation(controller, parameters)
+        if descriptor.component_id == PhysarumNetworkAnimation.COMPONENT_ID:
+            return PhysarumNetworkAnimation(controller, parameters)
+        if descriptor.component_id == ReactionDiffusionGardenAnimation.COMPONENT_ID:
+            return ReactionDiffusionGardenAnimation(controller, parameters)
+        if descriptor.component_id == WindInTheReedsAnimation.COMPONENT_ID:
+            return WindInTheReedsAnimation(controller, parameters)
         raise ValueError(f"Composer preview cannot render Animation {descriptor.component_id!r}")
 
     def _widget_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:

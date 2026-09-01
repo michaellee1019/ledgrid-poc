@@ -7,7 +7,7 @@ import numpy as np
 from animation.libraries.procedural_living import ProceduralLivingBase
 
 
-class PhysarumNetworkAnimation(ProceduralLivingBase):
+class _LegacyPhysarumNetworkAnimation(ProceduralLivingBase):
     ANIMATION_NAME = "Physarum Network"
     ANIMATION_DESCRIPTION = "Explorer agents reinforce efficient glowing routes between moving nutrients"
     ANIMATION_AUTHOR = "LED Grid Team"
@@ -110,3 +110,43 @@ class PhysarumNetworkAnimation(ProceduralLivingBase):
 
     def logical_state(self):
         return (self.x.tobytes(),self.y.tobytes(),self.heading.tobytes(),self.trail.tobytes(),round(self._nutrient_phase,6))
+
+
+_LegacyPhysarumNetworkAnimation.__module__ = "animation.plugins._legacy_physarum_network"
+
+from animation.libraries.procedural_sculptures import CadencedSculpture
+
+
+class PhysarumNetworkAnimation(CadencedSculpture):
+    ANIMATION_NAME="Physarum Network"; ANIMATION_DESCRIPTION="Explorer agents reinforce luminous nutrient routes"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
+    COMPONENT_ID="physarum_network"; SOURCE_FPS=24.; MAX_AGENTS=1800
+    COMPONENT_DEFAULTS={"motion":.58,"density":.60,"background_level":.16,"seed":10101,"agent_count":700,"branching":.75,"diffusion":.62,"nutrient_layout":"constellation","pulse_visibility":.4}
+    LEGACY_PRESET_KEYS=frozenset(("render_fps","simulation_hz"))
+    def __init__(self,controller,config=None): super().__init__(controller,config); self._init_network()
+    def _init_network(self):
+        n=min(self.MAX_AGENTS,max(80,int(self.params["agent_count"]*self.params["density"]))); self.x=self.rng.uniform(0,self._shape[0],n).astype(np.float32); self.y=self.rng.uniform(0,self._shape[1],n).astype(np.float32); self.heading=self.rng.uniform(-np.pi,np.pi,n).astype(np.float32); self.trail=np.zeros(self._shape,np.float32)
+        count=8; layout=self.params["nutrient_layout"]
+        if layout=="ladder": self.nutrients=np.column_stack((np.where(np.arange(count)%2,self._shape[0]*.72,self._shape[0]*.28),np.linspace(self._shape[1]*.1,self._shape[1]*.9,count)))
+        elif layout=="rings":
+            angle=np.linspace(0,np.pi*2,count,endpoint=False); self.nutrients=np.column_stack((self._shape[0]/2+np.cos(angle)*self._shape[0]*.32,self._shape[1]/2+np.sin(angle)*self._shape[1]*.32))
+        else: self.nutrients=np.column_stack((self.rng.uniform(0,self._shape[0],count),self.rng.uniform(0,self._shape[1],count)))
+    def reset_simulation(self): super().reset_simulation(); self._init_network()
+    def get_parameter_schema(self):
+        s=super().get_parameter_schema(); s.update({"agent_count":{"type":"int","min":80,"max":self.MAX_AGENTS,"default":700,"description":"Capped explorer population"},"branching":{"type":"float","min":.1,"max":1.5,"default":.75,"description":"Sensor steering breadth"},"diffusion":{"type":"float","min":.1,"max":.9,"default":.62,"description":"Pheromone diffusion rate"},"nutrient_layout":{"type":"str","options":["constellation","ladder","rings"],"default":"constellation","description":"Resource constellation"},"pulse_visibility":{"type":"float","min":0.,"max":1.,"default":.4,"description":"Route pulse visibility"}}); return s
+    @classmethod
+    def _validate_local_parameters(cls,v):
+        super()._validate_local_parameters(v)
+        if not 80<=v["agent_count"]<=cls.MAX_AGENTS: raise ValueError("agent_count is out of range")
+        for key,lo,hi in (("branching",.1,1.5),("diffusion",.1,.9),("pulse_visibility",0.,1.)):
+            if not lo<=float(v[key])<=hi: raise ValueError(f"{key} is out of range")
+        if v["nutrient_layout"] not in {"constellation","ladder","rings"}: raise ValueError("nutrient_layout is invalid")
+    def _step(self,tick):
+        self.heading+=(self.rng.random(self.heading.size)-.5)*self.params["branching"]*.12; self.x=np.mod(self.x+np.cos(self.heading)*(.18+self.params["motion"]*.24),self._shape[0]); self.y=np.mod(self.y+np.sin(self.heading)*(.18+self.params["motion"]*.24),self._shape[1]); ix=np.mod(self.x.astype(int),self._shape[0]); iy=np.mod(self.y.astype(int),self._shape[1]); np.add.at(self.trail,(ix,iy),.08); d=self.params["diffusion"]*.2; self.trail=(self.trail*(1-d)+d*(np.roll(self.trail,1,0)+np.roll(self.trail,-1,0)+np.roll(self.trail,1,1)+np.roll(self.trail,-1,1))/4)*.989
+        for nx,ny in self.nutrients: self.trail[int(nx)%self._shape[0],int(ny)%self._shape[1]]+=.16
+        np.clip(self.trail,0,1.5,out=self.trail)
+    def generate_frame(self,time_elapsed,frame_count):
+        tick,cached=self.begin_frame(time_elapsed)
+        if cached:return cached
+        self.advance_bounded(tick,self._step,12); value=np.clip(self.trail,0,1); pulse=np.maximum(0.,np.sin(tick*.11+value*11))*self.params["pulse_visibility"]
+        return self.finish_frame(tick,self.colorize(value,np.clip(value-.36+pulse*.4,0,1)))
+    def logical_state(self): return self.x.tobytes(),self.y.tobytes(),self.heading.tobytes(),self.trail.tobytes()
