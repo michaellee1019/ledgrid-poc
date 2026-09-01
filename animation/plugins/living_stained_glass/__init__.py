@@ -8,11 +8,12 @@ class LivingStainedGlassAnimation(CadencedSculpture):
     ANIMATION_DESCRIPTION="Broad colored panes drift gently while their lead topology heals"
     PLANT_MODIFIER_SUPPORT=frozenset(("shadow","illuminate","refract"))
     SOURCE_FPS=20.0
+    COMPONENT_ID = "living_stained_glass"
+    COMPONENT_DEFAULTS = {"motion": .34, "density": .52, "background_level": .18, "seed": 2201,
+                          "lead_width": .30, "light_direction": .40}
 
     def __init__(self,controller,config=None):
-        super().__init__(controller,config)
-        self.default_params.update({"lead_width":0.3,"light_direction":0.4})
-        self.params={**self.default_params,**(config or {})}; self._init_panes()
+        super().__init__(controller,config); self._init_panes()
 
     def _init_panes(self):
         n=max(5,int(7+19*float(self.params["density"])))
@@ -29,6 +30,12 @@ class LivingStainedGlassAnimation(CadencedSculpture):
         old=float(self.params.get("density",.5)); super().update_parameters(p)
         if "density" in p and float(p["density"])!=old:self._init_panes()
 
+    @classmethod
+    def _validate_local_parameters(cls, values):
+        super()._validate_local_parameters(values)
+        if not .05 <= float(values["lead_width"]) <= 1: raise ValueError("lead_width is out of range")
+        if not -1 <= float(values["light_direction"]) <= 1: raise ValueError("light_direction is out of range")
+
     def reset_simulation(self):super().reset_simulation();self._init_panes()
 
     def generate_frame(self,time_elapsed,frame_count):
@@ -42,15 +49,5 @@ class LivingStainedGlassAnimation(CadencedSculpture):
         cloud=.68+.18*np.sin(self._x*2+self._y*float(self.params["light_direction"])*2+t*.12)
         pane=(.42+.46*((nearest*0.61803398875)%1))*cloud*seam
         rgb=self.colorize(np.clip(pane,0,1),1-seam)
-        refract=self.plant_modifier_strength("refract")
-        g = None
-        if refract>0:
-            g=self.get_plant_masks(); rgb *= (1+.12*np.sin(g.distance*1.4+t)[...,None]*refract)
-        shadow=self.plant_modifier_strength("shadow")
-        if shadow>0:
-            if g is None: g=self.get_plant_masks()
-            rgb*=1-g.obstacle[...,None]*shadow
-        illum=self.plant_modifier_strength("illuminate")
-        if illum>0:rgb+=self.get_plant_masks().obstacle_edge[...,None]*70*illum
         self.pane_ids=nearest
         return self.finish_frame(tick,rgb.astype(np.float32))

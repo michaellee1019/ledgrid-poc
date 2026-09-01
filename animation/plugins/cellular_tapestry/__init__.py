@@ -8,11 +8,12 @@ class CellularTapestryAnimation(CadencedSculpture):
     ANIMATION_DESCRIPTION="Each new automaton row pushes a woven historical record down the wall"
     PLANT_MODIFIER_SUPPORT=frozenset(("obstacle","habitat","emitter"))
     SOURCE_FPS=20.0
+    COMPONENT_ID = "cellular_tapestry"
+    COMPONENT_DEFAULTS = {"motion": .48, "density": .54, "background_level": .16, "seed": 2801,
+                          "rule": 90, "mutation": .01, "wrap": True, "row_interval": .55}
 
     def __init__(self,controller,config=None):
-        super().__init__(controller,config)
-        self.default_params.update({"rule":90,"mutation":0.01,"wrap":True,"row_interval":0.55})
-        self.params={**self.default_params,**(config or {})};self._init_history()
+        super().__init__(controller,config); self._init_history()
 
     def _init_history(self):
         self.history=np.zeros((self._shape[1],self._shape[0]),bool)
@@ -27,6 +28,13 @@ class CellularTapestryAnimation(CadencedSculpture):
             "row_interval":{"type":"float","min":0.1,"max":1,"default":0.55,"description":"Seconds between born rows"},
         });return s
 
+    @classmethod
+    def _validate_local_parameters(cls, values):
+        super()._validate_local_parameters(values)
+        if not 0 <= int(values["rule"]) <= 255: raise ValueError("rule is out of range")
+        for name, low, high in (("mutation", 0., .15), ("row_interval", .1, 1.)):
+            if not low <= float(values[name]) <= high: raise ValueError(f"{name} is out of range")
+
     def reset_simulation(self):super().reset_simulation();self._init_history()
 
     def _step(self,tick):
@@ -38,12 +46,6 @@ class CellularTapestryAnimation(CadencedSculpture):
         nxt=((int(self.params["rule"])>>code)&1).astype(bool)
         mutation=float(self.params["mutation"])*float(self.params["density"])
         if mutation>0:nxt ^= self.rng.random(nxt.size)<mutation
-        habitat=self.plant_modifier_strength("habitat")
-        emitter=self.plant_modifier_strength("emitter")
-        if habitat>0 or emitter>0:
-            mask=self.get_plant_masks().obstacle.any(axis=1)
-            if habitat>0:nxt |= mask & (self.rng.random(nxt.size)<habitat*.15)
-            if emitter>0:nxt ^= mask & ((tick+np.arange(nxt.size))%max(2,int(8-emitter*5))==0)
         self.history[1:]=self.history[:-1];self.history[0]=nxt;self.current=nxt;self.rows_written+=1
 
     def generate_frame(self,time_elapsed,frame_count):
@@ -52,6 +54,4 @@ class CellularTapestryAnimation(CadencedSculpture):
         self.advance_bounded(tick,self._step)
         ages=np.linspace(1,.25,self._shape[1],dtype=np.float32)[:,None]
         value=(self.history*ages).T
-        obstacle=self.plant_modifier_strength("obstacle")
-        if obstacle>0:value*=1-self.get_plant_masks().obstacle*obstacle
         return self.finish_frame(tick,self.colorize(value,np.roll(value,1,axis=1)*.3))

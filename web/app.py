@@ -54,6 +54,11 @@ from animation.plugins.moonlit_fog_banks import MoonlitFogBanksAnimation
 from animation.plugins.rain_on_glass import RainOnGlassAnimation
 from animation.plugins.tidal_bioluminescence import TidalBioluminescenceAnimation
 from animation.plugins.waterfall_veil import WaterfallVeilAnimation
+from animation.plugins.cellular_tapestry import CellularTapestryAnimation
+from animation.plugins.flow_field_silk import FlowFieldSilkAnimation
+from animation.plugins.frostwork import FrostworkAnimation
+from animation.plugins.living_stained_glass import LivingStainedGlassAnimation
+from animation.plugins.quasicrystal_bloom import QuasicrystalBloomAnimation
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -176,6 +181,11 @@ class AnimationWebInterface:
                 RainOnGlassAnimation.COMPONENT_ID: RainOnGlassAnimation._normalized_parameters,
                 TidalBioluminescenceAnimation.COMPONENT_ID: TidalBioluminescenceAnimation._normalized_parameters,
                 WaterfallVeilAnimation.COMPONENT_ID: WaterfallVeilAnimation._normalized_parameters,
+                CellularTapestryAnimation.COMPONENT_ID: CellularTapestryAnimation._normalized_parameters,
+                FlowFieldSilkAnimation.COMPONENT_ID: FlowFieldSilkAnimation._normalized_parameters,
+                FrostworkAnimation.COMPONENT_ID: FrostworkAnimation._normalized_parameters,
+                LivingStainedGlassAnimation.COMPONENT_ID: LivingStainedGlassAnimation._normalized_parameters,
+                QuasicrystalBloomAnimation.COMPONENT_ID: QuasicrystalBloomAnimation._normalized_parameters,
             },
         )
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
@@ -1524,6 +1534,16 @@ class AnimationWebInterface:
             ChristmasTreeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == NightTrainWindowsAnimation.COMPONENT_ID:
             NightTrainWindowsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == CellularTapestryAnimation.COMPONENT_ID:
+            CellularTapestryAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FlowFieldSilkAnimation.COMPONENT_ID:
+            FlowFieldSilkAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FrostworkAnimation.COMPONENT_ID:
+            FrostworkAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == LivingStainedGlassAnimation.COMPONENT_ID:
+            LivingStainedGlassAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == QuasicrystalBloomAnimation.COMPONENT_ID:
+            QuasicrystalBloomAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == ConwayLifeAnimation.COMPONENT_ID:
             ConwayLifeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == TetrisAnimation.COMPONENT_ID:

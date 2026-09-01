@@ -38,6 +38,16 @@
     return {...existing, ...Object.fromEntries(fields.map((field, index) => { const control = document.getElementById(field); const name = names[index]; return [name, control.tagName === 'SELECT' ? control.value : (name === 'seed' || name === 'direction' ? Math.trunc(number(`#${field}`)) : number(`#${field}`))]; }))};
   };
   const atmosphereIds = Object.freeze(['circadian_window', 'cloud_canyon', 'desert_wind', 'moonlit_fog_banks', 'rain_on_glass', 'tidal_bioluminescence', 'waterfall_veil']);
+  const sculptureIds = Object.freeze(['cellular_tapestry', 'flow_field_silk', 'frostwork', 'living_stained_glass', 'quasicrystal_bloom']);
+  const sculptureSpecs = Object.freeze({
+    cellular_tapestry: {prefix:'tapestry', defaults:{motion:.48,density:.54,background_level:.16,seed:2801,rule:90,mutation:.01,wrap:true,row_interval:.55}, fields:[['rule','Rule'],['mutation','Mutation'],['row_interval','Weave pace']]},
+    flow_field_silk: {prefix:'silk', defaults:{motion:.52,density:.5,background_level:.14,seed:1901,turbulence:.35,persistence:.8}, fields:[['turbulence','Curl'],['persistence','Silk linger'],['motion','Drift']]},
+    frostwork: {prefix:'frost', defaults:{motion:.46,density:.48,background_level:.14,seed:1401,temperature:.35,melt_cycle:.55}, fields:[['temperature','Cold growth'],['melt_cycle','Melt cycle'],['density','Crystal density']]},
+    living_stained_glass: {prefix:'glass', defaults:{motion:.34,density:.52,background_level:.18,seed:2201,lead_width:.3,light_direction:.4}, fields:[['lead_width','Leadwork'],['light_direction','Light angle'],['motion','Pane drift']]},
+    quasicrystal_bloom: {prefix:'bloom', defaults:{motion:.42,density:.56,background_level:.16,seed:2701,symmetry:10,spatial_scale:2.4,warp:.18}, fields:[['symmetry','Symmetry'],['spatial_scale','Rosette scale'],['warp','Bloom warp']]},
+  });
+  const sculptureControlId = (id, name) => `${sculptureSpecs[id].prefix}${name[0].toUpperCase()}${name.slice(1)}`;
+  const sculptureParameters = (id, existing = {}) => ({...existing, ...Object.fromEntries(sculptureSpecs[id].fields.map(([name]) => [name, ['rule','symmetry'].includes(name) ? Math.trunc(number(`#${sculptureControlId(id, name)}`)) : number(`#${sculptureControlId(id, name)}`)]))});
   const atmosphereSpecs = Object.freeze({
     circadian_window: {prefix: 'circadian', defaults: {motion: .35, density: .5, mood: 'natural', seed: 29001, hour: -1, time_scale: 1}, fields: [['motion','Motion'],['density','Sky detail'],['mood','Sky mood',[['natural','Natural'],['ember','Ember'],['sleeper','Sleeper'],['pastel','Pastel']]],['seed','Sky seed'],['hour','Clock hour'],['time_scale','Day scale']]},
     cloud_canyon: {prefix: 'cloud', defaults: {motion: .42, density: .46, mood: 'moonlit', seed: 4301}, fields: [['motion','Cloud drift'],['density','Bank density'],['mood','Canyon mood',[['moonlit','Moonlit'],['daylight','Daylight'],['ember','Ember'],['violet','Violet']]],['seed','Canyon seed']]},
@@ -55,8 +65,10 @@
   const emojiWidget = () => ({id: 'composer-emoji-message', component: {component_id: 'emoji_arranger', version: 1, provider: 'python', role: 'widget', parameters: emojiParameters()}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: 0}});
   const componentPresetTargets = Object.freeze({aurora_curtains: 'aurora-curtains-preset-cards', conway_life: 'conway-life-preset-cards', tetris: 'tetris-preset-cards', firefly_synchrony: 'firefly-synchrony-preset-cards', fireworks: 'fireworksPresetCards', flame_burst: 'flame-burst-preset-cards', fluid_tank: 'fluid-tank-preset-cards', lava_lamp: 'lavaPresetCards', snake: 'snakePresetCards', cyclic_reef: 'reefPresetCards', canopy_cup: 'canopyPresetCards', maze_chase: 'mazePresetCards', pinball: 'pinballPresetCards', pixel_quest: 'questPresetCards', ascii_drop: 'asciiDropPresetCards', emoji: 'emojiAnimationPresetCards', christmas_tree: 'christmasTreePresetCards', night_train_windows: 'nightTrainPresetCards', gradient: 'gradient-preset-cards', rainbow: 'rainbow-preset-cards', solid: 'solid-preset-cards', sparkle: 'sparkle-preset-cards', wave: 'wave-preset-cards'});
   const atmospherePresetTargets = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
+  const sculpturePresetTargets = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
   const componentControls = Object.freeze({aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], flame_burst: ['#flameCadence', '#flameSize', '#flameEmbers', '#flameFlicker'], fluid_tank: ['#fluidFlow', '#fluidCurrent', '#fluidBubbles', '#fluidSurface'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed'], maze_chase: ['#mazeCadence', '#mazeDifficulty', '#mazeRadar'], pinball: ['#pinballTicks', '#pinballChaos'], pixel_quest: ['#questCadence', '#questDifficulty', '#questHud'], ascii_drop: ['#asciiPhrase', '#asciiStory', '#asciiSpeed', '#asciiDensity'], emoji: ['#emojiFace', '#emojiMood', '#emojiAnimationPulse', '#emojiAnimationScale'], christmas_tree: ['#treeSeason', '#treeHeight', '#treeSnowfall'], night_train_windows: ['#trainRoute', '#trainSpeed', '#trainGlow'], gradient: ['#gradientDirection','#gradientDrift','#gradientMotion','#gradientSeed'], rainbow: ['#rainbowBands','#rainbowTravel','#rainbowDirection','#rainbowSeed'], solid: ['#solidGlow','#solidBreath','#solidSeed'], sparkle: ['#sparkleDensity','#sparkleLinger','#sparkleTwinkle','#sparkleNight','#sparkleSeed'], wave: ['#waveAxis','#waveFrequency','#waveTravel','#waveShape','#waveDirection','#waveSeed']});
   const atmosphereControls = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, atmosphereSpecs[id].fields.map(([name]) => `#${atmosphereControlId(id, name)}`)])));
+  const sculptureControls = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, sculptureSpecs[id].fields.map(([name]) => `#${sculptureControlId(id, name)}`)])));
 
   function installPixelStoryControls() {
     const field = (id, label, value, options = null) => { const wrapper = document.createElement('label'); wrapper.textContent = label; const control = document.createElement(options ? 'select' : 'input'); control.id = id; if (options) options.forEach(([optionValue, title]) => control.append(new Option(title, optionValue))); else { control.type = id === 'asciiPhrase' ? 'text' : 'number'; control.step = '.01'; } control.value = value; wrapper.append(control); $('#animationControls').append(wrapper); };
@@ -82,6 +94,12 @@
       control.value = atmosphereSpecs[id].defaults[name]; wrapper.append(control); target.append(wrapper);
     }));
   }
+  function installSculptureControls() {
+    const target = $('#animationControls');
+    sculptureIds.forEach((id) => sculptureSpecs[id].fields.forEach(([name, label]) => {
+      const wrapper = document.createElement('label'); wrapper.textContent = label; const control = document.createElement('input'); control.type = 'number'; control.step = name === 'rule' || name === 'symmetry' ? '1' : '.01'; control.id = sculptureControlId(id, name); control.value = sculptureSpecs[id].defaults[name]; wrapper.append(control); target.append(wrapper);
+    }));
+  }
 
   function sameLocalParameters(left, right) {
     if (left === right) return true;
@@ -105,8 +123,8 @@
   }
   function syncComponentPresetUI() {
     const componentId = state.scene?.animation?.component_id;
-    [...Object.entries(componentPresetTargets), ...Object.entries(atmospherePresetTargets)].forEach(([id, targetId]) => setComponentRegion(document.getElementById(targetId), id === componentId));
-    [...Object.entries(componentControls), ...Object.entries(atmosphereControls)].forEach(([id, selectors]) => selectors.forEach((selector) => {
+    [...Object.entries(componentPresetTargets), ...Object.entries(atmospherePresetTargets), ...Object.entries(sculpturePresetTargets)].forEach(([id, targetId]) => setComponentRegion(document.getElementById(targetId), id === componentId));
+    [...Object.entries(componentControls), ...Object.entries(atmosphereControls), ...Object.entries(sculptureControls)].forEach(([id, selectors]) => selectors.forEach((selector) => {
       const control = $(selector); if (!control) return;
       const visible = id === componentId; const label = control.closest('label') || control;
       label.hidden = !visible; control.disabled = !visible; control.setAttribute('aria-hidden', String(!visible));
@@ -116,7 +134,7 @@
     });
     const choices = state.componentPresets[componentId] || [];
     const selected = choices.find((choice) => sameLocalParameters(choice.parameters, state.scene?.animation?.parameters));
-    const cards = document.getElementById(componentPresetTargets[componentId] || atmospherePresetTargets[componentId]);
+    const cards = document.getElementById(componentPresetTargets[componentId] || atmospherePresetTargets[componentId] || sculpturePresetTargets[componentId]);
     if (cards) cards.querySelectorAll('button').forEach((button) => {
       const active = selected?.name === button.textContent; button.setAttribute('aria-pressed', String(active)); button.classList.toggle('active', active);
     });
@@ -136,7 +154,9 @@
     const next = structuredClone(state.scene || defaultScene());
     next.background.parameters = {...next.background.parameters, gain: number('#backgroundGain')};
     const choice = $('#animationChoice').value;
-    if (choice !== next.animation.component_id) next.animation = atmosphereIds.includes(choice)
+    if (choice !== next.animation.component_id) next.animation = sculptureIds.includes(choice)
+      ? {component_id: choice, version: 1, provider: 'python', role: 'animation', parameters: sculptureParameters(choice, sculptureSpecs[choice].defaults)}
+      : atmosphereIds.includes(choice)
       ? {component_id: choice, version: 1, provider: 'python', role: 'animation', parameters: atmosphereParameters(choice)}
       : ambientIds.includes(choice)
       ? {component_id: choice, version: 1, provider: 'python', role: 'animation', parameters: ambientParameters(choice)}
@@ -175,6 +195,7 @@
                       : choice === 'night_train_windows'
                         ? {component_id: 'night_train_windows', version: 1, provider: 'python', role: 'animation', parameters: trainParameters({star_density: .35, seed: 1984})}
         : {component_id: 'aurora_curtains', version: 1, provider: 'python', role: 'animation', parameters: {curtain_density: number('#curtainDensity'), fold_depth: number('#foldDepth'), glow_intensity: number('#glowIntensity'), source_fps: 30, seed: 4201}};
+    else if (sculptureIds.includes(choice)) next.animation.parameters = sculptureParameters(choice, next.animation.parameters);
     else if (atmosphereIds.includes(choice)) next.animation.parameters = atmosphereParameters(choice, next.animation.parameters);
     else if (ambientIds.includes(choice)) next.animation.parameters = ambientParameters(choice, next.animation.parameters);
     else if (choice === 'conway_life') next.animation.parameters = {...next.animation.parameters, seed: number('#lifeSeed'), generations_per_second: number('#lifeRate')};
@@ -213,6 +234,9 @@
       const mapping = {gradient: [['gradientDirection','direction','vertical'],['gradientDrift','drift',.22],['gradientMotion','motion',.72],['gradientSeed','seed',6101]], rainbow: [['rainbowBands','bands',1.4],['rainbowTravel','travel',.65],['rainbowDirection','direction',1],['rainbowSeed','seed',6102]], solid: [['solidGlow','glow',.68],['solidBreath','breath',0],['solidSeed','seed',6103]], sparkle: [['sparkleDensity','density',.2],['sparkleLinger','linger',.65],['sparkleTwinkle','twinkle',.72],['sparkleNight','night',.08],['sparkleSeed','seed',6104]], wave: [['waveAxis','axis','vertical'],['waveFrequency','frequency',2],['waveTravel','travel',.45],['waveShape','shape',.8],['waveDirection','direction',1],['waveSeed','seed',6105]]};
       mapping[animation.component_id].forEach(([field, key, fallback]) => { document.getElementById(field).value = parameters[key] ?? fallback; });
     }
+    if (sculptureIds.includes(animation.component_id)) sculptureSpecs[animation.component_id].fields.forEach(([name]) => {
+      document.getElementById(sculptureControlId(animation.component_id, name)).value = parameters[name] ?? sculptureSpecs[animation.component_id].defaults[name];
+    });
     if (atmosphereIds.includes(animation.component_id)) atmosphereSpecs[animation.component_id].fields.forEach(([name]) => {
       document.getElementById(atmosphereControlId(animation.component_id, name)).value = parameters[name] ?? atmosphereSpecs[animation.component_id].defaults[name];
     });
@@ -387,6 +411,7 @@
     ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#clockOffset','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiLineSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#wallPace','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
     ['#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow'].forEach((selector) => $(selector).addEventListener('input', edit));
     Object.values(atmosphereControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
+    Object.values(sculptureControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
     Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave')).forEach((selector) => $(selector).addEventListener('input', edit));
     // Phrase editing is the ASCII instrument itself: publish each real text
     // input so the Preview and live remix visibly answer while typing.
@@ -400,7 +425,7 @@
   function syncSecondaryOperations() { $('#secondaryOperations').open = !window.matchMedia('(max-width: 760px)').matches; }
   const phoneLayout = window.matchMedia('(max-width: 760px)');
   phoneLayout.addEventListener('change', syncSecondaryOperations);
-  syncSecondaryOperations(); installPixelStoryControls(); installAmbientControls(); installAtmosphereControls(); wire(); applyScene(defaultScene());
+  syncSecondaryOperations(); installPixelStoryControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); wire(); applyScene(defaultScene());
   if (![...$('#animationChoice').options].some((option) => option.value === 'snake')) $('#animationChoice').append(new Option('Snake Garden', 'snake'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'canopy_cup')) $('#animationChoice').append(new Option('Canopy Cup', 'canopy_cup'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'maze_chase')) $('#animationChoice').append(new Option('Maze Chase', 'maze_chase'));
@@ -412,9 +437,10 @@
   if (![...$('#animationChoice').options].some((option) => option.value === 'night_train_windows')) $('#animationChoice').append(new Option('Night Train Windows', 'night_train_windows'));
   [['gradient','Gradient Field'],['rainbow','Rainbow River'],['solid','Solid Glow'],['sparkle','Sparkle Night'],['wave','Wave Ribbons']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   [['circadian_window','Circadian Window'],['cloud_canyon','Cloud Canyon'],['desert_wind','Desert Wind'],['moonlit_fog_banks','Moonlit Fog Banks'],['rain_on_glass','Rain on Glass'],['tidal_bioluminescence','Tidal Bioluminescence'],['waterfall_veil','Waterfall Veil']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
+  [['cellular_tapestry','Cellular Tapestry'],['flow_field_silk','Flow-Field Silk'],['frostwork','Frostwork'],['living_stained_glass','Living Stained Glass'],['quasicrystal_bloom','Quasicrystal Bloom']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   async function refreshStatus() { if (state.refreshInFlight) return; state.refreshInFlight = true; try { const response = await fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Local Composer server unavailable.'); const status = body.status; const newerRemoteRevision = Boolean(recoveryMatchesStatus(body) && status.revision > (state.revision || 0)); if (newerRemoteRevision) { state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null; state.history = []; state.redo = []; state.dirty = false; applyScene(state.scene); schedulePreview(); } renderStatus(status); if (newerRemoteRevision && status.undo_invalidated) acknowledgeUndo(status.undo_invalidation_revision); } catch (error) { $('#operationMessage').textContent = error.message; } finally { state.refreshInFlight = false; } }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene or use Go Live to replace it.`; }
   async function hydrateCurrentScene() { let response; try { response = await fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`); } catch (_) { const error = new Error('Local Composer server unavailable.'); error.serverUnavailable = true; throw error; } const body = await response.json(); if (!response.ok) { const error = new Error(body.error || 'Current scene recovery is unavailable.'); if (response.status >= 500) { error.serverUnavailable = true; throw error; } recoverFromInvalidRecovery(body); return; } if (body.recovery && (recoveryMatchesStatus(body) || !body.status.current)) { state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null; state.dirty = false; state.revision = body.status.revision || 0; applyScene(state.scene); renderStatus(body.status); } else { state.revision = body.status.revision || 0; applyScene(defaultScene()); renderStatus(body.status); } }
-  hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
+  hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();

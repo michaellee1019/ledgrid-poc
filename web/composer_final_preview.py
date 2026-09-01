@@ -54,6 +54,11 @@ from animation.plugins.moonlit_fog_banks import MoonlitFogBanksAnimation
 from animation.plugins.rain_on_glass import RainOnGlassAnimation
 from animation.plugins.tidal_bioluminescence import TidalBioluminescenceAnimation
 from animation.plugins.waterfall_veil import WaterfallVeilAnimation
+from animation.plugins.cellular_tapestry import CellularTapestryAnimation
+from animation.plugins.flow_field_silk import FlowFieldSilkAnimation
+from animation.plugins.frostwork import FrostworkAnimation
+from animation.plugins.living_stained_glass import LivingStainedGlassAnimation
+from animation.plugins.quasicrystal_bloom import QuasicrystalBloomAnimation
 from ipc.scene_contract import CanonicalScene
 
 
@@ -124,6 +129,11 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         RainOnGlassAnimation.component_descriptor(),
         TidalBioluminescenceAnimation.component_descriptor(),
         WaterfallVeilAnimation.component_descriptor(),
+        CellularTapestryAnimation.component_descriptor(),
+        FlowFieldSilkAnimation.component_descriptor(),
+        FrostworkAnimation.component_descriptor(),
+        LivingStainedGlassAnimation.component_descriptor(),
+        QuasicrystalBloomAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
         EmojiArrangerAnimation.component_descriptor(),
     )
@@ -313,6 +323,16 @@ class ComposerFinalPreview:
             return TidalBioluminescenceAnimation(controller, parameters)
         if descriptor.component_id == WaterfallVeilAnimation.COMPONENT_ID:
             return WaterfallVeilAnimation(controller, parameters)
+        if descriptor.component_id == CellularTapestryAnimation.COMPONENT_ID:
+            return CellularTapestryAnimation(controller, parameters)
+        if descriptor.component_id == FlowFieldSilkAnimation.COMPONENT_ID:
+            return FlowFieldSilkAnimation(controller, parameters)
+        if descriptor.component_id == FrostworkAnimation.COMPONENT_ID:
+            return FrostworkAnimation(controller, parameters)
+        if descriptor.component_id == LivingStainedGlassAnimation.COMPONENT_ID:
+            return LivingStainedGlassAnimation(controller, parameters)
+        if descriptor.component_id == QuasicrystalBloomAnimation.COMPONENT_ID:
+            return QuasicrystalBloomAnimation(controller, parameters)
         raise ValueError(f"Composer preview cannot render Animation {descriptor.component_id!r}")
 
     def _widget_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:

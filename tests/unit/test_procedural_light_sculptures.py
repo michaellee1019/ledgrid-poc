@@ -50,13 +50,10 @@ class ProceduralLightSculptureTests(unittest.TestCase):
                 for t in (0.0, .2, .8):
                     np.testing.assert_array_equal(self.pixels(a.generate_frame(t, 0)), self.pixels(b.generate_frame(t, 0)))
                 schema = a.get_parameter_schema()
-                for key in ("motion", "density", "mood", "background", "background_level",
-                            "brightness", "seed"):
+                for key in ("motion", "density", "background_level", "seed"):
                     self.assertIn(key, schema)
-                self.assertEqual(schema["background"]["options"],
-                                 ["none", "soft", "luminous", "radiant"])
                 before = self.pixels(a.generate_frame(1.0, 0)).copy()
-                a.update_parameters({"mood": "showcase"})
+                a.update_parameters({"background_level": 1.0})
                 after = self.pixels(a.generate_frame(1.0, 0))
                 self.assertFalse(np.array_equal(before, after))
 
@@ -118,22 +115,19 @@ class ProceduralLightSculptureTests(unittest.TestCase):
             self.assertTrue({"quiet","showcase","night"}.issubset({p.stem for p in paths}))
             for path in paths:
                 payload=json.loads(path.read_text()); self.assertIs(payload["params"]["plant_aware"],True)
-                animation=cls(self.controller,payload["params"]); schema=animation.get_parameter_schema()
-                for key,value in payload["params"].items():
-                    self.assertIn(key,schema)
-                    if "options" in schema[key]: self.assertIn(value,schema[key]["options"])
+                normalized = cls._normalized_parameters(payload["params"])
+                self.assertSetEqual(set(normalized), set(cls.COMPONENT_DEFAULTS))
+                self.assertNotIn("brightness", normalized); self.assertNotIn("speed", normalized)
+                animation=cls(self.controller,payload["params"])
                 frames.append(self.pixels(animation.generate_frame(.8,0)).copy())
             self.assertEqual(len({frame.tobytes() for frame in frames}),len(paths))
 
-    def test_radiant_bright_background_materially_lifts_a_warmed_scene(self):
-        common={"seed":929,"mood":"bright","brightness":.85,"motion":.5,
-                "density":.72,"background_level":.9}
-        dark=QuasicrystalBloomAnimation(self.controller,{**common,"background":"none"})
-        bright=QuasicrystalBloomAnimation(self.controller,{**common,"background":"radiant"})
-        for index,elapsed in enumerate((0.0,.1,.25,.5)):
-            dark_frame=self.pixels(dark.generate_frame(elapsed,index))
-            bright_frame=self.pixels(bright.generate_frame(elapsed,index))
-        self.assertGreater(float(bright_frame.mean()),float(dark_frame.mean())+2.0)
+    def test_global_palette_and_brightness_are_not_component_parameters(self):
+        for cls in CLASSES:
+            with self.subTest(plugin=cls.__name__):
+                self.assertNotIn("brightness", cls.COMPONENT_DEFAULTS)
+                with self.assertRaisesRegex(ValueError, "non-local"):
+                    cls._normalized_parameters({"speed": 1})
 
 
 if __name__ == "__main__": unittest.main()
