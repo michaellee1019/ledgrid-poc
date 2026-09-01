@@ -1,1 +1,16 @@
-{"version":1,"preset_id":"she_cute","name":"she cute","animation":"fluid_tank","params":{"flow_rate":0.6,"current":0.2,"bubble_lift":0.65,"surface_energy":0.35,"seed":6217},"created_at":1784606871.0853481,"updated_at":1784606871.0853481}
+{
+  "version": 2,
+  "preset_id": "she_cute",
+  "name": "she cute",
+  "animation": "fluid_tank",
+  "params": {
+    "flow_rate": 0.6,
+    "current": 0.2,
+    "bubble_lift": 0.65,
+    "surface_energy": 0.35,
+    "seed": 6217
+  },
+  "created_at": 1784606871.0853481,
+  "updated_at": 1784606871.0853481,
+  "description": "A gentle, buoyant fluid study with a soft current."
+}

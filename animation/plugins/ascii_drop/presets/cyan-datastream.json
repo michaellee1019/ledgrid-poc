@@ -1,1 +1,14 @@
-{"preset_id":"cyan-datastream","name":"Cyan Datastream","description":"Cool data fragments racing through blue.","animation":"ascii_drop","params":{"phrase":"0101 DATA GRID","story":"datastream","fall_speed":25.0,"density":0.68,"seed":10101}}
+{
+  "preset_id": "cyan-datastream",
+  "name": "Cyan Datastream",
+  "description": "Cool data fragments racing through blue.",
+  "animation": "ascii_drop",
+  "params": {
+    "phrase": "0101 DATA GRID",
+    "story": "datastream",
+    "fall_speed": 25.0,
+    "density": 0.68,
+    "seed": 10101
+  },
+  "version": 2
+}

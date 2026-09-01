@@ -1,1 +1,14 @@
-{"preset_id":"matrix-rain","name":"Matrix Rain","description":"Green glyphs wake up the wall.","animation":"ascii_drop","params":{"phrase":"WAKE UP 2026","story":"matrix","fall_speed":23.0,"density":0.78,"seed":1999}}
+{
+  "preset_id": "matrix-rain",
+  "name": "Matrix Rain",
+  "description": "Green glyphs wake up the wall.",
+  "animation": "ascii_drop",
+  "params": {
+    "phrase": "WAKE UP 2026",
+    "story": "matrix",
+    "fall_speed": 23.0,
+    "density": 0.78,
+    "seed": 1999
+  },
+  "version": 2
+}

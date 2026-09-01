@@ -1,1 +1,14 @@
-{"preset_id":"quiet-sleeper","name":"Quiet Sleeper","description":"Slow dark hills beyond a warm carriage.","animation":"night_train_windows","params":{"route":"sleeper","travel_speed":0.55,"window_glow":0.5,"star_density":0.3,"seed":9}}
+{
+  "preset_id": "quiet-sleeper",
+  "name": "Quiet Sleeper",
+  "description": "Slow dark hills beyond a warm carriage.",
+  "animation": "night_train_windows",
+  "params": {
+    "route": "sleeper",
+    "travel_speed": 0.55,
+    "window_glow": 0.5,
+    "star_density": 0.3,
+    "seed": 9
+  },
+  "version": 2
+}

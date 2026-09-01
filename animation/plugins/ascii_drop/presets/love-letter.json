@@ -1,1 +1,14 @@
-{"preset_id":"love-letter","name":"Love Letter","description":"A rose-colored pixel note.","animation":"ascii_drop","params":{"phrase":"LOVE YOU","story":"love","fall_speed":10.0,"density":0.42,"seed":214}}
+{
+  "preset_id": "love-letter",
+  "name": "Love Letter",
+  "description": "A rose-colored pixel note.",
+  "animation": "ascii_drop",
+  "params": {
+    "phrase": "LOVE YOU",
+    "story": "love",
+    "fall_speed": 10.0,
+    "density": 0.42,
+    "seed": 214
+  },
+  "version": 2
+}

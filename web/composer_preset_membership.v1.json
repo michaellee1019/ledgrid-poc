@@ -1,0 +1,459 @@
+{
+  "version": 1,
+  "components": {
+    "ascii_drop": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "amber-terminal",
+        "cyan-datastream",
+        "love-letter",
+        "matrix-rain",
+        "maximum-overflow"
+      ]
+    },
+    "aurora_curtains": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "showcase",
+        "solar-morning"
+      ]
+    },
+    "canopy_cup": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "barrel-temple-climb",
+        "championship-speedrun",
+        "cinematic-no-hud",
+        "fern-gully-flutter",
+        "impossible-valley-relay",
+        "neon-vine-night",
+        "plant-uprising",
+        "power-up-pandemonium",
+        "seven-realm-grand-prix",
+        "storybook-slow-motion",
+        "sunset-crystal-falls",
+        "webline-rooftops"
+      ]
+    },
+    "cellular_tapestry": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "christmas_tree": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "blizzard-lights",
+        "classic-christmas",
+        "quiet-snowfall",
+        "tiny-tree-party"
+      ]
+    },
+    "circadian_window": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "day-in-a-minute",
+        "midnight-window",
+        "pastel-noon",
+        "quiet-real-time"
+      ]
+    },
+    "clock_overlay": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "local-12-hour",
+        "precision-seconds",
+        "remote-team-plus-six"
+      ]
+    },
+    "cloud_canyon": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "daylight-canyon",
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "conway_life": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "arcade-afterlife",
+        "aurora-garden",
+        "bioluminescent-tide",
+        "classic-green",
+        "deep-space-acorn",
+        "earth-cities",
+        "gosper-foundry",
+        "ice-crystal",
+        "maximum-chaos",
+        "neon-glider-storm",
+        "oscillator-orchard",
+        "pulsar-observatory",
+        "r-pentomino-laboratory",
+        "solar-embers",
+        "synthwave-sunset"
+      ]
+    },
+    "cyclic_reef": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "desert_wind": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "candlelit-dunes",
+        "martian-saltation",
+        "quiet-ochre",
+        "violet-night-dunes"
+      ]
+    },
+    "emoji": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "golden-smile",
+        "ice-heart",
+        "neon-grin",
+        "valentine-heart"
+      ]
+    },
+    "firefly_synchrony": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "lantern-meadow",
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "fireworks": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "golden-willows",
+        "grand-finale",
+        "neon-crackle",
+        "patriotic-salute",
+        "quiet-sparklers"
+      ]
+    },
+    "flame_burst": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "afterburner",
+        "campfire-bloom",
+        "off-center-comet",
+        "rapid-ignition",
+        "solar-pulse"
+      ]
+    },
+    "flow_field_silk": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "fluid_tank": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "bubble-column",
+        "caustic-laboratory",
+        "flash-flood",
+        "quiet-aquarium",
+        "she_cute",
+        "storm-tank"
+      ]
+    },
+    "frostwork": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "pastel-daybreak",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "gradient": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "arctic-horizon",
+        "ember-shift",
+        "forest-dawn",
+        "hypercolor-scan",
+        "miami-sunset"
+      ]
+    },
+    "lava_lamp": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "bowl-bumpers",
+        "bowl-emitter",
+        "busy-bubbles",
+        "classic-amber",
+        "cotton-candy",
+        "foliage-refraction",
+        "habitat-pools",
+        "night",
+        "ocean-blue",
+        "quiet",
+        "ruby-vintage",
+        "seven-bowl-portals",
+        "showcase",
+        "slow-giants",
+        "solar-flare",
+        "stormy-wax",
+        "toxic-lime",
+        "violet-glass"
+      ]
+    },
+    "living_ecosystem": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "autumn-mosaic",
+        "bioluminescent-exoplanet",
+        "boreal-night",
+        "golden-hour",
+        "midnight-fireflies",
+        "neon-microverse",
+        "serengeti-migration",
+        "synthetic-gene-lab",
+        "temperate-wetland"
+      ]
+    },
+    "living_stained_glass": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "aurora-transept",
+        "candlelight-mosaic",
+        "daylight-rose",
+        "night",
+        "pastel-chapel",
+        "quiet",
+        "showcase",
+        "synthwave-basilica"
+      ]
+    },
+    "maze_chase": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "classic-chase",
+        "family-maze",
+        "hunter-vision",
+        "midnight-pursuit",
+        "nightmare-tunnel"
+      ]
+    },
+    "moonlit_fog_banks": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "aurora-morning-fog",
+        "quiet-banks",
+        "silver-halo",
+        "sleeping-ridge"
+      ]
+    },
+    "night_train_windows": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "ember-express",
+        "moonlit-berth",
+        "quiet-sleeper",
+        "synthwave-commuter"
+      ]
+    },
+    "physarum_network": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "showcase",
+        "synthwave-mycelium"
+      ]
+    },
+    "pinball": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "midnight-attract",
+        "multiball-mayhem",
+        "neon-casino",
+        "slow-motion-replay",
+        "tournament-table"
+      ]
+    },
+    "pixel_quest": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "cinematic-no-hud",
+        "heroic-adventure",
+        "scenic-journey",
+        "speedrun"
+      ]
+    },
+    "quasicrystal_bloom": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "daylight-prism",
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "rain_on_glass": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "pastel-sunshower",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "rainbow": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "classic-spectrum",
+        "hyperspectrum",
+        "pastel-drift",
+        "reverse-prism"
+      ]
+    },
+    "reaction_diffusion_garden": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "aurora-conservatory",
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "snake": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "classic-orchard",
+        "comet-garden",
+        "electric-hive",
+        "fire-serpents",
+        "ice-labyrinth",
+        "koi-at-midnight",
+        "neon-duel",
+        "portal-bloom",
+        "prism-switchbacks",
+        "rainbow-river"
+      ]
+    },
+    "solid": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "deep-ocean",
+        "forest-breath",
+        "rose-quartz",
+        "ultraviolet-pulse",
+        "warm-linen"
+      ]
+    },
+    "sparkle": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "candlelight",
+        "confetti-storm",
+        "diamond-dust",
+        "emerald-fireflies",
+        "starlight"
+      ]
+    },
+    "tetris": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "avalanche-factory",
+        "classic-quartet",
+        "cooperative-swarm",
+        "impossible-shift",
+        "solo-zen"
+      ]
+    },
+    "tidal_bioluminescence": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "waterfall_veil": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    },
+    "wave": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "chill_raining_fish_tank",
+        "emerald-breath",
+        "moonlit-tide",
+        "solar-radio",
+        "synthwave-ribbons",
+        "ultraviolet-static"
+      ]
+    },
+    "wind_in_the_reeds": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "showcase"
+      ]
+    }
+  }
+}

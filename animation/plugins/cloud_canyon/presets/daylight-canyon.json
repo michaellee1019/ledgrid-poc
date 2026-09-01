@@ -5,8 +5,11 @@
   "animation": "cloud_canyon",
   "category": "Radiant Sky",
   "description": "Bright blue cloud layers open around a slow-moving radiant canyon of light.",
-  "tags": ["daylight", "clouds", "bright"],
-  "palette": {"name": "Canyon Daylight", "colors": ["#1C3048", "#69B2DE", "#F4FBFF"]},
+  "tags": [
+    "daylight",
+    "clouds",
+    "bright"
+  ],
   "created_at": "2026-07-22T00:00:00Z",
   "updated_at": "2026-07-22T00:00:00Z",
   "params": {
@@ -21,8 +24,16 @@
     "seed": 4327,
     "plant_modifiers": {
       "version": 1,
-      "active": ["refract", "hue_shift", "liquid_glass"],
-      "strengths": {"refract": 0.44, "hue_shift": 0.26, "liquid_glass": 0.48}
+      "active": [
+        "refract",
+        "hue_shift",
+        "liquid_glass"
+      ],
+      "strengths": {
+        "refract": 0.44,
+        "hue_shift": 0.26,
+        "liquid_glass": 0.48
+      }
     }
   }
 }

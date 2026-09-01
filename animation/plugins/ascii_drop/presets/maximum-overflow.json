@@ -1,1 +1,14 @@
-{"preset_id":"maximum-overflow","name":"Maximum Overflow","description":"A maximal white-hot stream.","animation":"ascii_drop","params":{"phrase":"ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789","story":"overflow","fall_speed":36.0,"density":1.0,"seed":999999}}
+{
+  "preset_id": "maximum-overflow",
+  "name": "Maximum Overflow",
+  "description": "A maximal white-hot stream.",
+  "animation": "ascii_drop",
+  "params": {
+    "phrase": "ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789",
+    "story": "overflow",
+    "fall_speed": 36.0,
+    "density": 1.0,
+    "seed": 999999
+  },
+  "version": 2
+}

@@ -1,1 +1,14 @@
-{"preset_id":"ember-express","name":"Ember Express","description":"Orange towns slide past a red-black sleeper.","animation":"night_train_windows","params":{"route":"ember","travel_speed":1.45,"window_glow":0.82,"star_density":0.25,"seed":40}}
+{
+  "preset_id": "ember-express",
+  "name": "Ember Express",
+  "description": "Orange towns slide past a red-black sleeper.",
+  "animation": "night_train_windows",
+  "params": {
+    "route": "ember",
+    "travel_speed": 1.45,
+    "window_glow": 0.82,
+    "star_density": 0.25,
+    "seed": 40
+  },
+  "version": 2
+}

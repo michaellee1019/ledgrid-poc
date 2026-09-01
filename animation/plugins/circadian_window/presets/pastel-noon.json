@@ -5,8 +5,11 @@
   "animation": "circadian_window",
   "category": "Pastel Daylight",
   "description": "A fixed high-noon window washes the wall in radiant blush and powder-blue light.",
-  "tags": ["pastel", "daylight", "still"],
-  "palette": {"name": "Blush Noon", "colors": ["#23183A", "#AE80CD", "#FFD6E2"]},
+  "tags": [
+    "pastel",
+    "daylight",
+    "still"
+  ],
   "created_at": "2026-07-22T00:00:00Z",
   "updated_at": "2026-07-22T00:00:00Z",
   "params": {
@@ -24,8 +27,16 @@
     "time_scale": 0.0,
     "plant_modifiers": {
       "version": 1,
-      "active": ["illuminate", "hue_shift", "liquid_glass"],
-      "strengths": {"illuminate": 0.6, "hue_shift": 0.2, "liquid_glass": 0.32}
+      "active": [
+        "illuminate",
+        "hue_shift",
+        "liquid_glass"
+      ],
+      "strengths": {
+        "illuminate": 0.6,
+        "hue_shift": 0.2,
+        "liquid_glass": 0.32
+      }
     }
   }
 }

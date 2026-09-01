@@ -1,1 +1,14 @@
-{"preset_id":"moonlit-berth","name":"Moonlit Berth","description":"A blue landscape under clear stars.","animation":"night_train_windows","params":{"route":"moonlit","travel_speed":0.85,"window_glow":0.55,"star_density":0.64,"seed":1984}}
+{
+  "preset_id": "moonlit-berth",
+  "name": "Moonlit Berth",
+  "description": "A blue landscape under clear stars.",
+  "animation": "night_train_windows",
+  "params": {
+    "route": "moonlit",
+    "travel_speed": 0.85,
+    "window_glow": 0.55,
+    "star_density": 0.64,
+    "seed": 1984
+  },
+  "version": 2
+}
