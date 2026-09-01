@@ -303,6 +303,18 @@ class CanonicalSceneRuntime:
         if descriptor.component_id == "tetris":
             from animation.plugins.tetris import TetrisAnimation
             return TetrisAnimation(controller, parameters)
+        if descriptor.component_id == "ascii_drop":
+            from animation.plugins.ascii_drop import AsciiDropAnimation
+            return AsciiDropAnimation(controller, parameters)
+        if descriptor.component_id == "emoji":
+            from animation.plugins.emoji import EmojiAnimation
+            return EmojiAnimation(controller, parameters)
+        if descriptor.component_id == "christmas_tree":
+            from animation.plugins.christmas_tree import ChristmasTreeAnimation
+            return ChristmasTreeAnimation(controller, parameters)
+        if descriptor.component_id == "night_train_windows":
+            from animation.plugins.night_train_windows import NightTrainWindowsAnimation
+            return NightTrainWindowsAnimation(controller, parameters)
         if descriptor.component_id == "clock_overlay":
             from animation.plugins.clock_overlay import ClockOverlayAnimation
             return ClockOverlayAnimation(controller, parameters)

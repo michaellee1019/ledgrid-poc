@@ -24,14 +24,18 @@ from animation.core.plant_awareness import PlantMaskCache
 from animation.core.scene_runtime import CanonicalSceneRuntime, RuntimeFrame
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.canopy_cup import CanopyCupAnimation
+from animation.plugins.ascii_drop import AsciiDropAnimation
+from animation.plugins.christmas_tree import ChristmasTreeAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
+from animation.plugins.emoji import EmojiAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.maze_chase import MazeChaseAnimation
+from animation.plugins.night_train_windows import NightTrainWindowsAnimation
 from animation.plugins.pinball import PinballAnimation
 from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.snake import SnakeAnimation
@@ -78,6 +82,10 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         native_aurora_descriptor(),
         AuroraCurtainsAnimation.component_descriptor(),
         CanopyCupAnimation.component_descriptor(),
+        AsciiDropAnimation.component_descriptor(),
+        EmojiAnimation.component_descriptor(),
+        ChristmasTreeAnimation.component_descriptor(),
+        NightTrainWindowsAnimation.component_descriptor(),
         ConwayLifeAnimation.component_descriptor(),
         TetrisAnimation.component_descriptor(),
         FireflySynchronyAnimation.component_descriptor(),
@@ -213,6 +221,14 @@ class ComposerFinalPreview:
             return TetrisAnimation(controller, parameters)
         if descriptor.component_id == CanopyCupAnimation.COMPONENT_ID:
             return CanopyCupAnimation(controller, parameters)
+        if descriptor.component_id == AsciiDropAnimation.COMPONENT_ID:
+            return AsciiDropAnimation(controller, parameters)
+        if descriptor.component_id == EmojiAnimation.COMPONENT_ID:
+            return EmojiAnimation(controller, parameters)
+        if descriptor.component_id == ChristmasTreeAnimation.COMPONENT_ID:
+            return ChristmasTreeAnimation(controller, parameters)
+        if descriptor.component_id == NightTrainWindowsAnimation.COMPONENT_ID:
+            return NightTrainWindowsAnimation(controller, parameters)
         if descriptor.component_id == FireflySynchronyAnimation.COMPONENT_ID:
             return FireflySynchronyAnimation(controller, parameters)
         if descriptor.component_id == FireworksAnimation.COMPONENT_ID:

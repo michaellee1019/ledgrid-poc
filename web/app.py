@@ -25,13 +25,17 @@ from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.canopy_cup import CanopyCupAnimation
+from animation.plugins.ascii_drop import AsciiDropAnimation
+from animation.plugins.christmas_tree import ChristmasTreeAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
+from animation.plugins.emoji import EmojiAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.maze_chase import MazeChaseAnimation
+from animation.plugins.night_train_windows import NightTrainWindowsAnimation
 from animation.plugins.pinball import PinballAnimation
 from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.snake import SnakeAnimation
@@ -130,6 +134,10 @@ class AnimationWebInterface:
             {
                 AuroraCurtainsAnimation.COMPONENT_ID: AuroraCurtainsAnimation._normalized_parameters,
                 CanopyCupAnimation.COMPONENT_ID: CanopyCupAnimation._normalized_parameters,
+                AsciiDropAnimation.COMPONENT_ID: AsciiDropAnimation._normalized_parameters,
+                EmojiAnimation.COMPONENT_ID: EmojiAnimation._normalized_parameters,
+                ChristmasTreeAnimation.COMPONENT_ID: ChristmasTreeAnimation._normalized_parameters,
+                NightTrainWindowsAnimation.COMPONENT_ID: NightTrainWindowsAnimation._normalized_parameters,
                 ConwayLifeAnimation.COMPONENT_ID: ConwayLifeAnimation._normalized_parameters,
                 TetrisAnimation.COMPONENT_ID: TetrisAnimation._normalized_parameters,
                 FireflySynchronyAnimation.COMPONENT_ID: FireflySynchronyAnimation._normalized_parameters,
@@ -1467,6 +1475,14 @@ class AnimationWebInterface:
             AuroraCurtainsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == CanopyCupAnimation.COMPONENT_ID:
             CanopyCupAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == AsciiDropAnimation.COMPONENT_ID:
+            AsciiDropAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == EmojiAnimation.COMPONENT_ID:
+            EmojiAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == ChristmasTreeAnimation.COMPONENT_ID:
+            ChristmasTreeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == NightTrainWindowsAnimation.COMPONENT_ID:
+            NightTrainWindowsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == ConwayLifeAnimation.COMPONENT_ID:
             ConwayLifeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == TetrisAnimation.COMPONENT_ID:
