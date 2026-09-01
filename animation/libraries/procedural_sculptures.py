@@ -99,14 +99,25 @@ class CadencedSculpture(AnimationBase, ABC):
         if candidate["seed"] != old_seed:
             self.rng = np.random.default_rng(int(candidate["seed"])); self.reset_simulation()
 
-    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
-        del old
+    def _install_resolved_scene(self, new: ResolvedScene) -> None:
         if new.descriptor.component_id != self.COMPONENT_ID: raise ValueError("Sculpture received context for another component")
         candidate = self._normalized_parameters(new.parameters)
         if candidate != self.params: self.update_parameters(candidate)
         self._presentation_context = new
 
-    def set_presentation_context(self, context: ResolvedScene) -> None: self.on_presentation_context_changed(self._presentation_context, context)
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        del old
+        self._install_resolved_scene(new)
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        old = self._presentation_context
+        self._install_resolved_scene(context)
+        hook = type(self).on_presentation_context_changed
+        if (
+            hook is not CadencedSculpture.on_presentation_context_changed
+            and (old is None or old.digest != context.digest)
+        ):
+            hook(self, old, context)
     def render_resolved_scene(self, context: ResolvedScene): self.set_presentation_context(context); return self.generate_frame(context.phase_time, self.frame_count)
     def reset_simulation(self): self._last_sim_tick = -1
     def source_tick(self, time_elapsed: float) -> int: return max(0, int(max(0., float(time_elapsed)) * self.SOURCE_FPS + 1.e-9))
@@ -119,7 +130,7 @@ class CadencedSculpture(AnimationBase, ABC):
     def finish_frame(self, tick: int, logical_rgb: np.ndarray):
         frame = self.next_frame_buffer(clear=False); level = float(self.params["background_level"])
         if level:
-            palette = self.palette(); logical_rgb += (palette[1] * .10 + palette[2] * .04) * level
+            palette = CadencedSculpture.palette(self); logical_rgb += (palette[1] * .10 + palette[2] * .04) * level
         np.clip(logical_rgb, 0., 255., out=logical_rgb)
         np.copyto(frame, np.ascontiguousarray(logical_rgb).reshape((-1, 3)), casting="unsafe")
         self._cached_pixels = frame; self._render_key = (tick, self._revision, self._palette_id())
@@ -130,12 +141,12 @@ class CadencedSculpture(AnimationBase, ABC):
         for step in range(max(self._last_sim_tick + 1, tick - max_steps + 1), tick + 1): callback(step)
         self._last_sim_tick = tick
 
-    def _palette_id(self) -> str:
+    def _palette_id(self, mood: str | None = None) -> str:
         if self._presentation_context is not None: return str(self._presentation_context.palette["palette_id"])
-        return _DIRECT_PALETTES.get(str(self._authored_config.get("mood", "quiet")), "mist")
-    def palette(self): return SEMANTIC_PALETTES.get(self._palette_id(), SEMANTIC_PALETTES["neutral"])
+        return _DIRECT_PALETTES.get(str(mood if mood is not None else self._authored_config.get("mood", "quiet")), "mist")
+    def palette(self, mood: str | None = None): return SEMANTIC_PALETTES.get(self._palette_id(mood), SEMANTIC_PALETTES["neutral"])
     def colorize(self, value: np.ndarray, accent: np.ndarray | None = None):
-        p = self.palette(); v = np.clip(value, 0., 1.)[..., None]; mid = np.minimum(v * 2., 1.); high = np.maximum(v * 2. - 1., 0.)
+        p = CadencedSculpture.palette(self); v = np.clip(value, 0., 1.)[..., None]; mid = np.minimum(v * 2., 1.); high = np.maximum(v * 2. - 1., 0.)
         rgb = p[0] + (p[1] - p[0]) * mid + (p[2] - p[1]) * high
         if accent is not None: rgb += accent[..., None] * p[2] * .35
         return rgb.astype(np.float32, copy=False)

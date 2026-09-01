@@ -38,15 +38,8 @@ class CellularTapestryAnimation(CadencedSculpture):
 
     def reset_simulation(self):super().reset_simulation();self._init_history()
 
-    def palette(self, mood):
-        context = self.presentation_context
-        if context is None or context.vibe_id == "neutral":
-            return super().palette(mood)
-        roles = context.palette_roles
-        return np.asarray(
-            (roles["background_low"], roles["primary"], roles["accent"]),
-            dtype=np.float32,
-        )
+    def palette(self, mood=None):
+        return super().palette(mood)
 
     def on_presentation_context_changed(self, _old, _new):
         self._render_key = None

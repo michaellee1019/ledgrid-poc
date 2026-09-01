@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import base64
 import json
 import unittest
 from datetime import datetime
@@ -11,6 +12,8 @@ from pathlib import Path
 import numpy as np
 
 from animation.core.manager import PreviewLEDController
+from animation.core.presentation_contracts import resolve_scene
+from animation.libraries.procedural_sculptures import SEMANTIC_PALETTES
 from animation.plugins.cellular_tapestry import CellularTapestryAnimation
 from animation.plugins.flow_field_silk import FlowFieldSilkAnimation
 from animation.plugins.frostwork import FrostworkAnimation
@@ -69,6 +72,44 @@ class SculptureShowcaseSceneV2Tests(unittest.TestCase):
             frame = ComposerFinalPreview(catalog, ROOT).render(canonical, 1., datetime.now().astimezone())
             self.assertEqual(frame.pixels.shape, (33 * 138, 3))
         self.assertEqual(len(fingerprints), len(RENDERERS))
+
+    def test_every_named_sculpture_preset_uses_resolved_scene_palette_in_production_preview(self):
+        interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
+        client = interface.app.test_client()
+        catalog = current_component_catalog()
+        checked = 0
+        for component_id, renderer in RENDERERS.items():
+            if component_id == "quasicrystal_bloom":
+                continue
+            for choice in interface.composer_presets.choices(component_id):
+                selected = interface.composer_presets.apply(self.scene(component_id), choice["preset_id"])
+                palette_frames = {}
+                for palette_id in ("mist", "ember"):
+                    candidate = copy.deepcopy(selected)
+                    candidate["look"]["palette_id"] = palette_id
+                    resolved = resolve_scene(candidate, catalog, monotonic_elapsed=2.0)
+                    animation = renderer(self.controller, candidate["animation"]["parameters"])
+                    rng_before = copy.deepcopy(animation.rng.bit_generator.state)
+                    tick_before = animation._last_sim_tick
+                    animation.set_presentation_context(resolved)
+                    self.assertEqual(animation.rng.bit_generator.state, rng_before)
+                    self.assertEqual(animation._last_sim_tick, tick_before)
+                    self.assertTrue(animation.render_resolved_scene(resolved).changed)
+                    self.assertFalse(animation.render_resolved_scene(resolved).changed)
+                    np.testing.assert_array_equal(animation.palette(), SEMANTIC_PALETTES[palette_id])
+                    response = client.post("/api/composer/preview", json={
+                        "origin": "composer", "scene": candidate,
+                        "preview": {"monotonic_elapsed": 2.0, "wall_time": "2026-09-01T12:00:00+00:00"},
+                    })
+                    self.assertEqual(response.status_code, 200, f"{component_id}/{choice['preset_id']}/{palette_id}")
+                    frame = response.get_json()["frame"]
+                    self.assertEqual((frame["width"], frame["height"], frame["encoding"]), (33, 138, "rgb_u8_base64"))
+                    pixels = np.frombuffer(base64.b64decode(frame["pixels"]), dtype=np.uint8)
+                    self.assertEqual(pixels.shape, (33 * 138 * 3,))
+                    palette_frames[palette_id] = pixels.copy()
+                self.assertFalse(np.array_equal(palette_frames["mist"], palette_frames["ember"]))
+                checked += 1
+        self.assertEqual(checked, 18)
 
     def test_api_normalizes_browser_numbers_and_rejects_before_mutation(self):
         interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True); client = interface.app.test_client()
