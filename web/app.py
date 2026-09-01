@@ -26,6 +26,7 @@ from animation.core.preview_assets import load_catalog, merge_catalogs
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
+from animation.plugins.snake import SnakeAnimation
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -117,7 +118,10 @@ class AnimationWebInterface:
         self.composer_catalog = current_component_catalog()
         self.composer_presets = ComponentPresetCatalog(
             self.project_root,
-            {FireworksAnimation.COMPONENT_ID: FireworksAnimation._normalized_parameters},
+            {
+                FireworksAnimation.COMPONENT_ID: FireworksAnimation._normalized_parameters,
+                SnakeAnimation.COMPONENT_ID: SnakeAnimation._normalized_parameters,
+            },
         )
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
         self.composer_control = _ComposerLocalControlChannel()
@@ -1444,6 +1448,8 @@ class AnimationWebInterface:
             FireflySynchronyAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == FireworksAnimation.COMPONENT_ID:
             FireworksAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == SnakeAnimation.COMPONENT_ID:
+            SnakeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         return canonical
 
     def _fallback_led_info(self) -> Dict[str, int]:

@@ -34,7 +34,7 @@ class CuratedAnimationPresetTests(unittest.TestCase):
                 # Scene v2 component presets deliberately have no legacy
                 # plant_aware/output authority; Fireworks is the first small
                 # authored family exposed through the component catalog.
-                if animation_name != "fireworks":
+                if animation_name not in {"fireworks", "snake"}:
                     self.assertIs(payload["params"].get("plant_aware"), True)
                 self.assertIn(animation_name, self.plugins)
 
