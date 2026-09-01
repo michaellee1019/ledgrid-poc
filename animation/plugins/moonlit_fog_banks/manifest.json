@@ -1,1 +1,1 @@
-{"plugin_id":"moonlit_fog_banks","class":"MoonlitFogBanksAnimation","icon":"🌫️","gallery":"show","vibe":{"color_policy":"semantic","timing_adapter":"legacy_speed_param","capabilities":["luminance","palette_roles"],"semantic_roles":["accent","background_low","primary"]}}
+{"plugin_id":"moonlit_fog_banks","class":"MoonlitFogBanksAnimation","icon":"🌫️","gallery":"show","component":{"provider":"python","role":"animation","timing":"scaled_context","alpha_behavior":"opaque","palette_policy":"semantic","plant_capabilities":["effect_intent"],"fidelity_exceptions":[]}}

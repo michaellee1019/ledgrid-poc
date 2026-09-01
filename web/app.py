@@ -6,8 +6,9 @@ Flask-based web server for controlling animations and adjusting parameters in
 real time.
 """
 
-import inspect
+import base64
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -16,6 +17,7 @@ import tempfile
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -58,6 +60,47 @@ from animation.core.plant_awareness import (
     SURFACE_MODIFIERS,
     PlantModifierState,
 )
+from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
+from animation.plugins.canopy_cup import CanopyCupAnimation
+from animation.plugins.ascii_drop import AsciiDropAnimation
+from animation.plugins.christmas_tree import ChristmasTreeAnimation
+from animation.plugins.clock_overlay import ClockOverlayAnimation
+from animation.plugins.conway_life import ConwayLifeAnimation
+from animation.plugins.emoji_arranger import EmojiArrangerAnimation
+from animation.plugins.emoji import EmojiAnimation
+from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
+from animation.plugins.fireworks import FireworksAnimation
+from animation.plugins.flame_burst import FlameBurstAnimation
+from animation.plugins.fluid_tank import FluidTankAnimation
+from animation.plugins.cyclic_reef import CyclicReefAnimation
+from animation.plugins.living_ecosystem import LivingEcosystemAnimation
+from animation.plugins.physarum_network import PhysarumNetworkAnimation
+from animation.plugins.reaction_diffusion_garden import ReactionDiffusionGardenAnimation
+from animation.plugins.wind_in_the_reeds import WindInTheReedsAnimation
+from animation.plugins.lava_lamp import LavaLampAnimation
+from animation.plugins.maze_chase import MazeChaseAnimation
+from animation.plugins.night_train_windows import NightTrainWindowsAnimation
+from animation.plugins.pinball import PinballAnimation
+from animation.plugins.pixel_quest import PixelQuestAnimation
+from animation.plugins.snake import SnakeAnimation
+from animation.plugins.tetris import TetrisAnimation
+from animation.plugins.gradient import GradientAnimation
+from animation.plugins.rainbow import RainbowAnimation
+from animation.plugins.solid import SolidColorAnimation
+from animation.plugins.sparkle import SparkleAnimation
+from animation.plugins.wave import WaveAnimation
+from animation.plugins.circadian_window import CircadianWindowAnimation
+from animation.plugins.cloud_canyon import CloudCanyonAnimation
+from animation.plugins.desert_wind import DesertWindAnimation
+from animation.plugins.moonlit_fog_banks import MoonlitFogBanksAnimation
+from animation.plugins.rain_on_glass import RainOnGlassAnimation
+from animation.plugins.tidal_bioluminescence import TidalBioluminescenceAnimation
+from animation.plugins.waterfall_veil import WaterfallVeilAnimation
+from animation.plugins.cellular_tapestry import CellularTapestryAnimation
+from animation.plugins.flow_field_silk import FlowFieldSilkAnimation
+from animation.plugins.frostwork import FrostworkAnimation
+from animation.plugins.living_stained_glass import LivingStainedGlassAnimation
+from animation.plugins.quasicrystal_bloom import QuasicrystalBloomAnimation
 from drivers.frame_codec import (
     FRAME_ENCODING_NAME,
     decode_frame_data,
@@ -91,6 +134,36 @@ from ipc.scene_contract import (
     normalize_scene_payload,
     scene_activation_basis_digest,
     validate_bounded_browser_json,
+    LocalSceneAdapter,
+    SceneContractError,
+    normalize_composer_scene,
+)
+from animation.core.scene_runtime import CanonicalSceneRuntimeError
+from web.composer_component_editor import editor_catalog
+from web.live_scene_state import LiveSceneBlocked, LiveSceneStale, LiveSceneState
+from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
+from web.composer_component_presets import ComponentPresetCatalog
+from web.scene_look_store import SceneLookStore, SceneLookStoreError
+from web.starter_looks import get_starter, list_starters
+from web.working_draft_store import WorkingDraftStore, WorkingDraftError
+from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
+
+
+COMPOSER_SHELL_VERSION = "composer-shell-v8"
+
+PAINTER_MASK_TYPES = (
+    {
+        'id': 'foliage',
+        'label': 'Foliage',
+        'description': 'Leaves, vines, and other soft plant cover',
+        'color': [48, 220, 96],
+    },
+    {
+        'id': 'planter_bowls',
+        'label': 'Planter bowls',
+        'description': 'The seven solid rooting globes / planter bowls',
+        'color': [255, 72, 190],
+    },
 )
 from web.activation_token_store import (
     ActivationTokenConflict,
@@ -119,6 +192,23 @@ BROWSER_NATIVE_COMPONENT_ASSETS = {
     'compiled_rainbow': 'compiled_rainbow.wasm',
 }
 BROWSER_NATIVE_COMPONENTS = frozenset(BROWSER_NATIVE_COMPONENT_ASSETS)
+
+
+class _ComposerLocalControlChannel:
+    """In-memory Scene-v1 control sink used by the local Composer demo.
+
+    This is deliberately separate from the application's historical controller
+    channel: Composer activation records a checked command for inspection but
+    cannot reach a wall, receiver, camera, or deployment service.
+    """
+
+    def __init__(self) -> None:
+        self.commands: list[dict[str, Any]] = []
+
+    def send_command(self, action: str, **data: Any) -> dict[str, Any]:
+        command = {"action": action, **data}
+        self.commands.append(command)
+        return command
 
 class AnimationWebInterface:
     """Web interface for animation management"""
@@ -196,6 +286,77 @@ class AnimationWebInterface:
                 profile_library,
                 self.project_root / 'run_state' / 'installation_profile_authoring',
             )
+        self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
+        self.foliage_mask_path = self.project_root / "config" / "plant_pixel_map_32x138.json"
+        self.planter_mask_path = self.project_root / "config" / "plant_globe_map_32x138.json"
+        self.generated_preview_dir = (
+            self.project_root / "web" / "static" / "generated" / "animation-previews"
+        )
+        self.runtime_preview_dir = self.project_root / "run_state" / "animation_previews"
+        # Composer preview and publication use the same current Scene v2
+        # catalog.  Preview owns no wall channel and therefore remains inert.
+        self.composer_catalog = current_component_catalog()
+        self.composer_presets = ComponentPresetCatalog(
+            self.project_root,
+            {
+                AuroraCurtainsAnimation.COMPONENT_ID: AuroraCurtainsAnimation._normalized_parameters,
+                CanopyCupAnimation.COMPONENT_ID: CanopyCupAnimation._normalized_parameters,
+                AsciiDropAnimation.COMPONENT_ID: AsciiDropAnimation._normalized_parameters,
+                EmojiAnimation.COMPONENT_ID: EmojiAnimation._normalized_parameters,
+                ChristmasTreeAnimation.COMPONENT_ID: ChristmasTreeAnimation._normalized_parameters,
+                ClockOverlayAnimation.COMPONENT_ID: ClockOverlayAnimation._normalized_parameters,
+                NightTrainWindowsAnimation.COMPONENT_ID: NightTrainWindowsAnimation._normalized_parameters,
+                ConwayLifeAnimation.COMPONENT_ID: ConwayLifeAnimation._normalized_parameters,
+                TetrisAnimation.COMPONENT_ID: TetrisAnimation._normalized_parameters,
+                FireflySynchronyAnimation.COMPONENT_ID: FireflySynchronyAnimation._normalized_parameters,
+                FireworksAnimation.COMPONENT_ID: FireworksAnimation._normalized_parameters,
+                FlameBurstAnimation.COMPONENT_ID: FlameBurstAnimation._normalized_parameters,
+                FluidTankAnimation.COMPONENT_ID: FluidTankAnimation._normalized_parameters,
+                CyclicReefAnimation.COMPONENT_ID: CyclicReefAnimation._normalized_parameters,
+                LavaLampAnimation.COMPONENT_ID: LavaLampAnimation._normalized_parameters,
+                SnakeAnimation.COMPONENT_ID: SnakeAnimation._normalized_parameters,
+                MazeChaseAnimation.COMPONENT_ID: MazeChaseAnimation._normalized_parameters,
+                PinballAnimation.COMPONENT_ID: PinballAnimation._normalized_parameters,
+                PixelQuestAnimation.COMPONENT_ID: PixelQuestAnimation._normalized_parameters,
+                GradientAnimation.COMPONENT_ID: GradientAnimation._normalized_parameters,
+                RainbowAnimation.COMPONENT_ID: RainbowAnimation._normalized_parameters,
+                SolidColorAnimation.COMPONENT_ID: SolidColorAnimation._normalized_parameters,
+                SparkleAnimation.COMPONENT_ID: SparkleAnimation._normalized_parameters,
+                WaveAnimation.COMPONENT_ID: WaveAnimation._normalized_parameters,
+                CircadianWindowAnimation.COMPONENT_ID: CircadianWindowAnimation._normalized_parameters,
+                CloudCanyonAnimation.COMPONENT_ID: CloudCanyonAnimation._normalized_parameters,
+                DesertWindAnimation.COMPONENT_ID: DesertWindAnimation._normalized_parameters,
+                MoonlitFogBanksAnimation.COMPONENT_ID: MoonlitFogBanksAnimation._normalized_parameters,
+                RainOnGlassAnimation.COMPONENT_ID: RainOnGlassAnimation._normalized_parameters,
+                TidalBioluminescenceAnimation.COMPONENT_ID: TidalBioluminescenceAnimation._normalized_parameters,
+                WaterfallVeilAnimation.COMPONENT_ID: WaterfallVeilAnimation._normalized_parameters,
+                CellularTapestryAnimation.COMPONENT_ID: CellularTapestryAnimation._normalized_parameters,
+                FlowFieldSilkAnimation.COMPONENT_ID: FlowFieldSilkAnimation._normalized_parameters,
+                FrostworkAnimation.COMPONENT_ID: FrostworkAnimation._normalized_parameters,
+                LivingStainedGlassAnimation.COMPONENT_ID: LivingStainedGlassAnimation._normalized_parameters,
+                QuasicrystalBloomAnimation.COMPONENT_ID: QuasicrystalBloomAnimation._normalized_parameters,
+                LivingEcosystemAnimation.COMPONENT_ID: LivingEcosystemAnimation._normalized_parameters,
+                PhysarumNetworkAnimation.COMPONENT_ID: PhysarumNetworkAnimation._normalized_parameters,
+                ReactionDiffusionGardenAnimation.COMPONENT_ID: ReactionDiffusionGardenAnimation._normalized_parameters,
+                WindInTheReedsAnimation.COMPONENT_ID: WindInTheReedsAnimation._normalized_parameters,
+            },
+        )
+        self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
+        self.composer_control = _ComposerLocalControlChannel()
+        self.composer_live = LiveSceneState(
+            self.composer_catalog, self.composer_adapter, self.composer_control,
+        )
+        self.composer_looks = SceneLookStore(self.project_root / "run_state" / "composer_looks.json")
+        self.composer_library = ComposerLibraryState(self.project_root / "run_state" / "composer_library.json")
+        self.working_draft = WorkingDraftStore(self.project_root / 'run_state' / 'composer_draft.json')
+        # A saved look is editable only while it remains the opened user look.
+        # Built-ins have no id here, which makes Save require Save As.
+        self._composer_opened_look_id: str | None = None
+        self.composer_preview = ComposerFinalPreview(self.composer_catalog, self.project_root)
+        if self.local_mode:
+            self.generated_preview_dir = (
+                self.project_root / "run_state" / "mac_animation_previews"
+            )
         self.activation_token_store_path = (
             Path(activation_token_store_path)
             if activation_token_store_path is not None
@@ -211,6 +372,7 @@ class AnimationWebInterface:
 
         self.animation_presets_dir.mkdir(parents=True, exist_ok=True)
         self.scene_presets_dir.mkdir(parents=True, exist_ok=True)
+        self.painter_presets_dir.mkdir(parents=True, exist_ok=True)
 
         if self.activation_enabled:
             self._activation_token_store = ActivationTokenStore(
@@ -269,11 +431,403 @@ class AnimationWebInterface:
 
     def _register_routes(self):
         """Register Flask routes"""
-        
+
         @self.app.route('/')
         def index():
-            """Redirect the legacy root entry point to the sole browser product."""
-            return redirect('/composer', code=302)
+            """Render the sole local Composer product."""
+            return render_template(
+                'composer.html',
+                shell_version=COMPOSER_SHELL_VERSION,
+                local_mode=self.local_mode,
+            )
+
+        @self.app.route('/composer-sw.js')
+        def composer_service_worker():
+            response = send_from_directory(
+                self.project_root / 'web' / 'static' / 'composer',
+                'composer_sw.js',
+                mimetype='application/javascript',
+            )
+            response.headers['Service-Worker-Allowed'] = '/'
+            response.headers['Cache-Control'] = 'no-cache'
+            return response
+
+        @self.app.route('/api/composer/status')
+        def api_composer_status():
+            """Read current desired/observed Scene v2 publication state."""
+            return jsonify(self._composer_status_payload(request.args.get('client_id')))
+
+        @self.app.route('/api/composer/components')
+        def api_composer_components():
+            """Return the closed local chooser from qualified descriptors."""
+            return jsonify(editor_catalog(self.composer_catalog))
+
+        @self.app.route('/api/composer/components/<component_id>/presets')
+        def api_composer_component_presets(component_id: str):
+            """Read authored component choices without treating them as Looks."""
+            try:
+                return jsonify({'component_id': component_id, 'presets': self.composer_presets.choices(component_id)})
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/draft')
+        def api_composer_draft():
+            try:
+                value = self.working_draft.get()
+                if value is not None:
+                    canonical = self._composer_recovery_scene(value['scene'])
+                    if canonical.identity.to_dict() != value['basis']:
+                        raise WorkingDraftError('Crash recovery no longer matches its basis; discard it.')
+                    self._composer_opened_look_id = value['opened_look_id']
+                return jsonify({'draft': value})
+            except (WorkingDraftError, SceneContractError, SceneLookStoreError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/recovery')
+        def api_composer_recovery():
+            try:
+                status = self._composer_status_payload(
+                    request.args.get('client_id'), include_current_scene=True,
+                )
+                current_scene = status.pop('current_scene')
+                if current_scene is not None:
+                    return jsonify({'recovery': {
+                        'scene': current_scene, 'basis': status['current'],
+                        'opened_look_id': self._composer_opened_look_id,
+                        'authoritative': True,
+                    }, 'status': status})
+                value = self.working_draft.get()
+                if value is None:
+                    return jsonify({'recovery': None, 'status': status})
+                canonical = self._composer_recovery_scene(value['scene'])
+                if canonical.identity.to_dict() != value['basis']:
+                    raise WorkingDraftError('Current scene recovery no longer matches its basis.')
+                self._composer_opened_look_id = value['opened_look_id']
+                return jsonify({'recovery': {**value, 'authoritative': False}, 'status': status})
+            except (WorkingDraftError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload(request.args.get('client_id'))}), 400
+
+        @self.app.route('/api/composer/draft', methods=['POST','DELETE'])
+        def api_composer_change_draft():
+            try:
+                if request.method == 'DELETE':
+                    self.working_draft.discard()
+                    self._composer_opened_look_id = None
+                    return jsonify({'discarded': True})
+                raise WorkingDraftError('Crash recovery is updated only after a valid Scene v2 edit.')
+            except (WorkingDraftError, SceneContractError, TypeError, ValueError) as exc: return jsonify({'error':str(exc)}),400
+
+        @self.app.route('/api/composer/preview', methods=['POST'])
+        def api_composer_preview():
+            """Render one inert, installed-final Scene v2 frame."""
+            try:
+                return jsonify(self._composer_preview_payload(request.get_json(silent=True)))
+            except (CanonicalSceneRuntimeError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks')
+        def api_composer_looks():
+            try:
+                return jsonify({'looks': self.composer_looks.list()})
+            except SceneLookStoreError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/library')
+        def api_composer_library():
+            """Project the immutable starters and current local looks into one library."""
+            try:
+                return jsonify(ComposerLibraryState.project(
+                    self.composer_library.get(), self._composer_library_items(),
+                ))
+            except (ComposerLibraryStateError, SceneLookStoreError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/library/favorites', methods=['POST', 'DELETE'])
+        def api_composer_library_favorites():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'reference'}:
+                    raise ComposerLibraryStateError('Choose one library item.')
+                reference = self._composer_library_reference(payload['reference'])
+                state = (self.composer_library.favorite(reference)
+                         if request.method == 'POST' else self.composer_library.unfavorite(reference))
+                return jsonify(ComposerLibraryState.project(state, self._composer_library_items()))
+            except (ComposerLibraryStateError, SceneLookStoreError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/library/recents', methods=['POST'])
+        def api_composer_library_recents():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'reference'}:
+                    raise ComposerLibraryStateError('Choose one library item.')
+                reference = self._composer_library_reference(payload['reference'])
+                return jsonify(ComposerLibraryState.project(
+                    self.composer_library.revisit(reference), self._composer_library_items(),
+                ))
+            except (ComposerLibraryStateError, SceneLookStoreError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/library/preflight', methods=['POST'])
+        def api_composer_library_preflight():
+            """Verify a referenced library action can remain local before it begins."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'reference'}:
+                    raise ComposerLibraryStateError('Choose one library item.')
+                reference = self._composer_library_reference(payload['reference'])
+                self.composer_library.get()
+                return jsonify({'reference': reference})
+            except (ComposerLibraryStateError, SceneLookStoreError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/library/cards', methods=['POST'])
+        def api_composer_library_card():
+            """Render one current library item without opening or recording it."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'reference'}:
+                    raise ComposerLibraryStateError('Choose one library item.')
+                reference = self._composer_library_reference(payload['reference'])
+                return jsonify(self._composer_library_card_payload(reference))
+            except (CanonicalSceneRuntimeError, ComposerLibraryStateError, SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/starters')
+        def api_composer_starters(): return jsonify({'starters': list_starters()})
+
+        @self.app.route('/api/composer/starters/<starter_id>')
+        def api_composer_starter(starter_id):
+            try: return jsonify({'starter': self._composer_starter(get_starter(starter_id))})
+            except ValueError as exc: return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/starters/<starter_id>/remix', methods=['POST'])
+        def api_composer_remix_starter(starter_id):
+            payload = request.get_json(silent=True) or {}
+            try:
+                self._composer_starter(get_starter(starter_id))
+                if set(payload) != {'name', 'draft'}: raise SceneLookStoreError('A remix needs a name and current draft.')
+                canonical = self._composer_canonical(payload['draft'])
+                # Validate local library state before saving so corrupt state cannot
+                # create a saved look while this explicit remix cannot be recorded.
+                self.composer_library.get()
+                look = self._composer_look_payload(self.composer_looks.save(payload['name'], canonical))
+                self.composer_library.revisit({'kind': 'look', 'id': look['id']})
+                return jsonify({'look': look})
+            except (ComposerLibraryStateError, ValueError, SceneLookStoreError, SceneContractError, TypeError) as exc: return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks', methods=['POST'])
+        def api_composer_save_look():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'name', 'scene'}:
+                    raise SceneLookStoreError('Save As needs a name and current Scene v2.')
+                canonical = self._composer_canonical({'origin': 'composer', 'scene': payload['scene']})
+                look = self.composer_looks.save_as(payload['name'], canonical)
+                self._persist_composer_recovery(canonical, look['id'])
+                return jsonify({'look': self._composer_look_payload(look)})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks/<look_id>')
+        def api_composer_open_look(look_id: str):
+            try:
+                return jsonify({'look': self._composer_look_payload(self.composer_looks.get(look_id))})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks/<look_id>/open', methods=['POST'])
+        def api_composer_select_look(look_id: str):
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) - {'client_id', 'mutation_id', 'client_sequence'}:
+                    raise ValueError('look selection contains unknown fields')
+                look = self._composer_look_payload(self.composer_looks.get(look_id))
+                status = self._composer_submit_scene(
+                    look['scene'], client_id=payload.get('client_id', 'composer'),
+                    mutation_id=payload.get('mutation_id'), client_sequence=payload.get('client_sequence'),
+                    opened_look_id=look['id'], preserve_opened_look=False,
+                )
+                self.composer_library.revisit({'kind': 'look', 'id': look['id']})
+                return jsonify({'look': look, 'status': status})
+            except LiveSceneStale as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 409
+            except (ComposerLibraryStateError, SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+
+        @self.app.route('/api/composer/built-ins/open', methods=['POST'])
+        def api_composer_select_builtin():
+            """Open a current Scene v2 built-in without making it saveable.
+
+            Built-in catalogs are supplied by the composition chooser. This
+            endpoint is the explicit selection boundary that clears any prior
+            user-look save target while retaining ordinary live/stopped state.
+            """
+            payload = request.get_json(silent=True) or {}
+            try:
+                allowed = {'scene', 'client_id', 'mutation_id', 'client_sequence'}
+                if set(payload) - allowed or 'scene' not in payload:
+                    raise ValueError('built-in selection needs a Scene v2 and optional client metadata')
+                status = self._composer_submit_scene(
+                    payload['scene'], client_id=payload.get('client_id', 'composer'),
+                    mutation_id=payload.get('mutation_id'), client_sequence=payload.get('client_sequence'),
+                    opened_look_id=None, preserve_opened_look=False,
+                )
+                return jsonify({'builtin': True, 'status': status})
+            except LiveSceneStale as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 409
+            except (SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+
+        @self.app.route('/api/composer/looks/save', methods=['POST'])
+        def api_composer_save_opened_look():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'scene'}:
+                    raise SceneLookStoreError('Save needs the current Scene v2.')
+                if self._composer_opened_look_id is None:
+                    raise SceneLookStoreError('This built-in look is immutable; use Save As.')
+                canonical = self._composer_canonical({'origin': 'composer', 'scene': payload['scene']})
+                look = self.composer_looks.update(self._composer_opened_look_id, canonical)
+                self._persist_composer_recovery(canonical, look['id'])
+                return jsonify({'look': self._composer_look_payload(look)})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 409
+
+        @self.app.route('/api/composer/looks/import-legacy', methods=['POST'])
+        def api_composer_import_legacy_looks():
+            """One explicit, all-or-nothing import of reviewed legacy exports."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'looks'}:
+                    raise SceneLookStoreError('Legacy import needs only its reviewed looks.')
+                imported = self.composer_looks.import_legacy_once(payload['looks'], self._translate_legacy_look)
+                return jsonify({'looks': [self._composer_look_payload(look) for look in imported]})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks/<look_id>/duplicate', methods=['POST'])
+        def api_composer_duplicate_look(look_id: str):
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'name'}:
+                    raise SceneLookStoreError('A duplicate needs a new name.')
+                return jsonify({'look': self._composer_look_payload(self.composer_looks.duplicate(look_id, payload['name']))})
+            except (SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/looks/<look_id>', methods=['PATCH', 'PUT', 'DELETE'])
+        def api_composer_change_look(look_id: str):
+            try:
+                if request.method == 'DELETE':
+                    # Composer's only library/looks compatibility seam: reject a
+                    # corrupt library before changing the saved-look store, then
+                    # remove this deleted look from persistent library references.
+                    self.composer_library.get()
+                    if self._composer_opened_look_id == look_id:
+                        self._clear_opened_look_recovery()
+                    self.composer_looks.delete(look_id)
+                    self.composer_library.prune_look(look_id)
+                    return jsonify({'deleted': look_id})
+                payload = request.get_json(silent=True) or {}
+                if set(payload) == {'name'}:
+                    return jsonify({'look': self._composer_look_payload(self.composer_looks.rename(look_id, payload['name']))})
+                if set(payload) == {'scene'}:
+                    canonical = self._composer_canonical({'origin': 'composer', 'scene': payload['scene']})
+                    look = self.composer_looks.update(look_id, canonical)
+                    if self._composer_opened_look_id == look_id:
+                        self._persist_composer_recovery(canonical, look_id)
+                    return jsonify({'look': self._composer_look_payload(look)})
+                raise SceneLookStoreError('A look change needs a name or current Scene v2.')
+            except (ComposerLibraryStateError, SceneLookStoreError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+
+        @self.app.route('/api/composer/check', methods=['POST'])
+        def api_composer_check():
+            """Run advisory Scene v2 diagnostics without gating publication."""
+            payload = request.get_json(silent=True)
+            try:
+                return jsonify(self.composer_live.check(payload))
+            except (SceneContractError, ValueError, TypeError) as exc:
+                return jsonify({
+                    'error': str(exc), 'status': self._composer_status_payload(),
+                }), 400
+
+        @self.app.route('/api/composer/scene', methods=['POST'])
+        def api_composer_scene():
+            """Accept the newest valid scene and publish it when Composer is armed."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                allowed = {'origin', 'scene', 'client_id', 'mutation_id', 'client_sequence'}
+                if set(payload) - allowed:
+                    raise ValueError('scene request contains unknown fields')
+                return jsonify(self._composer_submit_scene(
+                    payload.get('scene'),
+                    client_id=payload.get('client_id', 'composer'),
+                    mutation_id=payload.get('mutation_id'),
+                    client_sequence=payload.get('client_sequence'),
+                ))
+            except LiveSceneStale as exc:
+                return jsonify({
+                    'error': str(exc), 'status': self._composer_status_payload(),
+                }), 409
+            except (SceneContractError, ValueError, TypeError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+            except TimeoutError as exc:
+                return jsonify({'error': str(exc) or 'Scene acknowledgement timed out.',
+                                'status': self._composer_status_payload()}), 504
+
+        @self.app.route('/api/composer/go-live', methods=['POST'])
+        def api_composer_go_live():
+            payload = request.get_json(silent=True) or {}
+            try:
+                return jsonify({'status': self.composer_live.go_live(client_id=payload.get('client_id', 'composer'))})
+            except LiveSceneBlocked as exc:
+                return jsonify({'error': str(exc), 'blockers': exc.blockers,
+                                'status': self._composer_status_payload()}), 409
+            except TimeoutError as exc:
+                return jsonify({'error': str(exc) or 'Scene acknowledgement timed out.',
+                                'status': self._composer_status_payload()}), 504
+
+        @self.app.route('/api/composer/connection', methods=['POST'])
+        def api_composer_connection():
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'connected'}:
+                    raise ValueError('connection request must contain connected')
+                return jsonify({'status': self.composer_live.set_connected(payload['connected'])})
+            except (ValueError, TypeError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+
+        @self.app.route('/api/composer/undo-ack', methods=['POST'])
+        def api_composer_undo_ack():
+            """Acknowledge a remote scene revision after clearing local undo."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                if set(payload) != {'client_id', 'revision'}:
+                    raise ValueError('undo acknowledgement needs client_id and revision')
+                return jsonify({'status': self.composer_live.acknowledge_undo_invalidation(
+                    client_id=payload['client_id'], revision=payload['revision'],
+                )})
+            except (ValueError, TypeError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+
+        @self.app.route('/api/composer/stop', methods=['POST'])
+        def api_composer_stop():
+            """Stop output while retaining the current editable scene."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                return jsonify({'status': self.composer_live.stop(client_id=payload.get('client_id', 'composer'))})
+            except TimeoutError as exc:
+                return jsonify({'error': str(exc) or 'Stop acknowledgement timed out.', 'status': self._composer_status_payload()}), 504
+            except (SceneContractError, ValueError, TypeError) as exc:
+                return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 409
+
+        @self.app.route('/api/animations')
+        def api_list_animations():
+            """API: Get list of available animations"""
+            animations = self._sorted_animations()
+            return jsonify(animations)
 
         @self.app.route('/composer')
         def browser_composer():
@@ -1533,6 +2087,171 @@ class AnimationWebInterface:
                 'success': True,
                 'plant_modifiers': serialized,
                 'command_id': self._command_id(command),
+            })
+
+        @self.app.route('/api/hardware/stats')
+        def api_get_hardware_stats():
+            """API: Hardware stats for SPI devices."""
+            status = self._status_payload()
+            return jsonify(status.get('driver_stats', {}))
+
+        @self.app.route('/api/hole', methods=['POST'])
+        def api_trigger_hole():
+            """Punch a random hole or one at the supplied grid coordinate."""
+            payload = request.get_json(silent=True) or {}
+            data: Dict[str, float] = {}
+            for key in ('x', 'y', 'radius'):
+                value = payload.get(key)
+                if value is not None:
+                    if not isinstance(value, (int, float)):
+                        return jsonify({'error': f'{key} must be numeric'}), 400
+                    data[key] = float(value)
+            if ('x' in data) != ('y' in data):
+                return jsonify({'error': 'x and y must be provided together'}), 400
+            self.control_channel.send_command('puncture_hole', **data)
+            return jsonify({'success': True, 'positioned': 'x' in data})
+
+        @self.app.route('/api/interaction', methods=['POST'])
+        def api_animation_interaction():
+            """Send a bounded gesture to the live Composer basis or legacy animation."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                kind, x, y, strength = self._validated_interaction_payload(payload)
+                composer = self.composer_live.snapshot(include_current_scene=True)
+                if composer['current'] is not None:
+                    if not (composer['running'] and composer['armed'] and composer['observed'] == composer['current']):
+                        raise ValueError('Composer interaction requires a live observed scene')
+                    canonical = self._composer_recovery_scene(composer['current_scene'])
+                    component_id = canonical.scene['animation']['component_id']
+                    if component_id not in {"lava_lamp", "flame_burst", "fluid_tank"}:
+                        raise ValueError('the published Composer animation does not accept primary interaction')
+                    if kind != 'primary':
+                        raise ValueError("interaction 'primary' is required by the published Composer animation")
+                    if not self.composer_preview.dispatch_animation_interaction(canonical, kind, x, y, strength):
+                        raise ValueError('the published Composer animation rejected that interaction')
+                    return jsonify({'success': True, 'accepted': True, 'component_id': component_id,
+                                    'basis': canonical.identity.to_dict()})
+                raw_status = self.control_channel.read_status() or {}
+                layout = self._sync_preview_layout_from_status(raw_status)
+                self._validate_interaction_bounds(x, y, layout)
+                supported = raw_status.get('interaction_types', [])
+                if kind not in supported:
+                    raise ValueError(f'interaction {kind!r} is not supported')
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            self.control_channel.send_command(
+                'animation_interaction', kind=kind, x=x, y=y, strength=strength
+            )
+            return jsonify({'success': True, 'accepted': True})
+
+        @self.app.route('/api/frame')
+        def api_get_frame():
+            """API: Get current animation frame data"""
+            return jsonify(self._status_payload(decode_frame=True))
+
+        @self.app.route('/api/painter/updates', methods=['POST'])
+        def api_painter_apply_updates():
+            """API: Apply sparse frame painter pixel updates."""
+            payload = request.get_json(silent=True) or {}
+            updates = payload.get('updates')
+            if not isinstance(updates, list) or not updates:
+                return jsonify({'error': 'updates must be a non-empty list'}), 400
+
+            self.control_channel.send_command('painter_apply_updates', updates=updates)
+            return jsonify({'success': True, 'queued_updates': len(updates)})
+
+        @self.app.route('/api/painter/frame', methods=['POST'])
+        def api_painter_set_frame():
+            """API: Replace the entire frame painter frame."""
+            payload = request.get_json(silent=True) or {}
+            led_info = self._normalize_led_info(payload.get('led_info'))
+            normalized_frame = self._extract_normalized_frame(payload, led_info=led_info)
+            if normalized_frame is None:
+                return jsonify({'error': 'Provide frame_data or frame_data_encoded'}), 400
+
+            self.control_channel.send_command(
+                'painter_set_frame',
+                frame_data_encoded=encode_frame_data(normalized_frame),
+                frame_data_length=len(normalized_frame),
+            )
+            return jsonify({'success': True, 'frame_data_length': len(normalized_frame)})
+
+        @self.app.route('/api/painter/clear', methods=['POST'])
+        def api_painter_clear():
+            """API: Clear the frame painter output to black."""
+            self.control_channel.send_command('painter_clear')
+            return jsonify({'success': True})
+
+        @self.app.route('/api/painter/masks')
+        def api_painter_get_masks():
+            """API: Load the two editable semantic plant-mask layers."""
+            try:
+                return jsonify(self._load_painter_masks())
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 500
+
+        @self.app.route('/api/painter/masks', methods=['POST'])
+        def api_painter_save_masks():
+            """API: Validate and atomically update the calibrated plant masks."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                saved = self._save_painter_masks(payload)
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except OSError as exc:
+                return jsonify({'error': f'Failed to save masks: {exc}'}), 500
+            return jsonify({'success': True, **saved})
+
+        @self.app.route('/api/painter/presets')
+        def api_painter_list_presets():
+            """API: List available frame painter presets."""
+            return jsonify({'presets': self._list_painter_presets()})
+
+        @self.app.route('/api/painter/presets/<preset_id>')
+        def api_painter_get_preset(preset_id: str):
+            """API: Load a frame painter preset by id."""
+            preset = self._load_painter_preset(preset_id)
+            if not preset:
+                return jsonify({'error': 'Preset not found'}), 404
+            return jsonify(preset)
+
+        @self.app.route('/api/painter/presets', methods=['POST'])
+        def api_painter_save_preset():
+            """API: Save or overwrite a frame painter preset."""
+            payload = request.get_json(silent=True) or {}
+            raw_name = (payload.get('name') or '').strip()
+            if not raw_name:
+                return jsonify({'error': 'Preset name is required'}), 400
+
+            preset_id = self._sanitize_preset_id(raw_name)
+            if not preset_id:
+                return jsonify({'error': 'Preset name is invalid'}), 400
+
+            status = self._status_payload()
+            led_info = self._normalize_led_info(payload.get('led_info') or status.get('led_info'))
+            frame_data = self._extract_normalized_frame(payload, led_info=led_info)
+            if frame_data is None:
+                frame_data = self._extract_normalized_frame(status, led_info=led_info)
+            if frame_data is None:
+                frame_data = [[0, 0, 0] for _ in range(led_info['total_leds'])]
+
+            existing = self._load_painter_preset(preset_id)
+            now = time.time()
+            preset_payload = {
+                'preset_id': preset_id,
+                'name': raw_name,
+                'created_at': existing.get('created_at', now) if isinstance(existing, dict) else now,
+                'updated_at': now,
+                'led_info': led_info,
+                'frame_encoding': FRAME_ENCODING_NAME,
+                'frame_data_length': len(frame_data),
+                'frame_data_encoded': encode_frame_data(frame_data),
+            }
+            self._write_painter_preset(preset_id, preset_payload)
+
+            return jsonify({
+                'success': True,
+                'preset': self._preset_summary(preset_payload),
             })
 
         @self.app.route(
@@ -3343,6 +4062,260 @@ class AnimationWebInterface:
         print("   Root URL redirects to Composer")
 
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
+
+    def _composer_status_payload(self, client_id: Optional[str] = None, *, include_current_scene: bool = False) -> Dict[str, Any]:
+        """Describe live-first current/desired/observed reconciliation.
+
+        This stays explicitly local: the acknowledgement comes from the
+        topology-neutral adapter and never claims a receiver or wall mutation.
+        """
+        return self.composer_live.snapshot(client_id=client_id, include_current_scene=include_current_scene)
+
+    def _composer_submit_scene(
+        self, scene: Any, *, client_id: str, mutation_id: str | None = None,
+        client_sequence: int | None = None, opened_look_id: str | None = None,
+        preserve_opened_look: bool = True,
+    ) -> Dict[str, Any]:
+        """Commit one valid scene, then atomically refresh hidden recovery.
+
+        The live coordinator is the acceptance boundary.  Recovery is never
+        updated before it accepts the same current-only Scene v2, which means a
+        rejected edit cannot overwrite the last safely recoverable wall state.
+        """
+        canonical = self._composer_canonical({'origin': 'composer', 'scene': scene})
+        next_opened_look_id = self._composer_opened_look_id if preserve_opened_look else opened_look_id
+        try:
+            result = self.composer_live.submit(
+                {'origin': 'composer', 'scene': canonical.scene}, client_id=client_id,
+                mutation_id=mutation_id, client_sequence=client_sequence,
+            )
+        except TimeoutError:
+            # LiveSceneState accepts desired state before attempting output
+            # acknowledgement. A timeout therefore leaves a valid newer scene
+            # editable in recovery, even while observed output remains prior.
+            self._persist_composer_recovery(canonical, next_opened_look_id)
+            raise
+        # An exact retry may describe an older mutation after another client
+        # has already won. It is not a new local edit and must not roll crash
+        # recovery or the opened-look cursor backward.
+        if result['exact_retry']:
+            return result
+        self._persist_composer_recovery(canonical, next_opened_look_id)
+        return result
+
+    def _persist_composer_recovery(self, canonical, opened_look_id: str | None) -> dict[str, Any]:
+        """Write only complete current scenes; output/calibration cannot enter."""
+        self._composer_opened_look_id = opened_look_id
+        return self.working_draft.save(
+            canonical.scene, canonical.identity.to_dict(), opened_look_id, time.time(),
+        )
+
+    def _composer_recovery_scene(self, scene: Any):
+        return self._composer_canonical({'origin': 'composer', 'scene': scene})
+
+    def _clear_opened_look_recovery(self) -> None:
+        """Clear a deleted look cursor before the look can cease to exist."""
+        recovery = self.working_draft.get()
+        if recovery is None:
+            self._composer_opened_look_id = None
+            return
+        canonical = self._composer_recovery_scene(recovery['scene'])
+        if canonical.identity.to_dict() != recovery['basis']:
+            raise WorkingDraftError('Crash recovery no longer matches its basis; discard it.')
+        self._persist_composer_recovery(canonical, None)
+
+    def _translate_legacy_look(self, value: Dict[str, Any]):
+        """Import only explicitly selected, pre-translated current-scene exports.
+
+        Old Scene v1 payloads are intentionally not interpreted at runtime.
+        A migration tool or operator must classify a useful legacy look first,
+        then place its validated Scene v2 candidate in ``scene_v2``.
+        """
+        if set(value) != {'name', 'selected', 'scene_v2'} or not isinstance(value['selected'], bool):
+            raise SceneLookStoreError('A legacy look must include name, selected, and scene_v2.')
+        if not value['selected']:
+            return None
+        canonical = self._composer_canonical({'origin': 'composer', 'scene': value['scene_v2']})
+        return value['name'], canonical
+
+    def _composer_preview_payload(self, payload: Any) -> Dict[str, Any]:
+        """Use an inert canonical runtime to render an authored Composer draft.
+
+        The runtime's ``activate`` method only establishes an in-memory basis
+        for its render instances.  This method deliberately does not use the
+        token store, adapter, or historical controller channel.
+        """
+        if not isinstance(payload, dict) or set(payload) - {'origin', 'scene', 'preview'}:
+            raise SceneContractError('preview request must contain Composer scene and optional preview time')
+        preview = payload.get('preview', {})
+        if not isinstance(preview, dict) or set(preview) - {'monotonic_elapsed', 'wall_time'}:
+            raise SceneContractError('preview time is malformed')
+        request_scene = {'origin': payload.get('origin'), 'scene': payload.get('scene')}
+        canonical = self._composer_canonical(request_scene)
+        elapsed = preview.get('monotonic_elapsed', time.monotonic())
+        if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)):
+            raise SceneContractError('preview monotonic_elapsed must be numeric')
+        raw_wall_time = preview.get('wall_time')
+        if raw_wall_time is None:
+            wall_time = datetime.now().astimezone()
+        elif isinstance(raw_wall_time, str):
+            try:
+                wall_time = datetime.fromisoformat(raw_wall_time.replace('Z', '+00:00'))
+            except ValueError as exc:
+                raise SceneContractError('preview wall_time must be ISO-8601') from exc
+            if wall_time.tzinfo is None:
+                raise SceneContractError('preview wall_time must include a timezone')
+        else:
+            raise SceneContractError('preview wall_time must be ISO-8601')
+        frame = self.composer_preview.render(canonical, float(elapsed), wall_time)
+        return {
+            'basis': frame.basis.to_dict(),
+            'frame': {
+                'width': 33,
+                'height': 138,
+                'encoding': 'rgb_u8_base64',
+                'orientation': 'strip_major_led_zero_bottom',
+                'pixels': base64.b64encode(frame.pixels.tobytes()).decode('ascii'),
+            },
+            'wall_mutations': 0,
+            'widget_placements': {
+                widget_id: {
+                    'strip_translation': value.strip_translation,
+                    'led_translation': value.led_translation,
+                    'clamped': value.clamped,
+                    'used_fallback': value.used_fallback,
+                    'overlap_pixels': value.overlap_pixels,
+                    'plant_overlap_pixels': value.plant_overlap_pixels,
+                    'widget_overlap_pixels': value.widget_overlap_pixels,
+                    'warning': value.warning,
+                }
+                for widget_id, value in frame.widget_placements.items()
+            },
+        }
+
+    def _composer_library_card_payload(self, reference: dict[str, str]) -> Dict[str, Any]:
+        """Return a fixed-time, inert frame for a current library reference.
+
+        This is intentionally a read-only Composer-library seam: resolving an
+        item must not open it into the draft, update recents/favorites, or use
+        activation and reconciliation state.
+        """
+        preview_time = {
+            'monotonic_elapsed': 12.0,
+            'wall_time': '2026-08-31T12:00:00+00:00',
+        }
+        if reference['kind'] == 'starter':
+            scene = self._composer_starter(get_starter(reference['id']))['scene']
+        else:
+            scene = self._composer_look_payload(self.composer_looks.get(reference['id']))['scene']
+        preview = self._composer_preview_payload({
+            'origin': 'composer', 'scene': scene, 'preview': preview_time,
+        })
+        return {'reference': reference, 'preview_time': preview_time, **preview}
+
+    def _composer_look_payload(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject old, corrupt, or non-current whole-scene look records."""
+        scene = record['scene']
+        canonical = self._composer_canonical({'origin': 'composer', 'scene': scene})
+        if canonical.scene != scene or canonical.identity.to_dict() != record['basis']:
+            raise SceneLookStoreError('Saved look has changed or is corrupt; recreate it.')
+        return {'id': record['id'], 'name': record['name'], 'basis': record['basis'], 'scene': scene}
+
+    def _composer_library_items(self) -> list[dict[str, str]]:
+        """Names are deliberately current projections, never copied into preferences."""
+        starters = [{'kind': 'starter', **item} for item in list_starters()]
+        looks = [{'kind': 'look', 'id': item['id'], 'name': item['name']} for item in self.composer_looks.list()]
+        return [*starters, *looks]
+
+    def _composer_library_reference(self, value: Any) -> dict[str, str]:
+        """Require a current typed reference before a preference can be persisted."""
+        reference = ComposerLibraryState._reference(value)
+        if (reference['kind'], reference['id']) not in {
+            (item['kind'], item['id']) for item in self._composer_library_items()
+        }:
+            raise ComposerLibraryStateError('That library item no longer exists.')
+        return reference
+
+    def _composer_starter(self, starter: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject invalid current built-ins before they reach selection."""
+        self._composer_canonical({'origin': 'composer', 'scene': starter['scene']})
+        return starter
+
+    def _composer_canonical(self, request_value: Any):
+        """Canonicalize the one current Scene v2 representation for Composer."""
+        canonical = normalize_composer_scene(request_value, self.composer_catalog)
+        # Keep Emoji Message's compact, local controls at the Composer boundary
+        # so an invalid text or position cannot replace the last
+        # live/recoverable scene before the final-preview runtime sees it.
+        for widget in canonical.scene["widgets"]:
+            component = widget["component"]
+            if component["component_id"] == EmojiArrangerAnimation.COMPONENT_ID:
+                EmojiArrangerAnimation._normalized_parameters(component["parameters"])
+        if canonical.scene["animation"]["component_id"] == AuroraCurtainsAnimation.COMPONENT_ID:
+            AuroraCurtainsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == CanopyCupAnimation.COMPONENT_ID:
+            CanopyCupAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == AsciiDropAnimation.COMPONENT_ID:
+            AsciiDropAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == EmojiAnimation.COMPONENT_ID:
+            EmojiAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == ChristmasTreeAnimation.COMPONENT_ID:
+            ChristmasTreeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == NightTrainWindowsAnimation.COMPONENT_ID:
+            NightTrainWindowsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == CellularTapestryAnimation.COMPONENT_ID:
+            CellularTapestryAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FlowFieldSilkAnimation.COMPONENT_ID:
+            FlowFieldSilkAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FrostworkAnimation.COMPONENT_ID:
+            FrostworkAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == LivingStainedGlassAnimation.COMPONENT_ID:
+            LivingStainedGlassAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == QuasicrystalBloomAnimation.COMPONENT_ID:
+            QuasicrystalBloomAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == LivingEcosystemAnimation.COMPONENT_ID:
+            LivingEcosystemAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == PhysarumNetworkAnimation.COMPONENT_ID:
+            PhysarumNetworkAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == ReactionDiffusionGardenAnimation.COMPONENT_ID:
+            ReactionDiffusionGardenAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == WindInTheReedsAnimation.COMPONENT_ID:
+            WindInTheReedsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == ConwayLifeAnimation.COMPONENT_ID:
+            ConwayLifeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == TetrisAnimation.COMPONENT_ID:
+            TetrisAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FireflySynchronyAnimation.COMPONENT_ID:
+            FireflySynchronyAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FireworksAnimation.COMPONENT_ID:
+            FireworksAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FlameBurstAnimation.COMPONENT_ID:
+            FlameBurstAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FluidTankAnimation.COMPONENT_ID:
+            FluidTankAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == CyclicReefAnimation.COMPONENT_ID:
+            CyclicReefAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == LavaLampAnimation.COMPONENT_ID:
+            LavaLampAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == SnakeAnimation.COMPONENT_ID:
+            SnakeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == MazeChaseAnimation.COMPONENT_ID:
+            MazeChaseAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == PinballAnimation.COMPONENT_ID:
+            PinballAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == PixelQuestAnimation.COMPONENT_ID:
+            PixelQuestAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == GradientAnimation.COMPONENT_ID:
+            GradientAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == RainbowAnimation.COMPONENT_ID:
+            RainbowAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == SolidColorAnimation.COMPONENT_ID:
+            SolidColorAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == SparkleAnimation.COMPONENT_ID:
+            SparkleAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == WaveAnimation.COMPONENT_ID:
+            WaveAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        return canonical
 
     def _fallback_led_info(self) -> Dict[str, int]:
         """Current preview-manager dimensions used as a fallback layout."""

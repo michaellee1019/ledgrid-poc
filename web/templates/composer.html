@@ -2,531 +2,58 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#242424">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Wall Composer">
-  <title>Preset Composer · Living Wall</title>
-  <link rel="manifest" href="{{ url_for('static', filename='composer.webmanifest') }}">
-  <link rel="icon" href="{{ url_for('static', filename='icons/composer.svg') }}" type="image/svg+xml">
-  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/composer-180.png') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/composer.css') }}">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Composer</title>
+  <link rel="manifest" href="{{ url_for('static', filename='composer/manifest.webmanifest', v=shell_version) }}">
+  <meta name="theme-color" content="#081316">
+  <link rel="icon" href="{{ url_for('static', filename='composer/icon.svg', v=shell_version) }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/composer_slice.css', v=shell_version) }}">
 </head>
 <body>
-  <a class="skip-link" href="#composerWorkspace">Skip to composer</a>
-
-  <header class="app-header">
-    <div class="brand-lockup">
-      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-      <span class="brand-name"><strong>Living Wall</strong><small>Composer</small></span>
-      <span class="server-pill" id="composerState" data-state="loading" role="status" aria-live="polite" aria-label="Composer readiness"><i aria-hidden="true"></i><span>Composer loading</span></span>
-      <span class="server-pill" id="serverState" data-state="checking" role="status" aria-live="polite" aria-label="Wall connection"><i aria-hidden="true"></i><span>Checking wall</span></span>
-    </div>
-    <div class="document-identity">
-      <label class="sr-only" for="presetName">Preset name</label>
-      <input id="presetName" value="Untitled look" maxlength="80" autocomplete="off">
-      <span id="saveState" role="status" aria-live="polite">Loading catalog…</span>
-    </div>
-    <div class="header-actions" aria-label="Document actions">
-      <button class="icon-button" id="undoButton" type="button" title="Undo · Ctrl/⌘ Z" aria-label="Undo" aria-keyshortcuts="Control+Z Meta+Z" disabled>↶</button>
-      <button class="icon-button" id="redoButton" type="button" title="Redo · Ctrl/⌘ Shift Z" aria-label="Redo" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" disabled>↷</button>
-      <span class="toolbar-separator" aria-hidden="true"></span>
-      <button class="quiet-button" id="importButton" type="button" title="Open JSON · Ctrl/⌘ O" aria-keyshortcuts="Control+O Meta+O">Open</button>
-      <button class="quiet-button" id="copyButton" type="button" title="Copy JSON to clipboard" aria-label="Copy preset JSON">Copy</button>
-      <button class="quiet-button" id="exportButton" type="button" title="Export JSON · Ctrl/⌘ E" aria-keyshortcuts="Control+E Meta+E">Export</button>
-      <span class="toolbar-separator" aria-hidden="true"></span>
-      <button class="quiet-button server-action" id="saveLibraryButton" type="button" title="Save to library · Ctrl/⌘ S" aria-keyshortcuts="Control+S Meta+S" disabled>Save</button>
-      <span class="toolbar-separator" aria-hidden="true"></span>
-      <div class="live-controls" aria-label="Wall playback">
-        <span class="live-mode-status" id="liveModeStatus" data-state="local" role="status" aria-live="polite"><i aria-hidden="true"></i>Local preview</span>
-        <button class="primary-button server-action" id="goLiveButton" type="button" title="Play this look on the wall and sync subsequent edits" disabled>Go Live</button>
-        <button class="danger-button server-action" id="operationsStopButton" type="button" aria-describedby="operationsStopHelp" title="Stop wall output" disabled><span aria-hidden="true">■</span> Stop</button>
-        <span class="sr-only" id="operationsStopHelp">Stop uses a checked, revision-qualified activation and waits for an observed safe idle state.</span>
-      </div>
-      <input id="importFile" type="file" accept="application/json,.json" hidden>
-    </div>
-  </header>
-
-  <section class="operations-bar" id="operationsBar" data-state="unavailable" aria-label="Observed wall status">
-    <div class="operations-summary">
-      <p class="eyebrow">Observed output</p>
-      <div class="operations-identities">
-        <strong id="operationsSelectedIdentity">Selected · none reported</strong>
-        <span id="operationsActiveIdentity">Active · none reported</span>
-      </div>
-      <small id="operationsController" role="status" aria-live="polite">Controller observation unavailable</small>
-    </div>
-    <div class="operations-readout">
-      <strong id="operationsPower">Desired power unknown · Observed power unknown</strong>
-      <span id="operationsStatus" role="status" aria-live="polite">Waiting for a controller observation.</span>
-    </div>
-    <div class="operations-actions">
-      <button class="quiet-button" id="operationsRefreshButton" type="button">Refresh status</button>
-    </div>
-    <details class="operations-diagnostics" id="operationsDiagnostics">
-      <summary>Receiver &amp; performance diagnostics</summary>
-      <div>
-        <p><strong>Receivers</strong><span id="operationsReceiver">Unknown</span></p>
-        <p><strong>Performance</strong><span id="operationsPerformance">Unknown</span></p>
-        <a id="operationsRawEvidence" href="/api/v1/composer/settings/observed" target="_blank" rel="noopener" hidden>View bounded controller evidence</a>
-        <section class="maintenance-panel" id="maintenancePanel" aria-labelledby="maintenanceHeading" hidden>
-          <h2 id="maintenanceHeading">Guarded maintenance</h2>
-          <p>Runs one named, bounded diagnostic through the controller and restores the prior output.</p>
-          <label for="maintenanceDiagnostic">Diagnostic
-            <select id="maintenanceDiagnostic">
-              <option value="receiver_band">Receiver band</option>
-              <option value="strip_ramp">Strip ramp</option>
-              <option value="direction_sentinel">Direction sentinel</option>
-              <option value="sparse_boundary">Sparse boundary</option>
-              <option value="tail_lane_probe">Tail lane probe</option>
-            </select>
-          </label>
-          <label for="maintenanceTarget" id="maintenanceTargetField">Receiver
-            <input id="maintenanceTarget" type="number" min="0" max="4" step="1" value="0" inputmode="numeric">
-          </label>
-          <label for="maintenanceLane" id="maintenanceLaneField" hidden>Tail lane
-            <input id="maintenanceLane" type="number" min="0" max="7" step="1" value="0" inputmode="numeric">
-          </label>
-          <label for="maintenanceIntensity">Intensity (1–64)
-            <input id="maintenanceIntensity" type="number" min="1" max="64" step="1" value="32" inputmode="numeric">
-          </label>
-          <label for="maintenanceDuration">Duration (0.1–30 s)
-            <input id="maintenanceDuration" type="number" min="0.1" max="30" step="0.1" value="1" inputmode="decimal">
-          </label>
-          <button class="quiet-button server-action" id="maintenanceRunButton" type="button">Run diagnostic</button>
-          <p id="maintenanceResult" role="status" aria-live="polite">Maintenance is unavailable until the controller capability is enabled.</p>
-        </section>
-      </div>
-    </details>
-  </section>
-
-  <main class="composer-shell" id="composerWorkspace" tabindex="-1">
-    <aside class="pane library-pane mobile-view is-active" data-mobile-view="library" aria-labelledby="libraryHeading">
-      <div class="pane-heading">
-        <div><p class="eyebrow">Assets</p><h1 id="libraryHeading">Presets</h1></div>
-        <button class="quiet-button" id="toggleLibraryFavoriteButton" type="button" aria-pressed="false" disabled>Save favorite</button>
-      </div>
-      <section class="preset-section" id="favoriteLibrarySection" aria-labelledby="favoriteLibraryHeading" hidden>
-        <div class="section-heading">
-          <div><h2 id="favoriteLibraryHeading">Favorites</h2><small>Saved on this device</small></div>
-        </div>
-        <div class="preset-list" id="favoriteList" role="list"></div>
-      </section>
-      <section class="preset-section" id="recentLibrarySection" aria-labelledby="recentLibraryHeading" hidden>
-        <div class="section-heading">
-          <div><h2 id="recentLibraryHeading">Recent</h2><small>Your latest local selections</small></div>
-        </div>
-        <div class="preset-list" id="recentList" role="list"></div>
-      </section>
-      <section class="preset-section featured-starts" aria-labelledby="presetHeading">
-        <div class="section-heading">
-          <div><h2 id="presetHeading">Starting points</h2><small>For the selected renderer</small></div>
-          <span id="presetCount">0</span>
-        </div>
-        <div class="preset-list" id="presetList"></div>
-      </section>
-      <section class="preset-section" id="savedRecordSection" aria-labelledby="savedRecordHeading">
-        <div class="section-heading">
-          <div><h2 id="savedRecordHeading">Saved records</h2><small>Built-in looks are read-only; saved looks and scenes stay separate.</small></div>
-        </div>
-        <label class="catalog-category-filter" for="savedRecordSelect">
-          <span>Open a saved look or scene</span>
-          <select id="savedRecordSelect" disabled>
-            <option value="">Loading saved records…</option>
-          </select>
-        </label>
-        <p id="savedRecordStatus" role="status" aria-live="polite">Saved records load without changing the wall.</p>
-        <div class="local-action-buttons" aria-label="Saved preset actions">
-          <button class="quiet-button server-action" id="reopenSavedRecordButton" type="button" disabled>Reopen</button>
-          <button class="quiet-button server-action" id="updateSavedRecordButton" type="button" disabled>Update</button>
-          <button class="danger-button server-action" id="deleteSavedRecordButton" type="button" disabled>Delete</button>
-        </div>
-      </section>
-
-      <label class="search-field" for="componentSearch">
-        <span aria-hidden="true">⌕</span>
-        <input id="componentSearch" type="search" placeholder="Find a renderer" autocomplete="off" aria-keyshortcuts="/">
-        <kbd aria-hidden="true">/</kbd>
-      </label>
-
-      <details class="catalog-disclosure" id="animationCatalogDisclosure" open>
-        <summary>
-          <span><strong>Renderer catalog</strong><small>All available backgrounds</small></span>
-          <span class="count-pill" id="catalogCount">0</span>
-        </summary>
-        <div class="catalog-disclosure-body">
-          <div class="catalog-filters" role="group" aria-label="Animation type filter">
-            <button type="button" data-filter="all" aria-pressed="true">All</button>
-            <button type="button" data-filter="python" aria-pressed="false">Python</button>
-            <button type="button" data-filter="native" aria-pressed="false">C++</button>
-          </div>
-          <div class="catalog-filters catalog-filters--saved" role="group" aria-label="Discovery item type">
-            <button type="button" data-catalog-kind="all" aria-pressed="true">All looks</button>
-            <button type="button" data-catalog-kind="renderer" aria-pressed="false">Renderers</button>
-            <button type="button" data-catalog-kind="preset" aria-pressed="false">Starting points</button>
-          </div>
-          <label class="catalog-category-filter" for="catalogCategoryFilter">
-            <span>Category</span>
-            <select id="catalogCategoryFilter">
-              <option value="all">All categories</option>
-            </select>
-          </label>
-          <div class="catalog-filters catalog-filters--saved" role="group" aria-label="Saved discovery items">
-            <button type="button" data-catalog-saved="all" aria-pressed="true">All</button>
-            <button type="button" data-catalog-saved="favorites" aria-pressed="false">Favorites</button>
-            <button type="button" data-catalog-saved="recent" aria-pressed="false">Recent</button>
-          </div>
-          <p class="catalog-result-summary" id="catalogResultSummary" role="status" aria-live="polite">Loading looks…</p>
-          <div class="component-list" id="componentList" role="listbox" aria-label="Animation renderers" aria-busy="true"></div>
-          <div class="catalog-more" id="catalogMore" hidden>
-            <button class="quiet-button" id="catalogShowMoreButton" type="button">Show more</button>
-          </div>
-        </div>
+<main class="composer" data-api-root="/api/composer">
+  <section id="composerShell" class="composer-shell" hidden aria-live="polite"><p id="composerShellMessage"></p><button id="composerShellRetry" class="button secondary" type="button" hidden>Reload Composer</button><button id="composerShellUpdate" class="button secondary" type="button" hidden>Reload update</button></section>
+  <div class="desktop-workspace">
+    <aside class="library-pane" aria-labelledby="library-title">
+      <div class="pane-heading"><p class="eyebrow">Library</p><h1 id="library-title">Scenes</h1></div>
+      <label>Search scenes <input id="librarySearch" type="search" placeholder="Search scenes"></label>
+      <div class="library-filters" role="group" aria-label="Scene collection"><button class="button text active" data-library-filter="all" type="button">All</button><button class="button text" data-library-filter="starter" type="button">Built-ins</button><button class="button text" data-library-filter="look" type="button">Saved</button><button class="button text" data-library-filter="favorites" type="button">Favorites</button></div>
+      <ol id="libraryList" class="library-list" aria-live="polite"></ol><p id="libraryEmpty" class="empty">No scenes found.</p>
+    </aside>
+    <section class="preview-pane" aria-labelledby="preview-title">
+      <div class="pane-heading"><div><p class="eyebrow">Installed final</p><h2 id="preview-title">Preview</h2></div><strong id="previewIdentity">Rendering…</strong></div>
+      <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" tabindex="0" aria-label="Installed final Scene preview"></canvas></div>
+      <p id="previewStatus" class="status-line" role="status" aria-live="polite">Rendering the current scene.</p>
+    </section>
+    <section class="inspectors" aria-label="Scene inspectors">
+      <section class="inspector" aria-labelledby="background-title"><div class="pane-heading"><p class="eyebrow">Background</p><h2 id="background-title">Native Aurora</h2></div><div class="field-grid"><label>Ambient gain <input id="backgroundGain" type="number" min="0" max="2" step=".01" value=".62"></label></div></section>
+      <section class="inspector" aria-labelledby="animation-title"><div class="pane-heading"><p class="eyebrow">Animation</p><h2 id="animation-title">Motion layer</h2></div><label>Animation <select id="animationChoice"><option value="aurora_curtains">Aurora Curtains</option><option value="conway_life">Conway Life</option><option value="tetris">Tetris</option><option value="firefly_synchrony">Firefly Meadow</option><option value="fireworks">Fireworks</option><option value="flame_burst">Flame Burst</option><option value="fluid_tank">Fluid Tank</option><option value="cyclic_reef">Cyclic Reef</option><option value="lava_lamp">Lava Lamp</option></select></label><div id="fireworksPresetCards" class="operation-row" aria-label="Fireworks presets"></div><div id="lavaPresetCards" class="operation-row" aria-label="Lava Lamp presets"></div><div id="flame-burst-preset-cards" class="operation-row" aria-label="Flame Burst presets"></div><div id="fluid-tank-preset-cards" class="operation-row" aria-label="Fluid Tank presets"></div><div id="animationControls" class="field-grid"><label>Density <input id="curtainDensity" type="number" min="0" max="1" step=".01" value=".56"></label><label>Fold depth <input id="foldDepth" type="number" min="0" max="1" step=".01" value=".58"></label><label>Glow <input id="glowIntensity" type="number" min="0" max="1" step=".01" value=".62"></label><label>Seed <input id="lifeSeed" type="number" value="4201"></label><label>Rate <input id="lifeRate" type="number" min=".1" max="20" step=".1" value="5"></label><label>Fireflies <input id="fireflyPopulation" type="number" min="20" max="220" step="1" value="100"></label><label>Pulse together <input id="fireflySynchrony" type="number" min="0" max="2" step=".05" value=".85"></label><label>Wander <input id="fireflyWandering" type="number" min="0" max="2" step=".05" value=".55"></label><label>Pulse softness <input id="fireflyPulseSoftness" type="number" min=".1" max="1" step=".05" value=".5"></label><label>Meadow glow <input id="fireflyMeadowGlow" type="number" min="0" max=".5" step=".01" value=".12"></label><label>Launch cadence <input id="fireworksCadence" type="number" min=".1" max="4" step=".05" value="1.15"></label><label>Shell population <input id="fireworksPopulation" type="number" min="12" max="120" step="1" value="54"></label><label>Burst size <input id="fireworksBurstSize" type="number" min=".08" max=".65" step=".01" value=".29"></label><label>Burst style <select id="fireworksStyle"><option value="mixed">Mixed</option><option value="ring">Ring</option><option value="willow">Willow</option><option value="palm">Palm</option><option value="burst">Burst</option></select></label><label>Gravity <input id="fireworksGravity" type="number" min="0" max="1.5" step=".01" value=".38"></label><label>Trails <input id="fireworksTrails" type="number" min=".1" max="1" step=".01" value=".72"></label><label>Crackle <input id="fireworksCrackle" type="number" min="0" max="1" step=".01" value=".24"></label><label>Twinkle <input id="fireworksTwinkle" type="number" min="0" max="1" step=".01" value=".35"></label><label>Show seed <input id="fireworksSeed" type="number" min="0" max="999999" step="1" value="1776"></label><label>Ignition cadence <input id="flameCadence" type="number" min=".12" max="4" step=".01" value=".9"></label><label>Flare reach <input id="flameSize" type="number" min=".12" max=".9" step=".01" value=".42"></label><label>Ember linger <input id="flameEmbers" type="number" min=".08" max="1" step=".01" value=".45"></label><label>Flicker <input id="flameFlicker" type="number" min="0" max="1" step=".01" value=".35"></label><label>Flow rate <input id="fluidFlow" type="number" min=".1" max="2" step=".01" value=".72"></label><label>Current <input id="fluidCurrent" type="number" min="0" max="1" step=".01" value=".35"></label><label>Bubble lift <input id="fluidBubbles" type="number" min="0" max="1" step=".01" value=".42"></label><label>Surface energy <input id="fluidSurface" type="number" min="0" max="1" step=".01" value=".38"></label><label>Wax bodies <input id="lavaBlobCount" type="number" min="3" max="12" step="1" value="7"></label><label>Blob scale <input id="lavaBlobScale" type="number" min=".6" max="1.8" step=".01" value="1"></label><label>Viscosity <input id="lavaViscosity" type="number" min="0" max="1" step=".01" value=".68"></label><label>Heat <input id="lavaHeat" type="number" min="0" max="1" step=".01" value=".72"></label><label>Turbulence <input id="lavaTurbulence" type="number" min="0" max="1" step=".01" value=".24"></label><label>Wax glow <input id="lavaGlow" type="number" min="0" max="1" step=".01" value=".58"></label><label>Wax seed <input id="lavaSeed" type="number" min="0" max="999999" step="1" value="1977"></label></div></section>
+      <section class="inspector" aria-labelledby="widgets-title"><div class="pane-heading"><p class="eyebrow">Widgets</p><h2 id="widgets-title">Clock &amp; message</h2></div><label class="switch"><input id="clockEnabled" type="checkbox"> Show time</label><div id="clockPresetCards" class="operation-row" aria-label="Clock Widget presets"></div><div class="field-grid"><label>Clock format <select id="clockFormat"><option value="12">12-hour</option><option value="24">24-hour</option></select></label><label class="switch"><input id="clockSeconds" type="checkbox" checked> Show seconds</label><label>Time offset (minutes) <input id="clockTimeOffset" type="number" min="-720" max="840" step="1" value="0"></label><label>Clock vertical offset <input id="clockOffset" type="number" min="-137" max="137" value="-8"></label></div><hr><label class="switch"><input id="emojiEnabled" type="checkbox"> Show emoji message</label><label>Message <input id="emojiText" type="text" maxlength="64" value="HI🔥"></label><div class="field-grid"><label>Across <input id="emojiXOffset" type="number" min="-137" max="137" value="8"></label><label>Down <input id="emojiYOffset" type="number" min="-32" max="32" value="3"></label><label>Letter spacing <input id="emojiCharSpacing" type="number" min="0" max="8" value="1"></label><label>Line spacing <input id="emojiLineSpacing" type="number" min="0" max="8" value="1"></label><label>Scroll <input id="emojiScrollSpeed" type="number" min="0" max="24" step=".1" value="0"></label><label>Pulse <input id="emojiPulseSpeed" type="number" min="0" max="3" step=".1" value=".5"></label></div><button id="removeEmoji" class="button text" type="button">Remove emoji message</button><div id="widgetWarning" class="warning" hidden role="status"></div></section>
+      <section class="inspector" aria-labelledby="plants-title"><div class="pane-heading"><p class="eyebrow">Plants</p><h2 id="plants-title">Final optics</h2></div><p class="muted">These finish the composed scene around the living wall. Calibration stays installation-owned.</p><div class="field-grid" aria-label="Plant final optics"><label class="switch"><input id="plantIlluminateEnabled" type="checkbox"> Illuminate</label><label>Illuminate strength <input id="plantIlluminateStrength" type="range" min="0" max="1" step=".05" value=".5" disabled aria-describedby="plantIlluminateValue"><output id="plantIlluminateValue">50%</output></label><label class="switch"><input id="plantShadowEnabled" type="checkbox"> Shadow</label><label>Shadow strength <input id="plantShadowStrength" type="range" min="0" max="1" step=".05" value=".5" disabled aria-describedby="plantShadowValue"><output id="plantShadowValue">50%</output></label><label class="switch"><input id="plantHueShiftEnabled" type="checkbox"> Hue shift</label><label>Hue shift strength <input id="plantHueShiftStrength" type="range" min="0" max="1" step=".05" value=".5" disabled aria-describedby="plantHueShiftValue"><output id="plantHueShiftValue">50%</output></label></div><p id="plantsStatus" class="status-line">No final plant optics active.</p></section>
+      <section class="inspector look-inspector" aria-labelledby="look-title"><div class="pane-heading"><p class="eyebrow">Look</p><h2 id="look-title">Finish</h2></div><div class="field-grid"><label>Palette <select id="previewPalette"><option value="mist">Mist</option><option value="neutral">Neutral</option><option value="spectrum">Spectrum</option><option value="ember">Ember</option></select></label><label>Pace <input id="wallPace" type="number" min="0" max="2" step=".01" value=".7"></label><label>Luminance <input id="sceneLuminance" type="number" min="0" max="2" step=".01" value=".82"></label></div></section>
+    </section>
+    <section class="inspector" aria-labelledby="snake-title"><div class="pane-heading"><p class="eyebrow">Snake</p><h2 id="snake-title">Arcade instrument</h2></div><div id="snakePresetCards" class="operation-row" aria-label="Snake presets"></div><div class="field-grid"><label>Move cadence <input data-snake-control id="snakeCadence" type="number" min="1" max="24" step=".5" value="9"></label><label>Snakes <input data-snake-control id="snakeCount" type="number" min="1" max="12" step="1" value="3"></label><label>Food <input data-snake-control id="snakeFood" type="number" min="1" max="24" step="1" value="5"></label><label>Growth <input data-snake-control id="snakeGrowth" type="number" min="1" max="12" step="1" value="3"></label><label>Rules <select data-snake-control id="snakeRules"><option value="classic">Classic</option><option value="wrap">Wrap</option><option value="portal">Portal</option><option value="battle">Battle</option></select></label><label>Obstacles <select data-snake-control id="snakeObstacles"><option value="none">None</option><option value="pillars">Pillars</option><option value="gates">Gates</option><option value="zigzag">Zigzag</option></select></label><label>Trails <input data-snake-control id="snakeTrails" type="number" min="0" max="1" step=".01" value=".72"></label><label>Glow <input data-snake-control id="snakeGlow" type="number" min="0" max="1" step=".01" value=".55"></label><label>Game seed <input data-snake-control id="snakeSeed" type="number" min="0" max="999999" step="1" value="1976"></label></div></section>
+    <section class="inspector" aria-labelledby="canopy-title"><div class="pane-heading"><p class="eyebrow">Canopy Cup</p><h2 id="canopy-title">Race instrument</h2></div><div id="canopyPresetCards" class="operation-row" aria-label="Canopy Cup presets"></div><div class="field-grid"><label>World <select data-canopy-control id="canopyWorld"><option value="tournament">Tournament</option><option value="emerald_gully">Emerald Gully</option><option value="web_city">Webline Rooftops</option><option value="barrel_ruins">Barrel Temple</option><option value="ivory_valley">Impossible Valley</option><option value="crystal_sunset">Crystal Falls</option><option value="neon_night">Neon Vine Night</option></select></label><label>Race heats <input data-canopy-control id="canopyHeats" type="number" min="2" max="7" step="1" value="7"></label><label>Course <input data-canopy-control id="canopyCourse" type="number" min=".6" max="1.4" step=".01" value="1"></label><label>Density <input data-canopy-control id="canopyDensity" type="number" min="0" max="1" step=".01" value=".55"></label><label>Rivalry <input data-canopy-control id="canopyRivalry" type="number" min="0" max="1" step=".01" value=".55"></label><label>Power-ups <input data-canopy-control id="canopyPowerups" type="number" min="0" max="1" step=".01" value=".6"></label></div></section>
+    <section class="inspector" aria-labelledby="reef-title"><div class="pane-heading"><p class="eyebrow">Cyclic Reef</p><h2 id="reef-title">Coral instrument</h2></div><div id="reefPresetCards" class="operation-row" aria-label="Cyclic Reef presets"></div><div class="field-grid"><label>Species <input data-reef-control id="reefSpecies" type="number" min="3" max="8" step="1" value="5"></label><label>Takeover pressure <input data-reef-control id="reefThreshold" type="number" min="1" max="5" step="1" value="2"></label><label>Mutation <input data-reef-control id="reefMutation" type="number" min="0" max=".02" step=".0005" value=".002"></label><label>Grazers <input data-reef-control id="reefGrazers" type="number" min="0" max="48" step="1" value="8"></label><label>Boundary glow <input data-reef-control id="reefGlow" type="number" min="0" max="1" step=".01" value=".55"></label><label>Topology <select data-reef-control id="reefTopology"><option value="wrap">Wrap</option><option value="closed">Closed</option></select></label><label>Reef pace <input data-reef-control id="reefPace" type="number" min=".25" max="2" step=".05" value="1"></label><label>Reef seed <input data-reef-control id="reefSeed" type="number" min="0" max="999999" step="1" value="13100"></label></div></section>
+    <section class="inspector" aria-labelledby="arcade-trio-title"><div class="pane-heading"><p class="eyebrow">Arcade trio</p><h2 id="arcade-trio-title">Game instruments</h2></div><div id="mazePresetCards" class="operation-row" aria-label="Maze Chase presets"></div><div id="pinballPresetCards" class="operation-row" aria-label="Pinball presets"></div><div id="questPresetCards" class="operation-row" aria-label="Pixel Quest presets"></div><div class="field-grid"><label>Maze cadence <input id="mazeCadence" type="number" min="1.5" max="18" step=".1" value="9"></label><label>Hunter pressure <input id="mazeDifficulty" type="number" min="0" max="1" step=".01" value=".82"></label><label class="switch">Hunter radar <input id="mazeRadar" type="checkbox"></label><label>Table ticks <input id="pinballTicks" type="number" min="12" max="90" step=".5" value="40.5"></label><label>Mayhem <input id="pinballChaos" type="number" min="0" max="1" step=".01" value=".72"></label><label>Quest cadence <input id="questCadence" type="number" min="3" max="36" step=".1" value="12"></label><label>Challenge <input id="questDifficulty" type="number" min=".55" max="1.8" step=".01" value="1"></label><label class="switch">Story HUD <input id="questHud" type="checkbox" checked></label></div></section>
+    <aside class="operations-pane" aria-labelledby="operations-title">
+      <div class="pane-heading"><div><p class="eyebrow">Operations</p><h2 id="operations-title">Current scene</h2></div><span id="saveState" class="state-chip">Loading</span></div>
+      <p id="sceneIdentity" class="identity">No current scene</p>
+      <section class="connection" aria-labelledby="connection-title"><p class="eyebrow" id="connection-title">Connection &amp; observed output</p><strong id="connectionState">Checking…</strong><p id="observedIdentity" class="identity">No observed output</p></section>
+      <button id="liveAction" class="button primary wide" type="button">Go Live</button>
+      <details id="secondaryOperations" class="secondary-operations" open><summary>More scene controls</summary>
+        <label>Name <input id="sceneName" maxlength="80" placeholder="Untitled scene"></label>
+        <div class="operation-row"><button id="openScene" class="button secondary" type="button">Open</button><button id="saveScene" class="button secondary" type="button">Save</button><button id="saveAsScene" class="button secondary" type="button">Save As</button></div>
+        <div class="operation-row"><button id="undoScene" class="button text" type="button">Undo</button><button id="redoScene" class="button text" type="button">Redo</button></div>
+        <button id="checkScene" class="button secondary wide" type="button">Check</button>
+        <details class="diagnostics"><summary>Diagnostics</summary><dl><div><dt>Desired</dt><dd id="desiredIdentity">Unavailable</dd></div><div><dt>Observed</dt><dd id="diagnosticObserved">Unavailable</dd></div><div><dt>Revision</dt><dd id="sceneRevision">Unavailable</dd></div><div><dt>Message</dt><dd id="operationMessage">Checking current scene…</dd></div></dl></details>
       </details>
     </aside>
-
-    <section class="stage-pane mobile-view" data-mobile-view="stage" aria-labelledby="stageHeading">
-      <div class="stage-topline">
-        <div>
-          <p class="eyebrow">Canvas · 33 × 138</p>
-          <h1 id="stageHeading">Select a browser-ready animation</h1>
-          <p class="scene-choice-status" id="sceneChoiceStatus" data-state="local" role="status" aria-live="polite">Choose a scene to start a local draft.</p>
-          <p id="componentDescription">Frames render on this device and never change the physical wall.</p>
-        </div>
-        <div class="engine-badge" id="engineBadge" data-state="waiting"><span></span><strong>Waiting</strong><small>No worker selected</small></div>
-      </div>
-
-      <div class="preview-workspace">
-        <div class="wall-room" id="wallRoom">
-          <div class="wall-aura" aria-hidden="true"></div>
-          <div class="wall-bezel">
-            <canvas id="previewCanvas" width="33" height="138" aria-label="Local animation preview of the renderer output"></canvas>
-            <div class="preview-placeholder" id="previewPlaceholder"><span aria-hidden="true">✦</span><strong>Your wall, simulated here</strong><small>Choose a supported renderer to begin.</small></div>
-          </div>
-          <div class="floor-shadow" aria-hidden="true"></div>
-        </div>
-
-        <div class="preview-mode-bar">
-          <div class="compare-control" role="group" aria-label="Preview version" aria-describedby="comparisonHelp">
-            <button type="button" data-compare="draft" aria-pressed="true">Draft</button>
-            <button type="button" data-compare="split" aria-pressed="false">Split</button>
-            <button type="button" data-compare="original" aria-pressed="false">Original</button>
-          </div>
-          <details class="comparison-help">
-            <summary aria-label="About Draft, Split, and Original">?</summary>
-            <p id="comparisonHelp"><strong>Draft</strong> is your edited look. <strong>Original</strong> is the starting state. <strong>Split</strong> shows Original on the left and Draft on the right.</p>
-          </details>
-        </div>
-        <div class="preview-foreground-control">
-          <label class="preview-foreground-toggle" for="installationForegroundToggle">
-            <input id="installationForegroundToggle" type="checkbox" role="switch" aria-describedby="installationForegroundStatus">
-            <span>Simulate installed plant foreground</span>
-          </label>
-          <span id="installationForegroundStatus" role="status" aria-live="polite">Output-accurate preview</span>
-        </div>
-        <p class="split-legend" id="splitLegend" aria-live="polite" hidden><span>Left · Original</span><span>Right · Draft</span></p>
-      </div>
-
-      <div class="transport" aria-label="Preview transport">
-        <button class="play-button" id="playButton" type="button" aria-label="Pause preview" aria-describedby="previewMotionStatus" disabled><span aria-hidden="true">Ⅱ</span></button>
-        <span class="timecode" id="timecode">0:00.0</span>
-        <label class="sr-only" for="timeline">Preview time</label>
-        <input id="timeline" type="range" min="0" max="20" value="0" step="0.01" disabled>
-        <span class="timecode">0:20</span>
-        <label class="fps-select">Rate
-          <select id="fpsSelect" aria-label="Preview frame rate">
-            <option value="24">24 fps</option>
-            <option value="30" selected>30 fps</option>
-            <option value="60">60 fps</option>
-          </select>
-        </label>
-      </div>
-      <p class="sr-only" id="previewMotionStatus" role="status" aria-live="polite">The local preview is playing.</p>
-
-      <div class="provenance-note">
-        <span aria-hidden="true">◎</span>
-        <p><strong id="provenanceTitle">Local simulation</strong><span id="provenanceDetail">This is an authored renderer preview—not camera feedback or framebuffer readback from the installation.</span></p>
-      </div>
-      <section class="interaction-panel" id="previewInteractionPanel" aria-label="Preview controls" hidden></section>
-    </section>
-
-    <aside class="pane inspector-pane mobile-view" data-mobile-view="tune" aria-labelledby="inspectorHeading">
-      <div class="inspector-tabs" role="tablist" aria-label="Inspector" aria-orientation="horizontal">
-        <button id="controlsTab" type="button" role="tab" aria-selected="true" aria-controls="controlsPanel" title="Tune · T" aria-keyshortcuts="T">Tune <kbd aria-hidden="true">T</kbd></button>
-        <button id="layersTab" type="button" role="tab" aria-selected="false" aria-controls="layersPanel" title="Layers · L" aria-keyshortcuts="L">Layers <kbd aria-hidden="true">L</kbd></button>
-        <button id="wallTab" type="button" role="tab" aria-selected="false" aria-controls="wallPanel" title="Wall · W" aria-keyshortcuts="W">Wall <kbd aria-hidden="true">W</kbd></button>
-        <button id="checkerTab" type="button" role="tab" aria-selected="false" aria-controls="checkerPanel" title="Check · C" aria-keyshortcuts="C">Check <kbd aria-hidden="true">C</kbd><span id="checkerDot" aria-hidden="true"></span></button>
-      </div>
-
-      <section id="controlsPanel" role="tabpanel" aria-labelledby="controlsTab">
-        <div class="pane-heading compact">
-          <div><p class="eyebrow">Properties</p><h1 id="inspectorHeading">Adjustments</h1></div>
-          <button class="text-button" id="resetButton" type="button" disabled>Reset</button>
-        </div>
-        <div class="parameter-toolbar">
-          <label class="parameter-search" for="parameterSearch"><span aria-hidden="true">⌕</span><input id="parameterSearch" type="search" placeholder="Filter controls" autocomplete="off"></label>
-          <label class="compact-switch parameter-help-toggle" for="parameterHelpToggle"><span>Help</span><input id="parameterHelpToggle" type="checkbox" role="switch"></label>
-        </div>
-        <p class="direct-edit-status" id="directEditStatus" data-state="local" role="status" aria-live="polite"><i aria-hidden="true"></i><span>Editing locally · dial changes update this preview immediately. Go Live to send this scene to the wall.</span></p>
-        <p class="empty-message" id="parameterEmpty">Controls are generated from the selected renderer’s declared schema.</p>
-        <form class="parameter-list" id="parameterList" autocomplete="off"></form>
-        <section class="advanced-parameters inline-advanced-parameters" aria-labelledby="advancedParametersHeading">
-          <h2 id="advancedParametersHeading">Installation-aware controls</h2>
-          <p class="installation-authority" id="installationProfileStatus" role="status">Plant geometry comes from the host-managed installation profile.</p>
-          <p class="empty-message" id="advancedParameterEmpty">No installation-aware controls for this renderer.</p>
-          <div class="parameter-list" id="advancedParameterList"></div>
-        </section>
-      </section>
-
-      <section id="layersPanel" role="tabpanel" aria-labelledby="layersTab" hidden>
-        <div class="layers-intro">
-          <p class="eyebrow">Scene stack</p>
-          <h1>Build what goes live</h1>
-          <p>The wall contract has one background and one fixed Clock slot. Preview compositing stays on this device.</p>
-        </div>
-
-        <ol class="layer-stack" aria-label="Scene layers, bottom to top">
-          <li class="layer-card is-required">
-            <span class="layer-order">1</span>
-            <span class="layer-icon" id="backgroundLayerIcon" aria-hidden="true">✦</span>
-            <p><strong id="backgroundLayerName">Background</strong><span id="backgroundLayerMeta">Choose a renderer</span></p>
-            <span class="fixed-chip">Required</span>
-          </li>
-          <li class="layer-card" id="clockLayerCard">
-            <span class="layer-order">2</span>
-            <span class="layer-icon" aria-hidden="true">◷</span>
-            <p><strong>Clock overlay</strong><span>Python · fixed top layer</span></p>
-            <label class="compact-switch"><span class="sr-only">Enable Clock overlay</span><input id="clockEnabled" type="checkbox" role="switch"></label>
-          </li>
-        </ol>
-
-        <div class="clock-options" id="clockOptions" hidden>
-          <label for="clockOpacity"><span>Clock opacity</span><output id="clockOpacityValue" for="clockOpacity">86%</output></label>
-          <input id="clockOpacity" type="range" min="0" max="255" value="220" step="1">
-          <label class="clock-preset-field" for="clockPresetSelect"><span>Clock starting point</span></label>
-          <select id="clockPresetSelect"><option value="">Custom</option></select>
-          <form class="parameter-list clock-parameter-list" id="clockParameterList" autocomplete="off"></form>
-          <p id="clockPreviewNote">The Clock is composed locally when the browser runtime exposes its layer frame.</p>
-        </div>
-
-        <details class="advanced-disclosure" id="installationAdvanced">
-          <summary>
-            <span><strong>Installation / Advanced</strong><small>Fallback, app installation, and offline readiness</small></span>
-          </summary>
-          <div class="advanced-disclosure-body">
-            <label class="fallback-field" for="fallbackSelect">
-              <span>Python safety fallback</span>
-              <select id="fallbackSelect" aria-describedby="fallbackHelp"></select>
-              <small id="fallbackHelp">Python backgrounds use themselves. Native backgrounds require a real Host Python fallback.</small>
-            </label>
-            <div class="app-readiness" aria-label="Composer app status">
-              <p><span aria-hidden="true">⌁</span><span><strong>Wall connection</strong><small id="networkStatus">Composer readiness and wall connectivity are independent.</small></span></p>
-              <p><span aria-hidden="true">↓</span><span><strong>Offline editing</strong><small id="offlineReadiness" role="status" aria-live="polite" data-state="unknown">Availability is confirmed after local assets finish caching.</small></span></p>
-              <button class="quiet-button full-button" id="prepareOfflineButton" type="button">Prepare for offline use</button>
-              <p><span aria-hidden="true">▣</span><span><strong>Installed app</strong><small id="installStatus" role="status" aria-live="polite" data-state="unknown">Installation is optional; app mode has not been detected yet.</small></span></p>
-            </div>
-            <p class="install-guidance" id="installGuidance">On iPhone, use Share, then Add to Home Screen. The installed composer keeps the same private local draft and applies edits only through checked activation.</p>
-          </div>
-        </details>
-
-        <section class="server-surface" aria-labelledby="serverActionsHeading">
-          <div class="server-surface-heading"><h2 id="serverActionsHeading">Wall actions</h2><span id="serverActionBadge">Online required</span></div>
-          <p id="serverActionStatus" role="status" aria-live="polite">Drafts, checks, uploads, and downloads work locally. Saving and activation require the wall server.</p>
-          <p class="activation-readiness" id="activationReadiness" role="status" aria-live="polite" data-state="unavailable">Run Check to determine whether this draft is ready for activation.</p>
-          <p class="activation-readiness" id="immediateApplyStatus" role="status" aria-live="polite" data-state="local">Local preview · edits stay on this device until you go Live.</p>
-          <div class="local-action-buttons" aria-label="Local file actions">
-            <button class="quiet-button" id="importPanelButton" type="button">Upload JSON</button>
-            <button class="quiet-button" id="exportPanelButton" type="button">Download JSON</button>
-          </div>
-          <div class="server-action-buttons">
-            <button class="quiet-button server-action" id="saveLibraryPanelButton" type="button" disabled>Save to library</button>
-          </div>
-          <div class="server-action-buttons" aria-label="Current activation actions">
-            <button class="quiet-button server-action" id="cancelActivationButton" type="button" hidden disabled>Cancel pending activation</button>
-            <button class="quiet-button server-action" id="rollbackActivationButton" type="button" hidden disabled>Restore previous wall state</button>
-          </div>
-        </section>
-      </section>
-
-      <section id="wallPanel" role="tabpanel" aria-labelledby="wallTab" hidden>
-        <div class="wall-controls-heading">
-          <div><p class="eyebrow">Installation state</p><h1>Wall settings</h1></div>
-          <button class="text-button" id="refreshWallButton" type="button">Refresh</button>
-        </div>
-        <p class="wall-scope-note">These settings are independent of this look. Supported changes join the same checked immediate-apply queue.</p>
-
-        <section class="wall-control-section" aria-labelledby="vibeHeading">
-          <div class="wall-section-heading"><h2 id="vibeHeading">Vibe</h2><output id="vibeReadout">Neutral</output></div>
-          <div class="vibe-options" id="vibeOptions" role="radiogroup" aria-label="Global vibe"></div>
-          <p class="wall-control-help" id="vibeProfileDetail">Atmosphere changes tempo, luminance, and supported color semantics.</p>
-        </section>
-
-        <section class="wall-control-section" aria-labelledby="playbackHeading">
-          <div class="wall-section-heading"><h2 id="playbackHeading">Playback &amp; output</h2><span>Global</span></div>
-          <label class="live-edit-control" for="globalPower">
-            <span><strong>Output power</strong><small id="globalPowerStatus" role="status" aria-live="polite">Waiting for a controller observation.</small></span>
-            <span class="compact-switch"><span class="sr-only">Turn physical wall output on or off</span><input id="globalPower" type="checkbox" role="switch"></span>
-          </label>
-          <label class="wall-range" for="globalBrightness"><span>Master brightness</span><output id="globalBrightnessValue" for="globalBrightness">—</output></label>
-          <input id="globalBrightness" type="range" min="0" max="255" step="1" value="128">
-          <label class="wall-range" for="globalSpeed"><span>Operator speed</span><output id="globalSpeedValue" for="globalSpeed">1.00×</output></label>
-          <input id="globalSpeed" type="range" min="0.25" max="3" step="0.05" value="1">
-          <label class="wall-range" for="globalTargetFps"><span>Target frame rate</span><output id="globalTargetFpsValue" for="globalTargetFps">—</output></label>
-          <input id="globalTargetFps" type="range" min="1" max="200" step="1" value="30">
-          <p class="wall-control-help">Operator speed multiplies the renderer’s authored speed. Master brightness and target FPS are output controls, not preset parameters.</p>
-        </section>
-
-        <section class="wall-control-section" aria-labelledby="plantHeading">
-          <div class="wall-section-heading"><h2 id="plantHeading">Plant behavior</h2><span id="plantModifierCount">0 active</span></div>
-          <p class="wall-control-help">Visual effects combine. Choose at most one field and one surface behavior. A zero-strength modifier is an exact no-op.</p>
-          <div class="plant-groups" id="plantModifierGroups"></div>
-        </section>
-
-        <section class="wall-control-section mask-summary" aria-labelledby="maskHeading">
-          <div class="wall-section-heading"><h2 id="maskHeading">Plant masks</h2><span id="maskGeometry">33 × 138</span></div>
-          <div class="mask-counts" aria-label="Calibrated mask counts">
-            <p><i class="mask-swatch foliage" aria-hidden="true"></i><span>Foliage</span><strong id="foliageMaskCount">—</strong></p>
-            <p><i class="mask-swatch globes" aria-hidden="true"></i><span>Seven globe regions</span><strong id="globeMaskCount">—</strong></p>
-          </div>
-          <button class="quiet-button full-button" id="editMasksButton" type="button">Edit calibrated masks…</button>
-        </section>
-
-        <div class="wall-apply-bar">
-          <p id="wallDraftStatus" role="status" aria-live="polite">Composer draft only · current wall state has not been read.</p>
-          <div><button class="quiet-button" id="resetWallDraftButton" type="button" disabled>Revert</button></div>
-        </div>
-      </section>
-
-      <section id="checkerPanel" role="tabpanel" aria-labelledby="checkerTab" hidden>
-        <div class="checker-intro">
-          <p class="eyebrow">Local acceptance</p>
-          <h1>Check before you ship</h1>
-          <p>Samples 48 frames in a disposable worker. Nothing is sent to the wall.</p>
-          <button class="primary-button full-button" id="runCheckerButton" type="button" disabled>Run local check</button>
-        </div>
-        <div class="checker-progress" id="checkerProgress" hidden>
-          <div><span id="checkerProgressLabel">Preparing renderer…</span><strong id="checkerProgressValue">0%</strong></div>
-          <progress id="checkerProgressBar" max="48" value="0"></progress>
-        </div>
-        <div class="check-summary" id="checkSummary" data-grade="idle">
-          <span class="check-gauge" id="checkGauge">—</span>
-          <p><strong id="checkHeadline">Not checked yet</strong><span id="checkSummaryCopy">Run a local sample after tuning.</span></p>
-        </div>
-        <dl class="metric-list" id="metricList">
-          <div data-metric="schema"><dt><span class="metric-icon">✓</span> Schema</dt><dd>Waiting</dd><small>Declared values and bounds</small></div>
-          <div data-metric="motion"><dt><span class="metric-icon">↝</span> Motion</dt><dd>Waiting</dd><small>Frame-to-frame change</small></div>
-          <div data-metric="luminance"><dt><span class="metric-icon">◐</span> Luminance</dt><dd>Waiting</dd><small>Perceived brightness</small></div>
-          <div data-metric="clipping"><dt><span class="metric-icon">◇</span> Clipping</dt><dd>Waiting</dd><small>Channels pinned at full output</small></div>
-          <div data-metric="strobe"><dt><span class="metric-icon">ϟ</span> Temporal delta</dt><dd>Waiting</dd><small>Rapid full-wall transitions</small></div>
-          <div data-metric="current"><dt><span class="metric-icon">⌁</span> Estimated current</dt><dd>Waiting</dd><small>60 mA/pixel RGB upper model</small></div>
-          <div data-metric="render"><dt><span class="metric-icon">◷</span> Render p95</dt><dd>Waiting</dd><small>Advisory browser timing</small></div>
-        </dl>
-        <p class="checker-caveat">Estimates are preview diagnostics, not measurements of the installed wall, power supply, receiver timing, or plant occlusion.</p>
-      </section>
-    </aside>
-  </main>
-
-  <div class="mobile-activate-bar" aria-label="Apply selected animation to the wall">
-    <span id="mobileActivationStatus" role="status" aria-live="polite">Local preview · edits stay on this device until you go Live.</span>
-    <button class="primary-button server-action" id="mobileGoLiveButton" type="button" disabled>Go Live</button>
   </div>
-
-  <nav class="mobile-tabs" aria-label="Composer sections">
-    <button type="button" data-mobile-target="library" aria-current="page"><span aria-hidden="true">▦</span>Looks</button>
-    <button type="button" data-mobile-target="edit"><span aria-hidden="true">⌁</span>Edit</button>
-    <button type="button" data-mobile-target="layers"><span aria-hidden="true">≋</span>Layers</button>
-    <button type="button" data-mobile-target="wall"><span aria-hidden="true">◫</span>Wall</button>
-    <button type="button" data-mobile-target="check"><span aria-hidden="true">✓</span>Check</button>
-  </nav>
-
-  <dialog class="action-dialog" id="overwriteDialog" aria-labelledby="overwriteHeading" aria-describedby="overwriteCopy" aria-modal="true">
-    <form method="dialog">
-      <span class="dialog-icon" aria-hidden="true">↻</span>
-      <h2 id="overwriteHeading">Replace the saved preset?</h2>
-      <p id="overwriteCopy">A library preset already uses this name. Your local draft is still safe.</p>
-      <div class="dialog-actions">
-        <button class="quiet-button" value="cancel">Keep both separate</button>
-        <button class="primary-button" id="confirmOverwriteButton" value="confirm">Replace preset</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog class="action-dialog" id="profileCandidateDialog" aria-labelledby="profileCandidateHeading" aria-describedby="profileCandidateDescription" aria-modal="true">
-    <form method="dialog">
-      <span class="dialog-icon" aria-hidden="true">◇</span>
-      <p class="eyebrow">Published profile candidate</p>
-      <h2 id="profileCandidateHeading">Use this profile for the next Check?</h2>
-      <p id="profileCandidateDescription">This stages the immutable candidate for local preview, Check, and the next guarded immediate apply. It does not select the profile on the wall by itself.</p>
-      <dl class="activation-summary">
-        <div><dt>Candidate</dt><dd id="profileCandidateDigest">—</dd></div>
-        <div><dt>Currently selected</dt><dd id="profileCandidateSelectedDigest">—</dd></div>
-      </dl>
-      <div class="dialog-actions">
-        <button class="quiet-button" value="cancel">Keep current profile</button>
-        <button class="primary-button" id="confirmProfileCandidateButton" value="confirm">Stage for next Check</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog class="mask-editor-dialog" id="maskEditorDialog" aria-labelledby="maskEditorHeading" aria-describedby="maskEditorStatus maskPanHint" aria-modal="true">
-    <div class="mask-editor-shell">
-      <header class="mask-editor-header">
-        <div><p class="eyebrow">Calibration geometry</p><h2 id="maskEditorHeading">Plant mask editor</h2><p id="maskEditorStatus" role="status" aria-live="polite">Loading calibrated masks…</p></div>
-        <button class="icon-button" id="closeMaskEditorButton" type="button" aria-label="Close mask editor">×</button>
-      </header>
-      <div class="mask-editor-toolbar" role="toolbar" aria-label="Mask painting tools">
-        <div class="mask-tools" role="group" aria-label="Paint layer">
-          <button type="button" data-mask-tool="foliage" aria-pressed="true" aria-keyshortcuts="1"><i class="mask-swatch foliage" aria-hidden="true"></i>Foliage <kbd>1</kbd></button>
-          <button type="button" data-mask-tool="top_left" aria-pressed="false" aria-keyshortcuts="2"><i class="mask-swatch top-left" aria-hidden="true"></i>Top left <kbd>2</kbd></button>
-          <button type="button" data-mask-tool="top_right" aria-pressed="false" aria-keyshortcuts="3"><i class="mask-swatch top-right" aria-hidden="true"></i>Top right <kbd>3</kbd></button>
-          <button type="button" data-mask-tool="upper_middle" aria-pressed="false" aria-keyshortcuts="4"><i class="mask-swatch upper-middle" aria-hidden="true"></i>Upper middle <kbd>4</kbd></button>
-          <button type="button" data-mask-tool="middle_left" aria-pressed="false" aria-keyshortcuts="5"><i class="mask-swatch middle-left" aria-hidden="true"></i>Middle left <kbd>5</kbd></button>
-          <button type="button" data-mask-tool="middle_right" aria-pressed="false" aria-keyshortcuts="6"><i class="mask-swatch middle-right" aria-hidden="true"></i>Middle right <kbd>6</kbd></button>
-          <button type="button" data-mask-tool="lower_left" aria-pressed="false" aria-keyshortcuts="7"><i class="mask-swatch lower-left" aria-hidden="true"></i>Lower left <kbd>7</kbd></button>
-          <button type="button" data-mask-tool="lower_right" aria-pressed="false" aria-keyshortcuts="8"><i class="mask-swatch lower-right" aria-hidden="true"></i>Lower right <kbd>8</kbd></button>
-          <button type="button" data-mask-tool="erase" aria-pressed="false" aria-keyshortcuts="E">Erase <kbd>E</kbd></button>
-        </div>
-        <button class="quiet-button" id="undoMaskButton" type="button" aria-keyshortcuts="Z" disabled>Undo</button>
-        <label class="mask-zoom" for="maskZoom">Zoom <input id="maskZoom" type="range" min="3" max="10" value="6" step="1"></label>
-      </div>
-      <div class="mask-editor-workspace">
-        <div class="mask-canvas-wrap" id="maskCanvasWrap">
-          <p class="mask-pan-hint" id="maskPanHint">Drag on the grid to paint. Swipe the wide dark margin to pan. With the grid focused, use the arrow keys to move and Space to paint.</p>
-          <canvas id="maskCanvas" tabindex="0" role="region" aria-label="Editable plant mask grid" aria-describedby="maskPanHint"></canvas>
-        </div>
-        <aside class="mask-editor-info">
-          <h3>Semantic layers</h3>
-          <p><i class="mask-swatch foliage" aria-hidden="true"></i><span>Foliage occlusion</span><strong id="editorFoliageCount">0</strong></p>
-          <p><i class="mask-swatch top-left" aria-hidden="true"></i><span>Top left globe</span><strong id="editor-top-left-count">0</strong></p>
-          <p><i class="mask-swatch top-right" aria-hidden="true"></i><span>Top right globe</span><strong id="editor-top-right-count">0</strong></p>
-          <p><i class="mask-swatch upper-middle" aria-hidden="true"></i><span>Upper middle globe</span><strong id="editor-upper-middle-count">0</strong></p>
-          <p><i class="mask-swatch middle-left" aria-hidden="true"></i><span>Middle left globe</span><strong id="editor-middle-left-count">0</strong></p>
-          <p><i class="mask-swatch middle-right" aria-hidden="true"></i><span>Middle right globe</span><strong id="editor-middle-right-count">0</strong></p>
-          <p><i class="mask-swatch lower-left" aria-hidden="true"></i><span>Lower left globe</span><strong id="editor-lower-left-count">0</strong></p>
-          <p><i class="mask-swatch lower-right" aria-hidden="true"></i><span>Lower right globe</span><strong id="editor-lower-right-count">0</strong></p>
-          <small>Each globe keeps its stable identity. Save updates only the managed draft; Publish creates a candidate; staging it enters the guarded immediate-apply queue.</small>
-        </aside>
-      </div>
-      <footer class="mask-editor-actions">
-        <button class="quiet-button" id="revertMasksButton" type="button" disabled>Revert saved</button>
-        <span></span>
-        <button class="quiet-button" id="doneMaskEditorButton" type="button">Done</button>
-        <button class="quiet-button" id="reviewProfileCandidateButton" type="button" hidden disabled>Review candidate…</button>
-        <button class="quiet-button" id="publishProfileButton" type="button" disabled>Publish candidate</button>
-        <button class="primary-button" id="saveMasksButton" type="button" disabled>Save draft</button>
-      </footer>
-    </div>
-  </dialog>
-
-  <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
-  <script src="{{ url_for('static', filename='js/composer_compositor.js') }}" defer></script>
-  <script src="{{ url_for('static', filename='js/composer_interactions.js') }}" defer></script>
-  <script src="{{ url_for('static', filename='js/composer_state.js') }}" defer></script>
-  <script src="{{ url_for('static', filename='js/composer_runtime.js') }}" defer></script>
-  <script src="{{ url_for('static', filename='js/composer-profiles.js') }}" defer></script>
-  <script src="{{ url_for('static', filename='js/composer-operations.js') }}" defer></script>
-  <script src="{{ url_for('browser_composer_application') }}" defer></script>
-  <script src="{{ url_for('static', filename='js/composer-maintenance.js') }}" defer></script>
+</main>
+<dialog id="readinessDialog" aria-labelledby="readiness-title"><h2 id="readiness-title">Go Live needs attention</h2><p id="readinessMessage">Resolve these items, then try again.</p><ul id="readinessList"></ul><button class="button primary" data-dialog-close type="button">Close</button></dialog>
+<dialog id="checkDialog" aria-labelledby="check-title"><h2 id="check-title">Scene check</h2><p id="checkMessage"></p><dl id="checkDetails"></dl><button class="button primary" data-dialog-close type="button">Close</button></dialog>
+<script src="{{ url_for('static', filename='js/composer_shell.js', v=shell_version) }}"></script>
+<script src="{{ url_for('static', filename='js/composer_preview_scheduler.js', v=shell_version) }}"></script>
+<script src="{{ url_for('static', filename='js/composer_slice.js', v=shell_version) }}"></script>
 </body>
 </html>

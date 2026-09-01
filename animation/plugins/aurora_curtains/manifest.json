@@ -1,1 +1,21 @@
-{"plugin_id":"aurora_curtains","class":"AuroraCurtainsAnimation","icon":"🌌","gallery":"show","vibe":{"color_policy":"semantic","timing_adapter":"legacy_speed_param","capabilities":["luminance","palette_roles"],"semantic_roles":["accent","background_low","primary"]}}
+{
+  "plugin_id": "aurora_curtains",
+  "class": "AuroraCurtainsAnimation",
+  "icon": "🌌",
+  "gallery": "show",
+  "component": {
+    "id": "aurora_curtains",
+    "version": 1,
+    "provider": "python",
+    "role": "animation",
+    "frame_format": "rgb_uint8_strip_major",
+    "cadence": "source_rate_cached",
+    "timing": "scaled_context",
+    "alpha_behavior": "opaque",
+    "palette_policy": "semantic",
+    "palette_roles": ["background_low", "primary", "accent"],
+    "plant_capabilities": ["effect_intent"],
+    "fidelity_exceptions": [],
+    "capabilities": ["semantic_palette_roles", "source_cadence", "scaled_context", "effect_intent"]
+  }
+}

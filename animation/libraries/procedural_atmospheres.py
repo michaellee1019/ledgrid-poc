@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional
 
 import numpy as np
 
 from animation import AnimationBase
-from animation.libraries.atmospheric_palette import (
-    resolve_atmospheric_palette,
-    semantic_atmospheric_palette_active,
-)
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.plant_awareness import PlantModifierState
+from animation.core.presentation_contracts import ResolvedScene
+
 
 MOOD_PALETTES: Mapping[str, Mapping[str, tuple[float, float, float]]] = {
     "moonlit": {"low": (1, 5, 14), "mid": (8, 38, 64), "high": (76, 178, 205)},
@@ -35,6 +37,8 @@ class ProceduralAtmosphereBase(AnimationBase):
     DEFAULT_MOOD = "moonlit"
     DEFAULT_SEED = 1701
     PLANT_MODIFIER_SUPPORT = frozenset()
+    COMPONENT_ID = ""
+    COMPONENT_DEFAULTS: Mapping[str, Any] = MappingProxyType({})
 
     def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
         super().__init__(controller, config)
@@ -59,6 +63,82 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._last_elapsed = None
         self._simulation_time = 0.0
         self._reset_seeded_state()
+        self._presentation_context: ResolvedScene | None = None
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def component_descriptor(cls) -> ComponentDescriptor:
+        """Describe this renderer as an opaque, semantic Scene v2 animation."""
+        return ComponentDescriptor(
+            component_id=cls.COMPONENT_ID, version=1, provider="python", role="animation",
+            timing_policy="scaled_context", alpha_behavior="opaque", palette_policy="semantic",
+            plant_capabilities=("effect_intent",), fidelity_exceptions=(),
+            defaults=cls.COMPONENT_DEFAULTS, parameter_normalizer=cls._normalized_parameters,
+        )
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        """Keep the Composer payload small, local, and independent of global look output."""
+        if not isinstance(values, Mapping):
+            raise ValueError("Atmosphere parameters must be an object")
+        defaults = dict(cls.COMPONENT_DEFAULTS)
+        allowed = set(defaults) | {"plant_aware", "plant_modifiers", "brightness", "speed"}
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(f"Unknown {cls.COMPONENT_ID} parameter {sorted(unknown)[0]!r}")
+        result = dict(defaults)
+        for name, value in values.items():
+            # Legacy brightness/speed remain readable in authored source files,
+            # but Scene v2 owns final brightness and pace at the scene boundary.
+            if name in {"brightness", "speed"}:
+                continue
+            if name == "plant_aware":
+                if type(value) is not bool:
+                    raise ValueError("plant_aware must be boolean")
+                # Source-preset compatibility only; v2 carries explicit effects.
+                continue
+            elif name == "plant_modifiers":
+                PlantModifierState.from_payload(value)
+                # Scene v2 applies installation effects once, after composition.
+                continue
+            elif name == "mood":
+                if value not in MOOD_PALETTES:
+                    raise ValueError("mood is not supported")
+                result[name] = value
+            elif name == "background":
+                if value not in BACKGROUND_LEVELS:
+                    raise ValueError("background is not supported")
+                result[name] = value
+            elif name in {"seed"}:
+                if type(value) is not int or not 0 <= value <= 999999:
+                    raise ValueError(f"{name} is out of range")
+                result[name] = value
+            elif name in {"motion", "density", "background_level"}:
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= float(value) <= (2 if name == "motion" else 1):
+                    raise ValueError(f"{name} is out of range")
+                result[name] = float(value)
+            elif name == "source_fps":
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not 20 <= float(value) <= 40:
+                    raise ValueError("source_fps is out of range")
+                result[name] = float(value)
+        return result
+
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        del old
+        if new.descriptor.component_id != self.COMPONENT_ID:
+            raise ValueError("Atmosphere received a context for another component")
+        candidate = self._normalized_parameters(new.parameters)
+        if candidate != self.params:
+            self.update_parameters(candidate)
+            self.params = candidate
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene):
+        self.set_presentation_context(context)
+        return self.generate_frame(context.phase_time, self.frame_count)
 
     def _reset_seeded_state(self) -> None:
         rng = np.random.default_rng(int(self.params.get("seed", self.DEFAULT_SEED)))
@@ -100,12 +180,6 @@ class ProceduralAtmosphereBase(AnimationBase):
             self._reset_seeded_state()
         self._last_source_tick = None
 
-    def on_presentation_context_changed(self, old_context, new_context) -> None:
-        """Refresh only presentation pixels when the semantic palette changes."""
-        super().on_presentation_context_changed(old_context, new_context)
-        if semantic_atmospheric_palette_active(self):
-            self._last_source_tick = None
-
     def generate_frame(self, time_elapsed: float, frame_count: int):
         fps = float(np.clip(self.params.get("source_fps", 30.0), 20.0, 40.0))
         tick = int(max(0.0, float(time_elapsed)) * fps + 1.0e-7)
@@ -132,11 +206,7 @@ class ProceduralAtmosphereBase(AnimationBase):
     def _palette(self):
         palette = MOOD_PALETTES.get(str(self.params.get("mood", self.DEFAULT_MOOD)),
                                     MOOD_PALETTES[self.DEFAULT_MOOD])
-        authored = tuple(
-            np.asarray(palette[key], dtype=np.float32)
-            for key in ("low", "mid", "high")
-        )
-        return resolve_atmospheric_palette(self, authored)
+        return tuple(np.asarray(palette[key], dtype=np.float32) for key in ("low", "mid", "high"))
 
     def _paint(self, field: np.ndarray, accent: Optional[np.ndarray] = None) -> None:
         low, mid, high = self._palette()

@@ -1,1 +1,1 @@
-{"plugin_id":"christmas_tree","class":"ChristmasTreeAnimation","icon":"🎄","gallery":"show","vibe":{"color_policy":"grade","timing_adapter":"legacy_speed_param","capabilities":[]}}
+{"plugin_id":"christmas_tree","class":"ChristmasTreeAnimation","icon":"🎄","gallery":"show","component":{"provider":"python","role":"animation","timing":"scaled_context","alpha_behavior":"opaque","palette_policy":"semantic","plant_capabilities":["effect_intent"],"fidelity_exceptions":[]},"preview":{"capture_seconds":[0,0.5,1.5,3,5,8,12,18],"simulation_fps":30}}

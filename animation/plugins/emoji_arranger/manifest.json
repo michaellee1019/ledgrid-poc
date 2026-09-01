@@ -1,0 +1,20 @@
+{
+  "plugin_id": "emoji_arranger",
+  "class": "EmojiArrangerAnimation",
+  "icon": "🎭",
+  "gallery": "show",
+  "component": {
+    "id": "emoji_arranger",
+    "version": 1,
+    "provider": "python",
+    "role": "widget",
+    "frame_format": "rgba_uint8_premultiplied_strip_major",
+    "cadence": "scaled_context_message_motion",
+    "timing": "scaled_context",
+    "alpha_behavior": "premultiplied_rgba",
+    "palette_policy": "semantic",
+    "palette_roles": ["message", "highlight", "ink"],
+    "plant_capabilities": ["effect_intent"],
+    "fidelity_exceptions": []
+  }
+}

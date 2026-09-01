@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from animation.plugins.flame_burst import FlameBurstAnimation
+from animation.plugins.flame_burst import LegacyFlameBurstAnimation as FlameBurstAnimation
 
 
 class _Controller:

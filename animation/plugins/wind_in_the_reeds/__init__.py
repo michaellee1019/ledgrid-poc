@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import numpy as np
 
 from animation.libraries.atmospheric_palette import (
@@ -11,7 +12,7 @@ from animation.libraries.atmospheric_palette import (
 from animation.libraries.procedural_living import ProceduralLivingBase
 
 
-class WindInTheReedsAnimation(ProceduralLivingBase):
+class _LegacyWindInTheReedsAnimation(ProceduralLivingBase):
     ANIMATION_NAME = "Wind in the Reeds"
     ANIMATION_DESCRIPTION = "Inverse-kinematic reeds sway in coherent, slow gust fronts"
     ANIMATION_AUTHOR = "LED Grid Team"
@@ -142,3 +143,36 @@ class WindInTheReedsAnimation(ProceduralLivingBase):
 
     def logical_state(self):
         return (round(self.gust_phase, 6), self.bend.tobytes(), self.pollen_x.tobytes(), self.pollen_y.tobytes(), self.pollen_life.tobytes())
+
+
+_LegacyWindInTheReedsAnimation.__module__ = "animation.plugins._legacy_wind_in_the_reeds"
+
+from animation.libraries.procedural_sculptures import CadencedSculpture
+
+
+class WindInTheReedsAnimation(CadencedSculpture):
+    ANIMATION_NAME="Wind in the Reeds"; ANIMATION_DESCRIPTION="A tactile field of reeds bends beneath travelling gust fronts"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
+    COMPONENT_ID="wind_in_the_reeds"; SOURCE_FPS=24.
+    COMPONENT_DEFAULTS={"motion":.5,"density":.58,"background_level":.18,"seed":6101,"wind":.65,"gustiness":.55,"stem_density":1.,"season":"late_summer","motes":.45,"silhouette_strength":.5}
+    def __init__(self,controller,config=None):super().__init__(controller,config);self._init_reeds()
+    def _init_reeds(self):
+        n=max(8,min(96,int((8+72*self.params["density"])*self.params["stem_density"])));self.base_x=self.rng.uniform(0,self._shape[0],n);self.lengths=self.rng.uniform(self._shape[1]*.12,self._shape[1]*.5,n);self.phases=self.rng.uniform(0,math.tau,n);self.bend=np.zeros(n);self.gust_phase=0.
+    def reset_simulation(self):super().reset_simulation();self._init_reeds()
+    def get_parameter_schema(self):
+        s=super().get_parameter_schema();s.update({"wind":{"type":"float","min":0.,"max":2.,"default":.65,"description":"Steady reed bend"},"gustiness":{"type":"float","min":0.,"max":2.,"default":.55,"description":"Coherent travelling gusts"},"stem_density":{"type":"float","min":.25,"max":1.5,"default":1.,"description":"Reed field density"},"season":{"type":"str","options":["spring","late_summer","winter"],"default":"late_summer","description":"Stem character"},"motes":{"type":"float","min":0.,"max":2.,"default":.45,"description":"Floating seed motes"},"silhouette_strength":{"type":"float","min":0.,"max":1.,"default":.5,"description":"Foreground depth"}});return s
+    @classmethod
+    def _validate_local_parameters(cls,v):
+        super()._validate_local_parameters(v)
+        if v["season"] not in {"spring","late_summer","winter"}:raise ValueError("season is invalid")
+        for key,lo,hi in (("wind",0.,2.),("gustiness",0.,2.),("stem_density",.25,1.5),("motes",0.,2.),("silhouette_strength",0.,1.)):
+            if not lo<=float(v[key])<=hi:raise ValueError(f"{key} is out of range")
+    def _step(self,tick):
+        self.gust_phase=(self.gust_phase+.025+.028*self.params["motion"])%math.tau;target=(self.params["wind"]*.28+self.params["gustiness"]*.44*np.sin(self.gust_phase-self.base_x*.22))*np.sin(self.gust_phase*.43+.7);self.bend+=(target-self.bend)*.18
+    def generate_frame(self,time_elapsed,frame_count):
+        tick,cached=self.begin_frame(time_elapsed)
+        if cached:return cached
+        self.advance_bounded(tick,self._step,12);value=np.zeros(self._shape,np.float32);accent=np.zeros_like(value)
+        for bx,length,bend,phase in zip(self.base_x,self.lengths,self.bend,self.phases):
+            t=np.linspace(0,1,max(4,int(length/4)));x=np.clip(np.rint(bx+bend*t*t*self._shape[0]*.18+np.sin(t*3+phase)*.25),0,self._shape[0]-1).astype(int);y=np.clip(np.rint(self._shape[1]-1-t*length),0,self._shape[1]-1).astype(int);value[x,y]=np.maximum(value[x,y],.45+.5*t);accent[x[-1],y[-1]]=1.
+        motes=np.maximum(0,np.sin(self._x*19+self._y*27+tick*.12))**30*self.params["motes"]*.35;value=np.maximum(value,motes);return self.finish_frame(tick,self.colorize(value*(1-self.params["silhouette_strength"]*.35),accent))
+    def logical_state(self):return round(self.gust_phase,6),self.bend.tobytes()

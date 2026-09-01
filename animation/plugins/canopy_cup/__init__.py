@@ -11,11 +11,14 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from animation import AnimationBase
+from animation import AnimationBase, RenderedFrame
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.presentation_contracts import ResolvedScene
 
 
 Color = Tuple[int, int, int]
@@ -114,7 +117,7 @@ class PowerOrb:
 
 
 class CanopyCupAnimation(AnimationBase):
-    """A self-playing, physics-based race through a magical plant tower."""
+    """A deterministic, opaque Scene v2 race through a magical plant tower."""
 
     ANIMATION_NAME = "Canopy Cup: Impossible Ascent"
     ANIMATION_DESCRIPTION = (
@@ -122,8 +125,12 @@ class CanopyCupAnimation(AnimationBase):
         "stairways through a seven-heat living-wall tournament"
     )
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
-    PLANT_MODIFIER_SUPPORT = frozenset(("obstacle", "emitter", "illuminate"))
+    ANIMATION_VERSION = "2.0"
+    COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "canopy_cup", 1, "python", "animation"
+    FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
+    CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
+    # Scene v2 owns plant geometry, optics, output brightness, and calibration.
+    PLANT_MODIFIER_SUPPORT = frozenset()
 
     PHYSICS_DT = 1.0 / 120.0
     MAX_CATCHUP = 0.10
@@ -134,11 +141,27 @@ class CanopyCupAnimation(AnimationBase):
     INTRO_TIME = 3.0
     PODIUM_TIME = 8.0
     MAX_ENEMIES = 16
+    SOURCE_FPS = 30.0
     THEMES = (
         "tournament", "emerald_gully", "web_city", "barrel_ruins",
         "ivory_valley", "crystal_sunset", "neon_night",
     )
     HEAT_THEMES = THEMES[1:]
+    DEFAULTS = MappingProxyType({
+        "seed": 4242, "world_theme": "tournament", "qualifying_heats": 7,
+        "course_difficulty": 1.0, "enemy_density": .55, "rivalry": .55,
+        "powerup_rate": .60, "show_hud": True,
+    })
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER,
+        role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="opaque",
+        palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",),
+        fidelity_exceptions=(), defaults=DEFAULTS,
+    )
+    SEMANTIC_TINTS = MappingProxyType({
+        "neutral": (1.00, 1.00, 1.00), "mist": (.74, .91, 1.00),
+        "spectrum": (1.00, .72, 1.00), "ember": (1.00, .76, .48),
+    })
 
     RACER_SPECS = (
         ("web", "Web-Wisp", ((246, 35, 64), (246, 35, 64), (28, 105, 255), (28, 105, 255)), .86),
@@ -193,24 +216,12 @@ class CanopyCupAnimation(AnimationBase):
         "9": ("111", "101", "111", "001", "110"),
     }
 
-    def __init__(self, controller, config: Dict[str, Any] = None):
-        super().__init__(controller, config)
+    def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
         self.width, self.height = self.get_strip_info()
-        self.default_params.update({
-            "speed": 1.0,
-            "brightness": 0.82,
-            "render_fps": 60.0,
-            "seed": 4242,
-            "world_theme": "tournament",
-            "qualifying_heats": 7,
-            "course_difficulty": 1.0,
-            "enemy_density": 0.55,
-            "rivalry": 0.55,
-            "powerup_rate": 0.60,
-            "show_hud": True,
-        })
-        self.params = {**self.default_params, **self.config}
-        self._validate_local_params()
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
 
         self._canvas = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self._gradient = np.zeros_like(self._canvas)
@@ -230,6 +241,7 @@ class CanopyCupAnimation(AnimationBase):
         self.last_render_elapsed: Optional[float] = None
         self._last_render_tick: Optional[int] = None
         self.last_rendered_frame: Optional[np.ndarray] = None
+        self._presentation_context: ResolvedScene | None = None
         self.fixed_steps = 0
         self.dropped_catchup_seconds = 0.0
         self.tournament_index = 0
@@ -258,59 +270,57 @@ class CanopyCupAnimation(AnimationBase):
         self._refresh_plant_geometry(force=True)
         self._begin_tournament(reset_clock=False)
 
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
+
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        schema.update({
-            "speed": {"type": "float", "min": 0.35, "max": 2.5, "default": 1.0,
-                      "description": "Tournament and physics speed"},
-            "render_fps": {"type": "float", "min": 30.0, "max": 90.0, "default": 60.0,
-                           "description": "Maximum visual refresh rate"},
+        return {
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 4242,
-                     "description": "Repeatable tournament seed"},
+                     "description": "Repeatable world seed"},
             "world_theme": {"type": "str", "default": "tournament", "options": list(self.THEMES),
-                            "description": "Visual world family; tournament cycles all realms"},
+                            "description": "Course world; tournament rotates through every realm"},
             "qualifying_heats": {"type": "int", "min": 2, "max": 7, "default": 7,
-                                 "description": "Qualifying heats before the championship"},
+                                 "description": "Race length before the championship"},
             "course_difficulty": {"type": "float", "min": 0.6, "max": 1.4, "default": 1.0,
-                                  "description": "Gap and moving-platform challenge"},
+                                  "description": "Course gaps and moving-platform challenge"},
             "enemy_density": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.55,
-                              "description": "Plant enemy population and spawn cadence"},
+                              "description": "Obstacle population and spawn cadence"},
             "rivalry": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.55,
                         "description": "Playful racer bumps and barrel knockback"},
             "powerup_rate": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.60,
-                            "description": "Signature power recharge rate"},
+                        "description": "Signature power recharge rate"},
             "show_hud": {"type": "bool", "default": True,
                          "description": "Show compact standings and heat markers"},
-        })
-        return schema
+        }
 
-    def _validate_local_params(self) -> None:
-        theme = str(self.params.get("world_theme", "tournament"))
-        if theme not in self.THEMES:
-            theme = "tournament"
-        self.params["world_theme"] = theme
-        self.params["qualifying_heats"] = max(2, min(7, int(self.params.get("qualifying_heats", 7))))
-        self.params["course_difficulty"] = max(.6, min(1.4, float(self.params.get("course_difficulty", 1.0))))
-        self.params["enemy_density"] = max(0.0, min(1.0, float(self.params.get("enemy_density", .55))))
-        self.params["rivalry"] = max(0.0, min(1.0, float(self.params.get("rivalry", .55))))
-        self.params["powerup_rate"] = max(0.0, min(1.0, float(self.params.get("powerup_rate", .60))))
+    @classmethod
+    def _normalized_parameters(cls, parameters: Mapping[str, Any]) -> dict[str, Any]:
+        supplied = dict(parameters)
+        unknown = sorted(set(supplied) - set(cls.DEFAULTS))
+        if unknown:
+            raise ValueError(f"Canopy Cup received non-local parameters: {', '.join(unknown)}")
+        result = dict(cls.DEFAULTS)
+        result.update(supplied)
+        if isinstance(result["seed"], bool) or not isinstance(result["seed"], int) or not 0 <= result["seed"] <= 999999:
+            raise ValueError("seed must be an integer from 0 to 999999")
+        if result["world_theme"] not in cls.THEMES:
+            raise ValueError("world_theme must be a supported world")
+        if isinstance(result["qualifying_heats"], bool) or not isinstance(result["qualifying_heats"], int) or not 2 <= result["qualifying_heats"] <= 7:
+            raise ValueError("qualifying_heats must be an integer from 2 to 7")
+        for name, low, high in (("course_difficulty", .6, 1.4), ("enemy_density", 0., 1.), ("rivalry", 0., 1.), ("powerup_rate", 0., 1.)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= float(value) <= high:
+                raise ValueError(f"{name} must be a number from {low} to {high}")
+            result[name] = float(value)
+        if not isinstance(result["show_hud"], bool):
+            raise ValueError("show_hud must be a boolean")
+        return result
 
-    def update_parameters(self, new_params: Dict[str, Any]):
-        old_plant_state = self.plant_modifier_state()
-        old_geometry = (
-            self.params.get("plant_clearance"), self.params.get("plant_mask_path"),
-            self.params.get("plant_globe_mask_path"),
-        )
-        seed_changed = "seed" in new_params and int(new_params["seed"]) != int(self.params.get("seed", 4242))
-        super().update_parameters(new_params)
-        self._validate_local_params()
-        new_geometry = (
-            self.params.get("plant_clearance"), self.params.get("plant_mask_path"),
-            self.params.get("plant_globe_mask_path"),
-        )
-        if old_plant_state != self.plant_modifier_state() or old_geometry != new_geometry:
-            self._refresh_plant_geometry(force=True)
-            self._revalidate_current_course()
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        candidate = self._normalized_parameters({**self.params, **dict(new_params)})
+        seed_changed = candidate["seed"] != self.params["seed"]
+        self.params = candidate
         if seed_changed:
             self.seed = int(self.params["seed"])
             self.tournament_index = 0
@@ -323,18 +333,21 @@ class CanopyCupAnimation(AnimationBase):
         self._last_render_tick = None
         self.last_rendered_frame = None
 
-    def on_presentation_context_changed(self, old_context, new_context) -> None:
-        """Refresh track geometry without restarting the tournament."""
-        if (
-            old_context is None
-            or old_context.installation_profile_identity
-            != new_context.installation_profile_identity
-        ):
-            self._refresh_plant_geometry(force=True)
-            self._revalidate_current_course()
-        self.last_render_elapsed = None
-        self._last_render_tick = None
-        self.last_rendered_frame = None
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        del old
+        descriptor = new.descriptor
+        if (descriptor.component_id, descriptor.version, descriptor.provider.value, descriptor.role.value) != (self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE):
+            raise ValueError("Canopy Cup received a context for another component")
+        if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Canopy Cup requires a semantic Scene v2 palette")
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene) -> RenderedFrame:
+        self.set_presentation_context(context)
+        return self.generate_frame(context.phase_time, self.frame_count)
 
     def _begin_tournament(self, *, reset_clock: bool) -> None:
         self.game_rng = random.Random(self.seed + self.tournament_index * 1_000_003)
@@ -542,25 +555,33 @@ class CanopyCupAnimation(AnimationBase):
     def _plant_obstacle_active(self) -> bool:
         return self.plant_modifier_strength("obstacle") > 0.0 and np.any(self._plant_obstacle_canvas)
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
-        fps = max(30.0, min(90.0, float(self.params.get("render_fps", 60.0))))
-        render_tick = int(math.floor(max(0.0, time_elapsed) * fps + 1e-9))
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
+        del frame_count
+        if self._presentation_context is None:
+            phase_time, palette_id, parameters = max(0.0, float(time_elapsed)), "neutral", self.params
+        else:
+            phase_time = max(0.0, float(self._presentation_context.phase_time))
+            palette_id = str(self._presentation_context.palette["palette_id"])
+            parameters = self._presentation_context.parameters
+        candidate = self._normalized_parameters(parameters)
+        if candidate != self.params:
+            self.update_parameters(candidate)
+        render_tick = int(math.floor(phase_time * self.SOURCE_FPS + 1e-9))
         if (
             self.last_rendered_frame is not None and self._last_render_tick is not None
             and render_tick == self._last_render_tick
         ):
             return self.rendered_frame(self.last_rendered_frame, changed=False)
 
-        if self.last_elapsed is None or time_elapsed < self.last_elapsed:
+        if self.last_elapsed is None or phase_time < self.last_elapsed:
             raw_delta = 0.0
         else:
-            raw_delta = max(0.0, time_elapsed - self.last_elapsed)
-        self.last_elapsed = time_elapsed
-        self.last_render_elapsed = time_elapsed
+            raw_delta = max(0.0, phase_time - self.last_elapsed)
+        self.last_elapsed = phase_time
+        self.last_render_elapsed = phase_time
         self._last_render_tick = render_tick
-        scaled_delta = raw_delta * max(.05, float(self.params.get("speed", 1.0)))
-        accepted = min(self.MAX_CATCHUP, scaled_delta)
-        self.dropped_catchup_seconds += max(0.0, scaled_delta - accepted)
+        accepted = min(self.MAX_CATCHUP, raw_delta)
+        self.dropped_catchup_seconds += max(0.0, raw_delta - accepted)
         self.accumulator += accepted
         steps = 0
         while self.accumulator + 1e-12 >= self.PHYSICS_DT and steps < self.MAX_STEPS:
@@ -572,10 +593,9 @@ class CanopyCupAnimation(AnimationBase):
             self.dropped_catchup_seconds += self.accumulator
             self.accumulator = 0.0
 
-        self._render()
+        self._render(palette_id)
         frame = self.next_frame_buffer(clear=False)
         frame.reshape(self.width, self.height, 3)[:] = self._canvas[::-1].transpose(1, 0, 2)
-        self.apply_brightness_array(frame, out=frame)
         self.last_rendered_frame = frame
         return self.rendered_frame(frame, changed=True)
 
@@ -1069,12 +1089,16 @@ class CanopyCupAnimation(AnimationBase):
 
     # ------------------------------ rendering ------------------------------
 
-    def _render(self) -> None:
+    def _render(self, palette_id: str = "neutral") -> None:
         self._render_background()
         self._render_geometry()
         self._render_entities()
         if bool(self.params.get("show_hud", True)):
             self._render_hud()
+        # Worlds establish course identity; the selected Scene v2 palette is
+        # the only palette authority for the final presentation plane.
+        tint = np.asarray(self.SEMANTIC_TINTS.get(palette_id, self.SEMANTIC_TINTS["neutral"]), dtype=np.float32)
+        np.multiply(self._canvas, tint, out=self._canvas, casting="unsafe")
 
     def _render_background(self) -> None:
         palette = self.PALETTES[self.current_theme]

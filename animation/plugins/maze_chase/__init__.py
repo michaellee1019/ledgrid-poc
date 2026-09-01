@@ -13,11 +13,14 @@ import math
 import random
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from types import MappingProxyType
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 import numpy as np
 
-from animation import AnimationBase
+from animation import AnimationBase, RenderedFrame
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.presentation_contracts import ResolvedScene
 
 
 Cell = Tuple[int, int]
@@ -121,6 +124,19 @@ class MazeChaseAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Autoplaying pellet maze with strategic hunters, power chains, scores, lives, and arcade intermissions"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
+    COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "maze_chase", 1, "python", "animation"
+    FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
+    CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
+    PLANT_MODIFIER_SUPPORT = frozenset()
+    DEFAULTS = MappingProxyType({"chase_cadence_hz": 9.0, "render_fps": 60.0, "difficulty": .82,
+                                 "show_ai_targets": False, "seed": 1980})
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE,
+        timing_policy=TIMING_POLICY, alpha_behavior="opaque", palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS,
+    )
+    _PALETTE_TINTS = MappingProxyType({"neutral": (1.0, .92, .72), "mist": (.64, .88, 1.0),
+                                       "spectrum": (1.0, .62, 1.0), "ember": (1.0, .60, .32)})
 
     NAVY = (0, 1, 10)
     WALL = (15, 55, 245)
@@ -143,18 +159,13 @@ class MazeChaseAnimation(AnimationBase):
                      ("chase", 20.0), ("scatter", 5.0), ("chase", 20.0),
                      ("scatter", 5.0), ("chase", math.inf))
 
-    def __init__(self, controller, config: Dict[str, Any] = None):
-        super().__init__(controller, config)
+    def __init__(self, controller, config: Mapping[str, Any] | None = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
         self.width, self.height = self.get_strip_info()
-        self.default_params.update({
-            "speed": 1.5,
-            "brightness": 1.0,
-            "render_fps": 60.0,
-            "difficulty": 0.82,
-            "show_ai_targets": False,
-            "seed": 1980,
-        })
-        self.params = {**self.default_params, **self.config}
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
+        self._presentation_context: ResolvedScene | None = None
         self.random = random.Random(int(self.params.get("seed", 1980)))
         self._canvas = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self._base_walkable: Set[Cell] = {
@@ -286,38 +297,33 @@ class MazeChaseAnimation(AnimationBase):
                 placed.add(self._nearest_visible_cell(origin, unavailable | placed))
         return placed
 
-    def on_presentation_context_changed(self, old_context, new_context) -> None:
-        """Refresh future maze/reset plans without moving active actors."""
-        if (
-            old_context is None
-            or old_context.installation_profile_identity
-            != new_context.installation_profile_identity
-        ):
-            self._configure_plant_maze()
-            self.initial_pellets = {
-                cell
-                for cell in self.walkable
-                if cell not in self.GHOST_SPAWNS
-                and cell != self.PLAYER_SPAWN
-                and cell not in self._plant_occluded_cells
-            }
-            authored = {
-                (row, col)
-                for row, line in enumerate(MAZE)
-                for col, value in enumerate(line)
-                if value == "o"
-            }
-            self.initial_energizers = self._place_energizers(authored)
-            self.initial_pellets -= self.initial_energizers
-            self.fruit_spawn = self._nearest_visible_cell((14, 7))
-        self.last_render_elapsed = None
-        self.last_rendered_frame = None
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> Dict[str, Any]:
+        supplied = dict(values)
+        unknown = sorted(set(supplied) - set(cls.DEFAULTS))
+        if unknown:
+            raise ValueError(f"Maze Chase received non-local parameters: {', '.join(unknown)}")
+        result = dict(cls.DEFAULTS)
+        result.update(supplied)
+        for name, low, high in (("chase_cadence_hz", 1.5, 18.0), ("render_fps", 20.0, 90.0), ("difficulty", 0.0, 1.0)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= float(value) <= high:
+                raise ValueError(f"{name} must be a number from {low} to {high}")
+            result[name] = float(value)
+        if isinstance(result["seed"], bool) or not isinstance(result["seed"], int) or not 0 <= result["seed"] <= 9999:
+            raise ValueError("seed must be an integer from 0 to 9999")
+        if not isinstance(result["show_ai_targets"], bool):
+            raise ValueError("show_ai_targets must be a boolean")
+        return result
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        schema.update({
-            "speed": {"type": "float", "min": 0.25, "max": 3.0, "default": 1.5,
-                      "description": "Simulation speed multiplier"},
+        return {
+            "chase_cadence_hz": {"type": "float", "min": 1.5, "max": 18.0, "default": 9.0,
+                      "description": "Maze decision cadence in ticks per second"},
             "render_fps": {"type": "float", "min": 20.0, "max": 90.0, "default": 60.0,
                            "description": "Maximum animation render rate"},
             "difficulty": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.82,
@@ -326,8 +332,43 @@ class MazeChaseAnimation(AnimationBase):
                                 "description": "Draw faint hunter target tiles"},
             "seed": {"type": "int", "min": 0, "max": 9999, "default": 1980,
                      "description": "Repeatable frightened movement seed"},
-        })
-        return schema
+        }
+
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        candidate = self._normalized_parameters({**self.params, **dict(new_params)})
+        if candidate == self.params:
+            return
+        seed_changed = candidate["seed"] != self.params["seed"]
+        self.params = candidate
+        if seed_changed:
+            self.random.seed(int(candidate["seed"]))
+            self._reset_board()
+            self._reset_actors()
+        self.last_render_elapsed = None
+
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        if new.descriptor.component_id != self.COMPONENT_ID or new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Maze Chase requires a semantic Scene v2 palette")
+        if old is None or old.palette != new.palette:
+            self.last_render_elapsed = None
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene) -> RenderedFrame:
+        self.set_presentation_context(context)
+        self.update_parameters(context.parameters)
+        return self.generate_frame(context.phase_time, self.frame_count)
+
+    def _apply_scene_palette(self, frame: np.ndarray) -> None:
+        if self._presentation_context is None:
+            return
+        tint = np.asarray(self._PALETTE_TINTS.get(self._presentation_context.palette["palette_id"], self._PALETTE_TINTS["neutral"]), dtype=np.float32)
+        source = frame.astype(np.float32)
+        light = source.max(axis=1, keepdims=True) / 255.0
+        np.clip(source * .58 + light * tint * 107.0, 0, 255, out=source)
+        frame[:] = source.astype(np.uint8)
 
     def _reset_board(self):
         self.pellets = set(self.initial_pellets)
@@ -462,13 +503,13 @@ class MazeChaseAnimation(AnimationBase):
             dt = min(0.05, max(0.0, time_elapsed - self.last_elapsed))
         self.last_elapsed = time_elapsed
         self.last_render_elapsed = time_elapsed
-        speed = max(0.1, float(self.params.get("speed", 1.5)))
-        self._update(dt * speed)
+        cadence = max(1.5, float(self.params.get("chase_cadence_hz", 9.0)))
+        self._update(dt * cadence / 6.0)
         self._render()
 
         frame = self.next_frame_buffer(clear=False)
         frame.reshape(self.width, self.height, 3)[:] = self._canvas[::-1].transpose(1, 0, 2)
-        self.apply_brightness_array(frame, out=frame)
+        self._apply_scene_palette(frame)
         self.last_rendered_frame = frame
         return self.rendered_frame(frame, changed=True)
 

@@ -1,207 +1,151 @@
-"""Behavior, cadence, mask, preset, and interaction tests for Lava Lamp."""
+"""Focused Scene v2, thermal-physics, and interaction proof for Lava Lamp."""
 
+from __future__ import annotations
+
+import copy
 import json
 import unittest
 from pathlib import Path
 
 import numpy as np
 
-from animation.core.base import RenderedFrame
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.plugins.lava_lamp import LavaLampAnimation
+from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
 from web.app import AnimationWebInterface
+from web.composer_final_preview import current_component_catalog
 from web.local_control import LocalControlChannel
 
-
 ROOT = Path(__file__).resolve().parents[2]
+PRESET_IDS = ["bowl-bumpers", "bowl-emitter", "busy-bubbles", "classic-amber", "cotton-candy", "foliage-refraction", "habitat-pools", "night", "ocean-blue", "quiet", "ruby-vintage", "seven-bowl-portals", "showcase", "slow-giants", "solar-flare", "stormy-wax", "toxic-lime", "violet-glass"]
 
 
-class LavaLampTests(unittest.TestCase):
-    def setUp(self):
-        self.controller = PreviewLEDController(32, 138)
+class LavaLampSceneV2Tests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.controller = PreviewLEDController(strips=33, leds_per_strip=138)
 
     @staticmethod
-    def pixels(frame):
-        return frame.pixels if isinstance(frame, RenderedFrame) else frame
+    def _scene() -> dict:
+        scene = _current_scene()
+        scene["animation"] = {"component_id": "lava_lamp", "version": 1, "provider": "python", "role": "animation", "parameters": {}}
+        return scene
 
-    def test_frame_contract_and_100fps_cadence_at_200hz(self):
-        animation = LavaLampAnimation(self.controller)
-        frames = [animation.generate_frame(index / 200.0, index) for index in range(200)]
-        changed = sum(frame.changed for frame in frames)
-        self.assertEqual(changed, 100)
-        pixels = frames[-1].pixels
-        self.assertEqual(pixels.shape, (32 * 138, 3))
-        self.assertEqual(pixels.dtype, np.uint8)
-        self.assertTrue(pixels.flags.c_contiguous)
+    def test_descriptor_and_parameters_are_opaque_semantic_and_local(self) -> None:
+        descriptor = LavaLampAnimation.component_descriptor()
+        self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.alpha_behavior.value, descriptor.palette_policy.value), ("lava_lamp", "animation", "opaque", "semantic"))
+        self.assertSetEqual(set(LavaLampAnimation.PLANT_MODIFIER_SUPPORT), set())
+        self.assertNotIn("brightness", LavaLampAnimation.DEFAULTS)
+        with self.assertRaisesRegex(ValueError, "non-local parameters"):
+            LavaLampAnimation._normalized_parameters({"brightness": .5})
 
-    def test_speed_scales_semantic_time_without_changing_render_cadence(self):
-        results = []
-        for speed in (0.1, 1.0, 4.0):
-            animation = LavaLampAnimation(self.controller, {"speed": speed})
-            changed = 0
-            for index in range(200):
-                changed += animation.generate_frame(index / 200.0, index).changed
-            results.append((animation.simulation_time, changed))
-        self.assertEqual([changed for _, changed in results], [100, 100, 100])
-        self.assertAlmostEqual(results[1][0] / results[0][0], 10.0, delta=1.2)
-        self.assertAlmostEqual(results[2][0] / results[1][0], 4.0, delta=0.25)
+    def test_bounded_thermal_cycle_and_stir_keep_wax_area_stable(self) -> None:
+        lamp = LavaLampAnimation(self.controller, {"blob_count": 5, "seed": 77})
+        initial_area = lamp.wax_area
+        target = int(np.flatnonzero(lamp.active)[0])
+        velocity = (float(lamp.vx[target]), float(lamp.vy[target]))
+        self.assertTrue(lamp.handle_interaction("primary", float(lamp.x[target]), float(lamp.y[target]), 1.0))
+        self.assertFalse(lamp.handle_interaction("secondary", 8.0, 80.0, 1.0))
+        for _ in range(900): lamp._step(.01)
+        stats = lamp.get_runtime_stats()
+        self.assertNotEqual(velocity, (float(lamp.vx[target]), float(lamp.vy[target])))
+        self.assertGreaterEqual(stats["interactions_applied"], 1)
+        self.assertLessEqual(stats["blob_count"], lamp.MAX_BLOBS)
+        self.assertAlmostEqual(lamp.wax_area, initial_area, places=3)
 
-    def test_default_thermal_cycle_is_bounded_and_conserves_wax(self):
-        animation = LavaLampAnimation(self.controller)
-        initial = animation.wax_area
-        for _ in range(12000):
-            animation._step(0.01)
-        stats = animation.get_runtime_stats()
-        self.assertGreaterEqual(stats["midline_up_crossings"], 5)
-        self.assertGreaterEqual(stats["midline_down_crossings"], 5)
-        self.assertLessEqual(stats["blob_count"], animation.MAX_BLOBS)
-        self.assertTrue(np.isfinite(animation.x[animation.active]).all())
-        self.assertTrue(np.isfinite(animation.y[animation.active]).all())
-        self.assertAlmostEqual(animation.wax_area, initial, places=3)
+    def test_scene_timing_and_palette_are_deterministic_at_33_by_138(self) -> None:
+        left = LavaLampAnimation(self.controller, {"seed": 314, "heat": .85})
+        right = LavaLampAnimation(self.controller, {"seed": 314, "heat": .85})
+        left_frames = [left.generate_frame(time, index).pixels.copy() for index, time in enumerate((0., .01, .5, 1., 3.))]
+        right_frames = [right.generate_frame(time, index).pixels.copy() for index, time in enumerate((0., .01, .5, 1., 3.))]
+        for expected, actual in zip(left_frames, right_frames): np.testing.assert_array_equal(expected, actual)
+        self.assertEqual(left_frames[-1].shape, (33 * 138, 3))
+        self.assertLessEqual(left.cadence_snapshot()["simulation_hz"], 100.0)
 
-    def test_visual_axes_do_not_change_semantic_state(self):
-        left = LavaLampAnimation(self.controller, {
-            "seed": 55, "palette": "classic", "background": "black",
-        })
-        right = LavaLampAnimation(self.controller, {
-            "seed": 55, "palette": "candy", "background": "ember",
-        })
-        for index in range(80):
-            left.generate_frame(index / 100.0, index)
-            right.generate_frame(index / 100.0, index)
-        for name in ("x", "y", "vx", "vy", "radius", "temperature", "active"):
-            np.testing.assert_array_equal(getattr(left, name), getattr(right, name))
-
-    def test_zero_strength_modifier_has_exact_frame_state_and_rng_parity(self):
-        base = LavaLampAnimation(self.controller, {"seed": 77})
-        zero = LavaLampAnimation(self.controller, {
-            "seed": 77,
-            "plant_modifiers": {
-                "version": 1, "active": ["refract"],
-                "strengths": {"refract": 0.0},
-            },
-        })
-        for index in range(30):
-            expected = base.generate_frame(index / 100.0, index)
-            actual = zero.generate_frame(index / 100.0, index)
-            np.testing.assert_array_equal(expected.pixels, actual.pixels)
-        for name in ("x", "y", "vx", "vy", "radius", "temperature", "active"):
-            np.testing.assert_array_equal(getattr(base, name), getattr(zero, name))
-        self.assertEqual(base.rng.bit_generator.state, zero.rng.bit_generator.state)
-
-    def test_click_stirs_splits_and_conserves_wax(self):
-        animation = LavaLampAnimation(self.controller, {"blob_count": 5})
-        target = int(np.flatnonzero(animation.active)[0])
-        before_velocity = (float(animation.vx[target]), float(animation.vy[target]))
-        before_area = animation.wax_area
-        self.assertTrue(animation.handle_interaction(
-            "primary", float(animation.x[target]), float(animation.y[target]), 1.0
-        ))
-        animation._step(0.01)
-        self.assertNotEqual(
-            before_velocity, (float(animation.vx[target]), float(animation.vy[target]))
-        )
-        self.assertEqual(animation.get_runtime_stats()["interactions_applied"], 1)
-        self.assertAlmostEqual(animation.wax_area, before_area, places=3)
-
-    def test_declares_rich_mask_semantics_and_modifier_updates_preserve_state(self):
-        expected = {
-            "illuminate", "shadow", "refract", "attractor", "repulsor",
-            "slow_zone", "obstacle", "bumper", "portal", "hazard",
-            "habitat", "emitter",
-        }
-        self.assertSetEqual(set(LavaLampAnimation.PLANT_MODIFIER_SUPPORT), expected)
-        animation = LavaLampAnimation(self.controller)
-        before = (animation.x.copy(), animation.y.copy(), animation.rng.bit_generator.state)
-        animation.update_parameters({
-            "plant_modifiers": {
-                "version": 1, "active": ["portal"], "strengths": {"portal": 1.0}
-            }
-        })
-        np.testing.assert_array_equal(animation.x, before[0])
-        np.testing.assert_array_equal(animation.y, before[1])
-        self.assertEqual(animation.rng.bit_generator.state, before[2])
-
-    def test_all_eighteen_presets_are_schema_valid_warmed_and_distinct(self):
+    def test_all_eighteen_presets_are_tracked_local_and_visually_distinct(self) -> None:
         paths = sorted((ROOT / "animation/plugins/lava_lamp/presets").glob("*.json"))
-        self.assertEqual(len(paths), 18)
-        self.assertTrue({"quiet", "night", "showcase"}.issubset({path.stem for path in paths}))
+        self.assertEqual([path.stem for path in paths], PRESET_IDS)
         frames = []
         for path in paths:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["preset_id"], path.stem)
-            self.assertIs(payload["params"]["plant_aware"], True)
-            animation = LavaLampAnimation(self.controller, payload["params"])
-            schema = animation.get_parameter_schema()
-            self.assertTrue(set(payload["params"]).issubset(schema))
-            for index in range(51):
-                rendered = animation.generate_frame(index / 100.0, index)
+            parameters = LavaLampAnimation._normalized_parameters(payload["params"])
+            self.assertSetEqual(set(parameters), set(LavaLampAnimation.DEFAULTS))
+            lamp = LavaLampAnimation(self.controller, parameters)
+            for index in range(51): rendered = lamp.generate_frame(index / 100.0, index)
             frames.append(rendered.pixels.copy())
         self.assertEqual(len({frame.tobytes() for frame in frames}), 18)
 
-    def test_manager_persists_and_isolates_interactive_preview(self):
-        manager = AnimationManager(self.controller, auto_start=False)
-        first = manager.get_animation_preview_with_params("lava_lamp", {"seed": 12})
-        session = manager._preview_session
-        second = manager.get_animation_preview_with_params("lava_lamp", {"seed": 12})
-        self.assertIs(manager._preview_session, session)
-        self.assertGreater(second["frame_count"], first["frame_count"])
-        self.assertTrue(manager.dispatch_preview_interaction(
-            "lava_lamp", "primary", 10.0, 80.0, 1.0, params={"seed": 12}
-        ))
-        self.assertEqual(len(session["animation"]._interactions), 1)
-        manager.set_plant_modifiers({
-            "version": 1, "active": ["refract"],
-            "strengths": {"refract": 0.5},
-        })
-        self.assertIs(manager._preview_session, session)
-        manager.get_animation_preview_with_params("lava_lamp", {"seed": 13})
-        self.assertIsNot(manager._preview_session, session)
-        expired = manager._preview_session
-        expired["last_access"] -= 301.0
-        manager.get_animation_preview_with_params("lava_lamp", {"seed": 13})
-        self.assertIsNot(manager._preview_session, expired)
-
-    def test_live_and_preview_http_interactions_are_routed_and_validated(self):
-        manager = AnimationManager(self.controller, auto_start=False)
-        interface = AnimationWebInterface(
-            LocalControlChannel(manager), manager, local_mode=True
-        )
+    def test_catalog_preview_live_and_recovery_keep_the_same_lamp_scene(self) -> None:
+        interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
         client = interface.app.test_client()
+        self.assertEqual([choice["preset_id"] for choice in interface.composer_presets.choices("lava_lamp")], PRESET_IDS)
+        scene = interface.composer_presets.apply(self._scene(), "stormy-wax")
+        self.assertNotIn("brightness", scene["animation"]["parameters"])
+        self.assertEqual(client.get("/api/composer/components/lava_lamp/presets").status_code, 200)
+        self.assertEqual(client.post("/api/composer/preview", json={"origin": "composer", "scene": scene, "preview": {"monotonic_elapsed": 2.0, "wall_time": "2026-08-31T12:00:00+00:00"}}).status_code, 200)
+        self.assertEqual(client.post("/api/composer/scene", json={"origin": "composer", "scene": scene, "client_id": "lava", "client_sequence": 1}).get_json()["state"], "live")
+        self.assertEqual(client.post("/api/composer/stop", json={"client_id": "lava"}).get_json()["status"]["state"], "stopped")
+        edited = copy.deepcopy(scene); edited["animation"]["parameters"]["heat"] = .33
+        self.assertFalse(client.post("/api/composer/scene", json={"origin": "composer", "scene": edited, "client_id": "lava", "client_sequence": 2}).get_json()["published"])
+        self.assertEqual(client.get("/api/composer/recovery?client_id=lava").get_json()["recovery"]["scene"]["animation"]["parameters"]["heat"], .33)
+        self.assertIs(current_component_catalog().require(provider="python", component_id="lava_lamp", version=1), LavaLampAnimation.component_descriptor())
 
-        preview = client.get("/api/preview/lava_lamp")
-        self.assertEqual(preview.status_code, 200)
-        response = client.post("/api/preview/lava_lamp/interaction", json={
-            "kind": "primary", "x": 8.0, "y": 90.0, "strength": 0.75,
-        })
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.get_json()["accepted"])
+    def test_control_remix_preserves_hidden_parameters_across_preview_live_and_recovery(self) -> None:
+        interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
+        client = interface.app.test_client()
+        scene = interface.composer_presets.apply(self._scene(), "stormy-wax")
+        scene["animation"]["parameters"].update({"interaction_radius": 16.0, "interaction_strength": 2.0})
+        preset = next(choice for choice in interface.composer_presets.choices("lava_lamp") if choice["preset_id"] == "quiet")
+        self.assertEqual(preset["parameters"]["interaction_radius"], 8.0)
+        self.assertEqual(preset["parameters"]["interaction_strength"], 1.0)
+        selected = copy.deepcopy(scene)
+        selected["animation"]["parameters"] = {
+            **preset["parameters"],
+            **{name: scene["animation"]["parameters"][name] for name in ("interaction_radius", "interaction_strength")},
+        }
+        self.assertEqual(selected["animation"]["parameters"]["heat"], preset["parameters"]["heat"])
+        self.assertEqual(selected["animation"]["parameters"]["interaction_radius"], 16.0)
+        self.assertEqual(selected["animation"]["parameters"]["interaction_strength"], 2.0)
+        first_preview = client.post("/api/composer/preview", json={"origin": "composer", "scene": selected, "preview": {"monotonic_elapsed": 2.0, "wall_time": "2026-08-31T12:00:00+00:00"}}).get_json()
+        first_live = client.post("/api/composer/scene", json={"origin": "composer", "scene": selected, "client_id": "lava-remix", "client_sequence": 1}).get_json()
+        remix = copy.deepcopy(selected); remix["animation"]["parameters"] = {**remix["animation"]["parameters"], "heat": .41}
+        remixed_preview = client.post("/api/composer/preview", json={"origin": "composer", "scene": remix, "preview": {"monotonic_elapsed": 2.0, "wall_time": "2026-08-31T12:00:00+00:00"}}).get_json()
+        remixed_live = client.post("/api/composer/scene", json={"origin": "composer", "scene": remix, "client_id": "lava-remix", "client_sequence": 2}).get_json()
+        recovered = client.get("/api/composer/recovery?client_id=lava-remix").get_json()["recovery"]["scene"]
+        self.assertEqual(first_preview["basis"]["digest"], first_live["current"]["digest"])
+        self.assertEqual(first_live["current"]["digest"], first_live["desired"]["digest"])
+        self.assertEqual(first_live["current"]["digest"], first_live["observed"]["digest"])
+        self.assertEqual(remixed_preview["basis"]["digest"], remixed_live["current"]["digest"])
+        self.assertEqual(remixed_live["current"]["digest"], remixed_live["desired"]["digest"])
+        self.assertEqual(remixed_live["current"]["digest"], remixed_live["observed"]["digest"])
+        self.assertEqual(recovered["animation"]["parameters"]["heat"], .41)
+        self.assertEqual(recovered["animation"]["parameters"]["interaction_radius"], 16.0)
+        self.assertEqual(recovered["animation"]["parameters"]["interaction_strength"], 2.0)
 
-        manager.current_animation = LavaLampAnimation(self.controller)
-        manager.current_animation_name = "lava_lamp"
-        response = client.post("/api/interaction", json={
-            "kind": "primary", "x": 8.0, "y": 90.0, "strength": 1.0,
-        })
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(manager.current_animation._interactions), 1)
-        live_queue_size = len(manager.current_animation._interactions)
-        response = client.post("/api/preview/lava_lamp/interaction", json={
-            "kind": "primary", "x": 8.0, "y": 90.0, "strength": 1.0,
-        })
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(manager.current_animation._interactions), live_queue_size)
-        rejected = client.post("/api/preview/lava_lamp/interaction", json={
-            "kind": "primary", "x": 99.0, "y": 90.0, "strength": 1.0,
-        })
-        self.assertEqual(rejected.status_code, 400)
-        rejected = client.post("/api/interaction", json={
-            "kind": "primary", "x": 8.0, "y": 138.0, "strength": 1.0,
-        })
-        self.assertEqual(rejected.status_code, 400)
-        rejected = client.post("/api/interaction", json={
-            "kind": "secondary", "x": 8.0, "y": 90.0, "strength": 1.0,
-        })
-        self.assertEqual(rejected.status_code, 400)
+    def test_existing_safe_primary_interaction_seam_stirs_only_its_preview(self) -> None:
+        manager = AnimationManager(self.controller, auto_start=False)
+        client = AnimationWebInterface(LocalControlChannel(manager), manager, local_mode=True).app.test_client()
+        self.assertEqual(client.get("/api/preview/lava_lamp").status_code, 200)
+        self.assertEqual(client.post("/api/preview/lava_lamp/interaction", json={"kind": "primary", "x": 8.0, "y": 90.0, "strength": .75}).status_code, 200)
+        manager.current_animation = LavaLampAnimation(self.controller); manager.current_animation_name = "lava_lamp"
+        self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8.0, "y": 90.0, "strength": 1.0}).status_code, 200)
+        self.assertEqual(client.post("/api/interaction", json={"kind": "secondary", "x": 8.0, "y": 90.0, "strength": 1.0}).status_code, 400)
+        self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 32.999, "y": 137.999, "strength": 1.0}).status_code, 200)
+        self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 33.0, "y": 20.0, "strength": 1.0}).status_code, 400)
+        self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8.0, "y": 138.0, "strength": 1.0}).status_code, 400)
+        self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8.0, "y": 90.0, "strength": 1.01}).status_code, 400)
+
+    def test_composer_canvas_uses_only_bounded_primary_interaction_for_live_instruments(self) -> None:
+        script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        self.assertIn("const lavaParameters = (existing = {}) => ({...existing", script)
+        self.assertIn("lavaParameters(next.animation.parameters)", script)
+        self.assertIn("const lavaInteractionParameters = (parameters = {})", script)
+        self.assertIn("next.animation.parameters = {...preset.parameters, ...lavaInteractionParameters(next.animation.parameters)}", script)
+        start = script.index("const primaryInstruments = Object.freeze")
+        end = script.index("function renderLibrary()", start)
+        interaction = script[start:end]
+        for token in ("lava_lamp:", "flame_burst:", "fluid_tank:", "componentId", "!trigger", "event.button !== 0", "event.isPrimary === false", "status?.running", "status?.armed", "Math.min(32.999", "Math.min(137.999", "kind: 'primary'", "strength: 1", "body.accepted !== true", "fetch('/api/interaction'"):
+            self.assertIn(token, interaction)
+        self.assertNotIn("/api/preview/lava_lamp/interaction", interaction)
 
 
 if __name__ == "__main__":

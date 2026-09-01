@@ -17,6 +17,17 @@ import sqlite3
 import time
 from typing import Any, Callable, Mapping
 
+from animation.core.component_catalog import ComponentCatalog
+from ipc.scene_contract import (
+    CanonicalScene,
+    LocalSceneAdapter,
+    SceneContractError,
+    SceneIdentity,
+    build_scene_activation_command,
+    normalize_composer_scene,
+    normalize_scene_identity,
+)
+
 
 TOKEN_BYTES = 32
 TOKEN_TTL_SECONDS = 120
@@ -28,6 +39,14 @@ class ActivationTokenError(RuntimeError):
 
 class ActivationTokenExpired(ActivationTokenError):
     """The supplied token existed but is no longer valid."""
+
+
+class ActivationTokenUnknown(ActivationTokenError):
+    """The local Check token was never issued by this process."""
+
+
+class ActivationTokenStale(ActivationTokenError):
+    """The local Check token expired before activation."""
 
 
 class ActivationTokenConflict(ActivationTokenError):
@@ -64,6 +83,31 @@ class BoundActivationToken:
     token: StoredActivationToken
 
 
+@dataclass(frozen=True)
+class CheckedScene:
+    token: str
+    canonical: CanonicalScene
+    expires_at: float
+
+    @property
+    def identity(self) -> SceneIdentity:
+        return self.canonical.identity
+
+
+@dataclass(frozen=True)
+class ActivationReceipt:
+    identity: SceneIdentity
+    command: dict[str, Any]
+    exact_retry: bool
+
+
+@dataclass
+class _CheckRecord:
+    checked: CheckedScene
+    binding: tuple[SceneIdentity, str] | None = None
+    receipt: ActivationReceipt | None = None
+
+
 def canonical_json(value: Any) -> str:
     """Return the one stable JSON representation used by token bindings."""
 
@@ -85,20 +129,24 @@ class ActivationTokenStore:
 
     def __init__(
         self,
-        path: str | Path,
+        path: str | Path | None = None,
         *,
         clock: Callable[[], float] = time.time,
         ttl_seconds: int = TOKEN_TTL_SECONDS,
     ) -> None:
-        self.path = Path(path)
+        self.path = Path(path) if path is not None else None
         self.clock = clock
         if type(ttl_seconds) is not int or ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be a positive integer")
         self.ttl_seconds = ttl_seconds
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        self._local_records: dict[str, _CheckRecord] = {}
+        if self.path is not None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
+        if self.path is None:
+            raise ActivationTokenConflict("durable activation token storage is unavailable")
         connection = sqlite3.connect(self.path, timeout=10.0)
         connection.row_factory = sqlite3.Row
         return connection
@@ -139,6 +187,87 @@ class ActivationTokenStore:
                         f"ALTER TABLE activation_tokens ADD COLUMN {name} {declaration}"
                     )
         os.chmod(self.path, 0o600)
+
+    def check(
+        self, request: Mapping[str, Any], catalog: ComponentCatalog
+    ) -> CheckedScene:
+        """Validate and retain one process-local Scene v2 Check token."""
+
+        canonical = normalize_composer_scene(request, catalog)
+        token = secrets.token_urlsafe(24)
+        checked = CheckedScene(
+            token=token,
+            canonical=canonical,
+            expires_at=float(self.clock()) + self.ttl_seconds,
+        )
+        self._local_records[token] = _CheckRecord(checked=checked)
+        return checked
+
+    def activate(
+        self,
+        token: str,
+        *,
+        basis: Mapping[str, Any],
+        idempotency_key: str,
+        control_channel: Any,
+        local_adapter: LocalSceneAdapter,
+    ) -> ActivationReceipt:
+        """Activate exactly the checked local Scene identity, idempotently."""
+
+        record = self._local_record_for(token)
+        supplied = normalize_scene_identity(basis)
+        if supplied != record.checked.identity:
+            raise ActivationTokenConflict(
+                "activation basis does not match the Check result"
+            )
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            raise ActivationTokenConflict("activation idempotency key is required")
+        if not callable(getattr(control_channel, "send_command", None)):
+            raise ActivationTokenConflict("runtime control channel is unavailable")
+        if not isinstance(local_adapter, LocalSceneAdapter):
+            raise ActivationTokenConflict("local scene adapter is unavailable")
+
+        requested_binding = (supplied, idempotency_key)
+        if record.binding is not None:
+            if record.binding != requested_binding:
+                raise ActivationTokenConflict(
+                    "Check token already names a different activation"
+                )
+            assert record.receipt is not None
+            return ActivationReceipt(
+                identity=record.receipt.identity,
+                command=dict(record.receipt.command),
+                exact_retry=True,
+            )
+
+        command = build_scene_activation_command(record.checked.canonical)
+        local_adapter.validate_control(command)
+        control_channel.send_command(
+            "activate_scene",
+            basis=dict(command["basis"]),
+            scene=dict(command["scene"]),
+        )
+        observed = local_adapter.accept_control(command)
+        if observed != record.checked.identity:  # pragma: no cover
+            raise SceneContractError(
+                "local adapter accepted a different scene identity"
+            )
+        receipt = ActivationReceipt(
+            identity=observed, command=command, exact_retry=False
+        )
+        record.binding = requested_binding
+        record.receipt = receipt
+        return receipt
+
+    def _local_record_for(self, token: str) -> _CheckRecord:
+        if not isinstance(token, str) or not token:
+            raise ActivationTokenUnknown("Check token is unknown")
+        record = self._local_records.get(token)
+        if record is None:
+            raise ActivationTokenUnknown("Check token is unknown")
+        if float(self.clock()) >= record.checked.expires_at and record.binding is None:
+            raise ActivationTokenStale("Check token is stale")
+        return record
 
     @staticmethod
     def _token_digest(token: str) -> str:
@@ -360,11 +489,15 @@ class ActivationTokenStore:
 
 
 __all__ = [
+    "ActivationReceipt",
     "ActivationTokenConflict",
     "ActivationTokenError",
     "ActivationTokenExpired",
+    "ActivationTokenStale",
     "ActivationTokenStore",
+    "ActivationTokenUnknown",
     "BoundActivationToken",
+    "CheckedScene",
     "IssuedActivationToken",
     "StoredActivationToken",
     "TOKEN_BYTES",

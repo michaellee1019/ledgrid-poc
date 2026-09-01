@@ -1,16 +1,1 @@
-{
-  "plugin_id": "snake",
-  "class": "SnakeAnimation",
-  "icon": "🐍",
-  "gallery": "show",
-  "preview": {
-    "capture_seconds": [0, 0.5, 1.5, 3, 5, 8, 12, 18],
-    "simulation_fps": 30
-  },
-  "vibe": {
-    "color_policy": "semantic",
-    "timing_adapter": "scaled_context",
-    "capabilities": ["palette_roles", "tempo", "luminance"],
-    "semantic_roles": ["secondary", "primary", "accent"]
-  }
-}
+{"plugin_id":"snake","class":"SnakeAnimation","icon":"🐍","gallery":"show","component":{"provider":"python","role":"animation","timing":"scaled_context","alpha_behavior":"opaque","palette_policy":"semantic","plant_capabilities":["effect_intent"],"fidelity_exceptions":[]},"preview":{"capture_seconds":[0,0.25,0.5,1,2,3,5,8],"simulation_fps":24}}

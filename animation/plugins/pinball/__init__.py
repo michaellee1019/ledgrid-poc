@@ -6,11 +6,14 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
-from animation import AnimationBase
+from animation import AnimationBase, RenderedFrame
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.presentation_contracts import ResolvedScene
 from animation.core.plant_awareness import GLOBE_REGION_ORDER
 from animation.libraries.palette_field import AnimatedPaletteField
 
@@ -34,7 +37,18 @@ class PinballAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Fast self-playing 90s PC pinball with scores, streaks, jackpots, and minigames"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
-    PLANT_MODIFIER_SUPPORT = frozenset(("bumper", "portal", "hazard"))
+    COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "pinball", 1, "python", "animation"
+    FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
+    CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
+    PLANT_MODIFIER_SUPPORT = frozenset()
+    DEFAULTS = MappingProxyType({"table_tick_hz": 40.5, "render_fps": 100.0, "chaos": .72, "seed": 95})
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE,
+        timing_policy=TIMING_POLICY, alpha_behavior="opaque", palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS,
+    )
+    _PALETTE_TINTS = MappingProxyType({"neutral": (1.0, .82, .40), "mist": (.48, .82, 1.0),
+                                       "spectrum": (1.0, .42, .94), "ember": (1.0, .45, .18)})
 
     NAVY = (0, 3, 18)
     BLUE = (0, 34, 92)
@@ -46,17 +60,13 @@ class PinballAnimation(AnimationBase):
     MAGENTA = (255, 0, 190)
     GREEN = (20, 255, 80)
 
-    def __init__(self, controller, config: Dict[str, Any] = None):
-        super().__init__(controller, config)
+    def __init__(self, controller, config: Mapping[str, Any] | None = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
         self.width, self.height = self.get_strip_info()
-        self.default_params.update({
-            "speed": 1.35,
-            "brightness": 1.0,
-            "render_fps": 100.0,
-            "chaos": 0.72,
-            "seed": 95,
-        })
-        self.params = {**self.default_params, **self.config}
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
+        self._presentation_context: ResolvedScene | None = None
         self.random = random.Random(int(self.params.get("seed", 95)))
 
         self._static = np.zeros((self.height, self.width, 3), dtype=np.uint8)
@@ -113,16 +123,34 @@ class PinballAnimation(AnimationBase):
                 self.ball_x, self.ball_y
             )
 
-    def update_parameters(self, new_params: Dict[str, Any]):
-        geometry_keys = {"plant_clearance", "plant_mask_path", "plant_globe_mask_path"}
-        old_state = self.plant_modifier_state()
-        super().update_parameters(new_params)
-        if geometry_keys & new_params.keys() or self.plant_modifier_state() != old_state:
-            self._plant_geometry_identity = None
-            self._plant_regions.clear()
-            self._plant_region_bounds.clear()
-            if self._plant_effects_enabled():
-                self._prepare_plant_table()
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> Dict[str, Any]:
+        supplied = dict(values)
+        unknown = sorted(set(supplied) - set(cls.DEFAULTS))
+        if unknown:
+            raise ValueError(f"Pinball received non-local parameters: {', '.join(unknown)}")
+        result = dict(cls.DEFAULTS)
+        result.update(supplied)
+        for name, low, high in (("table_tick_hz", 12.0, 90.0), ("render_fps", 24.0, 120.0), ("chaos", 0.0, 1.0)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= float(value) <= high:
+                raise ValueError(f"{name} must be a number from {low} to {high}")
+            result[name] = float(value)
+        if isinstance(result["seed"], bool) or not isinstance(result["seed"], int) or not 0 <= result["seed"] <= 9999:
+            raise ValueError("seed must be an integer from 0 to 9999")
+        return result
+
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        candidate = self._normalized_parameters({**self.params, **dict(new_params)})
+        if candidate == self.params:
+            return
+        if candidate["seed"] != self.params["seed"]:
+            self.random.seed(int(candidate["seed"]))
+        self.params = candidate
         self.last_render_elapsed = None
 
     def on_presentation_context_changed(self, old_context, new_context) -> None:
@@ -140,11 +168,10 @@ class PinballAnimation(AnimationBase):
         self.last_render_elapsed = None
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        schema.update({
-            "speed": {
-                "type": "float", "min": 0.4, "max": 3.0, "default": 1.35,
-                "description": "Ball and event speed",
+        return {
+            "table_tick_hz": {
+                "type": "float", "min": 12.0, "max": 90.0, "default": 40.5,
+                "description": "Table simulation ticks per second",
             },
             "render_fps": {
                 "type": "float", "min": 24.0, "max": 120.0, "default": 100.0,
@@ -158,8 +185,31 @@ class PinballAnimation(AnimationBase):
                 "type": "int", "min": 0, "max": 9999, "default": 95,
                 "description": "Repeatable table action seed",
             },
-        })
-        return schema
+        }
+
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        if new.descriptor.component_id != self.COMPONENT_ID or new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Pinball requires a semantic Scene v2 palette")
+        if old is None or old.palette != new.palette:
+            self.last_render_elapsed = None
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene) -> RenderedFrame:
+        self.set_presentation_context(context)
+        self.update_parameters(context.parameters)
+        return self.generate_frame(context.phase_time, self.frame_count)
+
+    def _apply_scene_palette(self, frame: np.ndarray) -> None:
+        if self._presentation_context is None:
+            return
+        tint = np.asarray(self._PALETTE_TINTS.get(self._presentation_context.palette["palette_id"], self._PALETTE_TINTS["neutral"]), dtype=np.float32)
+        source = frame.astype(np.float32)
+        light = source.max(axis=1, keepdims=True) / 255.0
+        np.clip(source * .56 + light * tint * 112.0, 0, 255, out=source)
+        frame[:] = source.astype(np.uint8)
 
     # Drawing helpers operate in logical top-to-bottom table coordinates.
     def _pixel(self, image: np.ndarray, x: int, y: int, color: Color, additive: bool = False):
@@ -499,13 +549,13 @@ class PinballAnimation(AnimationBase):
             dt = min(0.05, time_elapsed - self.last_elapsed)
         self.last_elapsed = time_elapsed
         self.last_render_elapsed = time_elapsed
-        self._update(dt * max(0.1, float(self.params.get("speed", 1.35))))
+        self._update(dt * max(12.0, float(self.params.get("table_tick_hz", 40.5))) / 30.0)
         self._render()
 
         frame = self.next_frame_buffer(clear=False)
         # Canonical layout is strip-major; physical LEDs run bottom-to-top.
         frame.reshape(self.width, self.height, 3)[:] = self._canvas[::-1].transpose(1, 0, 2)
-        self.apply_brightness_array(frame, out=frame)
+        self._apply_scene_palette(frame)
         self.last_rendered_frame = frame
         return self.rendered_frame(frame, changed=True)
 

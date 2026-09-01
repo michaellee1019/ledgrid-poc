@@ -43,7 +43,7 @@ class Tree:
     generation: int = 0
 
 
-class LivingEcosystemAnimation(AnimationBase):
+class _LegacyLivingEcosystemAnimation(AnimationBase):
     """Long-form food web with flocking, predation, inheritance, and mutation."""
 
     ANIMATION_NAME = "Living Ecosystem"
@@ -727,3 +727,81 @@ class LivingEcosystemAnimation(AnimationBase):
             if self._plant_mask_error:
                 stats["plant_mask_error"] = self._plant_mask_error
         return stats
+
+
+# Keep the retained implementation usable for source-history experiments, but
+# outside this package module's discoverable AnimationBase surface.
+_LegacyLivingEcosystemAnimation.__module__ = "animation.plugins._legacy_living_ecosystem"
+
+# The pre-Scene-v2 implementation remains above as historical reference.  The
+# qualified component below owns only local structural controls; the resolved
+# scene owns palette, pace, and final presentation brightness.
+from animation.libraries.procedural_sculptures import CadencedSculpture
+
+
+class LivingEcosystemAnimation(CadencedSculpture):
+    ANIMATION_NAME = "Living Ecosystem"
+    ANIMATION_DESCRIPTION = "Migrating herds cross a growing wetland beneath a living canopy"
+    ANIMATION_AUTHOR = "LED Grid Team"
+    ANIMATION_VERSION = "2.0"
+    COMPONENT_ID = "living_ecosystem"
+    SOURCE_FPS = 20.0
+    COMPONENT_DEFAULTS = {"motion": .55, "density": .62, "background_level": .22, "seed": 7319, "migration": .55, "predator_pressure": .38, "canopy_density": .58, "mutation": .10, "night_life": .42}
+    LEGACY_PRESET_KEYS = frozenset(("lifecycle_minutes", "day_length_seconds", "creature_density", "predator_ratio", "tree_density", "creature_size", "mutation_rate", "grass_regrowth", "predation_pressure", "pack_cohesion", "palette", "night_brightness", "glow_strength", "firefly_density", "water_shimmer", "color_saturation", "color_value", "output_gamma", "render_fps", "simulation_hz", "show_water"))
+
+    def __init__(self, controller, config=None):
+        super().__init__(controller, config); self._init_world()
+
+    def _init_world(self):
+        count = max(12, min(72, int(22 + 52 * self.params["density"])))
+        self.herd = np.column_stack((self.rng.uniform(0, self._shape[0], count), self.rng.uniform(0, self._shape[1], count))).astype(np.float32)
+        self.heading = self.rng.uniform(-math.pi, math.pi, count).astype(np.float32)
+        hunters = max(2, int(count * self.params["predator_pressure"] * .18))
+        self.hunters = np.column_stack((self.rng.uniform(0, self._shape[0], hunters), self.rng.uniform(0, self._shape[1], hunters))).astype(np.float32)
+        trees = max(8, int(12 + 56 * self.params["canopy_density"]))
+        self.trees = np.column_stack((self.rng.uniform(0, self._shape[0], trees), self.rng.uniform(0, self._shape[1], trees))).astype(np.float32)
+        self.season = float(self.rng.random())
+
+    def reset_simulation(self): super().reset_simulation(); self._init_world()
+
+    def get_parameter_schema(self):
+        schema = super().get_parameter_schema(); schema.update({
+            "migration": {"type":"float", "min":0., "max":1., "default":.55, "description":"How decisively herds cross the habitat"},
+            "predator_pressure": {"type":"float", "min":0., "max":1., "default":.38, "description":"Visible hunter pressure around herds"},
+            "canopy_density": {"type":"float", "min":.1, "max":1., "default":.58, "description":"Woodland cover and clearings"},
+            "mutation": {"type":"float", "min":0., "max":.5, "default":.10, "description":"Variation in each migration route"},
+            "night_life": {"type":"float", "min":0., "max":1., "default":.42, "description":"Firefly activity in the wetland"},
+        }); return schema
+
+    @classmethod
+    def _validate_local_parameters(cls, values):
+        super()._validate_local_parameters(values)
+        for key, low, high in (("migration",0.,1.), ("predator_pressure",0.,1.), ("canopy_density",.1,1.), ("mutation",0.,.5), ("night_life",0.,1.)):
+            if not low <= float(values[key]) <= high: raise ValueError(f"{key} is out of range")
+
+    def _step(self, tick):
+        phase = tick * (.012 + self.params["motion"] * .025)
+        target = np.arctan2(np.sin(self.herd[:, 1] * .06 + phase), np.cos(self.herd[:, 0] * .11 - phase))
+        self.heading += np.sin(target - self.heading) * (.09 + .19 * self.params["migration"])
+        self.heading += self.rng.normal(0., .012 + self.params["mutation"] * .06, self.heading.size)
+        self.herd[:, 0] = np.mod(self.herd[:, 0] + np.cos(self.heading) * (.10 + .26 * self.params["migration"]), self._shape[0])
+        self.herd[:, 1] = np.mod(self.herd[:, 1] + np.sin(self.heading) * .18 + .12, self._shape[1])
+        nearest = self.herd[np.arange(self.hunters.shape[0]) % self.herd.shape[0]]
+        self.hunters += np.sign(nearest - self.hunters) * (.04 + self.params["predator_pressure"] * .12)
+        self.hunters[:, 0] %= self._shape[0]; self.hunters[:, 1] %= self._shape[1]
+        self.season = (self.season + .0015 + self.params["motion"] * .002) % 1.
+
+    def generate_frame(self, time_elapsed, frame_count):
+        tick, cached = self.begin_frame(time_elapsed)
+        if cached: return cached
+        self.advance_bounded(tick, self._step, 10)
+        x, y = self._x, self._y; river = np.exp(-np.square((x - .18 * np.sin(y * 4 + tick*.02)) / .20))
+        field = np.clip(.18 + .28*np.sin(y*4 + self.season*math.tau) + .16*np.cos(x*6-y*2), 0., 1.)
+        value, accent = np.maximum(field, river*.62), river*.35
+        for tx, ty in self.trees: accent = np.maximum(accent, np.exp(-((x-(tx/self._shape[0]*2-1))**2 + (y-(ty/self._shape[1]*2-1))**2)/.008) * .62)
+        for hx, hy in self.herd: accent[int(np.clip(round(hx),0,self._shape[0]-1)), int(np.clip(round(hy),0,self._shape[1]-1))] = 1.
+        for hx, hy in self.hunters: value[int(np.clip(round(hx),0,self._shape[0]-1)), int(np.clip(round(hy),0,self._shape[1]-1))] = 1.
+        fireflies = np.maximum(0., np.sin(x*31 + y*17 + tick*.17))**28 * self.params["night_life"]
+        return self.finish_frame(tick, self.colorize(value, np.maximum(accent, fireflies)))
+
+    def logical_state(self): return self.herd.tobytes(), self.hunters.tobytes(), round(self.season, 6)

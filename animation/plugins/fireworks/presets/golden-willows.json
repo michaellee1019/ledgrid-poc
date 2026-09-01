@@ -1,14 +1,1 @@
-{
-  "preset_id": "golden-willows",
-  "name": "Golden Willows",
-  "animation": "fireworks",
-  "created_at": "2026-07-18T00:00:00Z",
-  "updated_at": "2026-07-18T00:00:00Z",
-  "params": {"plant_aware":true,
-    "brightness": 0.72, "launch_rate": 0.42, "max_rockets": 2,
-    "particles_per_burst": 80, "burst_size": 0.23, "burst_style": "willow",
-    "palette": "gold", "spark_lifetime": 3.4, "gravity": 0.2, "air_drag": 0.975,
-    "trail_persistence": 0.975, "trail_intensity": 0.82,
-    "secondary_spark_chance": 0.08, "twinkle": 0.12, "random_seed": 24
-  }
-}
+{"version":2,"preset_id":"golden-willows","name":"Golden Willows","animation":"fireworks","description":"Slow, long-falling gold branches.","params":{"launch_cadence":0.42,"shell_population":80,"burst_size":0.23,"burst_style":"willow","gravity":0.2,"trails":0.95,"crackle":0.08,"twinkle":0.12,"seed":24}}

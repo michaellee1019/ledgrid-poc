@@ -1,1 +1,22 @@
-{"plugin_id":"tetris","class":"TetrisAnimation","icon":"🧱","gallery":"show","preview":{"capture_seconds":[0,0.5,1.5,3,5,8,12,18],"simulation_fps":30},"vibe":{"color_policy":"grade","timing_adapter":"legacy_speed_param","capabilities":[]}}
+{
+  "plugin_id": "tetris",
+  "class": "TetrisAnimation",
+  "icon": "🧱",
+  "gallery": "show",
+  "preview": {"capture_seconds": [0, 0.5, 1.5, 3, 5, 8, 12, 18], "simulation_fps": 30},
+  "component": {
+    "id": "tetris",
+    "version": 1,
+    "provider": "python",
+    "role": "animation",
+    "frame_format": "rgb_uint8_strip_major",
+    "cadence": "local_gameplay_cadence_cached",
+    "timing": "scaled_context",
+    "alpha_behavior": "opaque",
+    "palette_policy": "semantic",
+    "palette_roles": ["I", "J", "L", "O", "S", "T", "Z", "flash"],
+    "plant_capabilities": ["effect_intent"],
+    "fidelity_exceptions": [],
+    "capabilities": ["semantic_palette_roles", "scaled_context", "effect_intent"]
+  }
+}

@@ -1,0 +1,76 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; overflow-x: hidden; background: #081316; color: #edf4f5; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.composer { width: 100%; max-width: none; margin: 0; padding: 1rem; }
+.desktop-workspace { display: grid; grid-template-columns: minmax(175px, 220px) minmax(120px, 150px) minmax(0, 1fr) minmax(245px, 290px); align-items: start; gap: 1rem; width: 100%; min-width: 0; }
+.library-pane, .preview-pane, .operations-pane, .inspector { min-width: 0; padding: 1rem; border: 1px solid #29434a; border-radius: 12px; background: #152328; box-shadow: 0 10px 28px #06101333; }
+.library-pane, .operations-pane { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow: auto; }
+.preview-pane { position: sticky; top: 1rem; }
+.operations-pane { border-color: #4d796f; }
+.inspectors { display: grid; grid-template-columns: repeat(5, minmax(170px, 1fr)); gap: 1rem; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; padding-bottom: .35rem; }
+.pane-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .7rem; margin-bottom: .8rem; }
+h1, h2 { margin: 0; font-size: 1.05rem; }
+p { margin: .35rem 0; }
+.eyebrow { margin: 0; color: #83d7c5; font-size: .72rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.muted, .empty, .status-line { color: #b6c7c9; font-size: .88rem; }
+label { display: grid; gap: .28rem; color: #d9e6e7; font-size: .85rem; }
+/* Local instrument labels share the grid rule above, so the hidden contract
+   needs the same explicit seam as authored preset-card rows. */
+label[hidden] { display: none !important; }
+input, select { min-width: 0; padding: .52rem; border: 1px solid #44656a; border-radius: 7px; background: #0d181c; color: #f5fbfb; }
+.field-grid { display: grid; gap: .65rem; }
+.button { min-height: 2.35rem; padding: .5rem .7rem; border: 0; border-radius: 7px; cursor: pointer; font-weight: 720; }
+.button.primary { background: #7ee0c8; color: #09201d; }
+.button.secondary { background: #29464c; color: #f1ffff; }
+.operation-row .button[aria-pressed="true"] { background: #5c9e93; color: #071917; }
+.button.text { background: transparent; color: #b9e9dc; }
+.button:focus-visible, input:focus-visible, select:focus-visible, dialog:focus-visible { outline: 2px solid #83d7c5; outline-offset: 2px; }
+.button:disabled { cursor: wait; opacity: .6; }
+.library-filters, .operation-row { display: flex; flex-wrap: wrap; gap: .35rem; margin: .65rem 0; }
+/* The Composer toggles authored-card groups with the HTML hidden contract.
+   This wins over the shared flex layout rule so inactive groups are absent,
+   not merely disabled in the accessibility tree. */
+.operation-row[hidden] { display: none !important; }
+.library-filters .active { background: #5c9e93; color: #071917; }
+.library-list { display: grid; gap: .45rem; margin: .8rem 0; padding: 0; list-style: none; }
+.library-list button { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 1px solid #39565c; background: #0d181c; color: #edf4f5; text-align: left; }
+.library-list button[aria-current="true"] { border-color: #83d7c5; box-shadow: 0 0 0 1px #83d7c577; }
+.library-kind { color: #a7bbbe; font-size: .72rem; }
+.preview-stage { display: flex; align-items: center; justify-content: center; min-height: 500px; padding: 1rem; border-radius: 9px; background: #050a0c; }
+.preview-canvas { width: min(100%, 120px); height: auto; max-height: calc(100vh - 210px); border: 1px solid #38545a; box-shadow: 0 0 28px #65d5c344; image-rendering: pixelated; }
+#previewIdentity { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identity, dd { overflow-wrap: anywhere; }
+.warning { margin: .7rem 0; padding: .55rem; border-left: 3px solid #e5ab77; background: #34251e; color: #fff1e6; font-size: .84rem; }
+.state-chip { padding: .3rem .55rem; border-radius: 99px; background: #29464c; font-size: .75rem; font-weight: 700; }
+.connection { margin: .9rem 0; padding: .8rem 0; border-top: 1px solid #29434a; border-bottom: 1px solid #29434a; }
+.wide { width: 100%; margin: .3rem 0; }
+.secondary-operations { margin-top: .8rem; }
+.secondary-operations > summary { cursor: pointer; color: #b9e9dc; font-weight: 720; }
+.secondary-operations[open] > summary { margin-bottom: .8rem; }
+.diagnostics { margin-top: .8rem; font-size: .84rem; }
+.diagnostics dl { display: grid; gap: .5rem; }
+.diagnostics div { padding: .45rem; border-radius: 6px; background: #0d181c; }
+.diagnostics dt { color: #a7bbbe; font-size: .72rem; }
+.diagnostics dd { margin: .15rem 0 0; }
+.composer-shell { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin-bottom: 1rem; padding: .7rem 1rem; border: 1px solid #d69b6f; border-radius: 10px; background: #34251e; }
+dialog { max-width: 420px; padding: 1.25rem; border: 1px solid #83d7c5; border-radius: 12px; background: #152328; color: #edf4f5; }
+dialog::backdrop { background: #020809bb; }
+dialog li { margin: .6rem 0; }
+@media (max-width: 760px) {
+  .composer { padding: .75rem; }
+  .desktop-workspace { display: flex; flex-direction: column; align-items: stretch; }
+  .library-pane, .preview-pane, .operations-pane { position: static; max-width: 100%; max-height: none; margin-bottom: 0; }
+  .operations-pane { order: 1; }
+  .library-pane { order: 2; }
+  .inspectors { order: 3; display: flex; flex-direction: column; overflow: visible; }
+  .look-inspector { order: -1; }
+  .preview-pane { order: 4; }
+  .preview-pane .pane-heading > * { min-width: 0; }
+  #previewIdentity { min-width: 0; flex: 0 1 auto; }
+  .preview-stage { min-height: 300px; }
+  .preview-canvas { max-height: 55vh; }
+  .button, input:not([type="checkbox"]) { min-height: 44px; }
+  select { height: 44px; min-height: 44px; padding-right: 2.25rem; -webkit-appearance: none; appearance: none; background-image: linear-gradient(45deg, transparent 50%, #b9e9dc 50%), linear-gradient(135deg, #b9e9dc 50%, transparent 50%); background-position: calc(100% - 1rem) calc(50% - 2px), calc(100% - .72rem) calc(50% - 2px); background-size: .32rem .32rem; background-repeat: no-repeat; }
+  .library-filters .button { min-width: 44px; }
+  .switch, .secondary-operations > summary, .diagnostics > summary { min-height: 44px; padding: .7rem 0; }
+}

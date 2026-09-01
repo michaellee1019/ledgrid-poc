@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from functools import lru_cache
+from types import MappingProxyType
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import numpy as np
 
 from animation import AnimationBase
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.plant_awareness import PlantModifierState
+from animation.core.presentation_contracts import ResolvedScene
 
 PALETTES = {
     "moonlit": ((2, 5, 13), (25, 43, 68), (142, 169, 184)),
@@ -34,6 +39,8 @@ class LongformSceneBase(AnimationBase):
     DEFAULT_MOOD = "moonlit"
     MOODS: Tuple[str, ...] = ("moonlit", "predawn")
     PLANT_MODIFIER_SUPPORT = frozenset({"illuminate", "shadow", "refract"})
+    COMPONENT_ID = ""
+    COMPONENT_DEFAULTS: Mapping[str, Any] = MappingProxyType({})
 
     def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
         super().__init__(controller, config)
@@ -62,6 +69,75 @@ class LongformSceneBase(AnimationBase):
         self._cached = None
         self._last_tick = None
         self._last_key = None
+        self._presentation_context: ResolvedScene | None = None
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return ComponentDescriptor(
+            component_id=cls.COMPONENT_ID, version=1, provider="python", role="animation",
+            timing_policy="scaled_context", alpha_behavior="opaque", palette_policy="semantic",
+            plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=cls.COMPONENT_DEFAULTS,
+            parameter_normalizer=cls._normalized_parameters,
+        )
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(values, Mapping):
+            raise ValueError("Atmosphere parameters must be an object")
+        defaults = dict(cls.COMPONENT_DEFAULTS)
+        allowed = set(defaults) | {"plant_aware", "plant_modifiers", "brightness", "speed"}
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(f"Unknown {cls.COMPONENT_ID} parameter {sorted(unknown)[0]!r}")
+        result = dict(defaults)
+        for name, value in values.items():
+            if name in {"brightness", "speed"}:
+                continue
+            if name == "plant_aware":
+                if type(value) is not bool: raise ValueError("plant_aware must be boolean")
+                continue
+            elif name == "plant_modifiers":
+                PlantModifierState.from_payload(value)
+                continue
+            elif name == "mood":
+                if value not in PALETTES: raise ValueError("mood is not supported")
+                result[name] = value
+            elif name == "background":
+                if value not in BACKGROUND_LEVELS: raise ValueError("background is not supported")
+                result[name] = value
+            elif name == "seed":
+                if type(value) is not int or not 0 <= value <= 2147483647: raise ValueError("seed is out of range")
+                result[name] = value
+            elif name in {"motion", "density", "background_level"}:
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= float(value) <= 1: raise ValueError(f"{name} is out of range")
+                result[name] = float(value)
+            elif name == "render_fps":
+                if type(value) is not int or not 5 <= value <= 40: raise ValueError("render_fps is out of range")
+                result[name] = value
+            elif name in {"hour", "time_offset", "time_scale"}:
+                if isinstance(value, bool) or not isinstance(value, (int, float)): raise ValueError(f"{name} must be numeric")
+                limits = {"hour": (-1.0, 23.999), "time_offset": (-12.0, 14.0), "time_scale": (0.0, 3600.0)}
+                low, high = limits[name]
+                if not low <= float(value) <= high: raise ValueError(f"{name} is out of range")
+                result[name] = float(value)
+        return result
+
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        del old
+        if new.descriptor.component_id != self.COMPONENT_ID: raise ValueError("Atmosphere received a context for another component")
+        candidate = self._normalized_parameters(new.parameters)
+        if candidate != self.params:
+            self.update_parameters(candidate)
+            self.params = candidate
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene):
+        self.set_presentation_context(context)
+        return self.generate_frame(context.phase_time, self.frame_count)
 
     def scene_defaults(self) -> Dict[str, Any]:
         return {}

@@ -15,7 +15,7 @@ import numpy as np
 from animation import AnimationBase
 
 
-class FlameBurstAnimation(AnimationBase):
+class LegacyFlameBurstAnimation(AnimationBase):
     """Energetic flame burst expanding from the grid center"""
 
     ANIMATION_NAME = "Frame Burst"
@@ -335,3 +335,11 @@ class FlameBurstAnimation(AnimationBase):
             result[plant_masks.foliage_flat] = foliage
             result[plant_masks.globes_flat] = globes
         return self.apply_brightness_array(result, out=result)
+
+
+# The legacy implementation remains available for migration archaeology; this
+# package exports the bounded Scene v2 renderer. Keep plugin-loader discovery
+# unambiguous when it imports this file directly.
+LegacyFlameBurstAnimation.__module__ = f"{__name__}.legacy"
+from .v2 import FlameBurstAnimation
+FlameBurstAnimation.__module__ = __name__

@@ -1,11 +1,5 @@
 """Evolving dune crests and sparse windblown grains."""
-
-from animation.libraries.atmospheric_palette import (
-    resolve_atmospheric_palette,
-    semantic_atmospheric_palette_active,
-)
 from animation.libraries.procedural_longform import LongformSceneBase
-
 
 class DesertWindAnimation(LongformSceneBase):
     ANIMATION_NAME = "Desert Wind"
@@ -15,11 +9,8 @@ class DesertWindAnimation(LongformSceneBase):
     SCENE = "desert"
     DEFAULT_MOOD = "ochre"
     MOODS = ("ochre", "mars", "predawn")
-
-    def palette(self):
-        return resolve_atmospheric_palette(self, super().palette())
-
-    def on_presentation_context_changed(self, old_context, new_context) -> None:
-        super().on_presentation_context_changed(old_context, new_context)
-        if semantic_atmospheric_palette_active(self):
-            self._last_key = None
+    COMPONENT_ID = "desert_wind"
+    COMPONENT_DEFAULTS = {
+        "motion": .35, "density": .5, "mood": "ochre", "background": "soft",
+        "background_level": .18, "render_fps": 24, "seed": 8001,
+    }

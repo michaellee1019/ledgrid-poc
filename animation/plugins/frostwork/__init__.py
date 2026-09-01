@@ -11,11 +11,12 @@ class FrostworkAnimation(CadencedSculpture):
     ANIMATION_DESCRIPTION = "Branching ice advances from a cold border, sparkles at its tips, and melts"
     PLANT_MODIFIER_SUPPORT = frozenset(("emitter", "obstacle", "illuminate"))
     SOURCE_FPS = 20.0
+    COMPONENT_ID = "frostwork"
+    COMPONENT_DEFAULTS = {"motion": .46, "density": .48, "background_level": .14, "seed": 1401,
+                          "temperature": .35, "melt_cycle": .55}
 
     def __init__(self, controller, config=None):
         super().__init__(controller, config)
-        self.default_params.update({"temperature": 0.35, "melt_cycle": 0.55})
-        self.params = {**self.default_params, **(config or {})}
         self.occupied = np.zeros(self._shape, bool)
         self.age = np.zeros(self._shape, np.float32)
         self.occupied[:, -1] = True
@@ -27,19 +28,18 @@ class FrostworkAnimation(CadencedSculpture):
             "melt_cycle": {"type":"float","min":0,"max":1,"default":0.55,"description":"Frequency of warm melt fronts"},
         }); return s
 
+    @classmethod
+    def _validate_local_parameters(cls, values):
+        super()._validate_local_parameters(values)
+        for name in ("temperature", "melt_cycle"):
+            if not 0 <= float(values[name]) <= 1: raise ValueError(f"{name} is out of range")
+
     def _step(self, tick):
         self.age[self.occupied] += 1
         neighbors = np.zeros_like(self.occupied)
         neighbors[1:] |= self.occupied[:-1]; neighbors[:-1] |= self.occupied[1:]
         neighbors[:, 1:] |= self.occupied[:, :-1]; neighbors[:, :-1] |= self.occupied[:, 1:]
         frontier = neighbors & ~self.occupied
-        obstacle = 0.0
-        if self.plant_modifier_strength("obstacle") > 0:
-            obstacle = self.get_plant_masks().obstacle
-            frontier &= ~obstacle
-        emitter = self.plant_modifier_strength("emitter")
-        if emitter > 0:
-            frontier |= self.get_plant_masks().obstacle_edge & ~self.occupied
         count = max(1, int((1 + 5 * float(self.params["density"])) * (0.4 + float(self.params["motion"]))))
         candidates = np.flatnonzero(frontier)
         if candidates.size:
@@ -87,6 +87,4 @@ class FrostworkAnimation(CadencedSculpture):
         self.advance_bounded(tick, self._step)
         tips = self.occupied & (self.age < 8)
         value = self.occupied.astype(np.float32) * (0.38 + 0.5 * np.exp(-self.age / 45.0))
-        illum = self.plant_modifier_strength("illuminate")
-        if illum > 0: value += self.get_plant_masks().obstacle_edge * tips * illum
         return self.finish_frame(tick, self.colorize(value, tips.astype(np.float32)))

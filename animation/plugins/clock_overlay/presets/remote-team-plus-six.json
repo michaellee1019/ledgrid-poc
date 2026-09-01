@@ -1,37 +1,11 @@
 {
-  "animation": "clock_overlay",
-  "category": "World Time",
-  "created_at": "2026-07-21T00:00:00Z",
-  "description": "A cool 24-hour companion clock set six hours ahead of the controller's local time.",
-  "name": "Remote Team +6 Hours",
-  "palette": {
-    "colors": [
-      "#000412",
-      "#1478E6",
-      "#50FFDC",
-      "#041E5A"
-    ],
-    "name": "Ocean"
-  },
-  "params": {
-    "brightness": 0.62,
-    "clock_offset_minutes": 360,
-    "face": "digital",
-    "format_24h": true,
-    "glow": 0.2,
-    "palette": "ocean",
-    "plant_aware": true,
-    "position_y": 0.5,
-    "scale": 1,
-    "show_seconds": false
-  },
   "preset_id": "remote-team-plus-six",
-  "tags": [
-    "remote-team",
-    "offset",
-    "plus-six",
-    "24-hour"
-  ],
-  "updated_at": "2026-07-21T00:00:00Z",
-  "version": 2
+  "name": "Remote team +6",
+  "description": "A 24-hour companion-zone clock, six hours ahead.",
+  "animation": "clock_overlay",
+  "params": {
+    "format_24h": true,
+    "show_seconds": false,
+    "clock_offset_minutes": 360
+  }
 }

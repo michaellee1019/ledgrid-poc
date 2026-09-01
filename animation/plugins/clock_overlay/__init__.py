@@ -1,331 +1,243 @@
-#!/usr/bin/env python3
-"""Sparse premultiplied-alpha clock overlay for composed host scenes."""
+"""Wall-clock-driven premultiplied Clock plane for host composition.
+
+This is intentionally a small bridge between the existing full-scene Clock
+and the host compositor.  It owns only an informational plane: Aurora (or a
+future opaque renderer) remains responsible for all background pixels.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from datetime import datetime
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta
+from types import MappingProxyType
+from typing import Any, Dict, Mapping, Optional
 
 import numpy as np
 
 from animation import AnimationBase
-from animation.core.plant_awareness import PLANT_MODIFIER_IDS
-from animation.core.presentation_contracts import OverlayFrame, TimingAdapter
-from animation.libraries.clock_face import ClockFaceRenderer
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.compositing import OverlayFrame
+from animation.core.presentation_contracts import ResolvedScene
+from animation.plugins.clock import ClockAnimation
 
 
-def _cache_value(value: Any) -> Any:
-    """Return a stable equality key for authored JSON-like parameters."""
-    if isinstance(value, Mapping):
-        return tuple(sorted((str(key), _cache_value(item)) for key, item in value.items()))
-    if isinstance(value, (list, tuple)):
-        return tuple(_cache_value(item) for item in value)
-    if isinstance(value, (set, frozenset)):
-        return tuple(sorted(_cache_value(item) for item in value))
-    return value
-
-
-def _content_dirty_ranges(
-    previous: np.ndarray, current: np.ndarray
-) -> tuple[tuple[int, int], ...]:
-    """Return exact flat ranges whose premultiplied RGBA bytes changed."""
+def _dirty_ranges(previous: np.ndarray, current: np.ndarray) -> tuple[tuple[int, int], ...]:
+    """Return exact flat-pixel ranges changed between two overlay buffers."""
     changed = np.flatnonzero(np.any(previous != current, axis=1))
-    if changed.size == 0:
+    if not changed.size:
         return ()
     starts = changed[np.r_[True, np.diff(changed) != 1]]
     ends = changed[np.r_[np.diff(changed) != 1, True]] + 1
-    return tuple(
-        (int(start), int(end)) for start, end in zip(starts, ends)
-    )
+    return tuple((int(start), int(end)) for start, end in zip(starts, ends))
 
 
-class ClockOverlayAnimation(ClockFaceRenderer, AnimationBase):
-    """Clock marks with an optional local contrast backdrop."""
+class ClockOverlayAnimation(AnimationBase):
+    """A cached, current-time digital clock in canonical RGBA8 overlay form."""
 
     ANIMATION_NAME = "Clock Overlay"
-    ANIMATION_DESCRIPTION = (
-        "Plant-aware clock marks with an optional high-contrast backdrop"
-    )
+    ANIMATION_DESCRIPTION = "Current wall time as a transparent composed layer"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.1"
+    ANIMATION_VERSION = "1.0"
 
-    PLANT_MODIFIER_SUPPORT = frozenset(PLANT_MODIFIER_IDS)
-    TIMING_ADAPTER = TimingAdapter.WALL_CLOCK
-    VIBE_CAPABILITIES = frozenset(("palette_roles", "luminance"))
-    VIBE_COLOR_POLICY = "semantic"
+    COMPONENT_ID = "clock_overlay"
+    COMPONENT_VERSION = 1
+    PROVIDER = "python"
+    ROLE = "widget"
+    FRAME_FORMAT = "rgba_uint8_premultiplied_strip_major"
+    TIMING_POLICY = "wall_clock"
+    PALETTE_POLICY = "semantic"
+    PALETTE_ROLES = ("clock",)
 
-    def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
-        super().__init__(controller, config)
-        self.default_params.update({
-            "face": "digital",
-            "palette": "amber",
-            "format_24h": False,
-            "show_seconds": True,
-            "clock_offset_minutes": 0,
-            "position_y": 0.5,
-            "scale": 1,
-            "glow": 0.45,
-            # Brightness changes straight color only. Opacity changes both RGB
-            # and alpha, preserving premultiplication and allowing opaque black.
-            "brightness": 1.0,
-            "opacity": 1.0,
-            # Disabled by default for exact visual compatibility. When enabled,
-            # the backdrop is a premultiplied black rectangle beneath the face.
-            "backdrop_opacity": 0.0,
-            "backdrop_padding": 1,
-        })
-        self.params = {**self.default_params, **self.config}
+    SEMANTIC_PALETTES = MappingProxyType({
+        "neutral": (150, 255, 218),
+        "mist": (170, 228, 245),
+        "spectrum": (54, 238, 230),
+        "ember": (255, 202, 92),
+    })
+
+    # This overlay deliberately replaces AnimationBase's compatibility
+    # parameters. Pace, brightness, plant geometry, and color grading belong
+    # to their owning background/composition/presentation stages, never here.
+    DEFAULTS = MappingProxyType({
+        "format_24h": False,
+        "show_seconds": True,
+        "clock_offset_minutes": 0,
+    })
+    # Catalog defaults cross the Composer JSON boundary. Clock color is
+    # resolved from the Scene v2 semantic palette, never supplied as a generic
+    # component default.
+    DESCRIPTOR_DEFAULTS = MappingProxyType({
+        "format_24h": False,
+        "show_seconds": True,
+        "clock_offset_minutes": 0,
+    })
+
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID,
+        version=COMPONENT_VERSION,
+        provider=PROVIDER,
+        role=ROLE,
+        alpha_behavior="premultiplied_rgba",
+        palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent",),
+        fidelity_exceptions=(),
+        timing_policy=TIMING_POLICY,
+        defaults=DESCRIPTOR_DEFAULTS,
+        # Scene publication must reject invalid clock-local controls before a
+        # candidate can replace the current live/recoverable scene.  The name
+        # is resolved when the catalog invokes it, after this class is defined.
+        parameter_normalizer=lambda values: ClockOverlayAnimation._normalized_parameters(values),
+    )
+
+    # Reuse the current Clock's established 3x5 visual-wall glyphs without
+    # importing its full-scene background or preset family.
+    FONT = ClockAnimation.FONT
+
+    def __init__(self, controller, config: Optional[Mapping[str, Any]] = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
         self.width, self.height = self.get_strip_info()
-        self._marks = np.zeros((self.width, self.height, 3), dtype=np.float32)
-        self._straight_rgb = np.zeros_like(self._marks)
-        self._halo_rgb = np.zeros_like(self._marks)
-        self._alpha = np.zeros((self.width, self.height), dtype=np.float32)
-        self._backdrop_alpha_work = np.zeros(
-            (self.width, self.height), dtype=np.uint16
-        )
         pixel_count = self.get_pixel_count()
-        self._overlay_buffers = [
-            np.zeros((pixel_count, 4), dtype=np.uint8),
-            np.zeros((pixel_count, 4), dtype=np.uint8),
-        ]
-        self._last_overlay_pixels = np.zeros((pixel_count, 4), dtype=np.uint8)
-        self._last_overlay_key = None
+        self._buffers = tuple(np.zeros((pixel_count, 4), dtype=np.uint8) for _ in range(2))
+        self._last_pixels = self._buffers[0]
+        self._last_key: Optional[tuple[Any, ...]] = None
         self._revision = 0
-        self._initialize_clock_face_state()
+        self._presentation_context: ResolvedScene | None = None
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = {
-            "face": {
-                "type": "str", "default": "digital",
-                "options": list(self.FACE_OPTIONS),
-                "description": "Clock face geometry",
-            },
-            "palette": {
-                "type": "str", "default": "amber",
-                "options": list(self.PALETTES),
-                "description": "Semantic clock-mark palette",
-            },
-            "format_24h": {
-                "type": "bool", "default": False,
-                "description": "Use 24-hour time",
-            },
-            "show_seconds": {
-                "type": "bool", "default": True,
-                "description": "Show seconds and use one-second cadence",
-            },
-            "clock_offset_minutes": {
-                "type": "int", "min": -720, "max": 840, "default": 0,
-                "description": "Offset from the controller's local wall clock",
-            },
-            "position_y": {
-                "type": "float", "min": 0.08, "max": 0.92, "default": 0.5,
-                "description": "Vertical position of the complete clock face",
-            },
-            "scale": {
-                "type": "int", "min": 1, "max": 3, "default": 1,
-                "description": "Face scale where geometry permits",
-            },
-            "glow": {
-                "type": "float", "min": 0.0, "max": 1.0, "default": 0.45,
-                "description": "Transparent halo strength around clock marks",
-            },
-            "brightness": {
-                "type": "float", "min": 0.0, "max": 1.0, "default": 1.0,
-                "description": "Clock color intensity; alpha coverage is unchanged",
-            },
-            "opacity": {
-                "type": "float", "min": 0.0, "max": 1.0, "default": 1.0,
-                "description": "Whole-overlay opacity applied to RGB and alpha",
-            },
-            "backdrop_opacity": {
-                "type": "float", "min": 0.0, "max": 1.0, "default": 0.0,
-                "description": (
-                    "Black contrast backdrop opacity; zero preserves transparency"
-                ),
-            },
-            "backdrop_padding": {
-                "type": "int", "min": 0, "max": 4, "default": 1,
-                "description": "Backdrop padding around current clock bounds",
-            },
+        return {
+            "format_24h": {"type": "bool", "default": False, "description": "Use 24-hour time"},
+            "show_seconds": {"type": "bool", "default": True, "description": "Show seconds and update each second"},
+            "clock_offset_minutes": {"type": "int", "min": -720, "max": 840, "default": 0, "description": "Offset from local wall time"},
         }
-        schema.update({
-            key: value for key, value in super().get_parameter_schema().items()
-            if key.startswith("plant_")
-        })
-        return schema
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> OverlayFrame:
-        del time_elapsed, frame_count  # wall-clock faces do not consume scene time
-        now = self._clock_now()
-        show_seconds = bool(self.params.get("show_seconds", True))
-        time_key = self._clock_time_key(now, show_seconds)
-        context = getattr(self, "presentation_context", None)
-        presentation_key = context.presentation_identity if context is not None else None
-        render_key = (
-            time_key,
-            _cache_value(self.params),
-            presentation_key,
-        )
-        if render_key == self._last_overlay_key:
-            return OverlayFrame(
-                pixels=self._last_overlay_pixels,
-                revision=self._revision,
-                changed=False,
-            )
-
-        # Seconds-off mode is semantically minute-driven for every face. It
-        # removes abstract second tracks and prevents residual sub-minute hand
-        # interpolation from multiplying render cadence.
-        face_now = now if show_seconds else now.replace(second=0, microsecond=0)
-        face = self._choice("face", self.FACE_OPTIONS, "digital")
-        palette = self._presentation_palette()
-        self._marks.fill(0.0)
-        self._draw_face(self._marks, face, face_now, palette, 0.0)
-        marks = self._marks
-        if self._plant_placement_enabled():
-            marks = self._place_away_from_plants(marks)
-        else:
-            self._reset_clock_placement_stats()
-
-        output = self._next_overlay_buffer()
-        self._render_premultiplied_overlay(marks, output)
-        self._last_overlay_key = render_key
-
-        previous = self._last_overlay_pixels
-        if np.array_equal(previous, output):
-            return OverlayFrame(
-                pixels=previous,
-                revision=self._revision,
-                changed=False,
-            )
-
-        dirty_ranges = _content_dirty_ranges(previous, output)
-        self._revision += 1
-        self._last_overlay_pixels = output
-        return OverlayFrame(
-            pixels=output,
-            revision=self._revision,
-            changed=True,
-            dirty_ranges=dirty_ranges,
-        )
-
-    def _next_overlay_buffer(self) -> np.ndarray:
-        # An invalidated key may rerender byte-identical content. Keep using the
-        # non-current scratch buffer until content truly changes so the cached
-        # plane is never cleared or overwritten during that comparison.
-        output = (
-            self._overlay_buffers[1]
-            if self._last_overlay_pixels is self._overlay_buffers[0]
-            else self._overlay_buffers[0]
-        )
-        output.fill(0)
-        return output
-
-    def _render_premultiplied_overlay(
-        self, marks: np.ndarray, output: np.ndarray
-    ) -> None:
-        """Convert visual RGB marks into physical premultiplied RGBA8."""
-        np.copyto(self._straight_rgb, marks)
-        self._halo_rgb.fill(0.0)
-        glow = float(np.clip(self.params.get("glow", 0.45), 0.0, 1.0))
-        if glow > 0.0:
-            # Deliberately do not use np.roll: glow at an edge must clip rather
-            # than wrap around to the opposite side of the physical wall.
-            np.maximum(self._halo_rgb[1:], marks[:-1], out=self._halo_rgb[1:])
-            np.maximum(self._halo_rgb[:-1], marks[1:], out=self._halo_rgb[:-1])
-            np.maximum(self._halo_rgb[:, 1:], marks[:, :-1], out=self._halo_rgb[:, 1:])
-            np.maximum(self._halo_rgb[:, :-1], marks[:, 1:], out=self._halo_rgb[:, :-1])
-            np.maximum(
-                self._straight_rgb,
-                self._halo_rgb * (glow * 0.13),
-                out=self._straight_rgb,
-            )
-
-        core = np.any(marks > 0.0, axis=2)
-        halo = np.any(self._halo_rgb > 0.0, axis=2) & ~core
-        self._alpha.fill(0.0)
-        self._alpha[core] = 255.0
-        self._alpha[halo] = 255.0 * glow * 0.35
-
-        opacity = float(np.clip(self.params.get("opacity", 1.0), 0.0, 1.0))
-        brightness = float(np.clip(self.params.get("brightness", 1.0), 0.0, 1.0))
-        final_alpha = self._alpha * opacity
-        premultiplied = (
-            self._straight_rgb
-            * brightness
-            * (final_alpha[:, :, None] / 255.0)
-        )
-
-        visual = output.reshape((self.width, self.height, 4))[:, ::-1]
-        np.rint(premultiplied, out=premultiplied)
-        np.clip(premultiplied, 0.0, 255.0, out=premultiplied)
-        np.copyto(visual[:, :, :3], premultiplied, casting="unsafe")
-        rounded_alpha = np.rint(final_alpha)
-        np.copyto(visual[:, :, 3], rounded_alpha, casting="unsafe")
-        # Float rounding and future palette additions must never violate the
-        # premultiplied contract checked by OverlayFrame.
-        np.minimum(visual[:, :, :3], visual[:, :, 3:4], out=visual[:, :, :3])
-        self._composite_black_backdrop(core, visual)
-
-    def _composite_black_backdrop(
-        self, core: np.ndarray, visual: np.ndarray
-    ) -> None:
-        """Place a clipped premultiplied-black rectangle beneath clock marks."""
-        backdrop_opacity = float(
-            np.clip(self.params.get("backdrop_opacity", 0.0), 0.0, 1.0)
-        )
-        overlay_opacity = float(
-            np.clip(self.params.get("opacity", 1.0), 0.0, 1.0)
-        )
-        backdrop_alpha = int(
-            np.floor(backdrop_opacity * overlay_opacity * 255.0 + 0.5)
-        )
-        if backdrop_alpha == 0:
-            return
-
-        coordinates = np.argwhere(core)
-        if coordinates.size == 0:
-            return
-        padding = int(np.clip(self.params.get("backdrop_padding", 1), 0, 4))
-        minimum = coordinates.min(axis=0)
-        maximum = coordinates.max(axis=0)
-        x0 = max(0, int(minimum[0]) - padding)
-        y0 = max(0, int(minimum[1]) - padding)
-        x1 = min(self.width, int(maximum[0]) + padding + 1)
-        y1 = min(self.height, int(maximum[1]) + padding + 1)
-
-        # The marks are the top layer. Their premultiplied RGB is unchanged by
-        # a black lower layer; only alpha gains Ab * (1 - Af), rounded with the
-        # compositor's exact RGBA8 half-up rule.
-        region = visual[x0:x1, y0:y1]
-        work = self._backdrop_alpha_work[x0:x1, y0:y1]
-        np.copyto(work, region[:, :, 3], casting="unsafe")
-        np.subtract(255, work, out=work)
-        np.multiply(work, backdrop_alpha, out=work)
-        np.add(work, 127, out=work)
-        np.floor_divide(work, 255, out=work)
-        np.add(work, region[:, :, 3], out=work)
-        np.copyto(region[:, :, 3], work, casting="unsafe")
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        """Return the provider-qualified wall-clock overlay declaration."""
+        return cls.COMPONENT_DESCRIPTOR
 
     def _clock_now(self) -> datetime:
-        context = getattr(self, "presentation_context", None)
-        if context is None:
-            return super()._clock_now()
-        return self._apply_clock_offset(
-            datetime.fromtimestamp(context.wall_time).astimezone()
+        """Isolated wall-time source so tests and callers can provide fixed time."""
+        return datetime.now().astimezone() + timedelta(minutes=int(self.params["clock_offset_minutes"]))
+
+    def on_presentation_context_changed(
+        self, old: ResolvedScene | None, new: ResolvedScene,
+    ) -> None:
+        """Accept the semantic Palette resolved by the Scene v2 runtime."""
+
+        del old
+        if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Clock Overlay requires a semantic Scene v2 palette")
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        """Public context hook used by the canonical runtime before rendering."""
+
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    @staticmethod
+    def _time_key(now: datetime, show_seconds: bool) -> tuple[int, ...]:
+        key = (now.year, now.month, now.day, now.hour, now.minute)
+        return (*key, now.second) if show_seconds else key
+
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> OverlayFrame:
+        """Render from wall time only; vibe/manager pace cannot advance this plane."""
+        del time_elapsed, frame_count
+        now = self._clock_now()
+        show_seconds = bool(self.params["show_seconds"])
+        key = (
+            self._time_key(now, show_seconds), show_seconds,
+            bool(self.params["format_24h"]), self._color_key(),
         )
+        if key == self._last_key:
+            return OverlayFrame(self._last_pixels, revision=self._revision, changed=False)
 
-    def _abstract_seconds_enabled(self) -> bool:
-        return bool(self.params.get("show_seconds", True))
+        output = self._buffers[1] if self._last_pixels is self._buffers[0] else self._buffers[0]
+        output.fill(0)
+        self._paint_digital(now, output)
+        self._last_key = key
+        if np.array_equal(output, self._last_pixels):
+            return OverlayFrame(self._last_pixels, revision=self._revision, changed=False)
 
-    def update_parameters(self, new_params: Dict[str, Any]):
-        super().update_parameters(new_params)
-        self._last_overlay_key = None
+        ranges = _dirty_ranges(self._last_pixels, output)
+        self._last_pixels = output
+        self._revision += 1
+        return OverlayFrame(output, revision=self._revision, changed=True, dirty_ranges=ranges)
 
-    def on_presentation_context_changed(self, old_context, new_context) -> None:
-        """Invalidate presentation only; wall time and authored state stay intact."""
-        self._last_overlay_key = None
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        """Accept only local overlay controls and invalidate its cached plane."""
+        unknown = set(new_params) - set(self.DEFAULTS)
+        if unknown:
+            raise ValueError(
+                f"Clock Overlay does not accept non-local parameters: {sorted(unknown)!r}"
+            )
+        self.params = self._normalized_parameters({**self.params, **dict(new_params)})
+        self._last_key = None
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        # Existing immutable starter bytes include an authored ``color`` field.
+        # Accept and validate it at the contract boundary, but do not retain or
+        # paint it: the Clock's color comes only from its semantic palette.
+        unknown = set(values) - (set(cls.DEFAULTS) | {"color"})
+        if unknown:
+            raise ValueError(
+                f"Clock Overlay does not accept non-local parameters: {sorted(unknown)!r}"
+            )
+        result = dict(cls.DEFAULTS)
+        result.update({key: value for key, value in values.items() if key != "color"})
+        for key in ("format_24h", "show_seconds"):
+            if not isinstance(result[key], bool):
+                raise ValueError(f"{key} must be a bool")
+        offset = result["clock_offset_minutes"]
+        if isinstance(offset, bool) or not isinstance(offset, int) or not -720 <= offset <= 840:
+            raise ValueError("clock_offset_minutes must be an integer from -720 to 840")
+        if "color" in values:
+            color = values["color"]
+            if (
+                not isinstance(color, (list, tuple))
+                or len(color) != 3
+                or any(isinstance(channel, bool) or not isinstance(channel, int) or not 0 <= channel <= 255 for channel in color)
+            ):
+                raise ValueError("color must be three integer channels from 0 to 255")
+        return result
+
+    def _color_key(self) -> tuple[int, int, int]:
+        palette_id = (
+            self._presentation_context.palette["palette_id"]
+            if self._presentation_context is not None and self._presentation_context.palette is not None
+            else "neutral"
+        )
+        return self.SEMANTIC_PALETTES.get(str(palette_id), self.SEMANTIC_PALETTES["neutral"])
+
+    def _paint_digital(self, now: datetime, output: np.ndarray) -> None:
+        visual = output.reshape(self.width, self.height, 4)[:, ::-1]
+        hour = now.hour if self.params["format_24h"] else (now.hour % 12 or 12)
+        text = f"{hour:02d}:{now.minute:02d}"
+        x = (self.width - self._text_width(text)) // 2
+        y = self.height // 2 - 3
+        color = self._color_key()
+        self._draw_text(visual, text, x, y, color)
+        if self.params["show_seconds"]:
+            seconds = f"{now.second:02d}"
+            self._draw_text(visual, seconds, (self.width - self._text_width(seconds)) // 2, y + 8, color)
+
+    @staticmethod
+    def _text_width(text: str) -> int:
+        return max(0, len(text) * 4 - 1)
+
+    def _draw_text(self, canvas: np.ndarray, text: str, x: int, y: int, color: tuple[int, int, int]) -> None:
+        cursor = x
+        for character in text:
+            for row, bits in enumerate(self.FONT.get(character, self.FONT[" "])):
+                for column in range(3):
+                    if bits & (1 << (2 - column)):
+                        xx, yy = cursor + column, y + row
+                        if 0 <= xx < self.width and 0 <= yy < self.height:
+                            canvas[xx, yy, :3] = color
+                            canvas[xx, yy, 3] = 255
+            cursor += 4
 
 
 __all__ = ["ClockOverlayAnimation"]

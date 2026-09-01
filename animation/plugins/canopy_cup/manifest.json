@@ -1,1 +1,1 @@
-{"plugin_id":"canopy_cup","class":"CanopyCupAnimation","icon":"🌿","gallery":"show","preview":{"capture_seconds":[0,1,3,6,10,16,24,36],"simulation_fps":30},"vibe":{"color_policy":"grade","timing_adapter":"legacy_speed_param","capabilities":[]}}
+{"plugin_id":"canopy_cup","class":"CanopyCupAnimation","icon":"🏆","gallery":"show","component":{"provider":"python","role":"animation","timing":"scaled_context","alpha_behavior":"opaque","palette_policy":"semantic","plant_capabilities":["effect_intent"],"fidelity_exceptions":[]}}

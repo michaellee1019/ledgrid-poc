@@ -1,1 +1,1 @@
-"""Clock overlay package tests."""
+"""Clock overlay tests."""
