@@ -10,6 +10,26 @@ are documented in [the web route inventory](../web/README.md) and
 Opening Composer is private and non-mutating. It loads the bundled catalog and
 renders locally before an operator deliberately requests a wall workflow.
 
+## Demo delivery posture
+
+The current product phase optimizes for breadth and fast visual learning. The
+demo should offer a varied catalog of visibly different components with fun,
+intuitive controls, strong defaults, and a short path from selection to browser
+Preview. Several thin, complete catalog entries are more valuable now than one
+entry with exhaustive state handling or production polish.
+
+Reversible technical debt is acceptable when it accelerates that breadth.
+Polish issues, rare state-management edges, speculative abstractions, and
+exhaustive compatibility or recovery work belong in Beads unless they threaten
+safety, corrupt authored work, violate the shared Scene v2 contract, or break
+the current demo path. Findings are recorded rather than ignored, but they do
+not automatically block the next catalog slice.
+
+Every visible slice should get quick browser feedback: select it, adjust its
+main controls, Preview it, and confirm the relevant live acknowledgement with a
+focused smoke. Physical-wall feedback should be batched at useful demo
+checkpoints and performed only under separate wall/deployment authorization.
+
 ## Product contract
 
 | ID | Priority | Current requirement | Evidence boundary |
@@ -21,6 +41,7 @@ renders locally before an operator deliberately requests a wall workflow.
 | COMP-05 | P1 | Provider, role, readiness, and preview capability are distinct; catalog visibility never authorizes activation. | Generated catalog and API contract tests. |
 | COMP-06 | P1 | Composer works at supported narrow widths with keyboard-operable controls and clear state text. | Focused browser evidence when a browser-bound change requires it; physical iPhone and VoiceOver evidence remain separately owned safeguards. |
 | COMP-07 | P1 | Wall settings, stop, observation, rollback, and diagnostics remain server-gated and report observed state rather than optimistic local state. | API/controller contracts and deployment evidence. |
+| COMP-08 | P1 | The demo catalog favors visibly distinct choices, intuitive component-local controls, useful defaults, and rapid Preview feedback over exhaustive polish of a single component. | Focused component contracts and one short browser smoke per visible slice; separately authorized live-wall checks at demo checkpoints. |
 
 ## Terms with one meaning
 

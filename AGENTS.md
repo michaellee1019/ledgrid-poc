@@ -129,7 +129,7 @@ bd prime                # Refresh Beads context
 
 ## Beads Autopilot
 
-These rules apply to the `ledgrid-poc-ib7` Live-First Composer initiative. They replace the retired worktree-train and source-parity sequencing with a depth-first continuous-delivery loop.
+These rules apply to the `ledgrid-poc-ib7` Live-First Composer initiative. They replace the retired worktree-train and source-parity sequencing with a breadth-first demo-delivery loop.
 
 ### The `start` contract
 
@@ -154,11 +154,21 @@ The integration base is the recorded `codex/ib7-selective-reconstruction` branch
 
 Use `bd ready --json` and select unassigned descendants of `ledgrid-poc-ib7`. Rank the shortest dependency path to the current Live-First demo first: user-visible behavior, shared contract unblockers, safety and operability, then complexity deletion. Defer broad renderer migration, inventory, verification-only work, documentation programs, and merge-history cleanup until the demo boundary or an actual dependency requires them. A leaf needs actionable acceptance, an identifiable ownership/conflict area, and focused validation; do not block delivery to perfect estimates, prose, or execution cards.
 
+### Breadth-first demo posture
+
+Optimize first for a compelling, varied catalog that is fun to explore: visibly distinct Animations and Widgets, intuitive component-local controls, useful defaults, and a short select-to-preview loop. Prefer several thin, complete catalog slices over taking one component or state path to production polish. Once a component can be selected, understood, previewed, and exercised through the accepted demo path, move to the next distinct catalog contribution.
+
+Deliberately incur reversible technical debt when it buys catalog breadth or faster feedback. During implementation, review, or debugging, turn polish findings and state-management edge cases into linked follow-up Beads and continue unless they threaten safety, corrupt user work, invalidate the shared Scene v2 contract, or break the current browser/live demo. Perfect cache behavior, exhaustive recovery, speculative abstractions, full compatibility, and exhaustive test matrices are normally backlog work rather than blockers. Do not silently discard a finding: record its reproduction, impact, and suggested boundary in Beads.
+
+Keep feedback fast. A user-visible leaf should normally get focused contract tests and one short browser smoke covering selection, intuitive control response, Preview, and the relevant live acknowledgement. Favor rapid visual confirmation over expanding a verification program. Batch physical-wall checks at useful demo checkpoints and only when the user has separately authorized wall or deployment operations; the `start` contract alone still does not authorize them.
+
 ### Sol portfolio steward
 
 Start a short-lived portfolio steward before dispatch when the current wave is missing or stale, after each batch of up to 15 selected Beads, or earlier when no product leaf is ready, an item stalls or reopens twice, priorities/dependencies disagree, or Beads/worktree/branch reality drifts. Use at most one steward at a time with `gpt-5.6-sol` and reasoning effort `high`.
 
 The steward reads the binding Scene v2 decision, epic, recent handoffs, ready/blocked queues, and branch progress. It may prepare or repair at most 15 bounded executable Beads, partition them into dependency-ordered non-conflicting waves, clarify acceptance from accepted decisions, and retire stale coordination work. It normally changes Beads only, leaves a short epic note, and exits before implementation dispatch. It must not inflate the backlog, rewrite product intent, implement code, authorize pushes/hardware, or claim later waves.
+
+The steward should shape breadth-first waves across distinct visual families and control patterns. Do not serialize the portfolio behind polish for the most mature component. Keep follow-up debt discoverable but off the runnable demo wave unless it crosses the blocker threshold above.
 
 Only the current runnable wave receives `worktree-ready` and may be claimed. Later selected Beads remain open and unclaimed until their dependencies integrate. Represent an unresolved product or authority choice as a separate Bead carrying the exact `human` label, block dependents on it, and leave it discoverable through `bd human list`.
 
@@ -175,6 +185,22 @@ Baseline validation is changed-language syntax or lint, focused tests, and `git 
 ### Risk-tiered acceptance
 
 Shared schemas, compositor or protocol work, risky live-state changes, and user-visible acceptance require an independent reviewer using `gpt-5.6-sol` with reasoning effort `high`. The reviewer works from an isolated worktree, checks the accepted Bead rather than redesigning it, records actionable findings or approval, and does not merge. The coordinator may review routine bounded leaves. A review is a gate on integration, not a separate long-running implementation lane.
+
+Reviewers must distinguish demo blockers from follow-up debt. Block integration only for a concrete failure of the accepted user-visible path, safety or data-integrity risk, a broken shared contract, or a regression likely to derail the next breadth wave. Record lower-impact correctness, perfect-state-management, maintainability, and rare edge-case findings as follow-up Beads, then approve the bounded demo increment when its primary path is convincing.
+
+### Animation modernization review discipline
+
+Use a review-before-implementation pass for catalog-wide animation modernization, including `ledgrid-poc-ib7.82`. A Terra worker records source-read-only evidence for one non-overlapping family, and a Sol reviewer independently reproduces the important claims. Create implementation children only from accepted `implement` dispositions or accepted product blockers; keep `retain-current`, `defer`, and `not-applicable` findings documented without turning them into speculative work.
+
+For every component, record exactly one disposition for semantic palette, premultiplied RGBA/background composition, installation geometry, and direct interaction. Evidence must use a real resolved Scene at every sample through the production render path, including Scene palette and pace. Direct `generate_frame` calls, constructor defaults, or a context installed once at the wrong elapsed time do not prove Scene timing or palette behavior. Preserve fixed 33x138 fingerprints, semantic state and RNG digests, cache/source-tick behavior, focused tests, and desktop mean/p95/p99/max plus changed-frame ratio; never present desktop timing as Raspberry Pi evidence.
+
+Absence of an interaction handler proves only current absence, not product-level `not-applicable`. Exercise the actual Composer event name, normally `primary`, and assess the animation's natural semantic boundary. An accepted input queues only validated events, consumes them once at the next source tick, and has exact no-input frame, logical-state, and RNG parity. If that story is not convincing, choose `defer` or give a visual/product rationale for `not-applicable`.
+
+Geometry remains provider-owned and non-authorable. Pick one precise role per accepted renderer—such as exact-core collision, clearance-only planning, exact-edge light, or presentation-only refraction—and state what a live geometry revision may recompute. Disabled and enabled-zero paths must be exact frame/state/RNG no-ops; live revisions preserve tick, RNG, and persistent simulation state. Do not duplicate the global final-optics pass inside a renderer: story-specific geometry and installation-wide shadow/refraction are separate concerns.
+
+Audit presets at three distinct layers: raw authored payloads, normalized component-local parameters, and visible names/descriptions. A raw legacy field may be intentionally stripped because Scene owns palette/background/brightness/pace or installation owns calibration; a collapsed normalized payload or false visible promise is product drift. Scope only the reviewed family and distinguish its failures from unrelated broad-suite noise.
+
+When acceptance requests changes, append corrected evidence instead of overwriting the original report, keep the source worktree clean, and rerun the same independent gate. On `stop`, an approval comment and `acceptance-approved` label recorded before interruption may be reconciled and closed after verification. Preserve dirty or unmerged worktrees; clean, source-read-only review worktrees with no unique commits may be removed after their Beads are closed.
 
 ### Continuous integration loop
 
