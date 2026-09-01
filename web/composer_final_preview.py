@@ -25,6 +25,7 @@ from animation.core.scene_runtime import CanonicalSceneRuntime, RuntimeFrame
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
+from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.tetris import TetrisAnimation
 from ipc.scene_contract import CanonicalScene
 
@@ -70,6 +71,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         ConwayLifeAnimation.component_descriptor(),
         TetrisAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
+        EmojiArrangerAnimation.component_descriptor(),
     )
 
 
@@ -194,14 +196,16 @@ class ComposerFinalPreview:
         raise ValueError(f"Composer preview cannot render Animation {descriptor.component_id!r}")
 
     def _widget_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
-        if descriptor.component_id != ClockOverlayAnimation.COMPONENT_ID:
-            raise ValueError(f"Composer preview cannot render Widget {descriptor.component_id!r}")
-        clock = ClockOverlayAnimation(controller, parameters)
-        # The component deliberately owns wall-clock cadence.  The source is
-        # injected at this preview boundary so deterministic requests neither
-        # read the host clock nor alter the shared clock implementation.
-        clock._clock_now = lambda: self._wall_time  # type: ignore[method-assign]
-        return clock
+        if descriptor.component_id == ClockOverlayAnimation.COMPONENT_ID:
+            clock = ClockOverlayAnimation(controller, parameters)
+            # The component deliberately owns wall-clock cadence.  The source is
+            # injected at this preview boundary so deterministic requests neither
+            # read the host clock nor alter the shared clock implementation.
+            clock._clock_now = lambda: self._wall_time  # type: ignore[method-assign]
+            return clock
+        if descriptor.component_id == EmojiArrangerAnimation.COMPONENT_ID:
+            return EmojiArrangerAnimation(controller, parameters)
+        raise ValueError(f"Composer preview cannot render Widget {descriptor.component_id!r}")
 
     def _plant_inputs(self, _plants: Mapping[str, Any], _descriptor: ComponentDescriptor) -> Mapping[str, float]:
         geometry = self._geometry.get()

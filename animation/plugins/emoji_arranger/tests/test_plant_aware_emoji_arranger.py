@@ -1,139 +1,75 @@
-"""Opt-in calibrated plant layout tests for Emoji Arranger."""
+"""Focused Scene v2 contracts for the transparent Emoji Message Widget."""
 
-import json
-from pathlib import Path
-import tempfile
+from __future__ import annotations
+
 import unittest
 
 import numpy as np
 
+from animation.core.component_catalog import ComponentCatalog
 from animation.core.manager import PreviewLEDController
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
+from web.composer_final_preview import current_component_catalog
 
 
-class PlantAwareEmojiArrangerTests(unittest.TestCase):
-    def setUp(self):
-        self.temporary_directory = tempfile.TemporaryDirectory()
-        root = Path(self.temporary_directory.name)
-        self.foliage_path = root / "foliage.json"
-        self.globe_path = root / "globes.json"
-        self.foliage_path.write_text(
-            json.dumps({"covered_indices": [1]}), encoding="utf-8"
+class EmojiMessageWidgetTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.controller = PreviewLEDController(strips=33, leds_per_strip=138)
+
+    def test_descriptor_is_a_scaled_semantic_python_widget_and_is_catalogued(self) -> None:
+        descriptor = EmojiArrangerAnimation.component_descriptor()
+        self.assertEqual(
+            (descriptor.component_id, descriptor.provider.value, descriptor.role.value,
+             descriptor.timing_policy.value, descriptor.alpha_behavior.value,
+             descriptor.palette_policy.value, tuple(item.value for item in descriptor.plant_capabilities),
+             descriptor.fidelity_exceptions),
+            ("emoji_arranger", "python", "widget", "scaled_context", "premultiplied_rgba",
+             "semantic", ("effect_intent",), ()),
         )
-        self.globe_path.write_text(
-            json.dumps({"globe_indices": [20], "region_count": 1}),
-            encoding="utf-8",
+        self.assertIs(
+            current_component_catalog().require(provider="python", component_id="emoji_arranger", version=1),
+            descriptor,
         )
+        self.assertIs(ComponentCatalog([descriptor]).require(
+            provider="python", component_id="emoji_arranger", version=1), descriptor)
 
-    def tearDown(self):
-        self.temporary_directory.cleanup()
+    def test_transparent_premultiplied_plane_preserves_reveal_and_moves_with_scaled_time(self) -> None:
+        widget = EmojiArrangerAnimation(self.controller, {
+            "text": "HI🔥", "x_offset": 8, "y_offset": 3, "scroll_speed": 3.0, "pulse_speed": 0.0,
+        })
+        first = widget.generate_frame(0.0, 0)
+        later = widget.generate_frame(1.0, 1)
+        self.assertEqual(first.pixels.shape, (33 * 138, 4))
+        self.assertTrue(np.all(first.pixels[:, :3] <= first.pixels[:, 3:4]))
+        self.assertGreater(np.count_nonzero(first.pixels[:, 3]), 0)
+        self.assertGreater(np.count_nonzero(first.pixels[:, 3] == 0), 0)
+        self.assertFalse(np.array_equal(first.pixels, later.pixels))
 
-    def make_animation(self, **params):
-        config = {
-            "text": "👀",
-            "active_columns": 12,
-            "pulse_speed": 0.0,
-            "plant_clearance": 0,
-            "plant_mask_path": str(self.foliage_path),
-            "plant_globe_mask_path": str(self.globe_path),
-            **params,
-        }
-        controller = PreviewLEDController(strips=10, leds_per_strip=20)
-        return EmojiArrangerAnimation(controller, config)
+    def test_rejects_legacy_aliases_raw_channels_and_invalid_message_values(self) -> None:
+        for parameters, message in (
+            ({"brightness": 0.5}, "non-local"),
+            ({"speed": 1.0}, "non-local"),
+            ({"plant_aware": True}, "non-local"),
+            ({"background_red": 2}, "non-local"),
+            ({"primary_red": 255}, "non-local"),
+            ({"active_columns": 8}, "non-local"),
+            ({"text": "hello"}, "unsupported"),
+            ({"x_offset": 138}, "x_offset"),
+            ({"scroll_speed": 25.0}, "scroll_speed"),
+        ):
+            with self.subTest(parameters=parameters), self.assertRaisesRegex(ValueError, message):
+                EmojiArrangerAnimation(self.controller, parameters)
 
-    def test_disabled_mode_has_exact_baseline_layout_and_frame_parity(self):
-        implicit = self.make_animation(text="A", active_columns=8)
-        explicit = self.make_animation(text="A", active_columns=8, plant_aware=False)
-
-        self.assertFalse(implicit.get_parameter_schema()["plant_aware"]["default"])
-        self.assertEqual(implicit._arrange_text_with_wrapping("AA", 8, 1), [["A"], ["A"]])
-        for elapsed in (0.0, 0.4, 1.25):
-            np.testing.assert_array_equal(
-                implicit.generate_frame(elapsed, 0).copy(),
-                explicit.generate_frame(elapsed, 0).copy(),
-            )
-
-        frame = implicit.generate_frame(0.0, 0)
-        background = np.array((2, 6, 12), dtype=np.uint8)
-        self.assertTrue(np.array_equal(frame[0], background))
-        self.assertFalse(np.array_equal(frame[2], background))
-        self.assertIsNone(implicit._plant_layout_key)
-
-    def test_enabled_layout_moves_important_features_off_masks(self):
-        animation = self.make_animation(plant_aware=True)
-        lines = animation._arrange_text_with_wrapping("👀", 12, 1)
-        masks = animation.get_plant_masks()
-
-        origins = animation._plant_aware_layout(lines, 0, 0, 1, 1, 10, 20, masks)
-        self.assertNotEqual(origins[0], (0, 0))
-
-        cells, _, _ = animation._line_pattern_cells(lines[0], 1)
-        origin_x, origin_y = origins[0]
-        for row, column, _ in cells:
-            self.assertFalse(masks.clearance[origin_y + row, origin_x + column])
-
-    def test_foliage_and_globes_remain_visible_as_distinct_landmarks(self):
-        animation = self.make_animation(plant_aware=True)
-        frame = animation.generate_frame(0.0, 0)
-
-        np.testing.assert_array_equal(frame[1], animation.PLANT_FOLIAGE_COLOR)
-        np.testing.assert_array_equal(frame[20], animation.PLANT_GLOBE_COLOR)
-        self.assertFalse(np.array_equal(frame[1], frame[20]))
-
-    def test_clearance_and_prior_lines_are_layout_obstacles(self):
-        # One foliage pixel expands into the preferred eye cells at radius one.
-        animation = EmojiArrangerAnimation(
-            PreviewLEDController(strips=16, leds_per_strip=20),
-            {
-                "text": "👀👀",
-                "active_columns": 12,
-                "plant_aware": True,
-                "plant_clearance": 1,
-                "plant_mask_path": str(self.foliage_path),
-                "plant_globe_mask_path": str(self.globe_path),
-            },
-        )
-        lines = animation._arrange_text_with_wrapping("👀👀", 12, 1)
-        masks = animation.get_plant_masks()
-        origins = animation._plant_aware_layout(lines, 0, 0, 1, 1, 16, 20, masks)
-
-        occupied = []
-        for line, (origin_x, origin_y) in zip(lines, origins):
-            cells, _, _ = animation._line_pattern_cells(line, 1)
-            visible = {
-                (origin_y + row, origin_x + column)
-                for row, column, _ in cells
-                if not masks.clearance[origin_y + row, origin_x + column]
-            }
-            occupied.append(visible)
-            self.assertTrue(visible)
-        self.assertTrue(occupied[0].isdisjoint(occupied[1]))
-
-    def test_unavoidable_plant_pixels_clip_glyph_instead_of_hiding_landmark(self):
-        total_pixels = 7 * 12
-        self.foliage_path.write_text(
-            json.dumps({"covered_indices": list(range(total_pixels))}),
-            encoding="utf-8",
-        )
-        self.globe_path.write_text(
-            json.dumps({"globe_indices": [], "region_count": 0}), encoding="utf-8"
-        )
-        animation = EmojiArrangerAnimation(
-            PreviewLEDController(strips=7, leds_per_strip=12),
-            {
-                "text": "👀",
-                "active_columns": 12,
-                "pulse_speed": 0.0,
-                "plant_aware": True,
-                "plant_clearance": 0,
-                "plant_mask_path": str(self.foliage_path),
-                "plant_globe_mask_path": str(self.globe_path),
-            },
-        )
-
-        frame = animation.generate_frame(0.0, 0)
-        expected = np.tile(np.array(animation.PLANT_FOLIAGE_COLOR), (total_pixels, 1))
-        np.testing.assert_array_equal(frame, expected)
+    def test_valid_updates_are_deterministic_and_invalid_updates_leave_the_last_valid_plane(self) -> None:
+        widget = EmojiArrangerAnimation(self.controller, {"text": "A🔥", "pulse_speed": 0.0})
+        widget.generate_frame(.5, 0)
+        widget.update_parameters({"char_spacing": 3})
+        changed = widget.generate_frame(.5, 1)
+        self.assertTrue(changed.changed)
+        before = dict(widget.params)
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            widget.update_parameters({"text": "?"})
+        self.assertEqual(widget.params, before)
 
 
 if __name__ == "__main__":

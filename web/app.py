@@ -23,6 +23,7 @@ from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
+from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -42,7 +43,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v6"
+COMPOSER_SHELL_VERSION = "composer-shell-v7"
 
 PAINTER_MASK_TYPES = (
     {
@@ -1415,7 +1416,16 @@ class AnimationWebInterface:
 
     def _composer_canonical(self, request_value: Any):
         """Canonicalize the one current Scene v2 representation for Composer."""
-        return normalize_composer_scene(request_value, self.composer_catalog)
+        canonical = normalize_composer_scene(request_value, self.composer_catalog)
+        # The current-only schema intentionally does not carry per-component
+        # validator hooks. Keep Emoji Message's compact, local controls at the
+        # Composer boundary so an invalid text or position cannot replace the
+        # last live/recoverable scene before the final-preview runtime sees it.
+        for widget in canonical.scene["widgets"]:
+            component = widget["component"]
+            if component["component_id"] == EmojiArrangerAnimation.COMPONENT_ID:
+                EmojiArrangerAnimation._normalized_parameters(component["parameters"])
+        return canonical
 
     def _fallback_led_info(self) -> Dict[str, int]:
         """Current preview-manager dimensions used as a fallback layout."""

@@ -1,459 +1,222 @@
-#!/usr/bin/env python3
-"""
-Emoji Arranger Animation
+"""Scene v2 Emoji Message Widget.
 
-Displays strings of emojis and characters arranged on the grid with proper wrapping.
-Supports all emojis, letters A-Z, and numbers 0-9 from the emoji animation patterns.
+The message owns only a small transparent glyph plane. Palette resolution,
+scaled time, plant presentation, and output brightness remain host concerns.
 """
+
+from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from types import MappingProxyType
+from typing import Any, Mapping, Optional
 
 import numpy as np
 
 from animation import AnimationBase
-from animation.libraries.color import mix_rgb, parameter_rgb, scale_rgb
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.compositing import OverlayFrame
+from animation.core.presentation_contracts import ResolvedScene
 from animation.libraries.pixel_art import EMOJI_PATTERNS
-from animation.core.plant_awareness import PlantMaskGeometry
+
+
+def _dirty_ranges(previous: np.ndarray, current: np.ndarray) -> tuple[tuple[int, int], ...]:
+    changed = np.flatnonzero(np.any(previous != current, axis=1))
+    if not changed.size:
+        return ()
+    starts = changed[np.r_[True, np.diff(changed) != 1]]
+    ends = changed[np.r_[np.diff(changed) != 1, True]] + 1
+    return tuple((int(start), int(end)) for start, end in zip(starts, ends))
 
 
 class EmojiArrangerAnimation(AnimationBase):
-    """Display strings of emojis and characters with proper wrapping"""
+    """A deterministic, transparent, semantic-palette Emoji Message plane."""
 
-    ANIMATION_NAME = "Emoji Arranger"
-    ANIMATION_DESCRIPTION = "Arrange strings of emojis and characters on the grid with wrapping"
+    ANIMATION_NAME = "Emoji Message"
+    ANIMATION_DESCRIPTION = "A compact scrolling emoji message composed over the current scene"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "2.0"
 
-    PLANT_FOLIAGE_COLOR = (8, 46, 14)
-    PLANT_GLOBE_COLOR = (28, 42, 92)
-    _IMPORTANT_PATTERN_CELLS = frozenset(("E", "M", "H"))
+    COMPONENT_ID = "emoji_arranger"
+    COMPONENT_VERSION = 1
+    PROVIDER = "python"
+    ROLE = "widget"
+    FRAME_FORMAT = "rgba_uint8_premultiplied_strip_major"
+    TIMING_POLICY = "scaled_context"
+    PALETTE_POLICY = "semantic"
+    PALETTE_ROLES = ("message", "highlight", "ink")
+    DEFAULTS = MappingProxyType({
+        "text": "HI🔥", "x_offset": 8, "y_offset": 3,
+        "char_spacing": 1, "line_spacing": 1,
+        "scroll_speed": 0.0, "pulse_speed": 0.5,
+    })
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID, version=COMPONENT_VERSION,
+        provider=PROVIDER, role=ROLE, timing_policy=TIMING_POLICY,
+        alpha_behavior="premultiplied_rgba", palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent",), fidelity_exceptions=(),
+        defaults=DEFAULTS,
+    )
+    SEMANTIC_PALETTES = MappingProxyType({
+        "neutral": MappingProxyType({"message": (150, 255, 218), "highlight": (225, 255, 244), "ink": (8, 22, 19)}),
+        "mist": MappingProxyType({"message": (170, 228, 245), "highlight": (235, 252, 255), "ink": (9, 25, 38)}),
+        "spectrum": MappingProxyType({"message": (54, 238, 230), "highlight": (231, 181, 255), "ink": (17, 5, 36)}),
+        "ember": MappingProxyType({"message": (255, 202, 92), "highlight": (255, 239, 179), "ink": (48, 10, 4)}),
+    })
 
-    def __init__(self, controller, config: Dict[str, Any] = None):
-        super().__init__(controller, config)
+    def __init__(self, controller: Any, config: Optional[Mapping[str, Any]] = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
+        self.width, self.height = self.get_strip_info()
+        self._buffers = tuple(np.zeros((self.get_pixel_count(), 4), dtype=np.uint8) for _ in range(2))
+        self._last_pixels = self._buffers[0]
+        self._last_key: tuple[Any, ...] | None = None
+        self._revision = 0
+        self._presentation_context: ResolvedScene | None = None
 
-        self.emoji_patterns = EMOJI_PATTERNS
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
 
-        self.default_params.update({
-            'text': 'HI🔥',
-            'char_spacing': 1,
-            'line_spacing': 1,
-            'scroll_speed': 0.0,
-            'background_red': 2,
-            'background_green': 6,
-            'background_blue': 12,
-            'primary_red': 255,
-            'primary_green': 200,
-            'primary_blue': 40,
-            'accent_red': 235,
-            'accent_green': 60,
-            'accent_blue': 70,
-            'pulse_speed': 0.5,
-            'x_offset': 0,
-            'y_offset': 0,
-            'active_columns': 8  # Hardware limitation
-        })
-
-        self.params = {**self.default_params, **self.config}
-        self._plant_layout_key = None
-        self._plant_layout_origins: Tuple[Tuple[int, int], ...] = ()
-
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        schema.update({
-            'text': {
-                'type': 'str',
-                'default': 'HI🔥',
-                'description': 'Text string to display (emojis, letters A-Z, numbers 0-9)'
-            },
-            'char_spacing': {
-                'type': 'int',
-                'min': 0,
-                'max': 10,
-                'default': 1,
-                'description': 'Spacing between characters'
-            },
-            'line_spacing': {
-                'type': 'int',
-                'min': 0,
-                'max': 10,
-                'default': 1,
-                'description': 'Spacing between lines'
-            },
-            'scroll_speed': {
-                'type': 'float',
-                'min': 0.0,
-                'max': 5.0,
-                'default': 0.0,
-                'description': 'Horizontal scroll speed (0 = no scroll)'
-            },
-            'pulse_speed': {
-                'type': 'float',
-                'min': 0.0,
-                'max': 3.0,
-                'default': 0.5,
-                'description': 'Speed of the breathing effect'
-            },
-            'x_offset': {
-                'type': 'int',
-                'min': -50,
-                'max': 50,
-                'default': 0,
-                'description': 'Horizontal offset'
-            },
-            'y_offset': {
-                'type': 'int',
-                'min': -20,
-                'max': 20,
-                'default': 0,
-                'description': 'Vertical offset'
-            },
-            'background_red': {'type': 'int', 'min': 0, 'max': 255, 'default': 2, 'description': 'Background red'},
-            'background_green': {'type': 'int', 'min': 0, 'max': 255, 'default': 6, 'description': 'Background green'},
-            'background_blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 12, 'description': 'Background blue'},
-            'primary_red': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Primary color red'},
-            'primary_green': {'type': 'int', 'min': 0, 'max': 255, 'default': 200, 'description': 'Primary color green'},
-            'primary_blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 40, 'description': 'Primary color blue'},
-            'accent_red': {'type': 'int', 'min': 0, 'max': 255, 'default': 235, 'description': 'Accent color red'},
-            'accent_green': {'type': 'int', 'min': 0, 'max': 255, 'default': 60, 'description': 'Accent color green'},
-            'accent_blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 70, 'description': 'Accent color blue'},
-            'active_columns': {
-                'type': 'int',
-                'min': 1,
-                'max': self.get_strip_info()[0],
-                'default': 8,
-                'description': 'Number of active columns (hardware limitation)'
-            }
-        })
-        return schema
-
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
-        strip_count, leds_per_strip = self.get_strip_info()
-        # Get parameters
-        text = str(self.params.get('text', 'HI🔥'))
-        char_spacing = int(self.params.get('char_spacing', 1))
-        line_spacing = int(self.params.get('line_spacing', 1))
-        scroll_speed = float(self.params.get('scroll_speed', 0.0))
-        x_offset = int(self.params.get('x_offset', 0))
-        y_offset = int(self.params.get('y_offset', 0))
-
-        # Pre-fill with background color
-        background = self.apply_brightness(self._color_from_params('background', (2, 6, 12)))
-        pixel_colors = self.next_frame_buffer(clear=False)
-        pixel_colors[:] = background
-
-        # Calculate scroll offset
-        scroll_offset = int(time_elapsed * scroll_speed * 10) if scroll_speed > 0 else 0
-
-        # Use only active columns for wrapping (hardware limitation)
-        active_columns = int(self.params.get('active_columns', 8))
-
-        # Arrange characters with wrapping
-        arranged_chars = self._arrange_text_with_wrapping(text, active_columns, char_spacing)
-        
-        # Render each character
-        palette = self._build_palette(time_elapsed)
-
-        plant_masks: Optional[PlantMaskGeometry] = None
-        plant_origins: Sequence[Tuple[int, int]] = ()
-        if self.plant_aware_enabled():
-            plant_masks = self.get_plant_masks()
-            pixel_colors[plant_masks.foliage_flat] = self.apply_brightness(
-                self.PLANT_FOLIAGE_COLOR
-            )
-            pixel_colors[plant_masks.globes_flat] = self.apply_brightness(
-                self.PLANT_GLOBE_COLOR
-            )
-            plant_origins = self._plant_aware_layout(
-                arranged_chars,
-                x_offset - scroll_offset,
-                y_offset,
-                char_spacing,
-                line_spacing,
-                strip_count,
-                leds_per_strip,
-                plant_masks,
-            )
-        
-        current_y = y_offset
-        for line_index, line in enumerate(arranged_chars):
-            current_x = x_offset - scroll_offset
-            render_y = current_y
-            if plant_masks is not None:
-                current_x, render_y = plant_origins[line_index]
-            
-            for char in line:
-                if char in self.emoji_patterns:
-                    self._render_character(
-                        char,
-                        current_x,
-                        render_y,
-                        palette,
-                        strip_count,
-                        leds_per_strip,
-                        pixel_colors,
-                        blocked=plant_masks.clearance if plant_masks is not None else None,
-                    )
-                
-                # Move to next character position
-                char_width = self._get_character_width(char)
-                current_x += char_width + char_spacing
-            
-            # Move to next line
-            current_y += 7 + line_spacing  # Character height is 7
-
-            # Stop if we're below the configured display height.
-            if current_y >= leds_per_strip:
-                break
-
-        return pixel_colors
-
-    def _plant_aware_layout(
-        self,
-        lines: Sequence[Sequence[str]],
-        preferred_x: int,
-        preferred_y: int,
-        char_spacing: int,
-        line_spacing: int,
-        strip_count: int,
-        leds_per_strip: int,
-        masks: PlantMaskGeometry,
-    ) -> Tuple[Tuple[int, int], ...]:
-        """Route wrapped lines around calibrated plant terrain.
-
-        Glyph features (eyes, mouths, and highlights) receive extra weight when
-        a completely clear fit is unavailable.  Previously placed lines are
-        reserved so rerouting cannot pile several lines into the same opening.
-        """
-        key = (
-            tuple(tuple(line) for line in lines),
-            preferred_x,
-            preferred_y,
-            char_spacing,
-            line_spacing,
-            strip_count,
-            leds_per_strip,
-            int(self.params.get("plant_clearance", 1)),
-            str(self.params.get("plant_mask_path", "")),
-            str(self.params.get("plant_globe_mask_path", "")),
-        )
-        if key == self._plant_layout_key:
-            return self._plant_layout_origins
-
-        reserved = np.zeros((strip_count, leds_per_strip), dtype=bool)
-        origins = []
-        line_y = preferred_y
-        for line in lines:
-            cells, width, height = self._line_pattern_cells(line, char_spacing)
-            origin = self._nearest_plant_safe_origin(
-                cells,
-                width,
-                height,
-                preferred_x,
-                line_y,
-                strip_count,
-                leds_per_strip,
-                masks,
-                reserved,
-            )
-            origins.append(origin)
-            origin_x, origin_y = origin
-            for row, column, _ in cells:
-                strip = origin_y + row
-                led = origin_x + column
-                if (
-                    0 <= strip < strip_count
-                    and 0 <= led < leds_per_strip
-                    and not masks.clearance[strip, led]
-                ):
-                    reserved[strip, led] = True
-            line_y += 7 + line_spacing
-
-        self._plant_layout_key = key
-        self._plant_layout_origins = tuple(origins)
-        return self._plant_layout_origins
-
-    def _line_pattern_cells(
-        self, line: Sequence[str], char_spacing: int
-    ) -> Tuple[List[Tuple[int, int, str]], int, int]:
-        cells: List[Tuple[int, int, str]] = []
-        cursor = 0
-        height = 0
-        for char in line:
-            pattern = self.emoji_patterns.get(char, ())
-            height = max(height, len(pattern))
-            for row, pattern_row in enumerate(pattern):
-                cells.extend(
-                    (row, cursor + column, cell)
-                    for column, cell in enumerate(pattern_row)
-                    if cell != "."
-                )
-            cursor += self._get_character_width(char) + char_spacing
-        width = max(0, cursor - (char_spacing if line else 0))
-        return cells, width, height
-
-    def _nearest_plant_safe_origin(
-        self,
-        cells: Sequence[Tuple[int, int, str]],
-        width: int,
-        height: int,
-        preferred_x: int,
-        preferred_y: int,
-        strip_count: int,
-        leds_per_strip: int,
-        masks: PlantMaskGeometry,
-        reserved: np.ndarray,
-    ) -> Tuple[int, int]:
-        def score(origin: Tuple[int, int]) -> Tuple[int, int, int, int, int]:
-            x, y = origin
-            reserved_hits = 0
-            plant_cost = 0
-            plant_hits = 0
-            offscreen_hits = 0
-            for row, column, cell in cells:
-                strip = y + row
-                led = x + column
-                if not (0 <= strip < strip_count and 0 <= led < leds_per_strip):
-                    offscreen_hits += 1
-                    continue
-                importance = 4 if cell in self._IMPORTANT_PATTERN_CELLS else 1
-                if reserved[strip, led]:
-                    reserved_hits += importance
-                if masks.globes[strip, led]:
-                    plant_cost += 12 * importance
-                    plant_hits += 1
-                elif masks.foliage[strip, led]:
-                    plant_cost += 8 * importance
-                    plant_hits += 1
-                elif masks.clearance[strip, led]:
-                    plant_cost += 2 * importance
-                    plant_hits += 1
-            distance = abs(x - preferred_x) + abs(y - preferred_y)
-            return reserved_hits, plant_cost, plant_hits, offscreen_hits, distance
-
-        preferred = (preferred_x, preferred_y)
-        if score(preferred)[:4] == (0, 0, 0, 0):
-            return preferred
-
-        max_x = max(0, leds_per_strip - max(1, width))
-        max_y = max(0, strip_count - max(1, height))
-        candidates = (
-            (x, y)
-            for y in range(max_y + 1)
-            for x in range(max_x + 1)
-        )
-        return min(candidates, key=lambda origin: (*score(origin), origin[1], origin[0]))
-
-    def _arrange_text_with_wrapping(self, text: str, max_width: int, char_spacing: int) -> List[List[str]]:
-        """Arrange text into lines with proper character wrapping"""
-        lines = []
-        current_line = []
-        current_width = 0
-
-        for char in text:
-            if char in self.emoji_patterns:
-                char_width = self._get_character_width(char)
-                needed_width = char_width + (char_spacing if current_line else 0)
-
-                # Check if character fits on current line
-                if current_width + needed_width <= max_width:
-                    current_line.append(char)
-                    current_width += needed_width
-                else:
-                    # Start new line
-                    if current_line:
-                        lines.append(current_line)
-                    current_line = [char]
-                    current_width = char_width
-            elif char == ' ':
-                # Handle spaces - try to fit, otherwise start new line
-                if current_width + 3 <= max_width:  # Space width
-                    current_width += 3
-                else:
-                    if current_line:
-                        lines.append(current_line)
-                    current_line = []
-                    current_width = 0
-
-        # Add final line
-        if current_line:
-            lines.append(current_line)
-
-        return lines
-
-    def _get_character_width(self, char: str) -> int:
-        """Get the width of a character pattern"""
-        if char in self.emoji_patterns:
-            pattern = self.emoji_patterns[char]
-            return len(pattern[0]) if pattern else 0
-        return 0
-
-    def _render_character(self, char: str, start_x: int, start_y: int, palette: Dict[str, Tuple[int, int, int]],
-                         strip_count: int, leds_per_strip: int, pixel_colors: List[Tuple[int, int, int]],
-                         blocked: Optional[np.ndarray] = None):
-        """Render a single character at the specified position"""
-        if char not in self.emoji_patterns:
-            return
-
-        pattern = self.emoji_patterns[char]
-        for row_idx, row in enumerate(pattern):
-            strip = start_y + row_idx
-            if strip < 0 or strip >= strip_count:
-                continue
-
-            for col_idx, cell in enumerate(row):
-                led = start_x + col_idx
-                if led < 0 or led >= leds_per_strip:
-                    continue
-                if blocked is not None and blocked[strip, led]:
-                    continue
-
-                color = palette.get(cell)
-                if color is None:
-                    continue
-
-                pixel_index = strip * leds_per_strip + led
-                if 0 <= pixel_index < len(pixel_colors):
-                    pixel_colors[pixel_index] = self.apply_brightness(color)
-
-    def _build_palette(self, time_elapsed: float) -> Dict[str, Tuple[int, int, int]]:
-        """Build color palette with breathing effect"""
-        pulse_speed = max(0.0, float(self.params.get('pulse_speed', 0.5)))
-        pulse = (math.sin(time_elapsed * pulse_speed * 2 * math.pi) + 1.0) / 2.0
-        accent_wave = (math.sin(time_elapsed * (pulse_speed * 1.5 + 0.3) * 2 * math.pi + 1.1) + 1.0) / 2.0
-
-        primary = self._color_from_params('primary', (255, 200, 40))
-        accent = self._color_from_params('accent', (235, 60, 70))
-        background = self._color_from_params('background', (2, 6, 12))
-
-        face = self._scale_color(primary, 0.8 + 0.25 * pulse)
-        highlight = self._mix_colors(primary, accent, 0.25)
-        highlight = self._scale_color(highlight, 0.9 + 0.25 * accent_wave)
-        mouth_base = self._mix_colors(accent, (90, 40, 20), 0.35)
-        mouth = self._scale_color(mouth_base, 0.8 + 0.2 * pulse)
-        eye = (20, 20, 20)
-
+    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
         return {
-            '.': background,
-            'F': face,
-            'H': highlight,
-            'E': eye,
-            'M': mouth
+            "text": {"type": "str", "default": "HI🔥", "description": "Letters, numbers, spaces, and supported emoji"},
+            "x_offset": {"type": "int", "min": -137, "max": 137, "default": 8, "description": "Horizontal message position"},
+            "y_offset": {"type": "int", "min": -32, "max": 32, "default": 3, "description": "Vertical message position"},
+            "char_spacing": {"type": "int", "min": 0, "max": 8, "default": 1, "description": "Space between glyphs"},
+            "line_spacing": {"type": "int", "min": 0, "max": 8, "default": 1, "description": "Space between wrapped lines"},
+            "scroll_speed": {"type": "float", "min": 0.0, "max": 24.0, "default": 0.0, "description": "Message scroll pixels per scaled second"},
+            "pulse_speed": {"type": "float", "min": 0.0, "max": 3.0, "default": 0.5, "description": "Message pulse cycles per scaled second"},
         }
 
-    def _color_from_params(self, prefix: str, default: Tuple[int, int, int]) -> Tuple[int, int, int]:
-        """Extract RGB color from parameters"""
-        return parameter_rgb(self.params, prefix, default, clamp_channels=False)
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        unknown = set(new_params) - set(self.DEFAULTS)
+        if unknown:
+            raise ValueError(f"Emoji Message does not accept non-local parameters: {sorted(unknown)!r}")
+        self.params = self._normalized_parameters({**self.params, **dict(new_params)})
+        self._last_key = None
 
-    def _scale_color(self, color: Tuple[int, int, int], scale: float) -> Tuple[int, int, int]:
-        """Scale color brightness"""
-        return scale_rgb(
-            color,
-            scale,
-            scale_bounds=(0.0, 2.0),
-            clamp_lower=False,
-        )
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        del old
+        descriptor = new.descriptor
+        if (descriptor.component_id, descriptor.version, descriptor.provider.value, descriptor.role.value) != (
+            self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE,
+        ):
+            raise ValueError("Emoji Message received a context for another component")
+        if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Emoji Message requires a semantic Scene v2 palette")
+        self._presentation_context = new
 
-    def _mix_colors(self, base: Tuple[int, int, int], overlay: Tuple[int, int, int], mix: float) -> Tuple[int, int, int]:
-        """Mix two colors"""
-        return mix_rgb(base, overlay, mix)
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene) -> OverlayFrame:
+        self.set_presentation_context(context)
+        return self.generate_frame(context.phase_time, self.frame_count)
+
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> OverlayFrame:
+        del frame_count
+        if self._presentation_context is None:
+            phase_time, palette_id, parameters = max(0.0, float(time_elapsed)), "neutral", self.params
+        else:
+            phase_time = max(0.0, float(self._presentation_context.phase_time))
+            palette_id = str(self._presentation_context.palette["palette_id"])
+            parameters = self._presentation_context.parameters
+        self.params = self._normalized_parameters(parameters)
+        tick = int(math.floor(phase_time * 60.0 + 1e-9))
+        key = (tuple(self.params.items()), palette_id, tick)
+        if key == self._last_key:
+            return OverlayFrame(self._last_pixels, revision=self._revision, changed=False)
+        output = self._buffers[1] if self._last_pixels is self._buffers[0] else self._buffers[0]
+        self._paint(output, phase_time, palette_id)
+        ranges = _dirty_ranges(self._last_pixels, output)
+        self._last_pixels = output
+        self._last_key = key
+        self._revision += 1
+        return OverlayFrame(output, revision=self._revision, changed=True, dirty_ranges=ranges)
+
+    def _paint(self, output: np.ndarray, phase_time: float, palette_id: str) -> None:
+        canvas = output.reshape(self.width, self.height, 4)
+        canvas.fill(0)
+        palette = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
+        pulse = .82 + .18 * ((math.sin(phase_time * self.params["pulse_speed"] * math.tau) + 1.0) * .5)
+        scroll = int(math.floor(phase_time * self.params["scroll_speed"] + 1e-9))
+        lines = self._arrange_text(self.params["text"], self.height, self.params["char_spacing"])
+        y = self.params["y_offset"]
+        for line in lines:
+            x = self.params["x_offset"] - scroll
+            for character in line:
+                self._paint_glyph(canvas, character, x, y, palette, pulse)
+                x += self._glyph_width(character) + self.params["char_spacing"]
+            y += 7 + self.params["line_spacing"]
+            if y >= self.width:
+                break
+
+    @staticmethod
+    def _glyph_width(character: str) -> int:
+        pattern = EMOJI_PATTERNS.get(character, ())
+        return len(pattern[0]) if pattern else 3
+
+    @classmethod
+    def _arrange_text(cls, text: str, max_width: int, spacing: int) -> list[list[str]]:
+        lines: list[list[str]] = []
+        line: list[str] = []
+        used = 0
+        for character in text:
+            width = cls._glyph_width(character)
+            needed = width + (spacing if line else 0)
+            if line and used + needed > max_width:
+                lines.append(line)
+                line, used = [], 0
+            if character != " ":
+                line.append(character)
+            used += needed if line else width
+        if line:
+            lines.append(line)
+        return lines
+
+    @staticmethod
+    def _paint_glyph(canvas: np.ndarray, character: str, x: int, y: int,
+                     palette: Mapping[str, tuple[int, int, int]], pulse: float) -> None:
+        role_for = {"F": "message", "H": "highlight", "E": "ink", "M": "ink"}
+        for row, pattern_row in enumerate(EMOJI_PATTERNS[character]):
+            strip = y + row
+            if not 0 <= strip < canvas.shape[0]:
+                continue
+            for column, cell in enumerate(pattern_row):
+                role = role_for.get(cell)
+                led = x + column
+                if role is None or not 0 <= led < canvas.shape[1]:
+                    continue
+                alpha = 235 if role == "highlight" else int(round(220 * pulse))
+                rgb = np.asarray(palette[role], dtype=np.uint16)
+                canvas[strip, led, :3] = ((rgb * alpha + 127) // 255).astype(np.uint8)
+                canvas[strip, led, 3] = alpha
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        unknown = set(values) - set(cls.DEFAULTS)
+        if unknown:
+            raise ValueError(f"Emoji Message does not accept non-local parameters: {sorted(unknown)!r}")
+        result = dict(cls.DEFAULTS)
+        result.update(values)
+        text = result["text"]
+        if not isinstance(text, str) or not text or len(text) > 64:
+            raise ValueError("text must contain 1 to 64 supported characters")
+        unsupported = sorted({character for character in text if character != " " and character not in EMOJI_PATTERNS})
+        if unsupported:
+            raise ValueError(f"text contains unsupported characters: {''.join(unsupported)!r}")
+        for name, minimum, maximum in (("x_offset", -137, 137), ("y_offset", -32, 32), ("char_spacing", 0, 8), ("line_spacing", 0, 8)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                raise ValueError(f"{name} must be an integer from {minimum} to {maximum}")
+        for name, minimum, maximum in (("scroll_speed", 0.0, 24.0), ("pulse_speed", 0.0, 3.0)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not minimum <= float(value) <= maximum:
+                raise ValueError(f"{name} must be a finite number from {minimum} to {maximum}")
+            result[name] = float(value)
+        return result
+
+
+__all__ = ["EmojiArrangerAnimation"]
