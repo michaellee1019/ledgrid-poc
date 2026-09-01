@@ -9,8 +9,10 @@ import unittest
 import numpy as np
 
 from web.app import AnimationWebInterface
+from animation.core.manager import AnimationManager
+from animation.core.scene_runtime import ScenePresentationContext
 from web.composer_final_preview import (
-    ComposerFinalPreview, NATIVE_AURORA_BUNDLE_DIGEST,
+    ComposerFinalPreview, InstalledFinalSceneRuntime, NATIVE_AURORA_BUNDLE_DIGEST,
     NATIVE_AURORA_COMPONENT_ID,
 )
 
@@ -118,6 +120,42 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         self.assertEqual(body["wall_mutations"], 0)
         self.assertEqual(self.wall.commands, [])
         self.assertEqual(self.interface.composer_control.commands, [])
+
+    def test_live_host_adapter_and_preview_share_exact_resolved_final_context(self) -> None:
+        """Independent installed runtimes must agree before browser encoding."""
+
+        wall_time = datetime.fromisoformat("2026-08-31T13:47:10+00:00")
+        cases = (
+            # Premultiplied alpha, ordered semantic Widgets, enabled optics.
+            _scene(
+                animation="conway_life", palette="ember", pace=.7, brightness=.5,
+                widgets=[_clock("first", [255, 0, 0]), _clock("second", [0, 0, 255], led=-8)],
+                plants={"effects": {"version": 1, "active": ["illuminate", "shadow"],
+                                    "strengths": {"illuminate": .45, "shadow": .25}}},
+            ),
+            # Opaque Animation and explicitly disabled plant effects retain
+            # their descriptor capability opt-outs without a second final pass.
+            _scene(animation="tetris", palette="mist", pace=1.25, brightness=.82,
+                   plants={"effects": {"version": 1, "active": [], "strengths": {}}}),
+        )
+        for scene in cases:
+            with self.subTest(animation=scene["animation"]["component_id"]):
+                canonical = self.interface._composer_canonical({"origin": "composer", "scene": scene})
+                host_runtime = InstalledFinalSceneRuntime(
+                    self.interface.composer_catalog, self.interface.project_root,
+                    controller=_Controller(),
+                )
+                # This is the only manager involvement: it accepts exact final
+                # bytes and cannot replay any presentation stage itself.
+                live_host = object.__new__(AnimationManager)
+                live_host.controller = _Controller()
+                hosted = live_host.render_scene_v2_presentation(
+                    host_runtime, canonical, monotonic_elapsed=1.25, wall_time=wall_time,
+                )
+                preview = ComposerFinalPreview(self.interface.composer_catalog, self.interface.project_root)
+                previewed = preview.render(canonical, 1.25, wall_time)
+                np.testing.assert_array_equal(hosted.pixels, previewed.pixels)
+                self.assertIs(live_host.current_frame_data, hosted.pixels)
 
     def test_alpha_and_opaque_animation_paths_are_both_final_compositions(self) -> None:
         alpha = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(animation="conway_life"))))

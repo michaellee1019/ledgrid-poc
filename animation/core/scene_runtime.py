@@ -33,6 +33,28 @@ class CanonicalSceneRuntimeError(ValueError):
 
 
 @dataclass(frozen=True)
+class ScenePresentationContext:
+    """One resolved Scene v2 frame request shared by host and Preview.
+
+    The canonical scene remains the sole authored input.  Elapsed time and
+    wall time are deliberately runtime-only inputs, so a caller can reproduce
+    a final frame without putting a clock value into the Scene identity.
+    """
+
+    canonical: CanonicalScene
+    monotonic_elapsed: float
+    wall_time: Any = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.canonical, CanonicalScene):
+            raise TypeError("canonical must be a CanonicalScene")
+        elapsed = self.monotonic_elapsed
+        if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)) or not math.isfinite(float(elapsed)) or elapsed < 0:
+            raise ValueError("monotonic_elapsed must be finite and non-negative")
+        object.__setattr__(self, "monotonic_elapsed", float(elapsed))
+
+
+@dataclass(frozen=True)
 class RuntimeFrame:
     pixels: np.ndarray
     basis: SceneIdentity
@@ -52,6 +74,7 @@ PlantInputResolver = Callable[[Mapping[str, Any], ComponentDescriptor], Mapping[
 PlantOptics = Callable[[np.ndarray, Mapping[str, Any]], np.ndarray]
 WidgetPlacementResolver = Callable[[Mapping[str, Any], int, int, int], tuple[int, int]]
 WidgetSafeGeometry = Callable[[Mapping[str, Any], int, int], np.ndarray]
+WallTimeConsumer = Callable[[Any], None]
 
 
 @dataclass
@@ -79,6 +102,7 @@ class CanonicalSceneRuntime:
         plant_optics: Optional[PlantOptics] = None,
         widget_placement_resolver: Optional[WidgetPlacementResolver] = None,
         widget_safe_geometry: Optional[WidgetSafeGeometry] = None,
+        wall_time_consumer: Optional[WallTimeConsumer] = None,
         master_brightness: float = 1.0,
     ) -> None:
         if not isinstance(catalog, ComponentCatalog):
@@ -97,6 +121,7 @@ class CanonicalSceneRuntime:
         # placements use installation authority rather than scene data.
         self._widget_placement_resolver = widget_placement_resolver
         self._widget_safe_geometry = widget_safe_geometry or self._all_safe_widget_geometry
+        self._wall_time_consumer = wall_time_consumer
         self._master_brightness = self._factor(master_brightness, "master_brightness")
         self._animation: _ComponentSlot | None = None
         self._widgets: dict[str, _ComponentSlot] = {}
@@ -167,10 +192,28 @@ class CanonicalSceneRuntime:
         return bool(handler(kind, x_value, y_value, strength_value))
 
     def render(self, monotonic_elapsed: float) -> RuntimeFrame:
+        """Render an already-active scene at an elapsed monotonic time.
+
+        New host/Preview boundaries should use :meth:`render_presentation` so
+        their clock source is carried in the same immutable request.
+        """
         canonical = self._canonical
         if canonical is None:
             raise CanonicalSceneRuntimeError("no canonical Scene v2 has been activated")
-        elapsed = self._finite_nonnegative(monotonic_elapsed, "monotonic_elapsed")
+        return self.render_presentation(ScenePresentationContext(canonical, monotonic_elapsed))
+
+    def render_presentation(self, presentation: ScenePresentationContext) -> RuntimeFrame:
+        """Render one exact installed-final frame from one resolved context."""
+        if not isinstance(presentation, ScenePresentationContext):
+            raise TypeError("presentation must be a ScenePresentationContext")
+        canonical = self._canonical
+        if canonical is None:
+            raise CanonicalSceneRuntimeError("no canonical Scene v2 has been activated")
+        if canonical.identity != presentation.canonical.identity:
+            raise CanonicalSceneRuntimeError("presentation context does not match the active canonical Scene v2")
+        if self._wall_time_consumer is not None:
+            self._wall_time_consumer(presentation.wall_time)
+        elapsed = presentation.monotonic_elapsed
         scene = canonical.scene
         bg_context = self._context(canonical, self._descriptor(scene["background"]), scene["background"]["parameters"], elapsed)
         background = self._background_renderer(bg_context, self._frame_count)
@@ -427,4 +470,7 @@ def _freeze_json(value: Any) -> Any:
     return value
 
 
-__all__ = ["CanonicalSceneRuntime", "CanonicalSceneRuntimeError", "RuntimeFrame"]
+__all__ = [
+    "CanonicalSceneRuntime", "CanonicalSceneRuntimeError", "RuntimeFrame",
+    "ScenePresentationContext",
+]
