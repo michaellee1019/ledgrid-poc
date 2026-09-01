@@ -108,5 +108,13 @@ wait -n "$CONTROLLER_PID" "$WEB_PID"
 EXIT_STATUS=$?
 set -e
 
+if [ "$EXIT_STATUS" -ne 0 ]; then
+    echo "ledgrid child exited with status $EXIT_STATUS (release ${RELEASE_ID:-unknown})" >&2
+    for log_file in controller.log web.log; do
+        echo "--- $log_file ---" >&2
+        tail -n 200 "$log_file" >&2 || true
+    done
+fi
+
 cleanup
 exit "$EXIT_STATUS"

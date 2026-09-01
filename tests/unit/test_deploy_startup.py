@@ -159,6 +159,53 @@ exit 65
         for invocation in server_invocations:
             self.assertIn(f"--release-id {release_id}", invocation)
 
+    def test_failed_child_logs_are_copied_to_the_service_journal(self) -> None:
+        bash_env = self.root / "bash-env"
+        bash_env.write_text(
+            'wait() { if [ "${1:-}" = -n ]; then shift; builtin wait "$1"; '
+            'else builtin wait "$@"; fi; }\n',
+            encoding="utf-8",
+        )
+        self._write_executable(
+            self.root / "venv" / "bin" / "python",
+            """#!/bin/bash
+set -euo pipefail
+if [ "${1:-}" = "-" ]; then
+    program=$(cat)
+    case "$program" in
+        *resolve_active_release_id*) printf '%s\n' "${LEDGRID_TEST_RELEASE_ID:-}" ;;
+        *default_strip_count*) printf '33\n' ;;
+        *DEFAULT_LEDS_PER_STRIP*) printf '138\n' ;;
+        *DEFAULT_ANIMATION_SPEED_SCALE*) printf '1.0\n' ;;
+        *) exit 64 ;;
+    esac
+    exit 0
+fi
+case " $* " in
+    *" --mode controller "*) printf 'controller traceback sentinel\n'; exit 23 ;;
+    *" --mode web "*) sleep 1 ;;
+esac
+exit 65
+""",
+        )
+
+        completed = subprocess.run(
+            ["/bin/bash", os.fspath(self.start_script)],
+            cwd=self.root,
+            env={
+                **os.environ,
+                "BASH_ENV": os.fspath(bash_env),
+                "LEDGRID_TEST_RELEASE_ID": "f" * 64,
+            },
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 23)
+        self.assertIn("ledgrid child exited with status 23", completed.stderr)
+        self.assertIn("controller traceback sentinel", completed.stderr)
+
     def test_missing_runtime_interpreter_fails_without_system_python_fallback(
         self,
     ) -> None:
