@@ -42,10 +42,22 @@ cp -rf source dest          # NOT: cp -r source dest
 ```
 
 **Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+
+## SSH and SCP
+
+**ALWAYS use the dedicated `.gpt-key`; NEVER invoke bare `ssh` or `scp`.** Bare remote commands may consult the human-managed SSH agent, request signing or a passphrase, or block waiting for human interaction. Agent automation must never depend on that interaction.
+
+The canonical key is `/Users/rtimmons/Projects/ledgrid-poc/.gpt-key`. It is intentionally ignored and may not exist inside temporary Git worktrees, so use this absolute saved-project path for every remote command:
+
+```bash
+LEDGRID_SSH_KEY=/Users/rtimmons/Projects/ledgrid-poc/.gpt-key
+ssh -i "$LEDGRID_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 user@host -- command
+scp -i "$LEDGRID_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes source user@host:path
+```
+
+For recipes or tools that accept an SSH key, explicitly pass the same key, for example `SSH_KEY="$LEDGRID_SSH_KEY" just deploy`. If `.gpt-key` is absent or unreadable, stop and report the blocker; do not fall back to default identities, the SSH agent, password prompts, or a newly generated key.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
