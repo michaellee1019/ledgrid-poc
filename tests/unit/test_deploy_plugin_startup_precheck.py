@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 from pathlib import Path
+import shutil
 import tempfile
 from typing import Any
 import unittest
@@ -26,7 +28,11 @@ class _HistoricalAnyLoader(AnimationPluginLoader):
     """The pre-fix candidate test which forwarded ``typing.Any`` to issubclass."""
 
     @staticmethod
-    def _is_concrete_animation_class(candidate: object, _module_name: str) -> bool:
+    def _is_concrete_animation_class(candidate: object, module_name: str) -> bool:
+        if not module_name.endswith("snake"):
+            return AnimationPluginLoader._is_concrete_animation_class(
+                candidate, module_name
+            )
         # This is the exact historical bad branch: ``typing.Any`` was treated
         # as a subclass candidate rather than filtered before ``issubclass``.
         if candidate is Any:
@@ -54,6 +60,31 @@ class DeploymentPluginStartupPrecheckTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _write_complete_plugin_tree_with(
+        self,
+        root: Path,
+        plugin_id: str,
+        source: str,
+        class_name: str,
+        *,
+        omit: tuple[str, ...] = (),
+    ) -> None:
+        """Keep every current retained plugin while replacing one package."""
+        for candidate in AnimationPluginLoader.DEFAULT_PLUGINS_DIR.iterdir():
+            if candidate.name in (plugin_id, *omit) or candidate.stem in (plugin_id, *omit):
+                continue
+            destination = root / candidate.name
+            if candidate.name == "aurora_curtains_native":
+                # Its manifest deliberately rejects a symlinked package root.
+                shutil.copytree(candidate, destination)
+            else:
+                os.symlink(
+                    candidate,
+                    destination,
+                    target_is_directory=candidate.is_dir(),
+                )
+        self._write_plugin(root, plugin_id, source, class_name)
+
     def test_healthy_current_tree_loads_every_plugin_and_renders_saved_plant_glow(self):
         result = run_plugin_startup_precheck()
 
@@ -78,7 +109,7 @@ class DeploymentPluginStartupPrecheckTests(unittest.TestCase):
 
     def test_removed_plant_glow_backgrounds_reference_blocks_before_activation(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
-            self._write_plugin(
+            self._write_complete_plugin_tree_with(
                 Path(temporary_dir),
                 "plant_glow",
                 "from animation.plugins.plant_glow import BACKGROUNDS\n",
@@ -90,9 +121,27 @@ class DeploymentPluginStartupPrecheckTests(unittest.TestCase):
             ):
                 run_plugin_startup_precheck(plugins_dir=temporary_dir)
 
+    def test_missing_allowlisted_plugin_blocks_before_any_startup(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            self._write_complete_plugin_tree_with(
+                Path(temporary_dir),
+                "plant_glow",
+                "from animation import AnimationBase\n"
+                "class PlantGlowAnimation(AnimationBase):\n"
+                "    def generate_frame(self, time_elapsed, frame_count):\n"
+                "        return self.next_frame_buffer()\n",
+                "PlantGlowAnimation",
+                omit=("snake",),
+            )
+            with self.assertRaisesRegex(
+                PluginStartupPrecheckError,
+                r"missing allowlisted plugin\(s\): .*'snake'",
+            ):
+                run_plugin_startup_precheck(plugins_dir=temporary_dir)
+
     def test_undefined_ambient_scene_schema_blocks_before_activation(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
-            self._write_plugin(
+            self._write_complete_plugin_tree_with(
                 Path(temporary_dir),
                 "ambient_scene",
                 "from animation import AnimationBase\n"
@@ -108,7 +157,7 @@ class DeploymentPluginStartupPrecheckTests(unittest.TestCase):
 
     def test_historical_typing_any_issubclass_probe_blocks_before_activation(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
-            self._write_plugin(
+            self._write_complete_plugin_tree_with(
                 Path(temporary_dir),
                 "snake",
                 "from typing import Any\n"

@@ -83,6 +83,24 @@ def _load_retained_plugins(
             )
 
 
+def _validate_complete_retained_set(plugin_ids: tuple[str, ...]) -> None:
+    """Reject a discovery result that silently dropped a shipped plugin."""
+    expected = set(AnimationManager.ALLOWED_PLUGINS)
+    discovered = set(plugin_ids)
+    missing = sorted(expected - discovered)
+    unexpected = sorted(discovered - expected)
+    if missing:
+        named = ", ".join(repr(plugin_id) for plugin_id in missing)
+        raise PluginStartupPrecheckError(
+            f"plugin discovery is missing allowlisted plugin(s): {named}"
+        )
+    if unexpected:
+        named = ", ".join(repr(plugin_id) for plugin_id in unexpected)
+        raise PluginStartupPrecheckError(
+            f"plugin discovery found unexpected plugin(s): {named}"
+        )
+
+
 def run_plugin_startup_precheck(
     *,
     plugins_dir: Optional[str | Path] = None,
@@ -112,6 +130,7 @@ def run_plugin_startup_precheck(
 
     if not plugin_ids:
         raise PluginStartupPrecheckError("plugin '<discovery>' found no retained plugins")
+    _validate_complete_retained_set(plugin_ids)
     _load_retained_plugins(loader, plugin_ids)
 
     controller = PreviewLEDController(
