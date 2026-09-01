@@ -4,11 +4,14 @@
 import json
 import math
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Dict, Optional, Set
 
 import numpy as np
 
 from animation import AnimationBase, RenderedFrame
+from animation.core.compositing import OverlayFrame
+from animation.core.presentation_contracts import ResolvedScene
 from animation.libraries.mask_effects import build_halo_weights, indices_from_payload
 from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.pinball import PinballAnimation
@@ -28,6 +31,16 @@ class PlantGlowAnimation(AnimationBase):
         "void", "twilight", "deep_ocean", "aurora", "earth", "starfield",
         "ember", "arcade",
     )
+    CONWAY_STYLE_PALETTES = {
+        "void": "neutral",
+        "twilight": "spectrum",
+        "deep_ocean": "mist",
+        "aurora": "spectrum",
+        "earth": "neutral",
+        "starfield": "mist",
+        "ember": "ember",
+        "arcade": "spectrum",
+    }
 
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)
@@ -214,8 +227,6 @@ class PlantGlowAnimation(AnimationBase):
         super().update_parameters(new_params)
         background_keys = {
             "background_source", "background_style", "background_speed", "background_seed",
-            "plant_aware", "plant_clearance", "plant_mask_path",
-            "plant_globe_mask_path",
         }
         if background_keys & new_params.keys():
             self._clear_background_animation()
@@ -260,41 +271,23 @@ class PlantGlowAnimation(AnimationBase):
         style = str(self.params.get("background_style", "aurora"))
         speed = float(self.params.get("background_speed", 1.0))
         seed = int(self.params.get("background_seed", 95))
-        plant_config = self._borrowed_plant_config()
         key = (
             source,
             style,
             speed,
             seed,
-            tuple(sorted(plant_config.items())),
         )
         if self._background_animation is None or self._background_key != key:
             if source == "conway":
                 conway_config = {
-                    "brightness": 1.0,
-                    "speed": 0.1,
-                    "random_density": 0.0,
+                    "seed": seed,
+                    "rule": "B3/S23",
+                    "initial_density": 0.12,
+                    "generations_per_second": float(
+                        np.clip(5.0 * speed, 0.5, 20.0)
+                    ),
                     "seed_cells": [],
-                    "glider_interval": 0.0,
-                    "stagnation_generations": 0,
-                    "destruct_on_loop": False,
-                    "background": style,
-                    "background_brightness": 0.6,
-                    "background_speed": speed,
-                    "background_fps": 30.0,
                 }
-                if plant_config:
-                    # In plant-aware mode the borrowed world becomes actual Life,
-                    # with foliage/globes acting as blocked habitat and globe
-                    # shores retaining Conway's nursery semantics.
-                    conway_config.update(
-                        {
-                            "random_density": 0.12,
-                            "seed_cells": None,
-                            "random_seed": seed,
-                        }
-                    )
-                    conway_config.update(plant_config)
                 self._background_animation = ConwayLifeAnimation(
                     self.controller,
                     conway_config,
@@ -303,28 +296,47 @@ class PlantGlowAnimation(AnimationBase):
                 self._background_animation = PinballAnimation(
                     self.controller,
                     {
-                        "brightness": 1.0,
-                        "speed": speed,
-                        "render_fps": 120.0,
+                        "table_tick_hz": float(
+                            np.clip(40.5 * speed, 12.0, 90.0)
+                        ),
+                        "render_fps": 100.0,
+                        "chaos": 0.72,
                         "seed": seed,
-                        **plant_config,
                     },
                 )
             self._background_key = key
 
-        rendered = self._background_animation.generate_frame(time_elapsed, frame_count)
+        if isinstance(self._background_animation, ConwayLifeAnimation):
+            palette_id = self.CONWAY_STYLE_PALETTES.get(style, "neutral")
+            parameters = MappingProxyType(dict(self._background_animation.params))
+            rendered = self._background_animation.render_resolved_scene(
+                ResolvedScene(
+                    canonical_scene=MappingProxyType({
+                        "owner": "plant_glow",
+                        "background_style": style,
+                    }),
+                    canonical_bytes=f"plant_glow:{style}".encode("ascii"),
+                    digest="0" * 64,
+                    descriptor=self._background_animation.component_descriptor(),
+                    parameters=parameters,
+                    palette=MappingProxyType({"palette_id": palette_id}),
+                    phase_time=max(0.0, float(time_elapsed)),
+                    plant_inputs=MappingProxyType({
+                        "foliage_density": 0.0,
+                        "globe_proximity": 0.0,
+                        "occlusion": 0.0,
+                    }),
+                )
+            )
+        else:
+            rendered = self._background_animation.generate_frame(
+                time_elapsed, frame_count
+            )
+        if isinstance(rendered, OverlayFrame):
+            # Conway is premultiplied RGBA. Plant Glow borrows it over black,
+            # so its premultiplied RGB channels are already the correct result.
+            return rendered.pixels[:, :3]
         return rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
-
-    def _borrowed_plant_config(self) -> Dict[str, Any]:
-        """Forward the common opt-in mask contract into borrowed simulations."""
-        if not self.plant_aware_enabled():
-            return {}
-        return {
-            "plant_aware": True,
-            "plant_clearance": int(self.params.get("plant_clearance", 1)),
-            "plant_mask_path": str(self.params.get("plant_mask_path")),
-            "plant_globe_mask_path": str(self.params.get("plant_globe_mask_path")),
-        }
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
         speed = float(self.params.get("speed", 1.0))
@@ -371,10 +383,7 @@ class PlantGlowAnimation(AnimationBase):
             "background_source": str(self.params.get("background_source", "color")),
             "background_style": str(self.params.get("background_style", "aurora")),
             "plant_aware": self.plant_aware_enabled(),
-            "background_plant_routing": bool(
-                self.plant_aware_enabled()
-                and self.params.get("background_source") in {"conway", "pinball"}
-            ),
+            "background_plant_routing": False,
             "mask_path": str(self.params.get("mask_path")),
             "globe_mask_path": str(self.params.get("globe_mask_path")),
         }

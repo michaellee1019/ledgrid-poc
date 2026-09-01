@@ -107,6 +107,28 @@ class DeploymentPluginStartupPrecheckTests(unittest.TestCase):
         self.assertNotIn("receiver_acceptance", recipe)
         self.assertNotIn("deploy_entrypoint.py run", recipe)
 
+    def test_demo_gate_tracks_the_reconstructed_composer_slice(self):
+        justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
+        recipe = justfile.split("test-demo:", 1)[1].split(
+            "\n# Required gate", 1
+        )[0]
+
+        for current_test in (
+            "test_composer_desktop_workspace.py",
+            "test_composer_runtime_preview.py",
+            "test_composer_preset_catalog_boundary.py",
+            "test_composer_maintenance_api.py",
+            "test_deploy_plugin_startup_precheck.py",
+            "test_deploy_startup.py",
+        ):
+            self.assertIn(current_test, recipe)
+        for retired_test in (
+            "test_browser_composer_mobile_ux.py",
+            "test_browser_composer_pwa.py",
+            "test_scene_activation_api.py",
+        ):
+            self.assertNotIn(retired_test, recipe)
+
     def test_removed_plant_glow_backgrounds_reference_blocks_before_activation(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             self._write_complete_plugin_tree_with(

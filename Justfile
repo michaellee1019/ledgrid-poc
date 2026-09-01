@@ -208,25 +208,22 @@ test-deployment:
 # Full local readiness gate.
 preflight: test
 
-# Product-demo gate: current Composer behavior plus the deployment path itself.
-# The broader `just test` aggregate remains available for compatibility-debt
-# cleanup and release hardening, but retired dashboard surfaces do not block a
-# wall demo.
+# Product-demo gate: the accepted current Composer slice plus the deployment
+# path itself.  The broader `just test` aggregate remains available for
+# compatibility-debt cleanup and release hardening, but retired Scene v1 and
+# unreconstructed browser surfaces do not block a wall demo.
 test-demo:
 	{{python_env}} pytest -q \
-		tests/unit/test_browser_composer.py \
-		tests/unit/test_browser_composer_actions.py \
-		tests/unit/test_browser_composer_catalog_acceptance.py \
-		tests/unit/test_browser_composer_mobile_ux.py \
-		tests/unit/test_browser_composer_pwa.py \
-		tests/unit/test_browser_composer_runtime.py \
-		tests/unit/test_browser_composer_state.py \
+		tests/unit/test_composer_desktop_workspace.py \
+		tests/unit/test_composer_runtime_preview.py \
+		tests/unit/test_composer_preset_catalog_boundary.py \
 		tests/unit/test_composer_maintenance_api.py \
-		tests/unit/test_scene_activation_api.py \
 		tests/unit/test_deploy_captured.py \
 		tests/unit/test_deploy_coordinator.py \
 		tests/unit/test_deploy_entrypoint.py \
-		tests/unit/test_deploy_manifest.py
+		tests/unit/test_deploy_manifest.py \
+		tests/unit/test_deploy_plugin_startup_precheck.py \
+		tests/unit/test_deploy_startup.py
 
 # Required gate before a normal wall deployment.  This uses only the in-memory
 # preview controller, so it cannot contact receivers or mutate wall state.

@@ -30,11 +30,16 @@ from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 # This is the preserved operator selection that must still be able to start
-# after every deployment.  Parameters deliberately remain empty: the plugin
-# owns its current defaults and schema.
+# after every deployment.  The Conway backdrop is deliberate: it exercises
+# Plant Glow's compatibility boundary with the strict Scene v2 renderer.
 SAVED_PLANT_GLOW_SCENE = {
     "plugin_id": "plant_glow",
-    "parameters": {},
+    "parameters": {
+        "background_source": "conway",
+        "background_style": "aurora",
+        "background_speed": 1.0,
+        "background_seed": 95,
+    },
 }
 
 

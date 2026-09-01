@@ -75,6 +75,14 @@ class PlantGlowAnimationTests(unittest.TestCase):
         self.assertGreater(np.count_nonzero(conway_frame[outside]), 100)
         self.assertGreater(np.count_nonzero(pinball_frame[outside]), 100)
         self.assertFalse(np.array_equal(conway_frame[outside], pinball_frame[outside]))
+        self.assertEqual(
+            set(conway._background_animation.params),
+            {"seed", "rule", "initial_density", "generations_per_second", "seed_cells"},
+        )
+        self.assertEqual(
+            conway._background_animation._presentation_context.palette["palette_id"],
+            "neutral",
+        )
         np.testing.assert_array_equal(
             conway_frame[conway._foliage_core][0], np.array([54, 255, 132], dtype=np.uint8)
         )
