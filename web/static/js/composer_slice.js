@@ -137,7 +137,7 @@
       region.classList.add('component-controls');
       region.dataset.animationComponents = componentIds;
     });
-    document.querySelectorAll('.desktop-workspace > .inspector[data-animation-components]').forEach((region) => {
+    document.querySelectorAll('.control-workspace > .inspector[data-animation-components]').forEach((region) => {
       if (region.parentElement === animationInspector) return;
       region.classList.add('component-controls');
       animationInspector.append(region);
