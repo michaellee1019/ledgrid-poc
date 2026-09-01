@@ -8,7 +8,7 @@
   // an id while resetting its sequence would make the next authored edit stale.
   const clientId = crypto.randomUUID();
   const state = { status: null, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
-    scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {} };
+    scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const number = (id) => Number($(id).value);
   const recoveryMatchesStatus = (body) => Boolean(body.recovery?.authoritative && body.status?.current && body.recovery?.basis?.digest === body.status.current.digest && body.recovery?.basis?.revision === body.status.current.revision);
@@ -305,7 +305,7 @@
     $('#observedIdentity').textContent = identity(status.observed); $('#diagnosticObserved').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
     $('#sceneIdentity').textContent = identity(status.current); $('#saveState').textContent = state.dirty ? 'Unsaved changes' : (state.selection?.kind === 'look' ? 'Saved look' : 'Current scene');
     $('#liveAction').textContent = status.running && status.armed && status.current ? 'Stop' : 'Go Live';
-    $('#operationMessage').textContent = status.last_error || (status.armed ? 'Changes publish immediately.' : 'Use Go Live to arm output.');
+    $('#operationMessage').textContent = state.authoredValidationError || status.last_error || (status.armed ? 'Changes publish immediately.' : 'Use Go Live to arm output.');
   }
   async function acknowledgeUndo(revision) { state.history = []; state.redo = []; await fetch(`${api}/undo-ack`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, revision})}); }
   function schedulePreview() { const generation = ++state.previewGeneration; const candidate = sceneFromControls(); state.scene = candidate; previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
@@ -315,7 +315,7 @@
     state.scene = scene; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
     const endpoint = builtin ? '/built-ins/open' : '/scene';
     const body = builtin ? {scene, client_id: clientId, mutation_id: crypto.randomUUID(), client_sequence: ++state.sequence} : {origin: 'composer', scene, client_id: clientId, mutation_id: crypto.randomUUID(), client_sequence: ++state.sequence};
-    try { const response = await fetch(`${api}${endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const result = await response.json(); renderStatus(result); if (!response.ok) throw Object.assign(new Error(result.error || 'Current scene could not be accepted.'), {result}); return result; }
+    try { const response = await fetch(`${api}${endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const result = await response.json(); state.authoredValidationError = response.ok ? null : (result.error || 'Current scene could not be accepted.'); renderStatus(result); if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result}); return result; }
     finally { state.submitting = false; }
   }
   async function edit(event) { state.lastControl = event?.target?.id || null; const previous = structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }

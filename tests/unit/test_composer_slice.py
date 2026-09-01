@@ -243,6 +243,31 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertIn("refreshInFlight", script)
         self.assertIn("recoveryMatchesStatus", script)
 
+    def test_invalid_authored_feedback_survives_status_poll_until_a_successful_edit(self) -> None:
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        self.assertIn("authoredValidationError: null", script)
+        self.assertIn(
+            "state.authoredValidationError || status.last_error ||",
+            script,
+        )
+        submit = script[
+            script.index("async function submit") : script.index("async function edit")
+        ]
+        self.assertIn(
+            "state.authoredValidationError = response.ok ? null :",
+            submit,
+        )
+        self.assertLess(
+            submit.index("state.authoredValidationError = response.ok ? null :"),
+            submit.index("renderStatus(result)"),
+        )
+        refresh = script[
+            script.index("async function refreshStatus") : script.index(
+                "document.addEventListener('visibilitychange'"
+            )
+        ]
+        self.assertNotIn("authoredValidationError =", refresh)
+
     def test_readding_after_primary_removal_selects_the_missing_slot_and_checks(self) -> None:
         """The client must restore the missing Conway lower slot without duplicates."""
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
