@@ -11,6 +11,9 @@ from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.tetris import TetrisAnimation
+from animation.plugins.maze_chase import MazeChaseAnimation
+from animation.plugins.pinball import PinballAnimation
+from animation.plugins.pixel_quest import PixelQuestAnimation
 from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
 from web.app import AnimationWebInterface
 
@@ -21,18 +24,27 @@ EXPECTED_IDS = {
     "conway_life": ["arcade-afterlife", "aurora-garden", "bioluminescent-tide", "classic-green", "deep-space-acorn", "earth-cities", "gosper-foundry", "ice-crystal", "maximum-chaos", "neon-glider-storm", "oscillator-orchard", "pulsar-observatory", "r-pentomino-laboratory", "solar-embers", "synthwave-sunset"],
     "tetris": ["avalanche-factory", "classic-quartet", "cooperative-swarm", "impossible-shift", "solo-zen"],
     "firefly_synchrony": ["lantern-meadow", "night", "quiet", "showcase"],
+    "maze_chase": ["classic-chase", "family-maze", "hunter-vision", "midnight-pursuit", "nightmare-tunnel"],
+    "pinball": ["midnight-attract", "multiball-mayhem", "neon-casino", "slow-motion-replay", "tournament-table"],
+    "pixel_quest": ["cinematic-no-hud", "heroic-adventure", "scenic-journey", "speedrun"],
 }
 NORMALIZERS = {
     "aurora_curtains": AuroraCurtainsAnimation._normalized_parameters,
     "conway_life": ConwayLifeAnimation._normalized_parameters,
     "tetris": TetrisAnimation._normalized_parameters,
     "firefly_synchrony": FireflySynchronyAnimation._normalized_parameters,
+    "maze_chase": MazeChaseAnimation._normalized_parameters,
+    "pinball": PinballAnimation._normalized_parameters,
+    "pixel_quest": PixelQuestAnimation._normalized_parameters,
 }
 DEFAULTS = {
     "aurora_curtains": AuroraCurtainsAnimation.DEFAULTS,
     "conway_life": ConwayLifeAnimation.DEFAULTS,
     "tetris": TetrisAnimation.DEFAULTS,
     "firefly_synchrony": FireflySynchronyAnimation.DEFAULTS,
+    "maze_chase": MazeChaseAnimation.DEFAULTS,
+    "pinball": PinballAnimation.DEFAULTS,
+    "pixel_quest": PixelQuestAnimation.DEFAULTS,
 }
 
 
@@ -51,7 +63,7 @@ class ExistingAnimationPresetSceneV2Tests(unittest.TestCase):
         return scene
 
     def test_exactly_the_twenty_eight_checked_component_cards_are_local(self) -> None:
-        self.assertEqual(sum(len(ids) for ids in EXPECTED_IDS.values()), 28)
+        self.assertEqual(sum(len(ids) for ids in EXPECTED_IDS.values()), 42)
         for component_id, expected_ids in EXPECTED_IDS.items():
             directory = ROOT / "animation" / "plugins" / component_id / "presets"
             paths = sorted(directory.glob("*.json"))
@@ -82,8 +94,8 @@ class ExistingAnimationPresetSceneV2Tests(unittest.TestCase):
                 self.assertEqual(preview.get_json()["frame"]["width"], 33)
 
     def test_representative_preset_remixes_keep_hidden_local_parameters_in_preview_and_live(self) -> None:
-        selected_ids = {"aurora_curtains": "showcase", "conway_life": "deep-space-acorn", "tetris": "cooperative-swarm", "firefly_synchrony": "lantern-meadow"}
-        edits = {"aurora_curtains": ("glow_intensity", 0.33), "conway_life": ("generations_per_second", 4.5), "tetris": ("fall_rate", 1.75), "firefly_synchrony": ("synchrony", 0.77)}
+        selected_ids = {"aurora_curtains": "showcase", "conway_life": "deep-space-acorn", "tetris": "cooperative-swarm", "firefly_synchrony": "lantern-meadow", "maze_chase": "hunter-vision", "pinball": "neon-casino", "pixel_quest": "heroic-adventure"}
+        edits = {"aurora_curtains": ("glow_intensity", 0.33), "conway_life": ("generations_per_second", 4.5), "tetris": ("fall_rate", 1.75), "firefly_synchrony": ("synchrony", 0.77), "maze_chase": ("difficulty", .44), "pinball": ("chaos", .42), "pixel_quest": ("show_hud", False)}
         for sequence, (component_id, preset_id) in enumerate(selected_ids.items(), start=1):
             selected = self.interface.composer_presets.apply(self._scene(component_id), preset_id)
             remix = copy.deepcopy(selected)
@@ -98,11 +110,14 @@ class ExistingAnimationPresetSceneV2Tests(unittest.TestCase):
                 if parameter != key:
                     self.assertEqual(recovered["animation"]["parameters"][parameter], json.loads(json.dumps(expected)))
 
-    def test_three_existing_component_normalizers_reject_invalid_live_and_preview_before_mutation(self) -> None:
+    def test_component_normalizers_reject_invalid_live_and_preview_before_mutation(self) -> None:
         checks = {
             "aurora_curtains": ("showcase", "curtain_density"),
             "conway_life": ("deep-space-acorn", "generations_per_second"),
             "tetris": ("cooperative-swarm", "fall_rate"),
+            "maze_chase": ("hunter-vision", "chase_cadence_hz"),
+            "pinball": ("neon-casino", "table_tick_hz"),
+            "pixel_quest": ("heroic-adventure", "quest_cadence_hz"),
         }
         for sequence, (component_id, (preset_id, parameter)) in enumerate(checks.items(), start=1):
             scene = self.interface.composer_presets.apply(self._scene(component_id), preset_id)
@@ -129,6 +144,7 @@ class ExistingAnimationPresetSceneV2Tests(unittest.TestCase):
 
     def test_desktop_cards_use_component_catalogs_and_preserve_firefly_seed_and_coupling(self) -> None:
         script = (ROOT / "web" / "static" / "js" / "composer_slice.js").read_text(encoding="utf-8")
+        css = (ROOT / "web" / "static" / "css" / "composer_slice.css").read_text(encoding="utf-8")
         self.assertIn("loadExistingComponentPresets", script)
         for component_id in EXPECTED_IDS:
             self.assertIn(f"'{component_id}'", script)
@@ -136,10 +152,14 @@ class ExistingAnimationPresetSceneV2Tests(unittest.TestCase):
         self.assertIn("fireflyParameters(next.animation.parameters)", script)
         self.assertIn("syncComponentPresetUI", script)
         self.assertIn("target.hidden = !visible; target.inert = !visible", script)
+        self.assertIn(".operation-row[hidden] { display: none !important; }", css)
         self.assertIn("aria-pressed", script)
         self.assertIn("Custom remix", script)
         for component_id in ("aurora_curtains", "firefly_synchrony", "tetris"):
             self.assertIn(component_id, script)
+        for component_id, target in (("maze_chase", "mazePresetCards"), ("pinball", "pinballPresetCards"), ("pixel_quest", "questPresetCards")):
+            self.assertIn(component_id, script)
+            self.assertIn(target, script)
         self.assertNotIn("components/aurora_curtains/looks", script)
 
 

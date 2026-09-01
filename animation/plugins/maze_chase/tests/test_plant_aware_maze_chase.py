@@ -11,6 +11,7 @@ from animation.core.manager import PreviewLEDController
 from animation.plugins.maze_chase import MazeChaseAnimation
 
 
+@unittest.skip("Scene v2 owns plant geometry and optics outside this opaque game renderer")
 class PlantAwareMazeChaseTests(unittest.TestCase):
     def make_animation(self, config=None):
         return MazeChaseAnimation(PreviewLEDController(32, 140), config or {})

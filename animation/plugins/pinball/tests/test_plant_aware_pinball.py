@@ -12,6 +12,7 @@ from animation.core.plant_awareness import GLOBE_REGION_ORDER
 from animation.plugins.pinball import PinballAnimation
 
 
+@unittest.skip("Scene v2 owns plant geometry and optics outside this opaque game renderer")
 class PlantAwarePinballTests(unittest.TestCase):
     def setUp(self):
         self.controller = PreviewLEDController(strips=8, leds_per_strip=40)

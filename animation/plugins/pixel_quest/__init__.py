@@ -6,11 +6,14 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
-from animation import AnimationBase
+from animation import AnimationBase, RenderedFrame
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.presentation_contracts import ResolvedScene
 
 
 Color = Tuple[int, int, int]
@@ -55,6 +58,19 @@ class PixelQuestAnimation(AnimationBase):
     )
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "2.0"
+    COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "pixel_quest", 1, "python", "animation"
+    FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
+    CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
+    PLANT_MODIFIER_SUPPORT = frozenset()
+    DEFAULTS = MappingProxyType({"quest_cadence_hz": 12.0, "render_fps": 45.0, "difficulty": 1.0,
+                                 "seed": 1986, "show_hud": True})
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE,
+        timing_policy=TIMING_POLICY, alpha_behavior="opaque", palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS,
+    )
+    _PALETTE_TINTS = MappingProxyType({"neutral": (.72, 1.0, .72), "mist": (.55, .82, 1.0),
+                                       "spectrum": (1.0, .58, 1.0), "ember": (1.0, .58, .25)})
 
     BIOMES = ("meadow", "forest", "desert", "ruins", "crystal")
     MONSTERS = {
@@ -88,18 +104,13 @@ class PixelQuestAnimation(AnimationBase):
     PLANT_FOLIAGE = (15, 104, 50)
     PLANT_GLOBE = (126, 42, 156)
 
-    def __init__(self, controller, config: Dict[str, Any] = None):
-        super().__init__(controller, config)
+    def __init__(self, controller, config: Mapping[str, Any] | None = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
         self.width, self.height = self.get_strip_info()
-        self.default_params.update({
-            "speed": 1.0,
-            "brightness": 1.0,
-            "render_fps": 45.0,
-            "difficulty": 1.0,
-            "seed": 1986,
-            "show_hud": True,
-        })
-        self.params = {**self.default_params, **self.config}
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
+        self._presentation_context: ResolvedScene | None = None
         self.random = random.Random(int(self.params.get("seed", 1986)))
         self._canvas = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self.last_elapsed: Optional[float] = None
@@ -114,11 +125,33 @@ class PixelQuestAnimation(AnimationBase):
         self.bursts: List[Burst] = []
         self._reset_run()
 
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> Dict[str, Any]:
+        supplied = dict(values)
+        unknown = sorted(set(supplied) - set(cls.DEFAULTS))
+        if unknown:
+            raise ValueError(f"Pixel Quest received non-local parameters: {', '.join(unknown)}")
+        result = dict(cls.DEFAULTS)
+        result.update(supplied)
+        for name, low, high in (("quest_cadence_hz", 3.0, 36.0), ("render_fps", 15.0, 90.0), ("difficulty", .55, 1.8)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= float(value) <= high:
+                raise ValueError(f"{name} must be a number from {low} to {high}")
+            result[name] = float(value)
+        if isinstance(result["seed"], bool) or not isinstance(result["seed"], int) or not 0 <= result["seed"] <= 9999:
+            raise ValueError("seed must be an integer from 0 to 9999")
+        if not isinstance(result["show_hud"], bool):
+            raise ValueError("show_hud must be a boolean")
+        return result
+
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        schema.update({
-            "speed": {"type": "float", "min": 0.25, "max": 3.0, "default": 1.0,
-                      "description": "Quest and combat speed"},
+        return {
+            "quest_cadence_hz": {"type": "float", "min": 3.0, "max": 36.0, "default": 12.0,
+                      "description": "Quest simulation ticks per second"},
             "render_fps": {"type": "float", "min": 15.0, "max": 90.0, "default": 45.0,
                            "description": "Maximum visual refresh rate"},
             "difficulty": {"type": "float", "min": 0.55, "max": 1.8, "default": 1.0,
@@ -127,18 +160,44 @@ class PixelQuestAnimation(AnimationBase):
                      "description": "Repeatable procedural adventure seed"},
             "show_hud": {"type": "bool", "default": True,
                          "description": "Show health, magic, XP, and levels"},
-        })
-        return schema
+        }
 
-    def update_parameters(self, new_params: Dict[str, Any]):
-        reset = "seed" in new_params
-        super().update_parameters(new_params)
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        candidate = self._normalized_parameters({**self.params, **dict(new_params)})
+        if candidate == self.params:
+            return
+        reset = candidate["seed"] != self.params["seed"]
+        self.params = candidate
         if reset:
             self.random.seed(int(self.params.get("seed", 1986)))
             self.run_number = 0
             self._reset_session_counters()
             self._reset_run()
         self.last_render_elapsed = None
+
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        if new.descriptor.component_id != self.COMPONENT_ID or new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Pixel Quest requires a semantic Scene v2 palette")
+        if old is None or old.palette != new.palette:
+            self.last_render_elapsed = None
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene) -> RenderedFrame:
+        self.set_presentation_context(context)
+        self.update_parameters(context.parameters)
+        return self.generate_frame(context.phase_time, self.frame_count)
+
+    def _apply_scene_palette(self, frame: np.ndarray) -> None:
+        if self._presentation_context is None:
+            return
+        tint = np.asarray(self._PALETTE_TINTS.get(self._presentation_context.palette["palette_id"], self._PALETTE_TINTS["neutral"]), dtype=np.float32)
+        source = frame.astype(np.float32)
+        light = source.max(axis=1, keepdims=True) / 255.0
+        np.clip(source * .60 + light * tint * 102.0, 0, 255, out=source)
+        frame[:] = source.astype(np.uint8)
 
     def _reset_session_counters(self):
         self.session_defeated = 0
@@ -470,8 +529,8 @@ class PixelQuestAnimation(AnimationBase):
         if self.last_elapsed is None or time_elapsed < self.last_elapsed:
             dt = 0.0
         else:
-            speed = max(.05, float(self.params.get("speed", 1.0)))
-            dt = (time_elapsed - self.last_elapsed) * speed
+            cadence = max(3.0, float(self.params.get("quest_cadence_hz", 12.0)))
+            dt = (time_elapsed - self.last_elapsed) * cadence / 12.0
         self.last_elapsed = time_elapsed
         self.last_render_elapsed = time_elapsed
         self._advance_game(dt)
@@ -479,7 +538,7 @@ class PixelQuestAnimation(AnimationBase):
 
         frame = self.next_frame_buffer(clear=False)
         frame.reshape(self.width, self.height, 3)[:] = self._canvas[::-1].transpose(1, 0, 2)
-        self.apply_brightness_array(frame, out=frame)
+        self._apply_scene_palette(frame)
         self.last_rendered_frame = frame
         return self.rendered_frame(frame, changed=True)
 

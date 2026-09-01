@@ -15,6 +15,9 @@ from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
+from animation.plugins.maze_chase import MazeChaseAnimation
+from animation.plugins.pinball import PinballAnimation
+from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from web.composer_final_preview import current_component_catalog
@@ -32,7 +35,7 @@ class ComponentCatalogTests(unittest.TestCase):
             for descriptor in catalog.descriptors
         }
         self.assertEqual(set(entries), {
-            "native_aurora", "aurora_curtains", "canopy_cup", "conway_life", "tetris", "firefly_synchrony", "fireworks", "cyclic_reef", "lava_lamp", "snake", "clock_overlay", "emoji_arranger",
+            "native_aurora", "aurora_curtains", "canopy_cup", "conway_life", "tetris", "firefly_synchrony", "fireworks", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "clock_overlay", "emoji_arranger",
         })
         self.assertEqual(
             [
@@ -47,6 +50,9 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
@@ -70,6 +76,9 @@ class ComponentCatalogTests(unittest.TestCase):
             "fireworks": _ROOT / "animation/plugins/fireworks/manifest.json",
             "cyclic_reef": _ROOT / "animation/plugins/cyclic_reef/manifest.json",
             "snake": _ROOT / "animation/plugins/snake/manifest.json",
+            "maze_chase": _ROOT / "animation/plugins/maze_chase/manifest.json",
+            "pinball": _ROOT / "animation/plugins/pinball/manifest.json",
+            "pixel_quest": _ROOT / "animation/plugins/pixel_quest/manifest.json",
             "clock_overlay": _ROOT / "animation/plugins/clock_overlay/manifest.json",
             "emoji_arranger": _ROOT / "animation/plugins/emoji_arranger/manifest.json",
         }

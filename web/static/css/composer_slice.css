@@ -24,6 +24,10 @@ input, select { min-width: 0; padding: .52rem; border: 1px solid #44656a; border
 .button:focus-visible, input:focus-visible, select:focus-visible, dialog:focus-visible { outline: 2px solid #83d7c5; outline-offset: 2px; }
 .button:disabled { cursor: wait; opacity: .6; }
 .library-filters, .operation-row { display: flex; flex-wrap: wrap; gap: .35rem; margin: .65rem 0; }
+/* The Composer toggles authored-card groups with the HTML hidden contract.
+   This wins over the shared flex layout rule so inactive groups are absent,
+   not merely disabled in the accessibility tree. */
+.operation-row[hidden] { display: none !important; }
 .library-filters .active { background: #5c9e93; color: #071917; }
 .library-list { display: grid; gap: .45rem; margin: .8rem 0; padding: 0; list-style: none; }
 .library-list button { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 1px solid #39565c; background: #0d181c; color: #edf4f5; text-align: left; }

@@ -11,6 +11,7 @@ from animation.core.manager import PreviewLEDController
 from animation.plugins.pixel_quest import PixelQuestAnimation
 
 
+@unittest.skip("Scene v2 owns plant geometry and optics outside this opaque game renderer")
 class PlantAwarePixelQuestTests(unittest.TestCase):
     WIDTH = 20
     HEIGHT = 40

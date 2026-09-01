@@ -31,6 +31,9 @@ from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
+from animation.plugins.maze_chase import MazeChaseAnimation
+from animation.plugins.pinball import PinballAnimation
+from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from ipc.scene_contract import CanonicalScene
@@ -82,6 +85,9 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         CyclicReefAnimation.component_descriptor(),
         LavaLampAnimation.component_descriptor(),
         SnakeAnimation.component_descriptor(),
+        MazeChaseAnimation.component_descriptor(),
+        PinballAnimation.component_descriptor(),
+        PixelQuestAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
         EmojiArrangerAnimation.component_descriptor(),
     )
@@ -217,6 +223,12 @@ class ComposerFinalPreview:
             return LavaLampAnimation(controller, parameters)
         if descriptor.component_id == SnakeAnimation.COMPONENT_ID:
             return SnakeAnimation(controller, parameters)
+        if descriptor.component_id == MazeChaseAnimation.COMPONENT_ID:
+            return MazeChaseAnimation(controller, parameters)
+        if descriptor.component_id == PinballAnimation.COMPONENT_ID:
+            return PinballAnimation(controller, parameters)
+        if descriptor.component_id == PixelQuestAnimation.COMPONENT_ID:
+            return PixelQuestAnimation(controller, parameters)
         raise ValueError(f"Composer preview cannot render Animation {descriptor.component_id!r}")
 
     def _widget_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:

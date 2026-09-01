@@ -31,6 +31,9 @@ from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
+from animation.plugins.maze_chase import MazeChaseAnimation
+from animation.plugins.pinball import PinballAnimation
+from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from ipc.control_channel import FileControlChannel
@@ -134,6 +137,9 @@ class AnimationWebInterface:
                 CyclicReefAnimation.COMPONENT_ID: CyclicReefAnimation._normalized_parameters,
                 LavaLampAnimation.COMPONENT_ID: LavaLampAnimation._normalized_parameters,
                 SnakeAnimation.COMPONENT_ID: SnakeAnimation._normalized_parameters,
+                MazeChaseAnimation.COMPONENT_ID: MazeChaseAnimation._normalized_parameters,
+                PinballAnimation.COMPONENT_ID: PinballAnimation._normalized_parameters,
+                PixelQuestAnimation.COMPONENT_ID: PixelQuestAnimation._normalized_parameters,
             },
         )
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
@@ -1475,6 +1481,12 @@ class AnimationWebInterface:
             LavaLampAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == SnakeAnimation.COMPONENT_ID:
             SnakeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == MazeChaseAnimation.COMPONENT_ID:
+            MazeChaseAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == PinballAnimation.COMPONENT_ID:
+            PinballAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == PixelQuestAnimation.COMPONENT_ID:
+            PixelQuestAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         return canonical
 
     def _fallback_led_info(self) -> Dict[str, int]:
