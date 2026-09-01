@@ -1,0 +1,11 @@
+{
+  "preset_id": "remote-team-plus-six",
+  "name": "Remote team +6",
+  "description": "A 24-hour companion-zone clock, six hours ahead.",
+  "animation": "clock_overlay",
+  "params": {
+    "format_24h": true,
+    "show_seconds": false,
+    "clock_offset_minutes": 360
+  }
+}

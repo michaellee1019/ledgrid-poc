@@ -138,6 +138,17 @@ class ClockOverlayTests(unittest.TestCase):
         self.assertGreater(changed.revision, first.revision)
         self.assertEqual(set(clock.params), {"format_24h", "show_seconds", "clock_offset_minutes"})
 
+    def test_rejected_live_update_keeps_the_current_clock_configuration_and_cache(self) -> None:
+        clock = _FixedClock(self.controller, {"format_24h": True, "show_seconds": False})
+        first = clock.generate_frame(0.0, 0)
+        before = dict(clock.params)
+        with self.assertRaisesRegex(ValueError, "clock_offset_minutes"):
+            clock.update_parameters({"clock_offset_minutes": 841})
+        self.assertEqual(clock.params, before)
+        cached = clock.generate_frame(500.0, 100_000)
+        self.assertFalse(cached.changed)
+        self.assertIs(cached.pixels, first.pixels)
+
     def test_fixed_wall_time_changes_clock_pixels_only_with_the_semantic_palette(self) -> None:
         clock = _FixedClock(self.controller, {"color": [1, 2, 3]})
         descriptor = clock.component_descriptor()

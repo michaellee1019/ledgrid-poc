@@ -82,6 +82,10 @@ class ClockOverlayAnimation(AnimationBase):
         fidelity_exceptions=(),
         timing_policy=TIMING_POLICY,
         defaults=DESCRIPTOR_DEFAULTS,
+        # Scene publication must reject invalid clock-local controls before a
+        # candidate can replace the current live/recoverable scene.  The name
+        # is resolved when the catalog invokes it, after this class is defined.
+        parameter_normalizer=lambda values: ClockOverlayAnimation._normalized_parameters(values),
     )
 
     # Reuse the current Clock's established 3x5 visual-wall glyphs without

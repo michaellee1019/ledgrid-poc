@@ -65,7 +65,23 @@ class SceneV2EndToEndDemoTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 200, saved.get_json())
         look = saved.get_json()["look"]
         self.assertEqual(look["name"], "Canopy Conway Clock")
-        self.assertEqual(look["scene"], named_scene)
+        # Clock color is compatibility input only: Scene v2 resolves its
+        # semantic color from Look, so the persisted/recovered form must drop
+        # that literal without changing any other authored scene bytes.
+        canonical_named_scene = copy.deepcopy(named_scene)
+        clock_parameters = canonical_named_scene["widgets"][0]["component"]["parameters"]
+        self.assertIn("color", clock_parameters)
+        clock_parameters.pop("color")
+        self.assertEqual(look["scene"], canonical_named_scene)
+        persisted_clock = look["scene"]["widgets"][0]
+        self.assertNotIn("color", persisted_clock["component"]["parameters"])
+        self.assertEqual(persisted_clock["id"], named_scene["widgets"][0]["id"])
+        self.assertEqual(persisted_clock["visible"], named_scene["widgets"][0]["visible"])
+        self.assertEqual(persisted_clock["placement"], named_scene["widgets"][0]["placement"])
+        self.assertEqual(
+            [widget["id"] for widget in look["scene"]["widgets"]],
+            [widget["id"] for widget in named_scene["widgets"]],
+        )
 
         # Selecting the named look accepts and acknowledges the same canonical
         # scene; preview remains inert and preserves 33x138 wall geometry.
@@ -79,7 +95,7 @@ class SceneV2EndToEndDemoTests(unittest.TestCase):
         self.assertEqual(selected_status["desired"], selected_status["observed"])
         preview = self.client.post(
             "/api/composer/preview",
-            json={"origin": "composer", "scene": named_scene,
+            json={"origin": "composer", "scene": canonical_named_scene,
                   "preview": {"monotonic_elapsed": 1.0, "wall_time": "2026-09-01T12:00:00+00:00"}},
         )
         self.assertEqual(preview.status_code, 200, preview.get_json())
@@ -90,7 +106,7 @@ class SceneV2EndToEndDemoTests(unittest.TestCase):
 
         # A valid live edit is observed immediately.  A rejected edit leaves the
         # last valid desired/observed output untouched.
-        edited = copy.deepcopy(named_scene)
+        edited = copy.deepcopy(canonical_named_scene)
         edited["look"]["pace"] = 1.15
         live_edit = self.client.post("/api/composer/scene", json=self._request(edited, sequence=2))
         self.assertEqual(live_edit.status_code, 200, live_edit.get_json())

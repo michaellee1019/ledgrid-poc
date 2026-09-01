@@ -12,7 +12,7 @@ from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 SCENE_V2_COMPONENT_PRESETS = {
     "aurora_curtains", "conway_life", "tetris", "firefly_synchrony",
-    "fireworks", "lava_lamp", "snake", "cyclic_reef", "canopy_cup",
+    "fireworks", "lava_lamp", "snake", "cyclic_reef", "canopy_cup", "clock_overlay",
 }
 
 
@@ -60,7 +60,7 @@ class CuratedAnimationPresetTests(unittest.TestCase):
                 rendered = animation.generate_frame(0.0, 0)
                 pixels = rendered.pixels if hasattr(rendered, "pixels") else rendered
                 self.assertIsInstance(pixels, np.ndarray)
-                channels = 4 if animation_name == "conway_life" else 3
+                channels = 4 if animation_name in {"conway_life", "clock_overlay"} else 3
                 self.assertEqual(pixels.shape, (DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP, channels))
                 self.assertEqual(pixels.dtype, np.uint8)
 

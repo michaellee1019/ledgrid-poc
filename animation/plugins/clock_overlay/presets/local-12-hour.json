@@ -1,0 +1,11 @@
+{
+  "preset_id": "local-12-hour",
+  "name": "Local 12-hour",
+  "description": "A concise familiar local-time readout.",
+  "animation": "clock_overlay",
+  "params": {
+    "format_24h": false,
+    "show_seconds": false,
+    "clock_offset_minutes": 0
+  }
+}

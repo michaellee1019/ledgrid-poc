@@ -18,6 +18,7 @@
   ]);
   const plantOpticIds = new Set(plantOptics.map(({id}) => id));
   const recoveryMatchesStatus = (body) => Boolean(body.recovery?.authoritative && body.status?.current && body.recovery?.basis?.digest === body.status.current.digest && body.recovery?.basis?.revision === body.status.current.revision);
+  const clockParameters = (existing = {}) => ({...existing, format_24h: $('#clockFormat').value === '24', show_seconds: $('#clockSeconds').checked, clock_offset_minutes: Math.trunc(number('#clockTimeOffset'))});
   const emojiParameters = () => ({text: $('#emojiText').value, x_offset: Math.trunc(number('#emojiXOffset')), y_offset: Math.trunc(number('#emojiYOffset')), char_spacing: Math.trunc(number('#emojiCharSpacing')), line_spacing: Math.trunc(number('#emojiLineSpacing')), scroll_speed: number('#emojiScrollSpeed'), pulse_speed: number('#emojiPulseSpeed')});
   const fireflyParameters = (existing = {}) => ({...existing, population: Math.trunc(number('#fireflyPopulation')), synchrony: number('#fireflySynchrony'), wandering: number('#fireflyWandering'), pulse_softness: number('#fireflyPulseSoftness'), meadow_glow: number('#fireflyMeadowGlow')});
   const fireworksParameters = () => ({launch_cadence: number('#fireworksCadence'), shell_population: Math.trunc(number('#fireworksPopulation')), burst_size: number('#fireworksBurstSize'), burst_style: $('#fireworksStyle').value, gravity: number('#fireworksGravity'), trails: number('#fireworksTrails'), crackle: number('#fireworksCrackle'), twinkle: number('#fireworksTwinkle'), seed: Math.trunc(number('#fireworksSeed'))});
@@ -152,6 +153,11 @@
     status.textContent = selected ? `Preset: ${selected.name}.` : choices.length ? `Custom remix — ${componentLabel(componentId)} parameters differ from every authored preset.` : `No authored presets for ${componentLabel(componentId)}.`;
   }
   function rememberComponentPresets(componentId, presets) { state.componentPresets[componentId] = presets; syncComponentPresetUI(); }
+  function clockWidgets(scene = state.scene) { return (scene?.widgets || []).filter((widget) => widget.component?.component_id === 'clock_overlay'); }
+  function syncClockPresetUI() {
+    const clocks = clockWidgets(); const selected = (state.componentPresets.clock_overlay || []).find((choice) => clocks.length === 1 && sameLocalParameters(choice.parameters, clocks[0].component?.parameters));
+    $('#clockPresetCards').querySelectorAll('button').forEach((button) => { const active = selected?.name === button.textContent; button.setAttribute('aria-pressed', String(active)); button.classList.toggle('active', active); });
+  }
 
   function defaultScene() {
     return { schema: 'ledgrid.scene.v2',
@@ -249,8 +255,8 @@
     else if (choice === 'christmas_tree') next.animation.parameters = treeParameters(next.animation.parameters);
     else if (choice === 'night_train_windows') next.animation.parameters = trainParameters(next.animation.parameters);
     const clockIndexes = next.widgets.reduce((indexes, widget, index) => widget.component?.component_id === 'clock_overlay' ? [...indexes, index] : indexes, []);
-    if (clockIndexes.length === 1) { const clock = next.widgets[clockIndexes[0]]; if (state.lastControl === 'clockEnabled') clock.visible = $('#clockEnabled').checked; if (state.lastControl === 'clockOffset') clock.placement = {...clock.placement, mode: 'manual', strip_translation: clock.placement.strip_translation ?? 0, led_translation: Math.trunc(number('#clockOffset'))}; }
-    else if (clockIndexes.length === 0 && state.lastControl === 'clockEnabled' && $('#clockEnabled').checked) next.widgets.push({id: 'composer-clock', component: {component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget', parameters: {format_24h: false, show_seconds: true, clock_offset_minutes: 0, color: [255, 224, 128]}}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: -8}});
+    if (clockIndexes.length === 1) { const clock = next.widgets[clockIndexes[0]]; if (state.lastControl === 'clockEnabled') clock.visible = $('#clockEnabled').checked; else if (['clockFormat', 'clockSeconds', 'clockTimeOffset'].includes(state.lastControl)) clock.component.parameters = clockParameters(clock.component.parameters); else if (state.lastControl === 'clockOffset') clock.placement = {...clock.placement, mode: 'manual', strip_translation: clock.placement.strip_translation ?? 0, led_translation: Math.trunc(number('#clockOffset'))}; }
+    else if (clockIndexes.length === 0 && state.lastControl === 'clockEnabled' && $('#clockEnabled').checked) next.widgets.push({id: 'composer-clock', component: {component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget', parameters: clockParameters()}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: -8}});
     const emojiIndexes = next.widgets.reduce((indexes, widget, index) => widget.component?.component_id === 'emoji_arranger' ? [...indexes, index] : indexes, []);
     if (emojiIndexes.length === 1) { const emoji = next.widgets[emojiIndexes[0]]; if (state.lastControl === 'emojiEnabled') emoji.visible = $('#emojiEnabled').checked; else if (state.lastControl?.startsWith('emoji')) emoji.component.parameters = emojiParameters(); }
     else if (emojiIndexes.length === 0 && state.lastControl === 'emojiEnabled' && $('#emojiEnabled').checked) next.widgets.push(emojiWidget());
@@ -302,7 +308,8 @@
     $('#snakeCadence').value = snake.move_cadence ?? 9; $('#snakeCount').value = snake.snake_count ?? 3; $('#snakeFood').value = snake.food_count ?? 5; $('#snakeGrowth').value = snake.growth_per_food ?? 3; $('#snakeRules').value = snake.ruleset ?? 'wrap'; $('#snakeObstacles').value = snake.obstacles ?? 'none'; $('#snakeTrails').value = snake.trails ?? .72; $('#snakeGlow').value = snake.glow ?? .55; $('#snakeSeed').value = snake.seed ?? 1976;
     const clocks = (scene.widgets || []).filter((widget) => widget.component?.component_id === 'clock_overlay');
     const clock = clocks.length === 1 ? clocks[0] : null;
-    $('#clockEnabled').checked = Boolean(clock?.visible); $('#clockOffset').value = clock?.placement?.led_translation ?? -8;
+    const clockParameters = clock?.component?.parameters || {};
+    $('#clockEnabled').checked = Boolean(clock?.visible); $('#clockFormat').value = clockParameters.format_24h ? '24' : '12'; $('#clockSeconds').checked = clockParameters.show_seconds ?? true; $('#clockTimeOffset').value = clockParameters.clock_offset_minutes ?? 0; $('#clockOffset').value = clock?.placement?.led_translation ?? -8;
     const emojis = (scene.widgets || []).filter((widget) => widget.component?.component_id === 'emoji_arranger');
     const emoji = emojis.length === 1 ? emojis[0] : null; const message = emoji?.component?.parameters || {};
     $('#emojiEnabled').checked = Boolean(emoji?.visible); $('#emojiText').value = message.text ?? 'HI🔥'; $('#emojiXOffset').value = message.x_offset ?? 8; $('#emojiYOffset').value = message.y_offset ?? 3;
@@ -312,7 +319,7 @@
     const plantEffects = scene.plants?.effects || {}; const activeOptics = new Set(plantEffects.active || []); const strengths = plantEffects.strengths || {};
     plantOptics.forEach((optic) => { $(optic.enabled).checked = activeOptics.has(optic.id); $(optic.strength).value = strengths[optic.id] ?? .5; syncPlantOpticControl(optic); });
     renderPlantOpticsStatus();
-    if (clocks.length <= 1) placementWarning();
+    if (clocks.length <= 1) placementWarning(); syncClockPresetUI();
     syncComponentPresetUI();
   }
   function placementWarning(placement = null) { const warning = $('#widgetWarning'); warning.hidden = !placement?.warning; warning.textContent = placement?.warning || ''; }
@@ -385,6 +392,14 @@
       document.querySelectorAll('[data-reef-control]').forEach((node) => { node.addEventListener('change', edit); node.addEventListener('input', edit); });
     } catch (error) { $('#operationMessage').textContent = error.message || 'Cyclic Reef presets are unavailable.'; }
   }
+  async function loadClockPresets() {
+    try {
+      const response = await fetch(`${api}/components/clock_overlay/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
+      const target = $('#clockPresetCards'); target.replaceChildren();
+      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { const clocks = clockWidgets(); if (clocks.length > 1) { placementWarning({warning: 'Multiple Clock widgets are preserved; choose one before applying a Clock preset.'}); return; } const previous = structuredClone(state.scene || defaultScene()); const next = structuredClone(state.scene || defaultScene()); const clock = clockWidgets(next)[0]; if (clock) clock.component.parameters = preset.parameters; else next.widgets.push({id: 'composer-clock', component: {component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget', parameters: preset.parameters}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: -8}}); state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
+      state.componentPresets.clock_overlay = body.presets; syncClockPresetUI();
+    } catch (error) { $('#operationMessage').textContent = error.message || 'Clock presets are unavailable.'; }
+  }
   function existingPresetCards(componentId) {
     const targetId = componentPresetTargets[componentId] || `${componentId.replaceAll('_', '-')}-preset-cards`;
     let target = document.getElementById(targetId);
@@ -445,6 +460,7 @@
   async function loadLibrary() { const response = await fetch(`${api}/library`); state.library = await response.json(); renderLibrary(); }
   function wire() {
     ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#clockOffset','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiLineSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#wallPace','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
+    ['#clockFormat','#clockSeconds','#clockTimeOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
     ['#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow'].forEach((selector) => $(selector).addEventListener('input', edit));
     Object.values(atmosphereControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
     Object.values(sculptureControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
@@ -482,5 +498,5 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene or use Go Live to replace it.`; }
   async function hydrateCurrentScene() { let response; try { response = await fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`); } catch (_) { const error = new Error('Local Composer server unavailable.'); error.serverUnavailable = true; throw error; } const body = await response.json(); if (!response.ok) { const error = new Error(body.error || 'Current scene recovery is unavailable.'); if (response.status >= 500) { error.serverUnavailable = true; throw error; } recoverFromInvalidRecovery(body); return; } if (body.recovery && (recoveryMatchesStatus(body) || !body.status.current)) { state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null; state.dirty = false; state.revision = body.status.revision || 0; applyScene(state.scene); renderStatus(body.status); } else { state.revision = body.status.revision || 0; applyScene(defaultScene()); renderStatus(body.status); } }
-  hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
+  hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();

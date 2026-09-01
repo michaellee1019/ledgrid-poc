@@ -1,0 +1,11 @@
+{
+  "preset_id": "precision-seconds",
+  "name": "Precision seconds",
+  "description": "Local 24-hour time with a live seconds readout.",
+  "animation": "clock_overlay",
+  "params": {
+    "format_24h": true,
+    "show_seconds": true,
+    "clock_offset_minutes": 0
+  }
+}
