@@ -3,7 +3,7 @@
 import unittest
 import random
 
-from animation.plugins.fluid_tank import FluidTankAnimation
+from animation.plugins.fluid_tank import LegacyFluidTankAnimation as FluidTankAnimation
 from animation.core.manager import AnimationManager
 from animation.core.plugin_loader import AnimationPluginLoader
 from tools.diagnostics.fluid_tank_simulation import SimulationConfig, run_simulation

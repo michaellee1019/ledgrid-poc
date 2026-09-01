@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from animation.core.manager import PreviewLEDController
-from animation.plugins.fluid_tank import FluidTankAnimation
+from animation.plugins.fluid_tank import LegacyFluidTankAnimation as FluidTankAnimation
 
 
 class PlantAwareFluidTankTests(unittest.TestCase):

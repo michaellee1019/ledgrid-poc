@@ -139,6 +139,33 @@ class CanonicalSceneRuntime:
 
     activate_scene = activate
 
+    def dispatch_animation_interaction(
+        self, kind: str, x: float, y: float, strength: float = 1.0,
+    ) -> bool:
+        """Deliver one bounded primary gesture to the active Scene v2 Animation.
+
+        This is deliberately an in-memory renderer action: it cannot publish,
+        replace the canonical scene, or alter desired/observed state.
+        """
+        if self._canonical is None or self._animation is None:
+            raise CanonicalSceneRuntimeError("no canonical Scene v2 has been activated")
+        animation = self._animation.instance
+        supported = getattr(animation, "INTERACTION_TYPES", frozenset())
+        if kind not in supported:
+            raise CanonicalSceneRuntimeError(f"interaction {kind!r} is not supported")
+        values = (x, y, strength)
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) for value in values):
+            raise CanonicalSceneRuntimeError("interaction coordinates and strength must be finite numbers")
+        x_value, y_value, strength_value = map(float, values)
+        if not 0.0 <= x_value < self.strip_count or not 0.0 <= y_value < self.leds_per_strip:
+            raise CanonicalSceneRuntimeError("interaction coordinates are outside the animation grid")
+        if not 0.0 < strength_value <= 1.0:
+            raise CanonicalSceneRuntimeError("interaction strength must be from 0 (exclusive) to 1")
+        handler = getattr(animation, "handle_interaction", None)
+        if not callable(handler):
+            raise CanonicalSceneRuntimeError("animation does not implement interaction handling")
+        return bool(handler(kind, x_value, y_value, strength_value))
+
     def render(self, monotonic_elapsed: float) -> RuntimeFrame:
         canonical = self._canonical
         if canonical is None:

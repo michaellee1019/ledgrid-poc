@@ -32,6 +32,8 @@ from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.emoji import EmojiAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
+from animation.plugins.flame_burst import FlameBurstAnimation
+from animation.plugins.fluid_tank import FluidTankAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.maze_chase import MazeChaseAnimation
@@ -147,6 +149,8 @@ class AnimationWebInterface:
                 TetrisAnimation.COMPONENT_ID: TetrisAnimation._normalized_parameters,
                 FireflySynchronyAnimation.COMPONENT_ID: FireflySynchronyAnimation._normalized_parameters,
                 FireworksAnimation.COMPONENT_ID: FireworksAnimation._normalized_parameters,
+                FlameBurstAnimation.COMPONENT_ID: FlameBurstAnimation._normalized_parameters,
+                FluidTankAnimation.COMPONENT_ID: FluidTankAnimation._normalized_parameters,
                 CyclicReefAnimation.COMPONENT_ID: CyclicReefAnimation._normalized_parameters,
                 LavaLampAnimation.COMPONENT_ID: LavaLampAnimation._normalized_parameters,
                 SnakeAnimation.COMPONENT_ID: SnakeAnimation._normalized_parameters,
@@ -902,10 +906,24 @@ class AnimationWebInterface:
 
         @self.app.route('/api/interaction', methods=['POST'])
         def api_animation_interaction():
-            """Send a logical-grid primary interaction to the live animation."""
+            """Send a bounded gesture to the live Composer basis or legacy animation."""
             payload = request.get_json(silent=True) or {}
             try:
                 kind, x, y, strength = self._validated_interaction_payload(payload)
+                composer = self.composer_live.snapshot(include_current_scene=True)
+                if composer['current'] is not None:
+                    if not (composer['running'] and composer['armed'] and composer['observed'] == composer['current']):
+                        raise ValueError('Composer interaction requires a live observed scene')
+                    canonical = self._composer_recovery_scene(composer['current_scene'])
+                    component_id = canonical.scene['animation']['component_id']
+                    if component_id not in {"lava_lamp", "flame_burst", "fluid_tank"}:
+                        raise ValueError('the published Composer animation does not accept primary interaction')
+                    if kind != 'primary':
+                        raise ValueError("interaction 'primary' is required by the published Composer animation")
+                    if not self.composer_preview.dispatch_animation_interaction(canonical, kind, x, y, strength):
+                        raise ValueError('the published Composer animation rejected that interaction')
+                    return jsonify({'success': True, 'accepted': True, 'component_id': component_id,
+                                    'basis': canonical.identity.to_dict()})
                 raw_status = self.control_channel.read_status() or {}
                 layout = self._sync_preview_layout_from_status(raw_status)
                 self._validate_interaction_bounds(x, y, layout)
@@ -1501,6 +1519,10 @@ class AnimationWebInterface:
             FireflySynchronyAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == FireworksAnimation.COMPONENT_ID:
             FireworksAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FlameBurstAnimation.COMPONENT_ID:
+            FlameBurstAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FluidTankAnimation.COMPONENT_ID:
+            FluidTankAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == CyclicReefAnimation.COMPONENT_ID:
             CyclicReefAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == LavaLampAnimation.COMPONENT_ID:

@@ -32,6 +32,8 @@ from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.emoji import EmojiAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
+from animation.plugins.flame_burst import FlameBurstAnimation
+from animation.plugins.fluid_tank import FluidTankAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.maze_chase import MazeChaseAnimation
@@ -95,6 +97,8 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         TetrisAnimation.component_descriptor(),
         FireflySynchronyAnimation.component_descriptor(),
         FireworksAnimation.component_descriptor(),
+        FlameBurstAnimation.component_descriptor(),
+        FluidTankAnimation.component_descriptor(),
         CyclicReefAnimation.component_descriptor(),
         LavaLampAnimation.component_descriptor(),
         SnakeAnimation.component_descriptor(),
@@ -222,6 +226,18 @@ class ComposerFinalPreview:
                 self._active_digest = canonical.identity.digest
             return self._runtime.render(elapsed)
 
+    def dispatch_animation_interaction(
+        self, canonical: CanonicalScene, kind: str, x: float, y: float,
+        strength: float = 1.0,
+    ) -> bool:
+        """Apply a gesture to this exact published final-preview basis only."""
+
+        with self._lock:
+            if canonical.identity.digest != self._active_digest:
+                self._runtime.activate(canonical)
+                self._active_digest = canonical.identity.digest
+            return self._runtime.dispatch_animation_interaction(kind, x, y, strength)
+
     def _animation_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
         if descriptor.component_id == AuroraCurtainsAnimation.COMPONENT_ID:
             return AuroraCurtainsAnimation(controller, parameters)
@@ -243,6 +259,10 @@ class ComposerFinalPreview:
             return FireflySynchronyAnimation(controller, parameters)
         if descriptor.component_id == FireworksAnimation.COMPONENT_ID:
             return FireworksAnimation(controller, parameters)
+        if descriptor.component_id == FlameBurstAnimation.COMPONENT_ID:
+            return FlameBurstAnimation(controller, parameters)
+        if descriptor.component_id == FluidTankAnimation.COMPONENT_ID:
+            return FluidTankAnimation(controller, parameters)
         if descriptor.component_id == CyclicReefAnimation.COMPONENT_ID:
             return CyclicReefAnimation(controller, parameters)
         if descriptor.component_id == LavaLampAnimation.COMPONENT_ID:

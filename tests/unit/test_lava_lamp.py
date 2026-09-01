@@ -134,16 +134,16 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8.0, "y": 138.0, "strength": 1.0}).status_code, 400)
         self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8.0, "y": 90.0, "strength": 1.01}).status_code, 400)
 
-    def test_composer_canvas_uses_only_bounded_primary_interaction_for_live_lava(self) -> None:
+    def test_composer_canvas_uses_only_bounded_primary_interaction_for_live_instruments(self) -> None:
         script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
         self.assertIn("const lavaParameters = (existing = {}) => ({...existing", script)
         self.assertIn("lavaParameters(next.animation.parameters)", script)
         self.assertIn("const lavaInteractionParameters = (parameters = {})", script)
         self.assertIn("next.animation.parameters = {...preset.parameters, ...lavaInteractionParameters(next.animation.parameters)}", script)
-        start = script.index("async function stirLavaAtPointer(")
+        start = script.index("const primaryInstruments = Object.freeze")
         end = script.index("function renderLibrary()", start)
         interaction = script[start:end]
-        for token in ("event.button !== 0", "event.isPrimary === false", "status?.running", "status?.armed", "Math.min(32.999", "Math.min(137.999", "kind: 'primary'", "strength: 1", "fetch('/api/interaction'"):
+        for token in ("lava_lamp:", "flame_burst:", "fluid_tank:", "componentId", "!trigger", "event.button !== 0", "event.isPrimary === false", "status?.running", "status?.armed", "Math.min(32.999", "Math.min(137.999", "kind: 'primary'", "strength: 1", "body.accepted !== true", "fetch('/api/interaction'"):
             self.assertIn(token, interaction)
         self.assertNotIn("/api/preview/lava_lamp/interaction", interaction)
 

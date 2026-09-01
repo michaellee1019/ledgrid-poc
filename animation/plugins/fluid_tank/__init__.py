@@ -27,7 +27,7 @@ class Hole:
         self.dry_time = dry_time
 
 
-class FluidTankAnimation(AnimationBase):
+class LegacyFluidTankAnimation(AnimationBase):
     """Conserved-volume water with a shallow-water surface and pressure holes."""
 
     ANIMATION_NAME = "Fluid Tank"
@@ -787,3 +787,11 @@ class FluidTankAnimation(AnimationBase):
 
     def get_runtime_stats(self) -> Dict[str, Any]:
         return dict(self.last_stats)
+
+
+# Keep the former high-parameter simulator in this module for migration
+# archaeology while exporting the compact Scene v2 renderer. Keep plugin
+# discovery unambiguous when this file is imported directly.
+LegacyFluidTankAnimation.__module__ = f"{__name__}.legacy"
+from .v2 import FluidTankAnimation
+FluidTankAnimation.__module__ = __name__
