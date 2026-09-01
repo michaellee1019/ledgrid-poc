@@ -99,6 +99,29 @@ class ComposerVisualLibraryTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.get_json())
             self.assertTrue(response.get_json()["status"]["running"])
 
+    def test_starter_cards_have_distinct_canonical_frames_and_selection_keeps_authored_parameters(self) -> None:
+        cards = []
+        for sequence, item in enumerate(self.client.get("/api/composer/starters").get_json()["starters"], start=1):
+            detail = self.client.get(f"/api/composer/starters/{item['id']}").get_json()["starter"]
+            card = self.client.post("/api/composer/library/cards", json={
+                "reference": {"kind": "starter", "id": item["id"]},
+            }).get_json()
+            self.assertEqual((card["frame"]["width"], card["frame"]["height"]), (33, 138))
+            cards.append((card["basis"]["digest"], card["frame"]["pixels"]))
+
+            opened = self.client.post("/api/composer/built-ins/open", json={
+                "scene": detail["scene"], "client_id": "starter-catalog", "client_sequence": sequence,
+            })
+            self.assertEqual(opened.status_code, 200, opened.get_json())
+            status = opened.get_json()["status"]
+            self.assertEqual(status["desired"], status["observed"])
+            self.assertEqual(
+                self.client.get("/api/composer/recovery?client_id=starter-catalog").get_json()["recovery"]["scene"],
+                detail["scene"],
+            )
+
+        self.assertEqual(len(set(cards)), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
