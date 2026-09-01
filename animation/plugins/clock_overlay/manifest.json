@@ -7,5 +7,10 @@
   "role": "widget",
   "frame_format": "rgba_uint8_premultiplied_strip_major",
   "timing": "wall_clock",
-  "cadence": "semantic_time_boundary_cached"
+  "cadence": "semantic_time_boundary_cached",
+  "alpha_behavior": "premultiplied_rgba",
+  "palette_policy": "semantic",
+  "palette_roles": ["clock"],
+  "plant_capabilities": ["effect_intent"],
+  "fidelity_exceptions": []
 }

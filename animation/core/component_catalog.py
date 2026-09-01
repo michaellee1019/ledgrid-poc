@@ -13,6 +13,26 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 
+def _freeze_default(value: Any) -> Any:
+    """Make catalog defaults recursively immutable and detached from callers."""
+
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_default(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_default(item) for item in value)
+    return value
+
+
+def _thaw_default(value: Any) -> Any:
+    """Return an isolated JSON-ready copy for component normalization."""
+
+    if isinstance(value, Mapping):
+        return {key: _thaw_default(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_default(item) for item in value]
+    return value
+
+
 class ComponentProvider(str, Enum):
     PYTHON = "python"
     RECEIVER_NATIVE = "receiver_native"
@@ -111,8 +131,15 @@ class ComponentDescriptor:
             raise ValueError("simulation inputs require the simulation_inputs plant capability")
         object.__setattr__(self, "optional_simulation_inputs", optional_inputs)
         object.__setattr__(self, "required_simulation_inputs", required_inputs)
-        object.__setattr__(self, "defaults", MappingProxyType(dict(self.defaults)))
+        if not isinstance(self.defaults, Mapping):
+            raise ValueError("defaults must be a mapping")
+        object.__setattr__(self, "defaults", _freeze_default(self.defaults))
         self._validate_role_shape()
+
+    def default_parameters(self) -> dict[str, Any]:
+        """Return a mutable JSON-ready copy without exposing catalog state."""
+
+        return _thaw_default(self.defaults)
 
     def validate_scene_v2(self) -> None:
         """Retain a named validation hook for scene-boundary callers."""
@@ -137,13 +164,25 @@ class ComponentCatalog:
     """Provider-qualified immutable component lookup."""
 
     def __init__(self, descriptors: tuple[ComponentDescriptor, ...] | list[ComponentDescriptor]):
+        qualified = tuple(descriptors)
         indexed: dict[tuple[str, str], ComponentDescriptor] = {}
-        for descriptor in descriptors:
+        for descriptor in qualified:
             key = (descriptor.provider.value, descriptor.component_id)
             if key in indexed:
                 raise ValueError(f"duplicate component descriptor {key!r}")
             indexed[key] = descriptor
+        self._qualified_descriptors = qualified
         self._descriptors = MappingProxyType(indexed)
+
+    @property
+    def descriptors(self) -> tuple[ComponentDescriptor, ...]:
+        """The finite, provider-qualified packet exposed to Scene v2 callers.
+
+        Provider remains part of the integrity address used by :meth:`require`;
+        this ordered packet is intentionally not a provider discovery surface.
+        """
+
+        return self._qualified_descriptors
 
     def require(self, *, provider: str, component_id: str, version: int) -> ComponentDescriptor:
         try:

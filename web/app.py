@@ -31,11 +31,7 @@ from drivers.frame_codec import (
     FRAME_ENCODING_NAME,
 )
 from web.preview_worker import RuntimePreviewWorker
-from animation.core.component_catalog import ComponentCatalog
 from animation.core.scene_runtime import CanonicalSceneRuntimeError
-from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
-from animation.plugins.clock_overlay import ClockOverlayAnimation
-from animation.plugins.conway_life import ConwayLifeAnimation
 from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_composer_scene
 from web.composer_component_editor import editor_catalog
 from web.live_scene_state import LiveSceneBlocked, LiveSceneStale, LiveSceneState
@@ -43,7 +39,7 @@ from web.composer_library_state import ComposerLibraryState, ComposerLibraryStat
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
 from web.working_draft_store import WorkingDraftStore, WorkingDraftError
-from web.composer_final_preview import ComposerFinalPreview, native_aurora_descriptor
+from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
 COMPOSER_SHELL_VERSION = "composer-shell-v5"
@@ -114,12 +110,7 @@ class AnimationWebInterface:
         self.runtime_preview_dir = self.project_root / "run_state" / "animation_previews"
         # Composer preview and publication use the same current Scene v2
         # catalog.  Preview owns no wall channel and therefore remains inert.
-        self.composer_catalog = ComponentCatalog([
-            native_aurora_descriptor(),
-            AuroraCurtainsAnimation.component_descriptor(),
-            ConwayLifeAnimation.component_descriptor(),
-            ClockOverlayAnimation.component_descriptor(),
-        ])
+        self.composer_catalog = current_component_catalog()
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
         self.composer_control = _ComposerLocalControlChannel()
         self.composer_live = LiveSceneState(

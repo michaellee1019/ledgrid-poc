@@ -140,7 +140,10 @@ def _normalize_component(value: Any, catalog: ComponentCatalog, expected_role: C
             raise SceneContractError("Animation must be Python premultiplied_rgba or opaque")
     elif descriptor.provider is not ComponentProvider.PYTHON or descriptor.alpha_behavior is not AlphaBehavior.PREMULTIPLIED_RGBA:
         raise SceneContractError("Widget must be Python premultiplied_rgba")
-    defaults = dict(descriptor.defaults)
+    # Descriptor defaults are recursively frozen catalog facts.  Component
+    # normalization receives its own JSON-ready copy, so no scene can mutate a
+    # shared descriptor through nested list or mapping values.
+    defaults = descriptor.default_parameters()
     catalog_digest = defaults.pop("bundle_digest", None)
     if descriptor.provider is ComponentProvider.RECEIVER_NATIVE:
         supplied = value.get("bundle_digest")

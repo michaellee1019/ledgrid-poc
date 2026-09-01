@@ -16,6 +16,7 @@ import numpy as np
 from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.compositing import OverlayFrame
+from animation.core.presentation_contracts import ResolvedScene
 from animation.plugins.clock import ClockAnimation
 
 
@@ -43,24 +44,31 @@ class ClockOverlayAnimation(AnimationBase):
     ROLE = "widget"
     FRAME_FORMAT = "rgba_uint8_premultiplied_strip_major"
     TIMING_POLICY = "wall_clock"
+    PALETTE_POLICY = "semantic"
+    PALETTE_ROLES = ("clock",)
+
+    SEMANTIC_PALETTES = MappingProxyType({
+        "neutral": (150, 255, 218),
+        "mist": (170, 228, 245),
+        "spectrum": (54, 238, 230),
+        "ember": (255, 202, 92),
+    })
 
     # This overlay deliberately replaces AnimationBase's compatibility
-    # parameters.  Pace, brightness, plant geometry, and color grading belong
+    # parameters. Pace, brightness, plant geometry, and color grading belong
     # to their owning background/composition/presentation stages, never here.
     DEFAULTS = MappingProxyType({
         "format_24h": False,
         "show_seconds": True,
         "clock_offset_minutes": 0,
-        "color": (255, 224, 128),
     })
-    # Catalog defaults cross the Composer JSON boundary, so their color uses
-    # a JSON array. Runtime defaults stay immutable tuples and are normalized
-    # independently below; no mutable descriptor value becomes runtime state.
+    # Catalog defaults cross the Composer JSON boundary. Clock color is
+    # resolved from the Scene v2 semantic palette, never supplied as a generic
+    # component default.
     DESCRIPTOR_DEFAULTS = MappingProxyType({
         "format_24h": False,
         "show_seconds": True,
         "clock_offset_minutes": 0,
-        "color": [255, 224, 128],
     })
 
     COMPONENT_DESCRIPTOR = ComponentDescriptor(
@@ -69,9 +77,9 @@ class ClockOverlayAnimation(AnimationBase):
         provider=PROVIDER,
         role=ROLE,
         alpha_behavior="premultiplied_rgba",
-        palette_policy="preserve",
-        plant_capabilities=("none",),
-        fidelity_exceptions=("authored_clock_color",),
+        palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent",),
+        fidelity_exceptions=(),
         timing_policy=TIMING_POLICY,
         defaults=DESCRIPTOR_DEFAULTS,
     )
@@ -91,13 +99,13 @@ class ClockOverlayAnimation(AnimationBase):
         self._last_pixels = self._buffers[0]
         self._last_key: Optional[tuple[Any, ...]] = None
         self._revision = 0
+        self._presentation_context: ResolvedScene | None = None
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         return {
             "format_24h": {"type": "bool", "default": False, "description": "Use 24-hour time"},
             "show_seconds": {"type": "bool", "default": True, "description": "Show seconds and update each second"},
             "clock_offset_minutes": {"type": "int", "min": -720, "max": 840, "default": 0, "description": "Offset from local wall time"},
-            "color": {"type": "color", "default": [255, 224, 128], "description": "Opaque clock-mark color"},
         }
 
     @classmethod
@@ -108,6 +116,21 @@ class ClockOverlayAnimation(AnimationBase):
     def _clock_now(self) -> datetime:
         """Isolated wall-time source so tests and callers can provide fixed time."""
         return datetime.now().astimezone() + timedelta(minutes=int(self.params["clock_offset_minutes"]))
+
+    def on_presentation_context_changed(
+        self, old: ResolvedScene | None, new: ResolvedScene,
+    ) -> None:
+        """Accept the semantic Palette resolved by the Scene v2 runtime."""
+
+        del old
+        if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Clock Overlay requires a semantic Scene v2 palette")
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        """Public context hook used by the canonical runtime before rendering."""
+
+        self.on_presentation_context_changed(self._presentation_context, context)
 
     @staticmethod
     def _time_key(now: datetime, show_seconds: bool) -> tuple[int, ...]:
@@ -150,31 +173,39 @@ class ClockOverlayAnimation(AnimationBase):
 
     @classmethod
     def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
-        unknown = set(values) - set(cls.DEFAULTS)
+        # Existing immutable starter bytes include an authored ``color`` field.
+        # Accept and validate it at the contract boundary, but do not retain or
+        # paint it: the Clock's color comes only from its semantic palette.
+        unknown = set(values) - (set(cls.DEFAULTS) | {"color"})
         if unknown:
             raise ValueError(
                 f"Clock Overlay does not accept non-local parameters: {sorted(unknown)!r}"
             )
         result = dict(cls.DEFAULTS)
-        result.update(values)
+        result.update({key: value for key, value in values.items() if key != "color"})
         for key in ("format_24h", "show_seconds"):
             if not isinstance(result[key], bool):
                 raise ValueError(f"{key} must be a bool")
         offset = result["clock_offset_minutes"]
         if isinstance(offset, bool) or not isinstance(offset, int) or not -720 <= offset <= 840:
             raise ValueError("clock_offset_minutes must be an integer from -720 to 840")
-        color = result["color"]
-        if (
-            not isinstance(color, (list, tuple))
-            or len(color) != 3
-            or any(isinstance(channel, bool) or not isinstance(channel, int) or not 0 <= channel <= 255 for channel in color)
-        ):
-            raise ValueError("color must be three integer channels from 0 to 255")
-        result["color"] = tuple(color)
+        if "color" in values:
+            color = values["color"]
+            if (
+                not isinstance(color, (list, tuple))
+                or len(color) != 3
+                or any(isinstance(channel, bool) or not isinstance(channel, int) or not 0 <= channel <= 255 for channel in color)
+            ):
+                raise ValueError("color must be three integer channels from 0 to 255")
         return result
 
     def _color_key(self) -> tuple[int, int, int]:
-        return self.params["color"]
+        palette_id = (
+            self._presentation_context.palette["palette_id"]
+            if self._presentation_context is not None and self._presentation_context.palette is not None
+            else "neutral"
+        )
+        return self.SEMANTIC_PALETTES.get(str(palette_id), self.SEMANTIC_PALETTES["neutral"])
 
     def _paint_digital(self, now: datetime, output: np.ndarray) -> None:
         visual = output.reshape(self.width, self.height, 4)[:, ::-1]

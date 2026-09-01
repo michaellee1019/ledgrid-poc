@@ -17,7 +17,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from animation.core.component_catalog import ComponentDescriptor
+from animation.core.component_catalog import ComponentCatalog, ComponentDescriptor
 from animation.core.compositing import BaseFrame
 from animation.core.manager import PreviewLEDController
 from animation.core.plant_awareness import PlantMaskCache
@@ -53,6 +53,28 @@ def native_aurora_descriptor() -> ComponentDescriptor:
             "seed": 8012,
         },
     )
+
+
+def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
+    """Return the complete, deliberately small Scene v2 component packet.
+
+    This is the sole Composer assembly seam. Retaining a demonstrated
+    component means adding its fully qualified descriptor here; policy stays
+    with the component declaration rather than being reimplemented by callers.
+    """
+
+    return (
+        native_aurora_descriptor(),
+        AuroraCurtainsAnimation.component_descriptor(),
+        ConwayLifeAnimation.component_descriptor(),
+        ClockOverlayAnimation.component_descriptor(),
+    )
+
+
+def current_component_catalog() -> ComponentCatalog:
+    """Build the current Composer catalog from its finite packet."""
+
+    return ComponentCatalog(current_component_descriptors())
 
 
 _PALETTES: Mapping[str, tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]] = {
@@ -220,5 +242,6 @@ class ComposerFinalPreview:
 
 __all__ = [
     "ComposerFinalPreview", "NATIVE_AURORA_BUNDLE_DIGEST",
-    "NATIVE_AURORA_COMPONENT_ID", "native_aurora_descriptor",
+    "NATIVE_AURORA_COMPONENT_ID", "current_component_catalog",
+    "current_component_descriptors", "native_aurora_descriptor",
 ]

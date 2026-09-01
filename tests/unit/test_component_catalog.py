@@ -1,0 +1,101 @@
+"""The checked, finite Scene v2 Composer component packet."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import unittest
+
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.manager import PreviewLEDController
+from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
+from animation.plugins.conway_life import ConwayLifeAnimation
+from web.composer_final_preview import current_component_catalog
+
+
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+class ComponentCatalogTests(unittest.TestCase):
+    def test_catalog_contains_only_the_qualified_scene_v2_packet(self) -> None:
+        catalog = current_component_catalog()
+
+        entries = {
+            descriptor.component_id: descriptor
+            for descriptor in catalog.descriptors
+        }
+        self.assertEqual(set(entries), {
+            "native_aurora", "aurora_curtains", "conway_life", "clock_overlay",
+        })
+        self.assertEqual(
+            [
+                (entry.provider.value, entry.role.value, entry.timing_policy.value,
+                 entry.alpha_behavior.value, entry.palette_policy.value,
+                 tuple(capability.value for capability in entry.plant_capabilities),
+                 entry.fidelity_exceptions)
+                for entry in catalog.descriptors
+            ],
+            [
+                ("receiver_native", "background", "scaled_context", "none", "semantic", ("final_optics",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), ()),
+                ("python", "widget", "wall_clock", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
+            ],
+        )
+
+    def test_plugin_manifests_match_their_qualified_descriptors(self) -> None:
+        catalog = current_component_catalog()
+        descriptors = {entry.component_id: entry for entry in catalog.descriptors}
+        locations = {
+            "aurora_curtains": _ROOT / "animation/plugins/aurora_curtains/manifest.json",
+            "conway_life": _ROOT / "animation/plugins/conway_life/manifest.json",
+            "clock_overlay": _ROOT / "animation/plugins/clock_overlay/manifest.json",
+        }
+        for component_id, location in locations.items():
+            manifest = json.loads(location.read_text(encoding="utf-8"))
+            declaration = manifest.get("component", manifest)
+            descriptor = descriptors[component_id]
+            self.assertEqual(declaration["provider"], descriptor.provider.value)
+            self.assertEqual(declaration["role"], descriptor.role.value)
+            self.assertEqual(declaration["timing"], descriptor.timing_policy.value)
+            self.assertEqual(declaration["alpha_behavior"], descriptor.alpha_behavior.value)
+            self.assertEqual(declaration["palette_policy"], descriptor.palette_policy.value)
+            self.assertEqual(declaration["plant_capabilities"], [item.value for item in descriptor.plant_capabilities])
+            self.assertEqual(declaration["fidelity_exceptions"], list(descriptor.fidelity_exceptions))
+
+    def test_provider_stays_an_integrity_address_not_a_discovery_filter(self) -> None:
+        catalog = current_component_catalog()
+
+        self.assertFalse(hasattr(catalog, "discover"))
+        self.assertIs(
+            catalog.require(provider="python", component_id="conway_life", version=1),
+            next(item for item in catalog.descriptors if item.component_id == "conway_life"),
+        )
+        with self.assertRaisesRegex(ValueError, "qualified catalog component"):
+            catalog.require(provider="receiver_native", component_id="conway_life", version=1)
+
+    def test_descriptor_defaults_are_deeply_frozen_and_consumers_receive_copies(self) -> None:
+        authored_defaults = {"nested": {"seed_cells": [[1, 2]]}}
+        descriptor = ComponentDescriptor(
+            "copy_safe", 1, "python", "animation", "scaled_context",
+            "opaque", "semantic", ("none",), (), defaults=authored_defaults,
+        )
+        authored_defaults["nested"]["seed_cells"][0][0] = 99
+        self.assertEqual(descriptor.defaults["nested"]["seed_cells"], ((1, 2),))
+        with self.assertRaises(TypeError):
+            descriptor.defaults["nested"]["seed_cells"][0] = (3, 4)
+
+        copied = descriptor.default_parameters()
+        copied["nested"]["seed_cells"][0][0] = 7
+        self.assertEqual(descriptor.defaults["nested"]["seed_cells"], ((1, 2),))
+
+        conway = ConwayLifeAnimation.component_descriptor()
+        copied_conway_defaults = conway.default_parameters()
+        copied_conway_defaults["seed_cells"].append([3, 4])
+        self.assertEqual(conway.defaults["seed_cells"], ())
+
+    def test_aurora_keeps_effect_intent_out_of_legacy_modifier_discovery(self) -> None:
+        aurora = AuroraCurtainsAnimation(PreviewLEDController(strips=2, leds_per_strip=2))
+
+        self.assertFalse(AuroraCurtainsAnimation.PLANT_MODIFIER_SUPPORT)
+        self.assertNotIn("effect_intent", aurora.get_info()["plant_modifier_support"])

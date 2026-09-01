@@ -132,8 +132,27 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         planted = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(plants={
             "effects": {"version": 1, "active": ["illuminate", "shadow"], "strengths": {"illuminate": .7, "shadow": .4}},
         }, palette="ember", pace=.7, brightness=.5))))
-        self.assertFalse(np.array_equal(first, second))
+        # Semantic Clock Widgets intentionally share the resolved Look color;
+        # author order stays canonical, but literal per-widget colors no
+        # longer affect their final pixels.
+        np.testing.assert_array_equal(first, second)
         self.assertFalse(np.array_equal(first, planted))
+
+    def test_final_preview_delivers_the_resolved_palette_to_the_clock_plane(self) -> None:
+        preview = ComposerFinalPreview(self.interface.composer_catalog, self.interface.project_root)
+        mist_scene = _scene(widgets=[_clock("clock", [255, 224, 128])], palette="mist")
+        ember_scene = _scene(widgets=[_clock("clock", [255, 224, 128])], palette="ember")
+        mist = self.interface._composer_canonical({"origin": "composer", "scene": mist_scene})
+        ember = self.interface._composer_canonical({"origin": "composer", "scene": ember_scene})
+
+        preview.render(mist, 1.25, datetime.fromisoformat("2026-08-31T13:47:10+00:00"))
+        clock = preview._runtime._widgets["clock"].instance
+        mist_clock = clock._last_pixels.copy()
+        preview.render(ember, 1.25, datetime.fromisoformat("2026-08-31T13:47:10+00:00"))
+        ember_clock = clock._last_pixels.copy()
+
+        np.testing.assert_array_equal(mist_clock[:, 3], ember_clock[:, 3])
+        self.assertFalse(np.array_equal(mist_clock[:, :3], ember_clock[:, :3]))
 
     def test_native_cadence_advances_continuously_without_live_side_effects(self) -> None:
         scene = _scene(animation="conway_life")

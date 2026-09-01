@@ -1,4 +1,4 @@
-"""Scene-v1 Conway Life as a transparent, semantic-palette overlay."""
+"""Scene v2 Conway Life as a premultiplied semantic Animation."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class ConwayLifeAnimation(AnimationBase):
     """Bounded-cadence B/S cellular life in canonical premultiplied RGBA8."""
 
     ANIMATION_NAME = "Conway Life Overlay"
-    ANIMATION_DESCRIPTION = "A seeded Life field composed over a semantic Scene-v1 background"
+    ANIMATION_DESCRIPTION = "A seeded Life field composed over the canonical Scene v2 background"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "3.0"
 
@@ -50,7 +50,11 @@ class ConwayLifeAnimation(AnimationBase):
     CADENCE_POLICY = "local_generation_cadence_cached"
     PALETTE_POLICY = "semantic"
     PALETTE_ROLES = ("alive", "mature")
-    CAPABILITIES = frozenset({"semantic_palette_roles", "scaled_context", "local_generation_cadence"})
+    CAPABILITIES = frozenset({
+        "semantic_palette_roles", "scaled_context", "local_generation_cadence", "simulation_inputs",
+    })
+    # Scene v2 supplies these as bounded simulation inputs; do not re-enable
+    # the legacy direct plant-modifier bridge.
     PLANT_MODIFIER_SUPPORT = frozenset()
     MAX_CATCH_UP_GENERATIONS = 8
 

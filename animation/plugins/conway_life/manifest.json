@@ -7,12 +7,16 @@
     "id": "conway_life",
     "version": 1,
     "provider": "python",
-    "role": "overlay",
+    "role": "animation",
     "frame_format": "rgba_uint8_premultiplied_strip_major",
     "cadence": "local_generation_cadence_cached",
     "timing": "scaled_context",
+    "alpha_behavior": "premultiplied_rgba",
     "palette_policy": "semantic",
     "palette_roles": ["alive", "mature"],
-    "capabilities": ["semantic_palette_roles", "scaled_context", "local_generation_cadence"]
+    "plant_capabilities": ["simulation_inputs"],
+    "fidelity_exceptions": [],
+    "optional_simulation_inputs": ["foliage_density", "globe_proximity", "occlusion"],
+    "capabilities": ["semantic_palette_roles", "scaled_context", "local_generation_cadence", "simulation_inputs"]
   }
 }

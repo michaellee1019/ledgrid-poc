@@ -1,10 +1,4 @@
-"""A context-native, source-cadenced Aurora Curtains background.
-
-Aurora is deliberately a Scene-v1 component rather than a compatibility
-adapter. It consumes already-scaled presentation time and semantic palette
-roles, then leaves presentation luminance and wall output brightness to the
-scene pipeline that owns them.
-"""
+"""A context-native, source-cadenced opaque Aurora Curtains Animation."""
 
 from __future__ import annotations
 
@@ -63,10 +57,10 @@ class AuroraCurtainsAnimation(AnimationBase):
     TIMING_POLICY = "scaled_context"
     PALETTE_POLICY = "semantic"
     PALETTE_ROLES = ("background_low", "primary", "accent")
-    CAPABILITIES = frozenset({"semantic_palette_roles", "source_cadence", "scaled_context"})
+    CAPABILITIES = frozenset({"semantic_palette_roles", "source_cadence", "scaled_context", "effect_intent"})
 
-    # Aurora has no semantic plant behaviour in this packet. It intentionally
-    # does not inherit the old plant_aware compatibility bridge.
+    # Effect intent is owned by the canonical Scene v2 plant payload.  It is
+    # not a legacy direct modifier, so the old bridge remains unavailable.
     PLANT_MODIFIER_SUPPORT = frozenset()
 
     DEFAULTS = MappingProxyType({
@@ -85,7 +79,7 @@ class AuroraCurtainsAnimation(AnimationBase):
         alpha_behavior="opaque",
         palette_policy=PALETTE_POLICY,
         timing_policy=TIMING_POLICY,
-        plant_capabilities=("none",),
+        plant_capabilities=("effect_intent",),
         fidelity_exceptions=(),
         intensity_parameter="glow_intensity",
         defaults=DEFAULTS,
@@ -116,7 +110,7 @@ class AuroraCurtainsAnimation(AnimationBase):
 
     @classmethod
     def component_descriptor(cls) -> ComponentDescriptor:
-        """Return the provider-qualified Scene-v1 declaration for Aurora."""
+        """Return the provider-qualified Scene v2 Animation declaration."""
         return cls.COMPONENT_DESCRIPTOR
 
     @classmethod
@@ -179,7 +173,7 @@ class AuroraCurtainsAnimation(AnimationBase):
         self.on_presentation_context_changed(self._presentation_context, context)
 
     def render_resolved_scene(self, context: ResolvedScene) -> np.ndarray:
-        """Render raw component RGB for Scene-v1's outer presentation pipeline."""
+        """Render raw component RGB for Scene v2's outer presentation pipeline."""
         self.set_presentation_context(context)
         rendered = self._render(
             phase_time=context.phase_time,
@@ -191,7 +185,7 @@ class AuroraCurtainsAnimation(AnimationBase):
     def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
         """Preserve the frame-plugin API using direct neutral headless context.
 
-        Managed Scene-v1 rendering calls :meth:`render_resolved_scene` with
+        Managed Scene v2 rendering calls :meth:`render_resolved_scene` with
         its already-scaled phase time. The direct path is deliberately neutral
         and does not synthesize pace or luminance controls.
         """

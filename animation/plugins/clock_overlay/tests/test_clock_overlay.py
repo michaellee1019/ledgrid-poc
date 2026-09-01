@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 import unittest
 
 import numpy as np
@@ -11,6 +12,7 @@ from animation.core.component_catalog import ComponentCatalog, ComponentDescript
 from animation.core.compositing import BaseFrame, HostSceneCompositor, PlacedOverlay
 from animation.core.manager import PreviewLEDController
 from animation.core.plugin_loader import AnimationPluginLoader
+from animation.core.presentation_contracts import ResolvedScene
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from ipc.scene_contract import normalize_composer_scene
@@ -47,7 +49,6 @@ class ClockOverlayTests(unittest.TestCase):
             "format_24h": False,
             "show_seconds": True,
             "clock_offset_minutes": 0,
-            "color": [255, 224, 128],
         })
         self.assertIs(
             ComponentCatalog([descriptor]).require(
@@ -98,10 +99,8 @@ class ClockOverlayTests(unittest.TestCase):
             "format_24h": False,
             "show_seconds": True,
             "clock_offset_minutes": 0,
-            "color": [255, 224, 128],
         })
-        self.assertIsInstance(parameters["color"], list)
-        self.assertEqual(_FixedClock(self.controller).params["color"], (255, 224, 128))
+        self.assertNotIn("color", _FixedClock(self.controller).params)
 
     def test_fixed_time_frame_is_canonical_premultiplied_rgba8(self) -> None:
         frame = _FixedClock(self.controller).generate_frame(4_000.0, 800_000)
@@ -113,7 +112,7 @@ class ClockOverlayTests(unittest.TestCase):
 
     def test_current_only_parameters_reject_legacy_and_validate_values(self) -> None:
         clock = _FixedClock(self.controller)
-        self.assertEqual(set(clock.params), {"format_24h", "show_seconds", "clock_offset_minutes", "color"})
+        self.assertEqual(set(clock.params), {"format_24h", "show_seconds", "clock_offset_minutes"})
         self.assertNotIn("speed", clock.params)
         self.assertNotIn("brightness", clock.params)
         self.assertNotIn("plant_aware", clock.params)
@@ -133,12 +132,32 @@ class ClockOverlayTests(unittest.TestCase):
     def test_valid_live_update_invalidates_cached_plane_without_legacy_state(self) -> None:
         clock = _FixedClock(self.controller)
         first = clock.generate_frame(0.0, 0)
-        clock.update_parameters({"format_24h": True, "color": (40, 200, 255)})
+        clock.update_parameters({"format_24h": True})
         changed = clock.generate_frame(1000.0, 200_000)
         self.assertTrue(changed.changed)
         self.assertGreater(changed.revision, first.revision)
-        self.assertEqual(clock.params["color"], (40, 200, 255))
-        self.assertEqual(set(clock.params), {"format_24h", "show_seconds", "clock_offset_minutes", "color"})
+        self.assertEqual(set(clock.params), {"format_24h", "show_seconds", "clock_offset_minutes"})
+
+    def test_fixed_wall_time_changes_clock_pixels_only_with_the_semantic_palette(self) -> None:
+        clock = _FixedClock(self.controller, {"color": [1, 2, 3]})
+        descriptor = clock.component_descriptor()
+
+        def context(palette_id: str) -> ResolvedScene:
+            return ResolvedScene(
+                canonical_scene=MappingProxyType({}), canonical_bytes=b"clock-test", digest="0" * 64,
+                descriptor=descriptor, parameters=MappingProxyType({}),
+                palette=MappingProxyType({"palette_id": palette_id}), phase_time=0.0,
+                plant_inputs=MappingProxyType({}),
+            )
+
+        clock.set_presentation_context(context("mist"))
+        mist = clock.generate_frame(0.0, 0)
+        clock.set_presentation_context(context("ember"))
+        ember = clock.generate_frame(0.0, 0)
+
+        np.testing.assert_array_equal(mist.pixels[:, 3], ember.pixels[:, 3])
+        self.assertFalse(np.array_equal(mist.pixels[:, :3], ember.pixels[:, :3]))
+        self.assertNotIn("color", clock.params)
 
     def test_seconds_and_minute_caches_follow_only_wall_time_boundaries(self) -> None:
         clock = _FixedClock(self.controller)
