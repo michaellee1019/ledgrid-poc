@@ -13,6 +13,7 @@ from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
+from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from web.composer_final_preview import current_component_catalog
@@ -30,7 +31,7 @@ class ComponentCatalogTests(unittest.TestCase):
             for descriptor in catalog.descriptors
         }
         self.assertEqual(set(entries), {
-            "native_aurora", "aurora_curtains", "conway_life", "tetris", "firefly_synchrony", "fireworks", "snake", "clock_overlay", "emoji_arranger",
+            "native_aurora", "aurora_curtains", "conway_life", "tetris", "firefly_synchrony", "fireworks", "cyclic_reef", "lava_lamp", "snake", "clock_overlay", "emoji_arranger",
         })
         self.assertEqual(
             [
@@ -44,6 +45,8 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("receiver_native", "background", "scaled_context", "none", "semantic", ("final_optics",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
@@ -62,6 +65,7 @@ class ComponentCatalogTests(unittest.TestCase):
             "tetris": _ROOT / "animation/plugins/tetris/manifest.json",
             "firefly_synchrony": _ROOT / "animation/plugins/firefly_synchrony/manifest.json",
             "fireworks": _ROOT / "animation/plugins/fireworks/manifest.json",
+            "cyclic_reef": _ROOT / "animation/plugins/cyclic_reef/manifest.json",
             "snake": _ROOT / "animation/plugins/snake/manifest.json",
             "clock_overlay": _ROOT / "animation/plugins/clock_overlay/manifest.json",
             "emoji_arranger": _ROOT / "animation/plugins/emoji_arranger/manifest.json",
@@ -136,6 +140,11 @@ class ComponentCatalogTests(unittest.TestCase):
     def test_snake_is_a_qualified_semantic_opaque_animation(self) -> None:
         descriptor = SnakeAnimation.component_descriptor()
         self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("snake", "animation", "scaled_context"))
+        self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("opaque", "semantic", ("effect_intent",)))
+
+    def test_cyclic_reef_is_a_qualified_semantic_opaque_animation(self) -> None:
+        descriptor = CyclicReefAnimation.component_descriptor()
+        self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("cyclic_reef", "animation", "scaled_context"))
         self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("opaque", "semantic", ("effect_intent",)))
 
     def test_emoji_message_is_a_scaled_semantic_widget(self) -> None:

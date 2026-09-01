@@ -28,6 +28,7 @@ from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
+from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
@@ -76,6 +77,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         TetrisAnimation.component_descriptor(),
         FireflySynchronyAnimation.component_descriptor(),
         FireworksAnimation.component_descriptor(),
+        CyclicReefAnimation.component_descriptor(),
         LavaLampAnimation.component_descriptor(),
         SnakeAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
@@ -205,6 +207,8 @@ class ComposerFinalPreview:
             return FireflySynchronyAnimation(controller, parameters)
         if descriptor.component_id == FireworksAnimation.COMPONENT_ID:
             return FireworksAnimation(controller, parameters)
+        if descriptor.component_id == CyclicReefAnimation.COMPONENT_ID:
+            return CyclicReefAnimation(controller, parameters)
         if descriptor.component_id == LavaLampAnimation.COMPONENT_ID:
             return LavaLampAnimation(controller, parameters)
         if descriptor.component_id == SnakeAnimation.COMPONENT_ID:
