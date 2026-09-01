@@ -10,6 +10,12 @@ from animation.core.plugin_loader import AnimationPluginLoader
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
+SCENE_V2_COMPONENT_PRESETS = {
+    "aurora_curtains", "conway_life", "tetris", "firefly_synchrony",
+    "fireworks", "lava_lamp", "snake", "cyclic_reef",
+}
+
+
 class CuratedAnimationPresetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -32,9 +38,9 @@ class CuratedAnimationPresetTests(unittest.TestCase):
                 self.assertEqual(animation_name, path.parents[1].name)
                 self.assertIsInstance(payload.get("params"), dict)
                 # Scene v2 component presets deliberately have no legacy
-                # plant_aware/output authority; Fireworks is the first small
-                # authored family exposed through the component catalog.
-                if animation_name not in {"fireworks", "lava_lamp", "snake", "cyclic_reef"}:
+                # plant_aware/output authority. They are normalized and
+                # previewed through the Composer component catalog instead.
+                if animation_name not in SCENE_V2_COMPONENT_PRESETS:
                     self.assertIs(payload["params"].get("plant_aware"), True)
                 self.assertIn(animation_name, self.plugins)
 
@@ -52,12 +58,10 @@ class CuratedAnimationPresetTests(unittest.TestCase):
                             self.assertLessEqual(value, definition["max"])
 
                 rendered = animation.generate_frame(0.0, 0)
-                pixels = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
+                pixels = rendered.pixels if hasattr(rendered, "pixels") else rendered
                 self.assertIsInstance(pixels, np.ndarray)
-                self.assertEqual(
-                    pixels.shape,
-                    (DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP, 3),
-                )
+                channels = 4 if animation_name == "conway_life" else 3
+                self.assertEqual(pixels.shape, (DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP, channels))
                 self.assertEqual(pixels.dtype, np.uint8)
 
 

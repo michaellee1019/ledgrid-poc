@@ -23,12 +23,15 @@ from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
+from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
+from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.snake import SnakeAnimation
+from animation.plugins.tetris import TetrisAnimation
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -121,6 +124,10 @@ class AnimationWebInterface:
         self.composer_presets = ComponentPresetCatalog(
             self.project_root,
             {
+                AuroraCurtainsAnimation.COMPONENT_ID: AuroraCurtainsAnimation._normalized_parameters,
+                ConwayLifeAnimation.COMPONENT_ID: ConwayLifeAnimation._normalized_parameters,
+                TetrisAnimation.COMPONENT_ID: TetrisAnimation._normalized_parameters,
+                FireflySynchronyAnimation.COMPONENT_ID: FireflySynchronyAnimation._normalized_parameters,
                 FireworksAnimation.COMPONENT_ID: FireworksAnimation._normalized_parameters,
                 CyclicReefAnimation.COMPONENT_ID: CyclicReefAnimation._normalized_parameters,
                 LavaLampAnimation.COMPONENT_ID: LavaLampAnimation._normalized_parameters,
@@ -1448,6 +1455,12 @@ class AnimationWebInterface:
             component = widget["component"]
             if component["component_id"] == EmojiArrangerAnimation.COMPONENT_ID:
                 EmojiArrangerAnimation._normalized_parameters(component["parameters"])
+        if canonical.scene["animation"]["component_id"] == AuroraCurtainsAnimation.COMPONENT_ID:
+            AuroraCurtainsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == ConwayLifeAnimation.COMPONENT_ID:
+            ConwayLifeAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == TetrisAnimation.COMPONENT_ID:
+            TetrisAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == FireflySynchronyAnimation.COMPONENT_ID:
             FireflySynchronyAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == FireworksAnimation.COMPONENT_ID:

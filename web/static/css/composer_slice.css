@@ -19,6 +19,7 @@ input, select { min-width: 0; padding: .52rem; border: 1px solid #44656a; border
 .button { min-height: 2.35rem; padding: .5rem .7rem; border: 0; border-radius: 7px; cursor: pointer; font-weight: 720; }
 .button.primary { background: #7ee0c8; color: #09201d; }
 .button.secondary { background: #29464c; color: #f1ffff; }
+.operation-row .button[aria-pressed="true"] { background: #5c9e93; color: #071917; }
 .button.text { background: transparent; color: #b9e9dc; }
 .button:focus-visible, input:focus-visible, select:focus-visible, dialog:focus-visible { outline: 2px solid #83d7c5; outline-offset: 2px; }
 .button:disabled { cursor: wait; opacity: .6; }

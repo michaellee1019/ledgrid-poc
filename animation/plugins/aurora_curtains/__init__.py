@@ -309,25 +309,26 @@ class AuroraCurtainsAnimation(AnimationBase):
         self._rgb += np.maximum(field - .12, 0.0)[..., None] * accent * (.34 * glow_intensity)
         np.clip(self._rgb, 0.0, 255.0, out=self._rgb)
 
-    def _normalized_parameters(self, values: Mapping[str, Any]) -> dict[str, float | int]:
-        unknown = set(values) - set(self.DEFAULTS)
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, float | int]:
+        unknown = set(values) - set(cls.DEFAULTS)
         if unknown:
             raise ValueError(
                 f"Aurora Curtains does not accept non-local parameters: {sorted(unknown)!r}"
             )
-        result: dict[str, float | int] = dict(self.DEFAULTS)
-        for key in self.DEFAULTS:
+        result: dict[str, float | int] = dict(cls.DEFAULTS)
+        for key in cls.DEFAULTS:
             if key in values:
                 result[key] = values[key]
         for key in ("curtain_density", "fold_depth", "glow_intensity"):
             value = result[key]
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
                 raise ValueError(f"{key} must be a number from 0 to 1")
-            result[key] = float(np.clip(float(value), 0.0, 1.0))
+            result[key] = float(value)
         fps = result["source_fps"]
-        if isinstance(fps, bool) or not isinstance(fps, (int, float)):
+        if isinstance(fps, bool) or not isinstance(fps, (int, float)) or not 20.0 <= float(fps) <= 40.0:
             raise ValueError("source_fps must be a number from 20 to 40")
-        result["source_fps"] = float(np.clip(float(fps), 20.0, 40.0))
+        result["source_fps"] = float(fps)
         seed = result["seed"]
         if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 999999:
             raise ValueError("seed must be an integer from 0 to 999999")

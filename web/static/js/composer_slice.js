@@ -8,18 +8,62 @@
   // an id while resetting its sequence would make the next authored edit stale.
   const clientId = crypto.randomUUID();
   const state = { status: null, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
-    scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false };
+    scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {} };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const number = (id) => Number($(id).value);
   const recoveryMatchesStatus = (body) => Boolean(body.recovery?.authoritative && body.status?.current && body.recovery?.basis?.digest === body.status.current.digest && body.recovery?.basis?.revision === body.status.current.revision);
   const emojiParameters = () => ({text: $('#emojiText').value, x_offset: Math.trunc(number('#emojiXOffset')), y_offset: Math.trunc(number('#emojiYOffset')), char_spacing: Math.trunc(number('#emojiCharSpacing')), line_spacing: Math.trunc(number('#emojiLineSpacing')), scroll_speed: number('#emojiScrollSpeed'), pulse_speed: number('#emojiPulseSpeed')});
-  const fireflyParameters = () => ({seed: 7319, population: Math.trunc(number('#fireflyPopulation')), coupling_radius: 8, synchrony: number('#fireflySynchrony'), wandering: number('#fireflyWandering'), pulse_softness: number('#fireflyPulseSoftness'), meadow_glow: number('#fireflyMeadowGlow')});
+  const fireflyParameters = (existing = {}) => ({...existing, population: Math.trunc(number('#fireflyPopulation')), synchrony: number('#fireflySynchrony'), wandering: number('#fireflyWandering'), pulse_softness: number('#fireflyPulseSoftness'), meadow_glow: number('#fireflyMeadowGlow')});
   const fireworksParameters = () => ({launch_cadence: number('#fireworksCadence'), shell_population: Math.trunc(number('#fireworksPopulation')), burst_size: number('#fireworksBurstSize'), burst_style: $('#fireworksStyle').value, gravity: number('#fireworksGravity'), trails: number('#fireworksTrails'), crackle: number('#fireworksCrackle'), twinkle: number('#fireworksTwinkle'), seed: Math.trunc(number('#fireworksSeed'))});
   const lavaParameters = (existing = {}) => ({...existing, blob_count: Math.trunc(number('#lavaBlobCount')), blob_scale: number('#lavaBlobScale'), viscosity: number('#lavaViscosity'), heat: number('#lavaHeat'), turbulence: number('#lavaTurbulence'), glow: number('#lavaGlow'), seed: Math.trunc(number('#lavaSeed'))});
   const reefParameters = (existing = {}) => ({...existing, species_count: Math.trunc(number('#reefSpecies')), takeover_threshold: Math.trunc(number('#reefThreshold')), mutation: number('#reefMutation'), grazers: Math.trunc(number('#reefGrazers')), boundary_glow: number('#reefGlow'), topology: $('#reefTopology').value, pace: number('#reefPace'), seed: Math.trunc(number('#reefSeed'))});
   const lavaInteractionParameters = (parameters = {}) => Object.fromEntries(['interaction_radius', 'interaction_strength'].filter((name) => Object.hasOwn(parameters, name)).map((name) => [name, parameters[name]]));
   const snakeParameters = (existing = {}) => ({...existing, move_cadence: number('#snakeCadence'), snake_count: Math.trunc(number('#snakeCount')), food_count: Math.trunc(number('#snakeFood')), growth_per_food: Math.trunc(number('#snakeGrowth')), ruleset: $('#snakeRules').value, obstacles: $('#snakeObstacles').value, trails: number('#snakeTrails'), glow: number('#snakeGlow'), seed: Math.trunc(number('#snakeSeed'))});
   const emojiWidget = () => ({id: 'composer-emoji-message', component: {component_id: 'emoji_arranger', version: 1, provider: 'python', role: 'widget', parameters: emojiParameters()}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: 0}});
+  const componentPresetTargets = Object.freeze({aurora_curtains: 'aurora-curtains-preset-cards', conway_life: 'conway-life-preset-cards', tetris: 'tetris-preset-cards', firefly_synchrony: 'firefly-synchrony-preset-cards', fireworks: 'fireworksPresetCards', lava_lamp: 'lavaPresetCards', snake: 'snakePresetCards', cyclic_reef: 'reefPresetCards'});
+  const componentControls = Object.freeze({aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed']});
+
+  function sameLocalParameters(left, right) {
+    if (left === right) return true;
+    if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+    const leftKeys = Object.keys(left).sort(); const rightKeys = Object.keys(right).sort();
+    return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && sameLocalParameters(left[key], right[key]));
+  }
+  function componentLabel(componentId) { return [...$('#animationChoice').options].find((option) => option.value === componentId)?.textContent || componentId; }
+  function setComponentRegion(target, visible) {
+    if (!target) return;
+    target.hidden = !visible; target.inert = !visible; target.setAttribute('aria-hidden', String(!visible));
+    target.querySelectorAll('button,input,select,textarea').forEach((control) => { control.disabled = !visible; });
+  }
+  function presetStatus() {
+    let target = $('#animationPresetState');
+    if (!target) {
+      target = document.createElement('p'); target.id = 'animationPresetState'; target.className = 'status-line'; target.setAttribute('aria-live', 'polite');
+      $('#animationControls').before(target);
+    }
+    return target;
+  }
+  function syncComponentPresetUI() {
+    const componentId = state.scene?.animation?.component_id;
+    Object.entries(componentPresetTargets).forEach(([id, targetId]) => setComponentRegion(document.getElementById(targetId), id === componentId));
+    Object.entries(componentControls).forEach(([id, selectors]) => selectors.forEach((selector) => {
+      const control = $(selector); if (!control) return;
+      const visible = id === componentId; const label = control.closest('label') || control;
+      label.hidden = !visible; control.disabled = !visible; control.setAttribute('aria-hidden', String(!visible));
+    }));
+    ['snakePresetCards', 'reefPresetCards'].forEach((targetId) => {
+      const target = document.getElementById(targetId); if (target) setComponentRegion(target.closest('.inspector'), (targetId === 'snakePresetCards' ? 'snake' : 'cyclic_reef') === componentId);
+    });
+    const choices = state.componentPresets[componentId] || [];
+    const selected = choices.find((choice) => sameLocalParameters(choice.parameters, state.scene?.animation?.parameters));
+    const cards = document.getElementById(componentPresetTargets[componentId]);
+    if (cards) cards.querySelectorAll('button').forEach((button) => {
+      const active = selected?.name === button.textContent; button.setAttribute('aria-pressed', String(active)); button.classList.toggle('active', active);
+    });
+    const status = presetStatus();
+    status.textContent = selected ? `Preset: ${selected.name}.` : choices.length ? `Custom remix — ${componentLabel(componentId)} parameters differ from every authored preset.` : `No authored presets for ${componentLabel(componentId)}.`;
+  }
+  function rememberComponentPresets(componentId, presets) { state.componentPresets[componentId] = presets; syncComponentPresetUI(); }
 
   function defaultScene() {
     return { schema: 'ledgrid.scene.v2',
@@ -37,7 +81,7 @@
       : choice === 'tetris'
         ? {component_id: 'tetris', version: 1, provider: 'python', role: 'animation', parameters: {}}
         : choice === 'firefly_synchrony'
-          ? {component_id: 'firefly_synchrony', version: 1, provider: 'python', role: 'animation', parameters: fireflyParameters()}
+          ? {component_id: 'firefly_synchrony', version: 1, provider: 'python', role: 'animation', parameters: fireflyParameters({seed: 7319, coupling_radius: 8})}
           : choice === 'fireworks'
             ? {component_id: 'fireworks', version: 1, provider: 'python', role: 'animation', parameters: fireworksParameters()}
           : choice === 'cyclic_reef'
@@ -49,7 +93,7 @@
         : {component_id: 'aurora_curtains', version: 1, provider: 'python', role: 'animation', parameters: {curtain_density: number('#curtainDensity'), fold_depth: number('#foldDepth'), glow_intensity: number('#glowIntensity'), source_fps: 30, seed: 4201}};
     else if (choice === 'conway_life') next.animation.parameters = {...next.animation.parameters, seed: number('#lifeSeed'), generations_per_second: number('#lifeRate')};
     else if (choice === 'aurora_curtains') next.animation.parameters = {...next.animation.parameters, curtain_density: number('#curtainDensity'), fold_depth: number('#foldDepth'), glow_intensity: number('#glowIntensity')};
-    else if (choice === 'firefly_synchrony') next.animation.parameters = fireflyParameters();
+    else if (choice === 'firefly_synchrony') next.animation.parameters = fireflyParameters(next.animation.parameters);
     else if (choice === 'fireworks') next.animation.parameters = fireworksParameters();
     else if (choice === 'cyclic_reef') next.animation.parameters = reefParameters(next.animation.parameters);
     else if (choice === 'lava_lamp') next.animation.parameters = lavaParameters(next.animation.parameters);
@@ -95,6 +139,7 @@
     $('#previewPalette').value = scene.look?.palette_id ?? 'mist'; $('#wallPace').value = scene.look?.pace ?? .7; $('#sceneLuminance').value = scene.look?.presentation_brightness ?? .82;
     $('#plantsStatus').textContent = scene.plants?.effects?.active?.length ? `${scene.plants.effects.active.length} plant effects active.` : 'No active plant effects.';
     if (clocks.length <= 1) placementWarning();
+    syncComponentPresetUI();
   }
   function placementWarning(placement = null) { const warning = $('#widgetWarning'); warning.hidden = !placement?.warning; warning.textContent = placement?.warning || ''; }
   function drawFrame(frame) {
@@ -125,7 +170,7 @@
   function remember(previous) { state.history.push(previous); if (state.history.length > 40) state.history.shift(); state.redo = []; }
   async function submit(scene, {builtin = false, rememberEdit = false} = {}) {
     if (rememberEdit) remember(structuredClone(state.scene || defaultScene()));
-    state.scene = scene; schedulePreview(); state.submitting = true;
+    state.scene = scene; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
     const endpoint = builtin ? '/built-ins/open' : '/scene';
     const body = builtin ? {scene, client_id: clientId, mutation_id: crypto.randomUUID(), client_sequence: ++state.sequence} : {origin: 'composer', scene, client_id: clientId, mutation_id: crypto.randomUUID(), client_sequence: ++state.sequence};
     try { const response = await fetch(`${api}${endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const result = await response.json(); renderStatus(result); if (!response.ok) throw Object.assign(new Error(result.error || 'Current scene could not be accepted.'), {result}); return result; }
@@ -137,6 +182,7 @@
       const response = await fetch(`${api}/components/fireworks/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
       const target = $('#fireworksPresetCards'); target.replaceChildren();
       body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'fireworks') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = preset.parameters; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
+      rememberComponentPresets('fireworks', body.presets);
     } catch (error) { $('#operationMessage').textContent = error.message || 'Fireworks presets are unavailable.'; }
   }
   async function loadSnakePresets() {
@@ -144,6 +190,7 @@
       const response = await fetch(`${api}/components/snake/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
       const target = $('#snakePresetCards'); target.replaceChildren();
       body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'snake') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = preset.parameters; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
+      rememberComponentPresets('snake', body.presets);
       document.querySelectorAll('[data-snake-control]').forEach((node) => { node.addEventListener('change', edit); node.addEventListener('input', edit); });
     } catch (error) { $('#operationMessage').textContent = error.message || 'Snake presets are unavailable.'; }
   }
@@ -152,6 +199,7 @@
       const response = await fetch(`${api}/components/lava_lamp/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
       const target = $('#lavaPresetCards'); target.replaceChildren();
       body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'lava_lamp') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = {...preset.parameters, ...lavaInteractionParameters(next.animation.parameters)}; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
+      rememberComponentPresets('lava_lamp', body.presets);
     } catch (error) { $('#operationMessage').textContent = error.message || 'Lava Lamp presets are unavailable.'; }
   }
   async function loadReefPresets() {
@@ -159,8 +207,26 @@
       const response = await fetch(`${api}/components/cyclic_reef/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
       const target = $('#reefPresetCards'); target.replaceChildren();
       body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'cyclic_reef') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = preset.parameters; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
+      rememberComponentPresets('cyclic_reef', body.presets);
       document.querySelectorAll('[data-reef-control]').forEach((node) => { node.addEventListener('change', edit); node.addEventListener('input', edit); });
     } catch (error) { $('#operationMessage').textContent = error.message || 'Cyclic Reef presets are unavailable.'; }
+  }
+  function existingPresetCards(componentId) {
+    const targetId = `${componentId.replaceAll('_', '-')}-preset-cards`;
+    let target = document.getElementById(targetId);
+    if (!target) {
+      target = document.createElement('div'); target.id = targetId; target.className = 'operation-row'; target.setAttribute('aria-label', `${componentId} presets`);
+      $('#animationControls').before(target);
+    }
+    return target;
+  }
+  async function loadExistingComponentPresets(componentId) {
+    try {
+      const response = await fetch(`${api}/components/${componentId}/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
+      const target = existingPresetCards(componentId); target.replaceChildren();
+      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== componentId) return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = preset.parameters; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
+      rememberComponentPresets(componentId, body.presets);
+    } catch (error) { $('#operationMessage').textContent = error.message || `${componentId} presets are unavailable.`; }
   }
   function filteredItems() { const query = state.query.toLocaleLowerCase(); let items = state.library.items.filter((item) => item.name.toLocaleLowerCase().includes(query)); if (state.filter === 'favorites') items = items.filter((item) => state.library.favorites.some((favorite) => favorite.kind === item.kind && favorite.id === item.id)); else if (state.filter !== 'all') items = items.filter((item) => item.kind === state.filter); return items; }
   async function stirLavaAtPointer(event) {
@@ -214,5 +280,5 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene or use Go Live to replace it.`; }
   async function hydrateCurrentScene() { let response; try { response = await fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`); } catch (_) { const error = new Error('Local Composer server unavailable.'); error.serverUnavailable = true; throw error; } const body = await response.json(); if (!response.ok) { const error = new Error(body.error || 'Current scene recovery is unavailable.'); if (response.status >= 500) { error.serverUnavailable = true; throw error; } recoverFromInvalidRecovery(body); return; } if (body.recovery && (recoveryMatchesStatus(body) || !body.status.current)) { state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null; state.dirty = false; state.revision = body.status.revision || 0; applyScene(state.scene); renderStatus(body.status); } else { state.revision = body.status.revision || 0; applyScene(defaultScene()); renderStatus(body.status); } }
-  hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(() => { previewScheduler.start(() => sceneFromControls()); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
+  hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(() => Promise.all(['aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony'].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(() => sceneFromControls()); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();
