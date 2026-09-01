@@ -25,6 +25,7 @@ from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
+from animation.plugins.fireworks import FireworksAnimation
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -38,6 +39,7 @@ from ipc.scene_contract import LocalSceneAdapter, SceneContractError, normalize_
 from web.composer_component_editor import editor_catalog
 from web.live_scene_state import LiveSceneBlocked, LiveSceneStale, LiveSceneState
 from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
+from web.composer_component_presets import ComponentPresetCatalog
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
 from web.working_draft_store import WorkingDraftStore, WorkingDraftError
@@ -113,6 +115,10 @@ class AnimationWebInterface:
         # Composer preview and publication use the same current Scene v2
         # catalog.  Preview owns no wall channel and therefore remains inert.
         self.composer_catalog = current_component_catalog()
+        self.composer_presets = ComponentPresetCatalog(
+            self.project_root,
+            {FireworksAnimation.COMPONENT_ID: FireworksAnimation._normalized_parameters},
+        )
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
         self.composer_control = _ComposerLocalControlChannel()
         self.composer_live = LiveSceneState(
@@ -177,6 +183,14 @@ class AnimationWebInterface:
         def api_composer_components():
             """Return the closed local chooser from qualified descriptors."""
             return jsonify(editor_catalog(self.composer_catalog))
+
+        @self.app.route('/api/composer/components/<component_id>/presets')
+        def api_composer_component_presets(component_id: str):
+            """Read authored component choices without treating them as Looks."""
+            try:
+                return jsonify({'component_id': component_id, 'presets': self.composer_presets.choices(component_id)})
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/draft')
         def api_composer_draft():
@@ -1428,6 +1442,8 @@ class AnimationWebInterface:
                 EmojiArrangerAnimation._normalized_parameters(component["parameters"])
         if canonical.scene["animation"]["component_id"] == FireflySynchronyAnimation.COMPONENT_ID:
             FireflySynchronyAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == FireworksAnimation.COMPONENT_ID:
+            FireworksAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         return canonical
 
     def _fallback_led_info(self) -> Dict[str, int]:

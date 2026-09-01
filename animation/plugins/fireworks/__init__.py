@@ -1,485 +1,218 @@
-#!/usr/bin/env python3
-"""Configurable rockets, aerial shells, trails, and twinkling night sky."""
+"""Scene v2 Fireworks: a small, immediate, semantic-palette instrument."""
 
 from __future__ import annotations
 
 import colorsys
 import math
-import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from types import MappingProxyType
+from typing import Any, Mapping
 
 import numpy as np
 
-from animation import AnimationBase
-
-
-Color = Tuple[float, float, float]
+from animation import AnimationBase, RenderedFrame
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.presentation_contracts import ResolvedScene
 
 
 @dataclass
-class Rocket:
+class _Rocket:
     x: float
     y: float
-    vx: float
-    vy: float
-    target_y: float
+    target: float
     hue: float
 
 
 @dataclass
-class Spark:
+class _Spark:
     x: float
     y: float
     vx: float
     vy: float
     age: float
     lifetime: float
-    color: Color
-    size: float = 1.0
-    can_split: bool = False
+    hue: float
     split: bool = False
 
 
 class FireworksAnimation(AnimationBase):
-    """A small particle system designed for tall, narrow LED installations."""
+    """A bounded fireworks show whose controls act on the next simulation tick."""
 
     ANIMATION_NAME = "Fireworks"
-    ANIMATION_DESCRIPTION = "Launching rockets, colorful aerial shells, drifting embers, and sparkling trails"
+    ANIMATION_DESCRIPTION = "An immediate, playful aerial-shell instrument"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "2.0"
+    COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "fireworks", 1, "python", "animation"
+    FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
+    CAPABILITIES = frozenset({"semantic_palette_roles", "scaled_context", "effect_intent"})
+    PLANT_MODIFIER_SUPPORT = frozenset()
+    SIM_HZ, MAX_CATCH_UP_STEPS, MAX_SPARKS = 24.0, 10, 720
+    STYLES = ("mixed", "ring", "willow", "palm", "burst")
+    DEFAULTS = MappingProxyType({"launch_cadence": 1.15, "shell_population": 54, "burst_size": .29, "burst_style": "mixed", "gravity": .38, "trails": .72, "crackle": .24, "twinkle": .35, "seed": 1776})
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="opaque", palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS)
+    SEMANTIC_PALETTES = MappingProxyType({
+        "neutral": ((4., 9., 18.), (255., 126., 42.), (255., 228., 146.)),
+        "mist": ((3., 9., 20.), (72., 185., 255.), (244., 237., 255.)),
+        "spectrum": ((14., 3., 35.), (245., 42., 238.), (45., 237., 220.)),
+        "ember": ((18., 3., 2.), (255., 76., 18.), (255., 206., 74.)),
+    })
 
-    PALETTES = {
-        "festival": (0.00, 0.08, 0.14, 0.33, 0.53, 0.67, 0.82, 0.92),
-        "patriotic": (0.00, 0.00, 0.62, 0.62),
-        "gold": (0.08, 0.10, 0.12),
-        "cool": (0.48, 0.55, 0.62, 0.72, 0.82),
-        "sunset": (0.00, 0.04, 0.08, 0.12, 0.90),
-        "forest": (0.25, 0.31, 0.38, 0.46),
-        "monochrome": (0.0,),
-    }
-    STYLES = {"mixed", "chrysanthemum", "ring", "willow", "palm"}
-
-    def __init__(self, controller, config: Dict[str, Any] = None):
-        super().__init__(controller, config)
-        self.default_params.update({
-            "speed": 1.0,
-            "launch_rate": 0.75,
-            "max_rockets": 3,
-            "launch_speed": 0.72,
-            "launch_spread": 0.85,
-            "burst_height_min": 0.50,
-            "burst_height_max": 0.88,
-            "particles_per_burst": 52,
-            "burst_size": 0.27,
-            "burst_style": "mixed",
-            "palette": "festival",
-            "base_hue": 0.02,
-            "hue_spread": 0.08,
-            "spark_lifetime": 1.8,
-            "gravity": 0.34,
-            "air_drag": 0.965,
-            "trail_persistence": 0.93,
-            "trail_intensity": 1.0,
-            "rocket_trails": True,
-            "secondary_spark_chance": 0.18,
-            "twinkle": 0.28,
-            "star_density": 0.012,
-            "background_level": 0.012,
-            "random_seed": 0,
-        })
-        self.params = {**self.default_params, **self.config}
-
+    def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
         self.width, self.height = self.get_strip_info()
-        self._rng = random.Random(int(self.params.get("random_seed", 0)))
-        self._seed = int(self.params.get("random_seed", 0))
-        self._rockets: List[Rocket] = []
-        self._sparks: List[Spark] = []
-        self._trail = np.zeros((self.height, self.width, 3), dtype=np.float32)
-        self._stars = np.zeros((self.height, self.width), dtype=np.float32)
-        self._plant_foliage = np.zeros((self.height, self.width), dtype=bool)
-        self._plant_globes = np.zeros((self.height, self.width), dtype=bool)
-        self._plant_obstacle = np.zeros((self.height, self.width), dtype=bool)
-        self._plant_clearance = np.zeros((self.height, self.width), dtype=bool)
-        self._plant_geometry = None
-        self._plant_active = self.plant_aware_enabled()
-        self._plant_foliage_flash = 0.0
-        self._plant_globe_flash = 0.0
-        self._plant_hits = 0
-        self._last_time = None
-        self._launch_accumulator = 1.0
-        self._burst_count = 0
-        self._rebuild_stars()
+        self._pixels = np.zeros((self.get_pixel_count(), 3), dtype=np.uint8)
+        self._trail = np.zeros((self.width, self.height, 3), dtype=np.float32)
+        self._presentation_context: ResolvedScene | None = None
+        self._last_tick: int | None = None; self._last_render_key: tuple[Any, ...] | None = None
+        self._rng = np.random.default_rng(self.params["seed"])
+        self._rockets: list[_Rocket] = []; self._sparks: list[_Spark] = []
+        self._launch_phase, self._burst_count = 1.0, 0
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        schema.update({
-            "launch_rate": self._float(0.05, 5.0, 0.75, "Average rockets launched per second"),
-            "max_rockets": self._int(1, 10, 3, "Maximum rockets rising at once"),
-            "launch_speed": self._float(0.2, 1.5, 0.72, "Upward rocket speed"),
-            "launch_spread": self._float(0.0, 1.0, 0.85, "How widely launch positions span the display"),
-            "burst_height_min": self._float(0.2, 0.95, 0.50, "Lowest burst height as a fraction of the display"),
-            "burst_height_max": self._float(0.2, 0.98, 0.88, "Highest burst height as a fraction of the display"),
-            "particles_per_burst": self._int(6, 160, 52, "Number of sparks in each aerial shell"),
-            "burst_size": self._float(0.04, 0.7, 0.27, "Initial shell expansion speed and size"),
-            "burst_style": self._string("mixed", "Shell shape: mixed, chrysanthemum, ring, willow, or palm"),
-            "palette": self._string("festival", "Colors: festival, patriotic, gold, cool, sunset, forest, or monochrome"),
-            "base_hue": self._float(0.0, 1.0, 0.02, "Primary hue used by monochrome shells"),
-            "hue_spread": self._float(0.0, 0.5, 0.08, "Color variation within each shell"),
-            "spark_lifetime": self._float(0.25, 5.0, 1.8, "How long burst sparks remain alive"),
-            "gravity": self._float(0.0, 1.5, 0.34, "Downward pull on rockets and embers"),
-            "air_drag": self._float(0.8, 1.0, 0.965, "Velocity retained by sparks each 60 Hz step"),
-            "trail_persistence": self._float(0.5, 0.995, 0.93, "How slowly luminous trails fade"),
-            "trail_intensity": self._float(0.1, 2.0, 1.0, "Brightness deposited into trails"),
-            "rocket_trails": {"type": "bool", "default": True, "description": "Draw bright tails behind rising rockets"},
-            "secondary_spark_chance": self._float(0.0, 1.0, 0.18, "Chance for sparks to split into tiny crackles"),
-            "twinkle": self._float(0.0, 1.0, 0.28, "Brightness shimmer on aging sparks"),
-            "star_density": self._float(0.0, 0.08, 0.012, "Density of dim background stars"),
-            "background_level": self._float(0.0, 0.15, 0.012, "Dark-blue night-sky brightness"),
-            "random_seed": self._int(0, 99999, 0, "Repeatable show layout and timing seed"),
-        })
-        return schema
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
 
-    @staticmethod
-    def _float(minimum: float, maximum: float, default: float, description: str):
-        return {"type": "float", "min": minimum, "max": maximum, "default": default, "description": description}
-
-    @staticmethod
-    def _int(minimum: int, maximum: int, default: int, description: str):
-        return {"type": "int", "min": minimum, "max": maximum, "default": default, "description": description}
-
-    @staticmethod
-    def _string(default: str, description: str):
-        return {"type": "str", "default": default, "description": description}
-
-    def update_parameters(self, new_params: Dict[str, Any]):
-        super().update_parameters(new_params)
-        new_seed = int(self.params.get("random_seed", 0))
-        if new_seed != self._seed:
-            self._seed = new_seed
-            self._rng.seed(new_seed)
-        if "star_density" in new_params or "random_seed" in new_params:
-            self._rebuild_stars()
-
-    def get_runtime_stats(self) -> Dict[str, Any]:
-        stats = {
-            "rockets": len(self._rockets),
-            "sparks": len(self._sparks),
-            "bursts": self._burst_count,
-            "plant_aware": self.plant_aware_enabled(),
-            "plant_hits": self._plant_hits,
+    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+        return {
+            "launch_cadence": {"type": "float", "min": .1, "max": 4., "default": 1.15, "description": "How often a new shell launches"},
+            "shell_population": {"type": "int", "min": 12, "max": 120, "default": 54, "description": "Sparks in each aerial shell"},
+            "burst_size": {"type": "float", "min": .08, "max": .65, "default": .29, "description": "Shell radius and launch reach"},
+            "burst_style": {"type": "str", "options": list(self.STYLES), "default": "mixed", "description": "Shape of the next shell"},
+            "gravity": {"type": "float", "min": 0., "max": 1.5, "default": .38, "description": "How quickly embers fall"},
+            "trails": {"type": "float", "min": .1, "max": 1., "default": .72, "description": "How long glowing trails linger"},
+            "crackle": {"type": "float", "min": 0., "max": 1., "default": .24, "description": "Chance of a shell breaking into crackles"},
+            "twinkle": {"type": "float", "min": 0., "max": 1., "default": .35, "description": "Sparkle shimmer"},
+            "seed": {"type": "int", "min": 0, "max": 999999, "default": 1776, "description": "Repeatable show sequence"},
         }
-        if self.plant_aware_enabled():
-            stats.update({
-                "plant_foliage_pixels": int(np.count_nonzero(self._plant_foliage)),
-                "plant_globe_pixels": int(np.count_nonzero(self._plant_globes)),
-            })
-            if self._plant_geometry is not None and self._plant_geometry.error:
-                stats["plant_mask_error"] = self._plant_geometry.error
-        return stats
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
-        self._ensure_geometry()
-        self._plant_active = self.plant_aware_enabled()
-        if self._plant_active:
-            self._refresh_plant_geometry()
-        if self._last_time is None or time_elapsed < self._last_time:
-            dt = 1.0 / 60.0
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        candidate = self._normalized_parameters({**self.params, **dict(new_params)})
+        if candidate["seed"] != self.params["seed"]:
+            self.params = candidate; self._reset_show()
         else:
-            dt = min(0.1, max(0.0, time_elapsed - self._last_time))
-        self._last_time = time_elapsed
-        scaled_dt = dt * max(0.0, float(self.params.get("speed", 1.0)))
-        if self._plant_active:
-            fade = 0.80 ** (scaled_dt * 60.0)
-            self._plant_foliage_flash *= fade
-            self._plant_globe_flash *= fade
+            self.params = candidate
+        self._last_render_key = None
 
-        persistence = min(0.9999, max(0.0, float(self.params.get("trail_persistence", 0.93))))
-        self._trail *= persistence ** (scaled_dt * 60.0)
-        self._launch_rockets(scaled_dt)
-        self._update_rockets(scaled_dt)
-        self._update_sparks(scaled_dt, time_elapsed)
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        del old
+        descriptor = new.descriptor
+        if (descriptor.component_id, descriptor.version, descriptor.provider.value, descriptor.role.value) != (self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE):
+            raise ValueError("Fireworks received a context for another component")
+        if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Fireworks requires a semantic Scene v2 palette")
+        self._presentation_context = new
 
-        image = self._trail.copy()
-        background = max(0.0, float(self.params.get("background_level", 0.012))) * 255.0
-        image[..., 2] += background
-        if np.any(self._stars):
-            shimmer = 0.65 + 0.35 * np.sin(time_elapsed * 2.2 + self._stars * 19.0)
-            image += (self._stars * shimmer)[..., None] * np.array((95.0, 125.0, 190.0), dtype=np.float32)
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
 
-        if self._plant_active:
-            self._render_plant_silhouettes(image)
+    def render_resolved_scene(self, context: ResolvedScene) -> RenderedFrame:
+        self.set_presentation_context(context)
+        return self.generate_frame(context.phase_time, self.frame_count)
 
-        np.clip(image, 0.0, 255.0, out=image)
-        logical = image.astype(np.uint8)
-        frame = self.next_frame_buffer(clear=False)
-        # Logical y=0 is the top; physical LED indices run bottom-to-top.
-        frame[:] = logical[::-1, :, :].transpose(1, 0, 2).reshape(-1, 3)
-        return self.apply_brightness_array(frame, out=frame)
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
+        del frame_count
+        if self._presentation_context is None:
+            phase_time, palette_id, parameters = max(0., float(time_elapsed)), "neutral", self.params
+        else:
+            phase_time, palette_id, parameters = max(0., float(self._presentation_context.phase_time)), str(self._presentation_context.palette["palette_id"]), self._presentation_context.parameters
+        candidate = self._normalized_parameters(parameters)
+        if candidate["seed"] != self.params["seed"]:
+            self.params = candidate; self._reset_show()
+        else:
+            self.params = candidate
+        tick = int(math.floor(phase_time * self.SIM_HZ + 1.e-9))
+        if self._last_tick is None: self._last_tick = tick
+        else:
+            target = min(tick, self._last_tick + self.MAX_CATCH_UP_STEPS)
+            while self._last_tick < target:
+                self._step(1. / self.SIM_HZ); self._last_tick += 1
+        key = (self._last_tick, palette_id, tuple(self.params.items()))
+        if key == self._last_render_key: return RenderedFrame(self._pixels, changed=False, dirty_ranges=())
+        self._paint(palette_id, phase_time); self._last_render_key = key
+        return RenderedFrame(self._pixels, changed=True)
 
-    def _ensure_geometry(self):
-        width, height = self.get_strip_info()
-        if (width, height) == (self.width, self.height):
-            return
-        self.width, self.height = width, height
-        self._trail = np.zeros((height, width, 3), dtype=np.float32)
-        self._plant_foliage = np.zeros((height, width), dtype=bool)
-        self._plant_globes = np.zeros((height, width), dtype=bool)
-        self._plant_obstacle = np.zeros((height, width), dtype=bool)
-        self._plant_clearance = np.zeros((height, width), dtype=bool)
-        self._plant_geometry = None
-        self._rockets.clear()
-        self._sparks.clear()
-        self._rebuild_stars()
+    def semantic_snapshot(self) -> Mapping[str, Any]:
+        return MappingProxyType({"seed": self.params["seed"], "tick": self._last_tick, "rockets": tuple((round(r.x, 4), round(r.y, 4), round(r.target, 4)) for r in self._rockets), "sparks": len(self._sparks), "bursts": self._burst_count})
 
-    def _rebuild_stars(self):
-        self._stars = np.zeros((self.height, self.width), dtype=np.float32)
-        density = min(0.08, max(0.0, float(self.params.get("star_density", 0.012))))
-        star_rng = random.Random(self._seed ^ 0x5A17)
-        for y in range(self.height):
-            for x in range(self.width):
-                if star_rng.random() < density:
-                    self._stars[y, x] = star_rng.uniform(0.08, 0.32)
+    def cadence_snapshot(self) -> Mapping[str, Any]:
+        return MappingProxyType({"simulation_hz": self.SIM_HZ, "tick": self._last_tick, "bursts": self._burst_count})
 
-    def _launch_rockets(self, dt: float):
-        rate = max(0.0, float(self.params.get("launch_rate", 0.75)))
-        self._launch_accumulator += dt * rate
-        max_rockets = max(1, int(self.params.get("max_rockets", 3)))
-        while self._launch_accumulator >= 1.0 and len(self._rockets) < max_rockets:
-            self._launch_accumulator -= 1.0
-            spread = min(1.0, max(0.0, float(self.params.get("launch_spread", 0.85))))
-            x = 0.5 + self._rng.uniform(-0.5, 0.5) * spread
-            low = float(self.params.get("burst_height_min", 0.50))
-            high = float(self.params.get("burst_height_max", 0.88))
-            low, high = sorted((max(0.05, min(0.98, low)), max(0.05, min(0.98, high))))
-            target_y = 1.0 - self._rng.uniform(low, high)
-            launch_speed = max(0.05, float(self.params.get("launch_speed", 0.72)))
-            vx = self._rng.uniform(-0.025, 0.025)
-            if self._plant_active:
-                # Favor a vertical sight line whose burst and rising trail can
-                # actually be seen instead of spending a shell behind foliage.
-                x = self._nearest_visible_launch_x(x, target_y)
-                vx = 0.0
-            self._rockets.append(Rocket(x, 1.02, vx, -launch_speed, target_y, self._choose_hue()))
+    def _reset_show(self) -> None:
+        self._rng = np.random.default_rng(self.params["seed"]); self._rockets.clear(); self._sparks.clear(); self._trail.fill(0.)
+        self._launch_phase, self._burst_count, self._last_tick = 1., 0, None
 
-    def _update_rockets(self, dt: float):
-        gravity = max(0.0, float(self.params.get("gravity", 0.34)))
-        survivors = []
+    def _step(self, dt: float) -> None:
+        self._trail *= .62 + .35 * float(self.params["trails"])
+        self._launch_phase += dt * float(self.params["launch_cadence"])
+        while self._launch_phase >= 1. and len(self._rockets) < 5:
+            self._launch_phase -= 1.; self._rockets.append(_Rocket(float(self._rng.uniform(.08, .92)), 1.04, float(self._rng.uniform(.18, .54)), float(self._rng.random())))
+        rising: list[_Rocket] = []
         for rocket in self._rockets:
-            rocket.x += rocket.vx * dt
-            rocket.y += rocket.vy * dt
-            rocket.vy += gravity * 0.32 * dt
-            if bool(self.params.get("rocket_trails", True)):
-                self._deposit(rocket.x, rocket.y, (255.0, 150.0, 55.0), 1.35)
-                self._deposit(rocket.x, rocket.y + 0.012, (90.0, 35.0, 8.0), 0.7)
-            if rocket.y <= rocket.target_y or rocket.vy >= -0.04:
-                self._burst(rocket)
-            elif -0.1 <= rocket.x <= 1.1 and rocket.y > -0.1:
-                survivors.append(rocket)
-        self._rockets = survivors
-
-    def _burst(self, rocket: Rocket):
-        requested = max(6, min(160, int(self.params.get("particles_per_burst", 52))))
-        style = str(self.params.get("burst_style", "mixed")).lower().strip()
-        if style not in self.STYLES:
-            style = "mixed"
-        if style == "mixed":
-            style = self._rng.choice(("chrysanthemum", "ring", "willow", "palm"))
-        count = max(6, requested // 2) if style == "palm" else requested
-        size = max(0.01, float(self.params.get("burst_size", 0.27)))
-        lifetime = max(0.1, float(self.params.get("spark_lifetime", 1.8)))
-        hue_spread = max(0.0, float(self.params.get("hue_spread", 0.08)))
-        shell_hue = rocket.hue
-        split_chance = max(0.0, min(1.0, float(self.params.get("secondary_spark_chance", 0.18))))
-
-        for index in range(count):
-            if style == "ring":
-                angle = math.tau * index / count + self._rng.uniform(-0.025, 0.025)
-                velocity = size * self._rng.uniform(0.90, 1.08)
-            elif style == "palm":
-                angle = self._rng.uniform(math.pi * 1.10, math.pi * 1.90)
-                velocity = size * self._rng.uniform(0.75, 1.35)
-            else:
-                angle = self._rng.uniform(0.0, math.tau)
-                velocity = size * (self._rng.random() ** 0.35)
-            if style == "willow":
-                velocity *= 0.78
-                particle_lifetime = lifetime * self._rng.uniform(1.3, 1.8)
-            else:
-                particle_lifetime = lifetime * self._rng.uniform(0.72, 1.18)
-            hue = (shell_hue + self._rng.uniform(-hue_spread, hue_spread)) % 1.0
-            color = self._hue_color(hue, style)
-            self._sparks.append(Spark(
-                rocket.x, rocket.y,
-                math.cos(angle) * velocity,
-                math.sin(angle) * velocity,
-                0.0, particle_lifetime, color,
-                self._rng.uniform(0.75, 1.25),
-                self._rng.random() < split_chance,
-            ))
-        self._deposit(rocket.x, rocket.y, (255.0, 255.0, 240.0), 2.2)
-        self._burst_count += 1
-
-    def _update_sparks(self, dt: float, time_elapsed: float):
-        gravity = max(0.0, float(self.params.get("gravity", 0.34)))
-        drag = min(1.0, max(0.0, float(self.params.get("air_drag", 0.965)))) ** (dt * 60.0)
-        twinkle = max(0.0, min(1.0, float(self.params.get("twinkle", 0.28))))
-        trail_intensity = max(0.0, float(self.params.get("trail_intensity", 1.0)))
-        survivors: List[Spark] = []
-        children: List[Spark] = []
+            rocket.y -= dt * (.72 + float(self.params["burst_size"]) * .38); self._deposit(rocket.x, rocket.y, (255., 172., 72.), .75 + .6 * float(self.params["trails"]))
+            if rocket.y <= rocket.target: self._burst(rocket)
+            else: rising.append(rocket)
+        self._rockets = rising
+        gravity, survivors, spawned = float(self.params["gravity"]), [], []
         for spark in self._sparks:
-            spark.age += dt
-            old_x, old_y = spark.x, spark.y
-            spark.x += spark.vx * dt
-            spark.y += spark.vy * dt
-            spark.vx *= drag
-            spark.vy = spark.vy * drag + gravity * dt
+            spark.age += dt; spark.x += spark.vx * dt; spark.y += spark.vy * dt; spark.vx *= .985; spark.vy += gravity * dt * .22
             life = spark.age / spark.lifetime
-            if self._plant_active:
-                collision = self._plant_collision_point(old_x, old_y, spark.x, spark.y)
-                if collision is not None:
-                    self._record_plant_hit(*collision, max(0.15, 1.0 - life))
-                    continue
-            if spark.can_split and not spark.split and life >= 0.55:
+            if life >= 1. or not (-.08 <= spark.x <= 1.08 and -.08 <= spark.y <= 1.08): continue
+            if not spark.split and life > .56 and self._rng.random() < float(self.params["crackle"]) * .055:
                 spark.split = True
-                for direction in (-1.0, 1.0):
-                    children.append(Spark(
-                        spark.x, spark.y,
-                        spark.vx + direction * self._rng.uniform(0.025, 0.07),
-                        spark.vy + self._rng.uniform(-0.04, 0.04),
-                        0.0, spark.lifetime * 0.32, spark.color, 0.65,
-                    ))
-            if life >= 1.0 or spark.x < -0.12 or spark.x > 1.12 or spark.y > 1.08:
-                continue
-            fade = (1.0 - life) ** 1.35
-            shimmer = 1.0 - twinkle + twinkle * (0.35 + 0.65 * abs(math.sin(time_elapsed * 25.0 + spark.x * 31.0)))
-            self._deposit(spark.x, spark.y, spark.color, fade * shimmer * spark.size * trail_intensity)
+                for direction in (-1., 1.): spawned.append(_Spark(spark.x, spark.y, spark.vx + direction * float(self._rng.uniform(.04, .13)), spark.vy + float(self._rng.uniform(-.08, .05)), 0., spark.lifetime * .34, (spark.hue + direction * .07) % 1.))
             survivors.append(spark)
-        # Keep pathological live parameter combinations bounded.
-        # Plant collision sampling has a little extra cost, and masked sparks
-        # contribute less useful light, so retain a smaller stress-path cloud.
-        spark_cap = 1000 if self._plant_active else 1400
-        self._sparks = (survivors + children)[-spark_cap:]
+        self._sparks = (survivors + spawned)[-self.MAX_SPARKS:]
 
-    def _choose_hue(self) -> float:
-        palette = str(self.params.get("palette", "festival")).lower().strip()
-        if palette == "random":
-            return self._rng.random()
-        hues = self.PALETTES.get(palette, self.PALETTES["festival"])
-        if palette == "monochrome":
-            return float(self.params.get("base_hue", 0.02)) % 1.0
-        return self._rng.choice(hues)
+    def _burst(self, rocket: _Rocket) -> None:
+        style = self.params["burst_style"]
+        if style == "mixed": style = self.STYLES[1 + int(self._rng.integers(len(self.STYLES) - 1))]
+        for index in range(int(self.params["shell_population"])):
+            if style == "ring": angle, velocity = math.tau * index / int(self.params["shell_population"]) + float(self._rng.uniform(-.035, .035)), float(self.params["burst_size"]) * float(self._rng.uniform(.85, 1.12))
+            elif style == "willow": angle, velocity = float(self._rng.uniform(0., math.tau)), float(self.params["burst_size"]) * float(self._rng.uniform(.25, .78))
+            elif style == "palm": angle, velocity = float(self._rng.uniform(math.pi * 1.08, math.pi * 1.92)), float(self.params["burst_size"]) * float(self._rng.uniform(.72, 1.32))
+            else: angle, velocity = float(self._rng.uniform(0., math.tau)), float(self.params["burst_size"]) * float(self._rng.uniform(.25, 1.15))
+            lifetime = float(self._rng.uniform(1.05, 1.8)) * (1.45 if style == "willow" else 1.)
+            self._sparks.append(_Spark(rocket.x, rocket.y, math.cos(angle) * velocity, math.sin(angle) * velocity, 0., lifetime, (rocket.hue + float(self._rng.uniform(-.11, .11))) % 1.))
+        self._deposit(rocket.x, rocket.y, (255., 255., 238.), 1.8); self._burst_count += 1
 
-    def _hue_color(self, hue: float, style: str) -> Color:
-        saturation = max(0.0, min(1.0, float(self.params.get("color_saturation", 1.0))))
-        value = max(0.0, min(1.0, float(self.params.get("color_value", 1.0))))
-        if style == "willow":
-            hue, saturation = 0.105, min(saturation, 0.78)
-        red, green, blue = colorsys.hsv_to_rgb(hue, saturation, value)
-        return red * 255.0, green * 255.0, blue * 255.0
+    def _paint(self, palette_id: str, phase_time: float) -> None:
+        background, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
+        canvas = self._pixels.reshape(self.width, self.height, 3); canvas[:] = np.asarray(background, dtype=np.uint8)
+        twinkle = float(self.params["twinkle"])
+        for spark in self._sparks:
+            life = spark.age / spark.lifetime; color = self._spark_color(spark.hue, primary, accent)
+            shimmer = 1. - twinkle + twinkle * (.45 + .55 * abs(math.sin(phase_time * 18. + spark.x * 23.)))
+            self._deposit(spark.x, spark.y, color, (1. - life) ** 1.35 * shimmer * (1.1 + float(self.params["trails"])))
+        canvas[:] = np.maximum(canvas, np.clip(self._trail, 0., 255.).astype(np.uint8))
 
-    def _deposit(self, x: float, y: float, color: Color, intensity: float):
-        """Add a sub-pixel light sample using bilinear filtering."""
-        if intensity <= 0.0 or not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-            return
-        px = x * max(0, self.width - 1)
-        py = y * max(0, self.height - 1)
-        x0, y0 = int(px), int(py)
-        fx, fy = px - x0, py - y0
-        red = color[0] * intensity
-        green = color[1] * intensity
-        blue = color[2] * intensity
-        for yy, wy in ((y0, 1.0 - fy), (y0 + 1, fy)):
-            if not 0 <= yy < self.height:
-                continue
-            for xx, wx in ((x0, 1.0 - fx), (x0 + 1, fx)):
-                weight = wx * wy
-                if 0 <= xx < self.width and weight > 0.0:
-                    if self._plant_active and self._plant_obstacle[yy, xx]:
-                        continue
-                    pixel = self._trail[yy, xx]
-                    pixel[0] += red * weight
-                    pixel[1] += green * weight
-                    pixel[2] += blue * weight
+    @staticmethod
+    def _spark_color(hue: float, primary: tuple[float, float, float], accent: tuple[float, float, float]) -> tuple[float, float, float]:
+        rgb = np.asarray(colorsys.hsv_to_rgb(hue, .62, 1.)) * 255.; semantic = np.asarray(primary) * .62 + np.asarray(accent) * .38
+        return tuple(np.clip(rgb * .45 + semantic * .55, 0., 255.))
 
-    def _refresh_plant_geometry(self):
-        masks = self.get_plant_masks()
-        if masks is self._plant_geometry:
-            return
-        # Shared masks are [strip, physical LED], while this particle canvas is
-        # [top-down y, x].
-        self._plant_foliage[:] = masks.foliage.T[::-1]
-        self._plant_globes[:] = masks.globes.T[::-1]
-        self._plant_obstacle[:] = masks.obstacle.T[::-1]
-        self._plant_clearance[:] = masks.clearance.T[::-1]
-        self._plant_geometry = masks
+    def _deposit(self, x: float, y: float, color: tuple[float, float, float], intensity: float) -> None:
+        if intensity <= 0. or not (0. <= x <= 1. and 0. <= y <= 1.): return
+        strip, led = int(round(x * (self.width - 1))), int(round(y * (self.height - 1)))
+        if 0 <= strip < self.width and 0 <= led < self.height:
+            self._trail[strip, led] += np.asarray(color, dtype=np.float32) * intensity
+            if intensity > .7:
+                for ds, dl in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    target = strip + ds, led + dl
+                    if 0 <= target[0] < self.width and 0 <= target[1] < self.height: self._trail[target] += np.asarray(color, dtype=np.float32) * intensity * .16
 
-    def _nearest_visible_launch_x(self, requested_x: float, target_y: float) -> float:
-        """Choose a low-occlusion vertical route near the authored launch point."""
-        if self.width <= 1 or not np.any(self._plant_clearance):
-            return requested_x
-        target_row = min(self.height - 1, max(0, int(round(target_y * (self.height - 1)))))
-        requested_column = requested_x * (self.width - 1)
-        best_column = min(self.width - 1, max(0, int(round(requested_column))))
-        best_score = -math.inf
-        for column in range(self.width):
-            route = self._plant_clearance[target_row:, column]
-            visible_fraction = 1.0 - float(np.count_nonzero(route)) / max(1, route.size)
-            target_safe = 1.0 if not self._plant_clearance[target_row, column] else 0.0
-            distance = abs(column - requested_column) / max(1, self.width - 1)
-            score = target_safe * 3.0 + visible_fraction - distance * 0.18
-            if score > best_score:
-                best_score = score
-                best_column = column
-        return best_column / max(1, self.width - 1)
-
-    def _plant_collision(self, x: float, y: float) -> bool:
-        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-            return False
-        column = min(self.width - 1, max(0, int(round(x * (self.width - 1)))))
-        row = min(self.height - 1, max(0, int(round(y * (self.height - 1)))))
-        return bool(self._plant_obstacle[row, column])
-
-    def _plant_collision_point(
-        self, x0: float, y0: float, x1: float, y1: float
-    ):
-        """Return the first masked point crossed by a spark's bounded step."""
-        pixel_dx = abs(x1 - x0) * max(1, self.width - 1)
-        pixel_dy = abs(y1 - y0) * max(1, self.height - 1)
-        steps = max(1, int(math.ceil(max(pixel_dx, pixel_dy))))
-        for step in range(1, steps + 1):
-            amount = step / steps
-            x = x0 + (x1 - x0) * amount
-            y = y0 + (y1 - y0) * amount
-            if self._plant_collision(x, y):
-                return x, y
-        return None
-
-    def _record_plant_hit(self, x: float, y: float, energy: float):
-        column = min(self.width - 1, max(0, int(round(x * (self.width - 1)))))
-        row = min(self.height - 1, max(0, int(round(y * (self.height - 1)))))
-        if self._plant_globes[row, column]:
-            self._plant_globe_flash = min(1.0, self._plant_globe_flash + energy)
-        else:
-            self._plant_foliage_flash = min(1.0, self._plant_foliage_flash + energy)
-        self._plant_hits += 1
-
-    def _render_plant_silhouettes(self, image: np.ndarray):
-        """Reveal plants as cool foliage and warm globe silhouettes on impact."""
-        image[self._plant_obstacle] *= 0.18
-        halo = self._plant_clearance & ~self._plant_obstacle
-        if np.any(halo):
-            halo_color = np.array((5.0, 12.0, 24.0), dtype=np.float32)
-            image[halo] = np.maximum(image[halo], halo_color)
-        if np.any(self._plant_foliage):
-            foliage = np.array(
-                (7.0, 38.0 + 150.0 * self._plant_foliage_flash, 25.0 + 55.0 * self._plant_foliage_flash),
-                dtype=np.float32,
-            )
-            image[self._plant_foliage] = np.maximum(image[self._plant_foliage], foliage)
-        if np.any(self._plant_globes):
-            globes = np.array(
-                (66.0 + 180.0 * self._plant_globe_flash, 18.0 + 80.0 * self._plant_globe_flash, 82.0),
-                dtype=np.float32,
-            )
-            image[self._plant_globes] = np.maximum(image[self._plant_globes], globes)
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        unknown = set(values) - set(cls.DEFAULTS)
+        if unknown: raise ValueError(f"Fireworks does not accept non-local parameters: {sorted(unknown)!r}")
+        result = dict(cls.DEFAULTS); result.update(values); seed, population = result["seed"], result["shell_population"]
+        if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 999999: raise ValueError("seed must be an integer from 0 to 999999")
+        if isinstance(population, bool) or not isinstance(population, int) or not 12 <= population <= 120: raise ValueError("shell_population must be an integer from 12 to 120")
+        if result["burst_style"] not in cls.STYLES: raise ValueError(f"burst_style must be one of {list(cls.STYLES)!r}")
+        for name, minimum, maximum in (("launch_cadence", .1, 4.), ("burst_size", .08, .65), ("gravity", 0., 1.5), ("trails", .1, 1.), ("crackle", 0., 1.), ("twinkle", 0., 1.)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not minimum <= float(value) <= maximum: raise ValueError(f"{name} must be a finite number from {minimum} to {maximum}")
+            result[name] = float(value)
+        return result

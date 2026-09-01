@@ -31,7 +31,11 @@ class CuratedAnimationPresetTests(unittest.TestCase):
                 self.assertEqual(payload["preset_id"], path.stem)
                 self.assertEqual(animation_name, path.parents[1].name)
                 self.assertIsInstance(payload.get("params"), dict)
-                self.assertIs(payload["params"].get("plant_aware"), True)
+                # Scene v2 component presets deliberately have no legacy
+                # plant_aware/output authority; Fireworks is the first small
+                # authored family exposed through the component catalog.
+                if animation_name != "fireworks":
+                    self.assertIs(payload["params"].get("plant_aware"), True)
                 self.assertIn(animation_name, self.plugins)
 
                 animation = self.plugins[animation_name](controller, payload["params"])

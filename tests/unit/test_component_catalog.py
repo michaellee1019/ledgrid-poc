@@ -12,6 +12,7 @@ from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
+from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.tetris import TetrisAnimation
 from web.composer_final_preview import current_component_catalog
 
@@ -28,7 +29,7 @@ class ComponentCatalogTests(unittest.TestCase):
             for descriptor in catalog.descriptors
         }
         self.assertEqual(set(entries), {
-            "native_aurora", "aurora_curtains", "conway_life", "tetris", "firefly_synchrony", "clock_overlay", "emoji_arranger",
+            "native_aurora", "aurora_curtains", "conway_life", "tetris", "firefly_synchrony", "fireworks", "clock_overlay", "emoji_arranger",
         })
         self.assertEqual(
             [
@@ -44,6 +45,7 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "widget", "wall_clock", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
                 ("python", "widget", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
             ],
@@ -57,6 +59,7 @@ class ComponentCatalogTests(unittest.TestCase):
             "conway_life": _ROOT / "animation/plugins/conway_life/manifest.json",
             "tetris": _ROOT / "animation/plugins/tetris/manifest.json",
             "firefly_synchrony": _ROOT / "animation/plugins/firefly_synchrony/manifest.json",
+            "fireworks": _ROOT / "animation/plugins/fireworks/manifest.json",
             "clock_overlay": _ROOT / "animation/plugins/clock_overlay/manifest.json",
             "emoji_arranger": _ROOT / "animation/plugins/emoji_arranger/manifest.json",
         }
@@ -120,6 +123,11 @@ class ComponentCatalogTests(unittest.TestCase):
     def test_firefly_meadow_is_a_qualified_semantic_opaque_animation(self) -> None:
         descriptor = FireflySynchronyAnimation.component_descriptor()
         self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("firefly_synchrony", "animation", "scaled_context"))
+        self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("opaque", "semantic", ("effect_intent",)))
+
+    def test_fireworks_is_a_qualified_semantic_opaque_animation(self) -> None:
+        descriptor = FireworksAnimation.component_descriptor()
+        self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("fireworks", "animation", "scaled_context"))
         self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("opaque", "semantic", ("effect_intent",)))
 
     def test_emoji_message_is_a_scaled_semantic_widget(self) -> None:

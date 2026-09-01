@@ -27,6 +27,7 @@ from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
+from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.tetris import TetrisAnimation
 from ipc.scene_contract import CanonicalScene
 
@@ -72,6 +73,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         ConwayLifeAnimation.component_descriptor(),
         TetrisAnimation.component_descriptor(),
         FireflySynchronyAnimation.component_descriptor(),
+        FireworksAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
         EmojiArrangerAnimation.component_descriptor(),
     )
@@ -197,6 +199,8 @@ class ComposerFinalPreview:
             return TetrisAnimation(controller, parameters)
         if descriptor.component_id == FireflySynchronyAnimation.COMPONENT_ID:
             return FireflySynchronyAnimation(controller, parameters)
+        if descriptor.component_id == FireworksAnimation.COMPONENT_ID:
+            return FireworksAnimation(controller, parameters)
         raise ValueError(f"Composer preview cannot render Animation {descriptor.component_id!r}")
 
     def _widget_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
