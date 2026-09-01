@@ -40,6 +40,11 @@ from animation.plugins.pinball import PinballAnimation
 from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
+from animation.plugins.gradient import GradientAnimation
+from animation.plugins.rainbow import RainbowAnimation
+from animation.plugins.solid import SolidColorAnimation
+from animation.plugins.sparkle import SparkleAnimation
+from animation.plugins.wave import WaveAnimation
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -148,6 +153,11 @@ class AnimationWebInterface:
                 MazeChaseAnimation.COMPONENT_ID: MazeChaseAnimation._normalized_parameters,
                 PinballAnimation.COMPONENT_ID: PinballAnimation._normalized_parameters,
                 PixelQuestAnimation.COMPONENT_ID: PixelQuestAnimation._normalized_parameters,
+                GradientAnimation.COMPONENT_ID: GradientAnimation._normalized_parameters,
+                RainbowAnimation.COMPONENT_ID: RainbowAnimation._normalized_parameters,
+                SolidColorAnimation.COMPONENT_ID: SolidColorAnimation._normalized_parameters,
+                SparkleAnimation.COMPONENT_ID: SparkleAnimation._normalized_parameters,
+                WaveAnimation.COMPONENT_ID: WaveAnimation._normalized_parameters,
             },
         )
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
@@ -1503,6 +1513,16 @@ class AnimationWebInterface:
             PinballAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == PixelQuestAnimation.COMPONENT_ID:
             PixelQuestAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == GradientAnimation.COMPONENT_ID:
+            GradientAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == RainbowAnimation.COMPONENT_ID:
+            RainbowAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == SolidColorAnimation.COMPONENT_ID:
+            SolidColorAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == SparkleAnimation.COMPONENT_ID:
+            SparkleAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == WaveAnimation.COMPONENT_ID:
+            WaveAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         return canonical
 
     def _fallback_led_info(self) -> Dict[str, int]:

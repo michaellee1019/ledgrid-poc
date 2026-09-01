@@ -40,6 +40,11 @@ from animation.plugins.pinball import PinballAnimation
 from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
+from animation.plugins.gradient import GradientAnimation
+from animation.plugins.rainbow import RainbowAnimation
+from animation.plugins.solid import SolidColorAnimation
+from animation.plugins.sparkle import SparkleAnimation
+from animation.plugins.wave import WaveAnimation
 from ipc.scene_contract import CanonicalScene
 
 
@@ -96,6 +101,11 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         MazeChaseAnimation.component_descriptor(),
         PinballAnimation.component_descriptor(),
         PixelQuestAnimation.component_descriptor(),
+        GradientAnimation.component_descriptor(),
+        RainbowAnimation.component_descriptor(),
+        SolidColorAnimation.component_descriptor(),
+        SparkleAnimation.component_descriptor(),
+        WaveAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
         EmojiArrangerAnimation.component_descriptor(),
     )
@@ -245,6 +255,16 @@ class ComposerFinalPreview:
             return PinballAnimation(controller, parameters)
         if descriptor.component_id == PixelQuestAnimation.COMPONENT_ID:
             return PixelQuestAnimation(controller, parameters)
+        if descriptor.component_id == GradientAnimation.COMPONENT_ID:
+            return GradientAnimation(controller, parameters)
+        if descriptor.component_id == RainbowAnimation.COMPONENT_ID:
+            return RainbowAnimation(controller, parameters)
+        if descriptor.component_id == SolidColorAnimation.COMPONENT_ID:
+            return SolidColorAnimation(controller, parameters)
+        if descriptor.component_id == SparkleAnimation.COMPONENT_ID:
+            return SparkleAnimation(controller, parameters)
+        if descriptor.component_id == WaveAnimation.COMPONENT_ID:
+            return WaveAnimation(controller, parameters)
         raise ValueError(f"Composer preview cannot render Animation {descriptor.component_id!r}")
 
     def _widget_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:

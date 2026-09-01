@@ -35,7 +35,7 @@ class ComponentCatalogTests(unittest.TestCase):
             for descriptor in catalog.descriptors
         }
         self.assertEqual(set(entries), {
-            "native_aurora", "aurora_curtains", "canopy_cup", "conway_life", "tetris", "firefly_synchrony", "fireworks", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "clock_overlay", "emoji_arranger",
+            "native_aurora", "aurora_curtains", "canopy_cup", "ascii_drop", "emoji", "christmas_tree", "night_train_windows", "conway_life", "tetris", "firefly_synchrony", "fireworks", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "gradient", "rainbow", "solid", "sparkle", "wave", "clock_overlay", "emoji_arranger",
         })
         self.assertEqual(
             [
@@ -49,7 +49,16 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("receiver_native", "background", "scaled_context", "none", "semantic", ("final_optics",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
