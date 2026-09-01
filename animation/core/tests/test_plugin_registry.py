@@ -36,6 +36,58 @@ class PluginRegistryTests(unittest.TestCase):
                 self.assertIsNotNone(loaded)
                 self.assertIs(loaded, getattr(module, loaded.__name__))
 
+    def test_loader_ignores_typing_exports_before_subclass_checks(self):
+        """Typing helpers such as Snake's Any must not abort discovery."""
+        import tempfile
+
+        source = """
+from typing import Any
+from animation import AnimationBase
+
+class ExternalAnimation(AnimationBase):
+    def generate_frame(self, time_elapsed, frame_count):
+        return self.next_frame_buffer()
+"""
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            plugin_path = Path(temporary_dir) / "external.py"
+            plugin_path.write_text(source, encoding="utf-8")
+            loader = AnimationPluginLoader(temporary_dir)
+
+            self.assertEqual(loader.scan_plugins(), ["external"])
+            self.assertEqual(loader.load_plugin("external").__name__, "ExternalAnimation")
+
+    def test_current_plugin_startup_loads_saved_plant_glow_scene(self):
+        """Startup must discover every retained plugin before restoring the wall scene."""
+        controller = PreviewLEDController(
+            strips=DEFAULT_STRIP_COUNT,
+            leds_per_strip=DEFAULT_LEDS_PER_STRIP,
+        )
+        manager = AnimationManager(
+            controller,
+            default_animation="plant_glow",
+            default_animation_config={},
+            auto_start=True,
+        )
+        self.addCleanup(manager.stop_animation)
+
+        self.assertSetEqual(
+            set(manager.plugin_loader.loaded_plugins), AnimationManager.ALLOWED_PLUGINS
+        )
+        self.assertEqual(manager.current_animation_name, "plant_glow")
+        self.assertTrue(manager.is_running)
+
+        rendered = manager.current_animation.generate_frame(0.0, 0)
+        pixels = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
+        self.assertEqual(
+            pixels.shape, (DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP, 3)
+        )
+        self.assertEqual(pixels.dtype, np.uint8)
+
+        ambient = manager.plugin_loader.get_plugin("ambient_scene")(controller)
+        self.assertEqual(
+            set(ambient.get_parameter_schema()), {"direction", "drift", "motion", "seed"}
+        )
+
     def test_manifest_rejects_package_id_drift(self):
         import json
         import tempfile

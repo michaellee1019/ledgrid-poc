@@ -13,7 +13,19 @@ class AmbientSceneAnimation(AnimationBase):
     COMPONENT_VERSION, PROVIDER, ROLE = 1, "python", "animation"
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
     CAPABILITIES, PLANT_MODIFIER_SUPPORT = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent")), frozenset()
-    DEFAULTS: Mapping[str, Any] = MappingProxyType({})
+    # This module remains a shipped gradient ambient renderer in addition to
+    # providing the shared base for the named instruments. Its direct plugin
+    # contract is therefore the same complete local control set as Gradient;
+    # subclasses replace both mappings with their own controls.
+    DEFAULTS: Mapping[str, Any] = MappingProxyType({
+        "direction": "vertical", "drift": .22, "motion": .72, "seed": 6101,
+    })
+    SCHEMA: Mapping[str, tuple[Any, ...]] = MappingProxyType({
+        "direction": ("choice", ("vertical", "horizontal", "diagonal"), None, "Band direction"),
+        "drift": ("float", .0, 2., "Color drift tempo"),
+        "motion": ("float", 0., 1., "How much the field travels"),
+        "seed": ("int", 0, 999999, "Repeatable field seed"),
+    })
     STYLE = "gradient"
     PALETTES = MappingProxyType({"neutral": ((4.,11.,19.),(32.,164.,148.),(186.,255.,220.)),"mist": ((3.,8.,22.),(61.,146.,220.),(236.,245.,255.)),"spectrum": ((19.,3.,35.),(235.,42.,203.),(48.,240.,224.)),"ember": ((24.,3.,2.),(244.,76.,16.),(255.,209.,78.))})
     def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):

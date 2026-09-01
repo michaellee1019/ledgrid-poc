@@ -21,6 +21,13 @@ class PlantGlowAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Breathing foliage and globe masks over color, Conway, or pinball worlds"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.1"
+    # Plant Glow owns the preserved choices for its legacy borrowed Conway
+    # backdrop. Conway Life is now a Scene v2 overlay and intentionally no
+    # longer exports a ``BACKGROUNDS`` compatibility constant.
+    CONWAY_BACKGROUND_STYLES = (
+        "void", "twilight", "deep_ocean", "aurora", "earth", "starfield",
+        "ember", "arcade",
+    )
 
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)
@@ -153,7 +160,7 @@ class PlantGlowAnimation(AnimationBase):
                 },
                 "background_style": {
                     "type": "str", "default": "aurora",
-                    "options": list(ConwayLifeAnimation.BACKGROUNDS),
+                    "options": list(self.CONWAY_BACKGROUND_STYLES),
                     "description": "Conway atmosphere used when background source is conway",
                 },
                 "background_strength": {
