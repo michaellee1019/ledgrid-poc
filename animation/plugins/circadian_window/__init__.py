@@ -9,6 +9,12 @@ class CircadianWindowAnimation(LongformSceneBase):
     SCENE = "circadian"
     DEFAULT_MOOD = "natural"
     MOODS = ("natural", "ember", "sleeper")
+    COMPONENT_ID = "circadian_window"
+    COMPONENT_DEFAULTS = {
+        "motion": .35, "density": .5, "mood": "natural", "background": "soft",
+        "background_level": .18, "render_fps": 24, "seed": 29001,
+        "hour": -1.0, "time_offset": 0.0, "time_scale": 1.0,
+    }
 
     def scene_defaults(self):
         return {"hour": -1.0, "time_offset": 0.0, "time_scale": 1.0}
@@ -22,4 +28,3 @@ class CircadianWindowAnimation(LongformSceneBase):
 
     def scene_key(self):
         return (float(self.params.get("hour",-1)), float(self.params.get("time_offset",0)), float(self.params.get("time_scale",1)))
-

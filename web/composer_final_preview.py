@@ -47,6 +47,13 @@ from animation.plugins.rainbow import RainbowAnimation
 from animation.plugins.solid import SolidColorAnimation
 from animation.plugins.sparkle import SparkleAnimation
 from animation.plugins.wave import WaveAnimation
+from animation.plugins.circadian_window import CircadianWindowAnimation
+from animation.plugins.cloud_canyon import CloudCanyonAnimation
+from animation.plugins.desert_wind import DesertWindAnimation
+from animation.plugins.moonlit_fog_banks import MoonlitFogBanksAnimation
+from animation.plugins.rain_on_glass import RainOnGlassAnimation
+from animation.plugins.tidal_bioluminescence import TidalBioluminescenceAnimation
+from animation.plugins.waterfall_veil import WaterfallVeilAnimation
 from ipc.scene_contract import CanonicalScene
 
 
@@ -110,6 +117,13 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         SolidColorAnimation.component_descriptor(),
         SparkleAnimation.component_descriptor(),
         WaveAnimation.component_descriptor(),
+        CircadianWindowAnimation.component_descriptor(),
+        CloudCanyonAnimation.component_descriptor(),
+        DesertWindAnimation.component_descriptor(),
+        MoonlitFogBanksAnimation.component_descriptor(),
+        RainOnGlassAnimation.component_descriptor(),
+        TidalBioluminescenceAnimation.component_descriptor(),
+        WaterfallVeilAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
         EmojiArrangerAnimation.component_descriptor(),
     )
@@ -285,6 +299,20 @@ class ComposerFinalPreview:
             return SparkleAnimation(controller, parameters)
         if descriptor.component_id == WaveAnimation.COMPONENT_ID:
             return WaveAnimation(controller, parameters)
+        if descriptor.component_id == CircadianWindowAnimation.COMPONENT_ID:
+            return CircadianWindowAnimation(controller, parameters)
+        if descriptor.component_id == CloudCanyonAnimation.COMPONENT_ID:
+            return CloudCanyonAnimation(controller, parameters)
+        if descriptor.component_id == DesertWindAnimation.COMPONENT_ID:
+            return DesertWindAnimation(controller, parameters)
+        if descriptor.component_id == MoonlitFogBanksAnimation.COMPONENT_ID:
+            return MoonlitFogBanksAnimation(controller, parameters)
+        if descriptor.component_id == RainOnGlassAnimation.COMPONENT_ID:
+            return RainOnGlassAnimation(controller, parameters)
+        if descriptor.component_id == TidalBioluminescenceAnimation.COMPONENT_ID:
+            return TidalBioluminescenceAnimation(controller, parameters)
+        if descriptor.component_id == WaterfallVeilAnimation.COMPONENT_ID:
+            return WaterfallVeilAnimation(controller, parameters)
         raise ValueError(f"Composer preview cannot render Animation {descriptor.component_id!r}")
 
     def _widget_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:

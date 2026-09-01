@@ -9,4 +9,8 @@ class MoonlitFogBanksAnimation(LongformSceneBase):
     SCENE = "fog"
     DEFAULT_MOOD = "moonlit"
     MOODS = ("moonlit", "predawn", "sleeper")
-
+    COMPONENT_ID = "moonlit_fog_banks"
+    COMPONENT_DEFAULTS = {
+        "motion": .35, "density": .5, "mood": "moonlit", "background": "soft",
+        "background_level": .18, "render_fps": 24, "seed": 7101,
+    }

@@ -9,4 +9,8 @@ class DesertWindAnimation(LongformSceneBase):
     SCENE = "desert"
     DEFAULT_MOOD = "ochre"
     MOODS = ("ochre", "mars", "predawn")
-
+    COMPONENT_ID = "desert_wind"
+    COMPONENT_DEFAULTS = {
+        "motion": .35, "density": .5, "mood": "ochre", "background": "soft",
+        "background_level": .18, "render_fps": 24, "seed": 8001,
+    }

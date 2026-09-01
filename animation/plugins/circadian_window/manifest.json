@@ -1,1 +1,1 @@
-{"plugin_id":"circadian_window","class":"CircadianWindowAnimation","icon":"🌅","gallery":"show"}
+{"plugin_id":"circadian_window","class":"CircadianWindowAnimation","icon":"🌅","gallery":"show","component":{"provider":"python","role":"animation","timing":"scaled_context","alpha_behavior":"opaque","palette_policy":"semantic","plant_capabilities":["effect_intent"],"fidelity_exceptions":[]}}

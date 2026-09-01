@@ -124,6 +124,26 @@ class ComposerPreviewSchedulerTests(unittest.TestCase):
           }})().catch((error) => {{ console.error(error); process.exitCode = 1; }});
         """)
 
+    def test_rejected_startup_authored_scene_never_becomes_poll_candidate(self) -> None:
+        self._node(f"""
+          (async () => {{
+          const {{ComposerPreviewScheduler}} = require({str(SCHEDULER)!r});
+          const flush = () => new Promise((resolve) => setImmediate(resolve));
+          const requests = [], errors = [];
+          const scheduler = new ComposerPreviewScheduler({{
+            request: (candidate) => {{ requests.push(candidate); return Promise.reject(new Error('canonical scene bytes do not match its scene value')); }},
+            onFrame: () => {{}}, onError: (error, task) => errors.push([error.message, task.kind]),
+            setIntervalFn: () => 6, clearIntervalFn: () => {{}},
+          }});
+          scheduler.start();
+          const rejected = scheduler.submitAuthored('startup-invalid', {{generation: 1}});
+          await rejected.catch(() => {{}}); await flush(); await flush();
+          scheduler.poll(); scheduler.poll(); scheduler.poll();
+          if (JSON.stringify(requests) !== JSON.stringify(['startup-invalid'])) throw new Error(`startup candidate was retried: ${{JSON.stringify(requests)}}`);
+          if (JSON.stringify(errors) !== JSON.stringify([['canonical scene bytes do not match its scene value', 'authored']])) throw new Error('rejected startup error was not reported once');
+          }})().catch((error) => {{ console.error(error); process.exitCode = 1; }});
+        """)
+
     def test_stale_poll_failure_cannot_override_newer_authored_success(self) -> None:
         self._node(f"""
           (async () => {{

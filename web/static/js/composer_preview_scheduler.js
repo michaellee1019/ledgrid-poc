@@ -21,7 +21,7 @@
       this.candidate = null;
     }
 
-    start(candidate) {
+    start(candidate = null) {
       this.candidate = candidate;
       this.polling = true;
       this._arm();

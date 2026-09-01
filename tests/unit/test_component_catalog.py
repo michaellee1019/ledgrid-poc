@@ -35,7 +35,7 @@ class ComponentCatalogTests(unittest.TestCase):
             for descriptor in catalog.descriptors
         }
         self.assertEqual(set(entries), {
-            "native_aurora", "aurora_curtains", "canopy_cup", "ascii_drop", "emoji", "christmas_tree", "night_train_windows", "conway_life", "tetris", "firefly_synchrony", "fireworks", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "gradient", "rainbow", "solid", "sparkle", "wave", "clock_overlay", "emoji_arranger",
+            "native_aurora", "aurora_curtains", "canopy_cup", "ascii_drop", "emoji", "christmas_tree", "night_train_windows", "conway_life", "tetris", "firefly_synchrony", "fireworks", "flame_burst", "fluid_tank", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "gradient", "rainbow", "solid", "sparkle", "wave", "circadian_window", "cloud_canyon", "desert_wind", "moonlit_fog_banks", "rain_on_glass", "tidal_bioluminescence", "waterfall_veil", "clock_overlay", "emoji_arranger",
         })
         self.assertEqual(
             [
@@ -54,6 +54,15 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
@@ -88,6 +97,13 @@ class ComponentCatalogTests(unittest.TestCase):
             "maze_chase": _ROOT / "animation/plugins/maze_chase/manifest.json",
             "pinball": _ROOT / "animation/plugins/pinball/manifest.json",
             "pixel_quest": _ROOT / "animation/plugins/pixel_quest/manifest.json",
+            "circadian_window": _ROOT / "animation/plugins/circadian_window/manifest.json",
+            "cloud_canyon": _ROOT / "animation/plugins/cloud_canyon/manifest.json",
+            "desert_wind": _ROOT / "animation/plugins/desert_wind/manifest.json",
+            "moonlit_fog_banks": _ROOT / "animation/plugins/moonlit_fog_banks/manifest.json",
+            "rain_on_glass": _ROOT / "animation/plugins/rain_on_glass/manifest.json",
+            "tidal_bioluminescence": _ROOT / "animation/plugins/tidal_bioluminescence/manifest.json",
+            "waterfall_veil": _ROOT / "animation/plugins/waterfall_veil/manifest.json",
             "clock_overlay": _ROOT / "animation/plugins/clock_overlay/manifest.json",
             "emoji_arranger": _ROOT / "animation/plugins/emoji_arranger/manifest.json",
         }

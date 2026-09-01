@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 def _freeze_default(value: Any) -> Any:
@@ -88,6 +88,9 @@ class ComponentDescriptor:
     optional_simulation_inputs: tuple[str, ...] = ()
     required_simulation_inputs: tuple[str, ...] = ()
     defaults: Mapping[str, Any] = field(default_factory=dict)
+    parameter_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = field(
+        default=None, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if not self.component_id or not isinstance(self.component_id, str):
@@ -134,6 +137,8 @@ class ComponentDescriptor:
         if not isinstance(self.defaults, Mapping):
             raise ValueError("defaults must be a mapping")
         object.__setattr__(self, "defaults", _freeze_default(self.defaults))
+        if self.parameter_normalizer is not None and not callable(self.parameter_normalizer):
+            raise ValueError("parameter_normalizer must be callable")
         self._validate_role_shape()
 
     def default_parameters(self) -> dict[str, Any]:

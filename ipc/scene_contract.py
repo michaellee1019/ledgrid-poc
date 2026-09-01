@@ -157,6 +157,14 @@ def _normalize_component(value: Any, catalog: ComponentCatalog, expected_role: C
     parameters = validate_component_parameters(
         {**defaults, **authored}, intensity_parameter=descriptor.intensity_parameter
     )
+    if descriptor.parameter_normalizer is not None:
+        try:
+            parameters = descriptor.parameter_normalizer(parameters)
+        except (TypeError, ValueError) as exc:
+            raise SceneContractError(str(exc)) from exc
+        parameters = validate_component_parameters(
+            parameters, intensity_parameter=descriptor.intensity_parameter
+        )
     result = {
         "component_id": descriptor.component_id,
         "version": descriptor.version,

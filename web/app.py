@@ -47,6 +47,13 @@ from animation.plugins.rainbow import RainbowAnimation
 from animation.plugins.solid import SolidColorAnimation
 from animation.plugins.sparkle import SparkleAnimation
 from animation.plugins.wave import WaveAnimation
+from animation.plugins.circadian_window import CircadianWindowAnimation
+from animation.plugins.cloud_canyon import CloudCanyonAnimation
+from animation.plugins.desert_wind import DesertWindAnimation
+from animation.plugins.moonlit_fog_banks import MoonlitFogBanksAnimation
+from animation.plugins.rain_on_glass import RainOnGlassAnimation
+from animation.plugins.tidal_bioluminescence import TidalBioluminescenceAnimation
+from animation.plugins.waterfall_veil import WaterfallVeilAnimation
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -162,6 +169,13 @@ class AnimationWebInterface:
                 SolidColorAnimation.COMPONENT_ID: SolidColorAnimation._normalized_parameters,
                 SparkleAnimation.COMPONENT_ID: SparkleAnimation._normalized_parameters,
                 WaveAnimation.COMPONENT_ID: WaveAnimation._normalized_parameters,
+                CircadianWindowAnimation.COMPONENT_ID: CircadianWindowAnimation._normalized_parameters,
+                CloudCanyonAnimation.COMPONENT_ID: CloudCanyonAnimation._normalized_parameters,
+                DesertWindAnimation.COMPONENT_ID: DesertWindAnimation._normalized_parameters,
+                MoonlitFogBanksAnimation.COMPONENT_ID: MoonlitFogBanksAnimation._normalized_parameters,
+                RainOnGlassAnimation.COMPONENT_ID: RainOnGlassAnimation._normalized_parameters,
+                TidalBioluminescenceAnimation.COMPONENT_ID: TidalBioluminescenceAnimation._normalized_parameters,
+                WaterfallVeilAnimation.COMPONENT_ID: WaterfallVeilAnimation._normalized_parameters,
             },
         )
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
@@ -1491,10 +1505,9 @@ class AnimationWebInterface:
     def _composer_canonical(self, request_value: Any):
         """Canonicalize the one current Scene v2 representation for Composer."""
         canonical = normalize_composer_scene(request_value, self.composer_catalog)
-        # The current-only schema intentionally does not carry per-component
-        # validator hooks. Keep Emoji Message's compact, local controls at the
-        # Composer boundary so an invalid text or position cannot replace the
-        # last live/recoverable scene before the final-preview runtime sees it.
+        # Keep Emoji Message's compact, local controls at the Composer boundary
+        # so an invalid text or position cannot replace the last
+        # live/recoverable scene before the final-preview runtime sees it.
         for widget in canonical.scene["widgets"]:
             component = widget["component"]
             if component["component_id"] == EmojiArrangerAnimation.COMPONENT_ID:
