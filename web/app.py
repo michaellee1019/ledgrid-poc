@@ -46,7 +46,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, native_aurora_descriptor
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v3"
+COMPOSER_SHELL_VERSION = "composer-shell-v5"
 
 PAINTER_MASK_TYPES = (
     {

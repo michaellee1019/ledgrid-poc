@@ -92,6 +92,38 @@ class ComposerPreviewSchedulerTests(unittest.TestCase):
           }})().catch((error) => {{ console.error(error); process.exitCode = 1; }});
         """)
 
+    def test_invalid_authored_scene_polls_last_rendered_scene_once_then_recovers(self) -> None:
+        self._node(f"""
+          (async () => {{
+          const {{ComposerPreviewScheduler}} = require({str(SCHEDULER)!r});
+          const deferred = () => {{ let resolve, reject; const promise = new Promise((a,b) => {{resolve=a; reject=b}}); return {{promise, resolve, reject}}; }};
+          const flush = () => new Promise((resolve) => setImmediate(resolve));
+          const requests = [], errors = [];
+          const scheduler = new ComposerPreviewScheduler({{
+            request: (candidate) => {{ const task = deferred(); requests.push({{candidate, task}}); return task.promise; }},
+            onFrame: () => {{}}, onError: (error, task) => errors.push([error.message, task.kind]),
+            setIntervalFn: () => 6, clearIntervalFn: () => {{}},
+          }});
+          scheduler.start(() => 'initial');
+          const baseline = scheduler.submitAuthored('valid-before', {{generation: 1}});
+          requests[0].task.resolve('baseline-frame'); await baseline; await flush();
+          const invalid = scheduler.submitAuthored('invalid', {{generation: 2}});
+          requests[1].task.reject(new Error('luminance must be at most 2'));
+          await invalid.catch(() => {{}}); await flush();
+          for (let tick = 0; tick < 3; tick += 1) {{
+            scheduler.poll();
+            const poll = requests.at(-1);
+            if (poll.candidate !== 'valid-before') throw new Error(`invalid poll candidate: ${{poll.candidate}}`);
+            poll.task.resolve(`retained-${{tick}}`); await flush(); await flush();
+          }}
+          if (errors.length !== 1 || errors[0][1] !== 'authored' || requests.filter((request) => request.candidate === 'invalid').length !== 1) throw new Error(`invalid scene retried: ${{JSON.stringify({{errors, requests: requests.map((request) => request.candidate)}})}}`);
+          const corrected = scheduler.submitAuthored('valid-after', {{generation: 3}});
+          requests.at(-1).task.resolve('corrected-frame'); await corrected; await flush();
+          scheduler.poll();
+          if (requests.at(-1).candidate !== 'valid-after') throw new Error('valid correction did not become the polling source');
+          }})().catch((error) => {{ console.error(error); process.exitCode = 1; }});
+        """)
+
     def test_stale_poll_failure_cannot_override_newer_authored_success(self) -> None:
         self._node(f"""
           (async () => {{

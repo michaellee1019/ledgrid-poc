@@ -77,6 +77,10 @@
       this.authoredInFlight = true;
       Promise.resolve(this.request(task.candidate)).then((body) => {
         if (task.authorityEpoch === this.authorityEpoch) {
+          // Poll only a successfully rendered authored scene.  An invalid
+          // in-progress control value stays editable in the Composer, but it
+          // cannot become a 30fps preview retry source.
+          this.candidate = () => task.candidate;
           this.onFrame(body, {kind: 'authored', generation: task.generation, authorityEpoch: task.authorityEpoch, autosave: task.autosave, candidate: task.candidate});
           this.resume();
           task.resolve(body);
