@@ -39,7 +39,7 @@ class TetrisAnimationTests(unittest.TestCase):
     def test_supports_dozens_of_scattered_tetrominoes(self):
         animation = TetrisAnimation(
             self.controller,
-            {"tetromino_count": 48, "speed": 0.2},
+            {"tetromino_count": 48, "fall_rate": 0.2},
         )
         animation.random.seed(1234)
 
@@ -100,6 +100,30 @@ class TetrisAnimationTests(unittest.TestCase):
         self.assertFalse(skipped.changed)
         self.assertIs(skipped.pixels, first.pixels)
         self.assertTrue(next_frame.changed)
+
+    def test_time_rewind_repaints_without_advancing_gameplay_or_rng(self):
+        animation = TetrisAnimation(self.controller, {"seed": 4102, "bot_imperfection": 0.0})
+        animation.generate_frame(0.0, 0)
+        animation.generate_frame(0.02, 1)
+        before = (
+            tuple(tuple(row) for row in animation.board),
+            tuple((piece.kind, piece.rotation, piece.x, piece.y, piece.fall_progress,
+                   piece.action_accumulator) for piece in animation.active_pieces),
+            animation.lines_cleared,
+            animation.random.getstate(),
+        )
+
+        rewound = animation.generate_frame(0.0, 2)
+
+        self.assertTrue(rewound.changed)
+        self.assertEqual(animation.last_elapsed, 0.0)
+        self.assertEqual(before, (
+            tuple(tuple(row) for row in animation.board),
+            tuple((piece.kind, piece.rotation, piece.x, piece.y, piece.fall_progress,
+                   piece.action_accumulator) for piece in animation.active_pieces),
+            animation.lines_cleared,
+            animation.random.getstate(),
+        ))
 
     def test_pieces_keep_independent_movement_state(self):
         animation = TetrisAnimation(self.controller, {"tetromino_count": 2})

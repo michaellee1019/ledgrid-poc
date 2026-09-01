@@ -5,9 +5,12 @@ import random
 import threading
 from dataclasses import dataclass
 from math import sqrt
-from typing import List, Tuple, Dict, Any, Optional
+from types import MappingProxyType
+from typing import List, Tuple, Dict, Any, Mapping, Optional
 
 from animation import AnimationBase
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.presentation_contracts import ResolvedScene
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
@@ -39,8 +42,28 @@ PIECE_COLORS: Dict[str, Color] = {
     "Z": (255, 60, 60),
 }
 
-PLANT_FOLIAGE_COLOR: Color = (10, 52, 22)
-PLANT_GLOBE_COLOR: Color = (78, 16, 70)
+SEMANTIC_PALETTES: Mapping[str, Mapping[str, Color]] = MappingProxyType({
+    "neutral": MappingProxyType({
+        "I": (94, 235, 226), "J": (91, 144, 255), "L": (255, 173, 73),
+        "O": (255, 238, 101), "S": (96, 238, 158), "T": (218, 104, 236),
+        "Z": (255, 111, 98), "flash": (255, 164, 138),
+    }),
+    "mist": MappingProxyType({
+        "I": (120, 238, 245), "J": (105, 162, 245), "L": (245, 183, 111),
+        "O": (255, 232, 132), "S": (115, 229, 184), "T": (190, 139, 245),
+        "Z": (245, 126, 124), "flash": (245, 172, 142),
+    }),
+    "spectrum": MappingProxyType({
+        "I": (71, 233, 230), "J": (99, 100, 255), "L": (255, 153, 77),
+        "O": (246, 238, 91), "S": (95, 244, 139), "T": (223, 95, 242),
+        "Z": (255, 95, 134), "flash": (255, 157, 104),
+    }),
+    "ember": MappingProxyType({
+        "I": (255, 196, 91), "J": (255, 133, 70), "L": (255, 167, 82),
+        "O": (255, 225, 108), "S": (242, 180, 84), "T": (255, 111, 91),
+        "Z": (255, 89, 72), "flash": (255, 148, 92),
+    }),
+})
 
 
 def _normalize(coords: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
@@ -108,10 +131,49 @@ class TetrisAnimation(AnimationBase):
     ANIMATION_NAME = "Tetris"
     ANIMATION_DESCRIPTION = "Autoplaying Tetris board with coordinated falling tetrominoes"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "2.0"
 
-    def __init__(self, controller, config: Dict[str, Any] = None):
-        super().__init__(controller, config)
+    COMPONENT_ID = "tetris"
+    COMPONENT_VERSION = 1
+    PROVIDER = "python"
+    ROLE = "animation"
+    FRAME_FORMAT = "rgb_uint8_strip_major"
+    TIMING_POLICY = "scaled_context"
+    PALETTE_POLICY = "semantic"
+    PALETTE_ROLES = tuple(BASE_SHAPES) + ("flash",)
+    CAPABILITIES = frozenset({"semantic_palette_roles", "scaled_context", "effect_intent"})
+    PLANT_MODIFIER_SUPPORT = frozenset()
+
+    # The game owns only its deterministic simulation and local drawing
+    # controls. Scene pace, final plant optics, and presentation brightness
+    # are applied once by the Scene v2 runtime after this opaque RGB plane.
+    DEFAULTS = MappingProxyType({
+        "seed": 4201,
+        "tetromino_count": 5,
+        "bot_imperfection": 0.18,
+        "fall_rate": 3.0,
+        "smooth_drop": True,
+        "smooth_drop_strength": 0.6,
+        "smooth_drop_max_pieces": 32,
+        "render_fps": 150.0,
+        "high_density_render_fps": 150.0,
+    })
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID,
+        version=COMPONENT_VERSION,
+        provider=PROVIDER,
+        role=ROLE,
+        timing_policy=TIMING_POLICY,
+        alpha_behavior="opaque",
+        palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent",),
+        fidelity_exceptions=(),
+        defaults=DEFAULTS,
+    )
+
+    def __init__(self, controller, config: Optional[Mapping[str, Any]] = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
 
         self.num_strips = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
         self.leds_per_strip = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
@@ -134,27 +196,29 @@ class TetrisAnimation(AnimationBase):
         self.input_lock = threading.Lock()
         self.input_piece_index = 0
         self.plans_dirty = False
-        self._tetris_plant_masks = None
-
-        self.default_params.update({
-            'speed': 3.0,
-            'tetromino_count': 5,
-            'bot_imperfection': 0.18,
-            'smooth_drop': True,
-            'smooth_drop_strength': 0.6,
-            'smooth_drop_max_pieces': 32,
-            'render_fps': 150.0,
-            'high_density_render_fps': 150.0,
-        })
-        self.params = {**self.default_params, **self.config}
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
+        self._presentation_context: Optional[ResolvedScene] = None
+        self._palette_id = "neutral"
+        self.random.seed(self.params["seed"])
 
         self.base_drop_speed = max(12.0, self.board_height / 4.0)
         self._refresh_runtime_params()
 
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        """Return the provider-qualified opaque Scene v2 declaration."""
+
+        return cls.COMPONENT_DESCRIPTOR
+
+    @classmethod
+    def palette_roles(cls, palette_id: str) -> Mapping[str, Color]:
+        return SEMANTIC_PALETTES.get(str(palette_id), SEMANTIC_PALETTES["neutral"])
+
     def _refresh_runtime_params(self):
-        speed = max(0.2, float(self.params.get('speed', 1.0)))
-        self.drop_speed = self.base_drop_speed * speed
-        self.action_interval = max(0.0125, 0.1 / speed)
+        fall_rate = float(self.params['fall_rate'])
+        self.drop_speed = self.base_drop_speed * fall_rate
+        self.action_interval = max(0.0125, 0.1 / fall_rate)
         self.fail_rate = min(0.6, max(0.0, float(self.params.get('bot_imperfection', 0.18))))
         self.tetromino_count = max(
             1,
@@ -162,8 +226,11 @@ class TetrisAnimation(AnimationBase):
         )
 
     def get_parameter_schema(self) -> Dict[str, Any]:
-        schema = super().get_parameter_schema()
-        schema.update({
+        return {
+            'seed': {
+                'type': 'int', 'min': 0, 'max': 999999, 'default': 4201,
+                'description': 'Deterministic tetromino sequence seed',
+            },
             'tetromino_count': {
                 'type': 'int',
                 'min': 1,
@@ -178,12 +245,12 @@ class TetrisAnimation(AnimationBase):
                 'default': 0.18,
                 'description': 'Chance for the bot to pick a risky move'
             },
-            'speed': {
+            'fall_rate': {
                 'type': 'float',
                 'min': 0.2,
                 'max': 5.0,
-                'default': 2.0,
-                'description': 'Playback speed multiplier'
+                'default': 3.0,
+                'description': 'Component-local falling cadence multiplier'
             },
             'smooth_drop': {
                 'type': 'bool',
@@ -217,28 +284,101 @@ class TetrisAnimation(AnimationBase):
                 'max': 200.0,
                 'default': 150.0,
                 'description': 'Render rate used above the smooth-piece limit'
-            }
-        })
-        return schema
+            },
+        }
 
-    def update_parameters(self, params: Dict[str, Any]):
-        super().update_parameters(params)
+    def update_parameters(self, params: Mapping[str, Any]):
+        normalized = self._normalized_parameters({**self.params, **dict(params)})
+        if normalized == self.params:
+            return
+        self.params = normalized
         self._refresh_runtime_params()
-        if {
-            'plant_aware', 'plant_clearance', 'plant_mask_path',
-            'plant_globe_mask_path',
-        } & params.keys():
-            self.plans_dirty = True
-            self._tetris_plant_masks = None
         if len(self.active_pieces) > self.tetromino_count:
             del self.active_pieces[self.tetromino_count:]
         self.last_render_elapsed = None
         self.next_render_elapsed = None
 
+    def on_presentation_context_changed(
+        self, old: Optional[ResolvedScene], new: ResolvedScene,
+    ) -> None:
+        del old
+        self._validate_context(new)
+        self._presentation_context = new
+        palette_id = self._context_palette_id(new)
+        if palette_id != self._palette_id:
+            # Palette edits are presentation-only: repaint immediately without
+            # moving pieces, consuming RNG, or waiting for the prior cadence.
+            self._palette_id = palette_id
+            self.next_render_elapsed = None
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene) -> Any:
+        self.set_presentation_context(context)
+        self.update_parameters(context.parameters)
+        return self.generate_frame(context.phase_time, self.frame_count)
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> Dict[str, Any]:
+        unknown = set(values) - set(cls.DEFAULTS)
+        if unknown:
+            raise ValueError(f"Tetris does not accept non-local parameters: {sorted(unknown)!r}")
+        result = dict(cls.DEFAULTS)
+        result.update(values)
+        seed = result["seed"]
+        if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 999999:
+            raise ValueError("seed must be an integer from 0 to 999999")
+        for name, minimum, maximum in (
+            ("bot_imperfection", 0.0, 0.6),
+            ("fall_rate", 0.2, 5.0),
+            ("smooth_drop_strength", 0.0, 1.0),
+            ("render_fps", 15.0, 200.0),
+            ("high_density_render_fps", 15.0, 200.0),
+        ):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not minimum <= float(value) <= maximum:
+                raise ValueError(f"{name} must be a number from {minimum} to {maximum}")
+            result[name] = float(value)
+        for name, minimum, maximum in (
+            ("tetromino_count", 1, MAX_TETROMINO_COUNT),
+            ("smooth_drop_max_pieces", 0, MAX_TETROMINO_COUNT),
+        ):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                raise ValueError(f"{name} must be an integer from {minimum} to {maximum}")
+        if not isinstance(result["smooth_drop"], bool):
+            raise ValueError("smooth_drop must be boolean")
+        return result
+
+    def _validate_context(self, context: ResolvedScene) -> None:
+        descriptor = context.descriptor
+        if (
+            descriptor.component_id, descriptor.version, descriptor.provider.value,
+            descriptor.role.value,
+        ) != (self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE):
+            raise ValueError("Tetris received a context for another component")
+        if context.palette is None:
+            raise ValueError("Tetris requires a semantic palette context")
+
+    @staticmethod
+    def _context_palette_id(context: ResolvedScene) -> str:
+        assert context.palette is not None
+        return str(context.palette["palette_id"])
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
+        time_rewound = (
+            self.last_elapsed is not None and time_elapsed < self.last_elapsed
+        )
+        if time_rewound:
+            # A new Scene pace can rewind scaled time. Repaint the requested
+            # point now, while the zero delta below preserves game/RNG state.
+            self.last_render_elapsed = None
+            self.next_render_elapsed = None
         render_fps = self._effective_render_fps()
         if (
-            self.last_rendered_frame is not None
+            not time_rewound
+            and self.last_rendered_frame is not None
             and self.next_render_elapsed is not None
             and time_elapsed < self.next_render_elapsed
         ):
@@ -264,13 +404,11 @@ class TetrisAnimation(AnimationBase):
 
         self._update_game(delta)
 
-        if self.plant_aware_enabled():
-            self._render_plant_landmarks(frame)
-
         if self.game_over_flash > 0.0:
             flash_strength = int(80 * min(1.0, self.game_over_flash))
             if flash_strength > 0:
-                tint = self.apply_brightness((flash_strength, 10, 10))
+                flash = self.palette_roles(self._palette_id)["flash"]
+                tint = tuple(int(channel * flash_strength / 80) for channel in flash)
                 for strip in range(1, self.num_strips):
                     base_index = strip * self.leds_per_strip
                     for led in range(self.board_height):
@@ -671,35 +809,7 @@ class TetrisAnimation(AnimationBase):
             - aggregate_height * 0.45
             - bumpiness * 0.35
             - max_height * 0.8
-            - self._plant_placement_penalty(coords, x_offset, y_offset)
         )
-
-    def _plant_placement_penalty(
-        self,
-        coords: List[Tuple[int, int]],
-        x_offset: int,
-        y_offset: int,
-    ) -> float:
-        """Discourage bot landings that the calibrated plants would obscure."""
-        if not self.plant_aware_enabled():
-            return 0.0
-
-        masks = self._plant_geometry()
-        penalty = 0.0
-        for cx, cy in coords:
-            board_x = x_offset + cx
-            board_y = y_offset + cy
-            if not (0 <= board_x < self.board_width and 0 <= board_y < self.board_height):
-                continue
-            strip = board_x + 1
-            physical_led = (self.leds_per_strip - 1) - board_y
-            if masks.globes[strip, physical_led]:
-                penalty += 80.0
-            elif masks.foliage[strip, physical_led]:
-                penalty += 24.0
-            elif masks.clearance[strip, physical_led]:
-                penalty += 7.0
-        return penalty
 
     def _apply_pending_inputs(self):
         with self.input_lock:
@@ -818,24 +928,16 @@ class TetrisAnimation(AnimationBase):
         return max((y for _, y in coords), default=0) + 1
 
     def _active_piece_color(self, piece: str) -> Color:
-        base = TETROMINOS[piece]['color']
+        base = self.palette_roles(self._palette_id)[piece]
         return tuple(min(255, int(c * 1.15) + 10) for c in base)
 
-    def _render_plant_landmarks(self, frame: Any):
-        """Keep calibrated plant cores legible underneath the Tetris board."""
-        masks = self._plant_geometry()
-        frame[masks.foliage_flat] = self.apply_brightness(PLANT_FOLIAGE_COLOR)
-        frame[masks.globes_flat] = self.apply_brightness(PLANT_GLOBE_COLOR)
+    def _board_color(self, color: Color) -> Color:
+        """Resolve stored piece identity into the current semantic Look palette."""
 
-    def _plant_geometry(self):
-        if self._tetris_plant_masks is None:
-            self._tetris_plant_masks = self.get_plant_masks()
-        return self._tetris_plant_masks
-
-    def _plant_occludes_index(self, index: int) -> bool:
-        if not self.plant_aware_enabled():
-            return False
-        return bool(self._plant_geometry().obstacle_flat[index])
+        for kind, info in TETROMINOS.items():
+            if color == info["color"]:
+                return self.palette_roles(self._palette_id)[kind]
+        return color
 
     def _set_pixel(self, frame: List[Color], strip: int, led: int, color: Color):
         if strip < 0 or strip >= self.num_strips:
@@ -845,9 +947,7 @@ class TetrisAnimation(AnimationBase):
         phys_led = (self.leds_per_strip - 1) - led
         idx = strip * self.leds_per_strip + phys_led
         if 0 <= idx < len(frame):
-            if self._plant_occludes_index(idx):
-                return
-            frame[idx] = self.apply_brightness(color)
+            frame[idx] = self._board_color(color)
 
     def _set_pixel_blend(self, frame: List[Color], strip: int, led: int, color: Color, alpha: float):
         if alpha <= 0.0:
@@ -857,11 +957,11 @@ class TetrisAnimation(AnimationBase):
         alpha = min(1.0, alpha) * strength
         if alpha <= 0.0:
             return
-        scaled = self.apply_brightness((
+        scaled = (
             int(color[0] * alpha),
             int(color[1] * alpha),
             int(color[2] * alpha),
-        ))
+        )
         if strip < 0 or strip >= self.num_strips:
             return
         if led < 0 or led >= self.leds_per_strip:
@@ -869,8 +969,6 @@ class TetrisAnimation(AnimationBase):
         phys_led = (self.leds_per_strip - 1) - led
         idx = strip * self.leds_per_strip + phys_led
         if 0 <= idx < len(frame):
-            if self._plant_occludes_index(idx):
-                return
             base = frame[idx]
             frame[idx] = (
                 min(255, int(base[0]) + scaled[0]),
@@ -889,11 +987,4 @@ class TetrisAnimation(AnimationBase):
             'max_spawns_per_update': MAX_SPAWNS_PER_UPDATE,
             'max_coordinated_plans': MAX_COORDINATED_PLANS,
         }
-        if self.plant_aware_enabled():
-            masks = self._plant_geometry()
-            stats.update({
-                'plant_foliage_pixels': masks.foliage_count,
-                'plant_globe_pixels': masks.globe_count,
-                'plant_mask_error': masks.error,
-            })
         return stats

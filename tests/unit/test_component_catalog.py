@@ -10,6 +10,7 @@ from animation.core.component_catalog import ComponentDescriptor
 from animation.core.manager import PreviewLEDController
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
+from animation.plugins.tetris import TetrisAnimation
 from web.composer_final_preview import current_component_catalog
 
 
@@ -25,7 +26,7 @@ class ComponentCatalogTests(unittest.TestCase):
             for descriptor in catalog.descriptors
         }
         self.assertEqual(set(entries), {
-            "native_aurora", "aurora_curtains", "conway_life", "clock_overlay",
+            "native_aurora", "aurora_curtains", "conway_life", "tetris", "clock_overlay",
         })
         self.assertEqual(
             [
@@ -39,6 +40,7 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("receiver_native", "background", "scaled_context", "none", "semantic", ("final_optics",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "widget", "wall_clock", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
             ],
         )
@@ -49,6 +51,7 @@ class ComponentCatalogTests(unittest.TestCase):
         locations = {
             "aurora_curtains": _ROOT / "animation/plugins/aurora_curtains/manifest.json",
             "conway_life": _ROOT / "animation/plugins/conway_life/manifest.json",
+            "tetris": _ROOT / "animation/plugins/tetris/manifest.json",
             "clock_overlay": _ROOT / "animation/plugins/clock_overlay/manifest.json",
         }
         for component_id, location in locations.items():
@@ -99,3 +102,11 @@ class ComponentCatalogTests(unittest.TestCase):
 
         self.assertFalse(AuroraCurtainsAnimation.PLANT_MODIFIER_SUPPORT)
         self.assertNotIn("effect_intent", aurora.get_info()["plant_modifier_support"])
+
+    def test_tetris_is_a_qualified_semantic_opaque_animation(self) -> None:
+        descriptor = TetrisAnimation.component_descriptor()
+
+        self.assertEqual(descriptor.component_id, "tetris")
+        self.assertEqual(descriptor.alpha_behavior.value, "opaque")
+        self.assertEqual(descriptor.palette_policy.value, "semantic")
+        self.assertEqual(tuple(capability.value for capability in descriptor.plant_capabilities), ("effect_intent",))

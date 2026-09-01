@@ -300,6 +300,9 @@ class CanonicalSceneRuntime:
         if descriptor.component_id == "conway_life":
             from animation.plugins.conway_life import ConwayLifeAnimation
             return ConwayLifeAnimation(controller, parameters)
+        if descriptor.component_id == "tetris":
+            from animation.plugins.tetris import TetrisAnimation
+            return TetrisAnimation(controller, parameters)
         if descriptor.component_id == "clock_overlay":
             from animation.plugins.clock_overlay import ClockOverlayAnimation
             return ClockOverlayAnimation(controller, parameters)

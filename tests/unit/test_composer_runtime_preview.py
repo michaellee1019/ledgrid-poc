@@ -58,10 +58,15 @@ def _scene(*, animation: str = "conway_life", widgets: list[dict] | None = None,
         "animation": _component(animation, "animation", {
             "seed": 1971, "rule": "B3/S23", "initial_density": 0.14,
             "generations_per_second": 5.0,
-        } if animation == "conway_life" else {
+        } if animation == "conway_life" else ({
+            "seed": 4201, "tetromino_count": 5, "bot_imperfection": .18,
+            "fall_rate": 3.0, "smooth_drop": True, "smooth_drop_strength": .6,
+            "smooth_drop_max_pieces": 32, "render_fps": 150.0,
+            "high_density_render_fps": 150.0,
+        } if animation == "tetris" else {
             "seed": 4201, "source_fps": 30.0, "curtain_density": .56,
             "fold_depth": .58, "glow_intensity": .62,
-        }),
+        })),
         "widgets": widgets or [],
         "plants": plants or {"effects": {"version": 1, "active": [], "strengths": {}}},
         "look": {"palette_id": palette, "pace": pace, "presentation_brightness": brightness},
@@ -121,6 +126,65 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         native_only = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(animation="conway_life", pace=0.0))))
         self.assertTrue(np.any(alpha == native_only))
         self.assertFalse(np.array_equal(opaque, native_only))
+
+    def test_tetris_opaque_plane_hides_native_background_and_keeps_clock_above(self) -> None:
+        tetris = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(animation="tetris"))))
+        native_only = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(animation="conway_life", pace=0.0))))
+        clocked = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(
+            animation="tetris", widgets=[_clock("clock", [255, 224, 128], led=-8)],
+        ))))
+
+        self.assertFalse(np.array_equal(tetris, native_only))
+        self.assertFalse(np.array_equal(tetris, clocked))
+
+    def test_paused_tetris_palette_edit_repaints_the_real_final_preview(self) -> None:
+        mist = _scene(animation="tetris", palette="mist", pace=0.0)
+        ember = _scene(animation="tetris", palette="ember", pace=0.0)
+
+        mist_pixels = self._pixels(self.client.post("/api/composer/preview", json=_request(mist, elapsed=2.0)))
+        ember_pixels = self._pixels(self.client.post("/api/composer/preview", json=_request(ember, elapsed=2.5)))
+
+        self.assertFalse(np.array_equal(mist_pixels, ember_pixels))
+
+    def test_tetris_pace_rewind_repaints_without_advancing_its_real_runtime(self) -> None:
+        running = self.interface._composer_canonical({"origin": "composer", "scene": _scene(animation="tetris", pace=1.0)})
+        paused = self.interface._composer_canonical({"origin": "composer", "scene": _scene(animation="tetris", pace=0.0)})
+        preview = ComposerFinalPreview(self.interface.composer_catalog, self.interface.project_root)
+        preview.render(running, 1.25, datetime.fromisoformat("2026-08-31T13:47:10+00:00"))
+        tetris = preview._runtime._animation.instance
+        before = (
+            tuple(tuple(row) for row in tetris.board),
+            tuple((piece.kind, piece.rotation, piece.x, piece.y, piece.fall_progress,
+                   piece.action_accumulator) for piece in tetris.active_pieces),
+            tetris.random.getstate(),
+        )
+
+        rewound = preview.render(paused, 1.25, datetime.fromisoformat("2026-08-31T13:47:10+00:00"))
+
+        self.assertTrue(rewound.changed)
+        self.assertEqual(tetris.last_elapsed, 0.0)
+        self.assertEqual(before, (
+            tuple(tuple(row) for row in tetris.board),
+            tuple((piece.kind, piece.rotation, piece.x, piece.y, piece.fall_progress,
+                   piece.action_accumulator) for piece in tetris.active_pieces),
+            tetris.random.getstate(),
+        ))
+
+    def test_invalid_tetris_parameter_preserves_the_last_live_scene(self) -> None:
+        scene = _scene(animation="tetris")
+        published = self.client.post("/api/composer/scene", json={
+            "origin": "composer", "scene": scene, "client_id": "desktop", "client_sequence": 1,
+        })
+        self.assertEqual(published.status_code, 200)
+        original = published.get_json()["current"]
+        invalid = _scene(animation="tetris")
+        invalid["animation"]["parameters"]["speed"] = 1.0
+        rejected = self.client.post("/api/composer/scene", json={
+            "origin": "composer", "scene": invalid, "client_id": "desktop", "client_sequence": 2,
+        })
+
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(self.client.get("/api/composer/status").get_json()["current"], original)
 
     def test_widget_order_plant_effects_and_look_presentation_change_final_pixels(self) -> None:
         first = self._pixels(self.client.post("/api/composer/preview", json=_request(_scene(widgets=[

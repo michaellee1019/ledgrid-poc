@@ -42,7 +42,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v5"
+COMPOSER_SHELL_VERSION = "composer-shell-v6"
 
 PAINTER_MASK_TYPES = (
     {

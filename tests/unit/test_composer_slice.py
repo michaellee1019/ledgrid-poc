@@ -123,6 +123,7 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertIn("Operations", html)
         self.assertIn("Installed final", html)
         self.assertIn("conway_life", Path("web/static/js/composer_slice.js").read_text(encoding="utf-8"))
+        self.assertIn("tetris", Path("web/static/js/composer_slice.js").read_text(encoding="utf-8"))
         self.assertIn('id="liveAction"', html)
         self.assertNotIn("previewCanvas", html)
         self.assertNotIn("Tools", html)

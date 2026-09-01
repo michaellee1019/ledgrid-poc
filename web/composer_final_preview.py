@@ -25,6 +25,7 @@ from animation.core.scene_runtime import CanonicalSceneRuntime, RuntimeFrame
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
+from animation.plugins.tetris import TetrisAnimation
 from ipc.scene_contract import CanonicalScene
 
 
@@ -67,6 +68,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         native_aurora_descriptor(),
         AuroraCurtainsAnimation.component_descriptor(),
         ConwayLifeAnimation.component_descriptor(),
+        TetrisAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
     )
 
@@ -187,6 +189,8 @@ class ComposerFinalPreview:
             return AuroraCurtainsAnimation(controller, parameters)
         if descriptor.component_id == ConwayLifeAnimation.COMPONENT_ID:
             return ConwayLifeAnimation(controller, parameters)
+        if descriptor.component_id == TetrisAnimation.COMPONENT_ID:
+            return TetrisAnimation(controller, parameters)
         raise ValueError(f"Composer preview cannot render Animation {descriptor.component_id!r}")
 
     def _widget_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
