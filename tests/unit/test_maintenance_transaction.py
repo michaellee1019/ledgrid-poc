@@ -36,14 +36,14 @@ def _status():
     }
 
 
-def _command():
+def _command(*, diagnostic="receiver_band", target=None):
     status = _status()
     return {
         "schema": MAINTENANCE_SCHEMA,
         "schema_version": MAINTENANCE_SCHEMA_VERSION,
         "request_id": REQUEST_ID,
-        "diagnostic": "receiver_band",
-        "target": {"receiver_id": 2},
+        "diagnostic": diagnostic,
+        "target": target if target is not None else {"receiver_id": 2},
         "intensity": 8,
         "duration_seconds": 0.01,
         "expected_identity": identity_from_status(status).to_dict(),
@@ -63,18 +63,46 @@ class _Controller:
         acknowledgements=range(5),
         drained=None,
         wrong_restore_id=False,
+        lane_apply_fails=False,
     ):
         self.restore_fails = restore_fails
         self.acknowledgements = acknowledgements
         self.drained = drained
         self.wrong_restore_id = wrong_restore_id
+        self.lane_apply_fails = lane_apply_fails
         self.calls = []
         self.idle = []
+        self.events = []
+        self.tail_lane_mask = 0xFF
+
+    @staticmethod
+    def _lane_receipt(lane_mask):
+        return {
+            "logical_device": 4,
+            "lane_mask": lane_mask,
+            "authority_digest": AUTHORITY,
+            "status": {
+                "receiver_logical_device": 4,
+                "receiver_lane_mask": lane_mask,
+            },
+        }
+
+    def capture_trusted_receiver_lane_mask(self, logical_device):
+        self.events.append(("capture_lane", logical_device))
+        return self._lane_receipt(self.tail_lane_mask)
+
+    def set_trusted_receiver_lane_mask(self, logical_device, lane_mask):
+        self.events.append(("set_lane", logical_device, lane_mask))
+        self.tail_lane_mask = lane_mask
+        if self.lane_apply_fails and lane_mask != 0xFF:
+            raise RuntimeError("lane-mask acknowledgement is stale")
+        return self._lane_receipt(lane_mask)
 
     def present_trusted_full_frame(self, request_id, frame):
         if self.drained is not None:
             self.drained.assert_called_once()
         self.calls.append((request_id, frame))
+        self.events.append(("present", request_id))
         if request_id.endswith(":restore") and self.restore_fails:
             raise RuntimeError("restore disconnected")
         return {
@@ -91,6 +119,7 @@ class _Controller:
 
     def set_all_pixels(self, frame):
         self.idle.append(frame)
+        self.events.append(("safe_idle",))
 
 
 def _manager(controller):
@@ -169,6 +198,67 @@ class MaintenanceChannelTests(unittest.TestCase):
 
 
 class MaintenanceLeaseTests(unittest.TestCase):
+    def test_tail_lane_probe_receipt_applies_one_lane_then_restores_before_frame(self):
+        controller = _Controller()
+        manager = _manager(controller)
+        request = MaintenanceRequest.from_mapping(_command(
+            diagnostic="tail_lane_probe", target={"receiver_id": 4, "lane": 3},
+        ))
+
+        result = manager.run_maintenance_transaction(
+            request, authority_digest=AUTHORITY, sleep=lambda _seconds: None,
+        )
+
+        self.assertEqual(
+            controller.events,
+            [
+                ("capture_lane", 4),
+                ("set_lane", 4, 0x08),
+                ("present", REQUEST_ID),
+                ("set_lane", 4, 0xFF),
+                ("present", f"{REQUEST_ID}:restore"),
+            ],
+        )
+        self.assertEqual(result["tail_lane_apply_receipt"]["lane_mask"], 0x08)
+        self.assertEqual(result["tail_lane_restore_receipt"]["lane_mask"], 0xFF)
+
+    def test_ordinary_diagnostic_never_calls_tail_lane_mask_primitive(self):
+        controller = _Controller()
+        manager = _manager(controller)
+
+        manager.run_maintenance_transaction(
+            MaintenanceRequest.from_mapping(_command()),
+            authority_digest=AUTHORITY,
+            sleep=lambda _seconds: None,
+        )
+
+        self.assertEqual(
+            controller.events,
+            [("present", REQUEST_ID), ("present", f"{REQUEST_ID}:restore")],
+        )
+
+    def test_tail_lane_ack_failure_restores_prior_mask_before_safe_idle(self):
+        controller = _Controller(lane_apply_fails=True)
+        manager = _manager(controller)
+        request = MaintenanceRequest.from_mapping(_command(
+            diagnostic="tail_lane_probe", target={"receiver_id": 4, "lane": 2},
+        ))
+
+        with self.assertRaisesRegex(RuntimeError, "safe idle"):
+            manager.run_maintenance_transaction(
+                request, authority_digest=AUTHORITY, sleep=lambda _seconds: None,
+            )
+
+        self.assertEqual(
+            controller.events,
+            [
+                ("capture_lane", 4),
+                ("set_lane", 4, 0x04),
+                ("set_lane", 4, 0xFF),
+                ("safe_idle",),
+            ],
+        )
+
     def test_transaction_restores_exact_frame_and_blocks_interleaved_present(self):
         controller = _Controller()
         manager = _manager(controller)

@@ -4831,7 +4831,17 @@ class AnimationManager:
         with self._maintenance_transaction_guard():
             pause_requested = False
             capture = None
+            tail_lane_prior_receipt = None
+            tail_lane_apply_receipt = None
+            tail_lane_restore_receipt = None
+            tail_lane_change_attempted = False
+            tail_lane_mask = None
             try:
+                if request.diagnostic == "tail_lane_probe":
+                    # ``MaintenanceRequest`` has already constrained this to
+                    # logical receiver 4 and lane 0..7.  Keep the temporary
+                    # mask local to this transaction; never mutate topology.
+                    tail_lane_mask = 1 << request.target["lane"]
                 pause_requested = True
                 self._request_maintenance_pause()
                 # A renderer can die after its liveness check but before it
@@ -4842,6 +4852,28 @@ class AnimationManager:
                 with self._maintenance_guard():
                     with self._presentation_io_guard():
                         capture = self._maintenance_capture()
+                        if tail_lane_mask is not None:
+                            tail_lane_prior_receipt = (
+                                self.controller.capture_trusted_receiver_lane_mask(4)
+                            )
+                            self._validate_tail_lane_mask_receipt(
+                                tail_lane_prior_receipt,
+                                expected_mask=None,
+                                authority_digest=authority_digest,
+                            )
+                            # Set this before the I/O call: a transport failure
+                            # can happen after the receiver accepted the mask.
+                            tail_lane_change_attempted = True
+                            tail_lane_apply_receipt = (
+                                self.controller.set_trusted_receiver_lane_mask(
+                                    4, tail_lane_mask
+                                )
+                            )
+                            self._validate_tail_lane_mask_receipt(
+                                tail_lane_apply_receipt,
+                                expected_mask=tail_lane_mask,
+                                authority_digest=authority_digest,
+                            )
                         receipt = self.controller.present_trusted_full_frame(
                             request.request_id, build_frame(request)
                         )
@@ -4851,6 +4883,18 @@ class AnimationManager:
                     sleep(request.duration_seconds)
                     restore_request_id = f"{request.request_id}:restore"
                     with self._presentation_io_guard():
+                        if tail_lane_prior_receipt is not None:
+                            tail_lane_restore_receipt = (
+                                self.controller.set_trusted_receiver_lane_mask(
+                                    4, tail_lane_prior_receipt["lane_mask"]
+                                )
+                            )
+                            self._validate_tail_lane_mask_receipt(
+                                tail_lane_restore_receipt,
+                                expected_mask=tail_lane_prior_receipt["lane_mask"],
+                                authority_digest=authority_digest,
+                            )
+                            tail_lane_change_attempted = False
                         # Restore the exact captured raw frame through the same
                         # complete-frame receipt primitive before releasing lease.
                         restore_receipt = self.controller.present_trusted_full_frame(
@@ -4865,9 +4909,15 @@ class AnimationManager:
                     self._active_scene_state = capture["active_scene"]
                     self.output_brightness = capture["power"]
                     self.is_running = capture["is_running"]
-                    return {"receipt": receipt, "restore_receipt": restore_receipt}
+                    result = {"receipt": receipt, "restore_receipt": restore_receipt}
+                    if tail_lane_prior_receipt is not None:
+                        result["tail_lane_prior_receipt"] = tail_lane_prior_receipt
+                        result["tail_lane_apply_receipt"] = tail_lane_apply_receipt
+                        result["tail_lane_restore_receipt"] = tail_lane_restore_receipt
+                    return result
             except BaseException as exc:
                 drain_error = None
+                lane_restore_error = None
                 try:
                     # The lease makes a pending normal presentation drain
                     # before black is output; force-safe-idle makes any late
@@ -4880,6 +4930,28 @@ class AnimationManager:
                     drain_error = drain_exc
                 try:
                     with self._maintenance_guard(), self._presentation_io_guard():
+                        if (
+                            tail_lane_change_attempted
+                            and tail_lane_prior_receipt is not None
+                        ):
+                            try:
+                                # A tail-lane failure can occur after the
+                                # receiver applied the one-bit mask. Restore
+                                # the receipt-captured mask before any black
+                                # fail-safe frame is allowed onto the wire.
+                                tail_lane_restore_receipt = (
+                                    self.controller.set_trusted_receiver_lane_mask(
+                                        4, tail_lane_prior_receipt["lane_mask"]
+                                    )
+                                )
+                                self._validate_tail_lane_mask_receipt(
+                                    tail_lane_restore_receipt,
+                                    expected_mask=tail_lane_prior_receipt["lane_mask"],
+                                    authority_digest=authority_digest,
+                                )
+                                tail_lane_change_attempted = False
+                            except BaseException as restore_exc:
+                                lane_restore_error = restore_exc
                         self._maintenance_safe_idle()
                 except BaseException as idle_exc:
                     drain_detail = (
@@ -4887,16 +4959,26 @@ class AnimationManager:
                         if drain_error is None
                         else f"; pending presentation failed ({drain_error})"
                     )
+                    lane_detail = (
+                        ""
+                        if lane_restore_error is None
+                        else f"; lane-mask restoration failed ({lane_restore_error})"
+                    )
                     raise MaintenanceRunError(
-                        f"maintenance failed ({exc}){drain_detail}; safe idle also failed ({idle_exc})"
+                        f"maintenance failed ({exc}){drain_detail}{lane_detail}; safe idle also failed ({idle_exc})"
                     ) from exc
                 drain_detail = (
                     ""
                     if drain_error is None
                     else f"; pending presentation failed ({drain_error})"
                 )
+                lane_detail = (
+                    ""
+                    if lane_restore_error is None
+                    else f"; lane-mask restoration failed ({lane_restore_error})"
+                )
                 raise MaintenanceRunError(
-                    f"maintenance failed{drain_detail}; entered safe idle: {exc}"
+                    f"maintenance failed{drain_detail}{lane_detail}; entered safe idle: {exc}"
                 ) from exc
             finally:
                 if pause_requested:
@@ -4917,6 +4999,31 @@ class AnimationManager:
             if isinstance(item, dict)
         } != set(range(5)):
             raise MaintenanceRunError("maintenance acknowledgement is partial")
+
+    @staticmethod
+    def _validate_tail_lane_mask_receipt(receipt, *, expected_mask, authority_digest: str) -> None:
+        """Accept only a fresh, authoritative acknowledgement from receiver 4."""
+        from web.maintenance_api import MaintenanceRunError
+
+        if not isinstance(receipt, dict) or receipt.get("logical_device") != 4:
+            raise MaintenanceRunError("tail lane-mask acknowledgement has the wrong receiver")
+        if receipt.get("authority_digest") != authority_digest:
+            raise MaintenanceRunError("tail lane-mask acknowledgement authority is stale")
+        lane_mask = receipt.get("lane_mask")
+        if (
+            isinstance(lane_mask, bool)
+            or not isinstance(lane_mask, int)
+            or not 1 <= lane_mask <= 0xFF
+            or (expected_mask is not None and lane_mask != expected_mask)
+        ):
+            raise MaintenanceRunError("tail lane-mask acknowledgement has the wrong mask")
+        status = receipt.get("status")
+        if (
+            not isinstance(status, dict)
+            or status.get("receiver_logical_device") != 4
+            or status.get("receiver_lane_mask") != lane_mask
+        ):
+            raise MaintenanceRunError("tail lane-mask acknowledgement is incomplete")
 
     def _present_frame(self, frame, dirty_ranges, use_partial, inline_show):
         """Present one frame on the dedicated I/O worker and return timings."""

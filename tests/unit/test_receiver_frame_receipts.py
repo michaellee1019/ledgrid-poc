@@ -42,7 +42,17 @@ def _identities():
 
 
 class _ReceiptDevice:
-    def __init__(self, identity, *, reject=False, drift=False, failure=None):
+    def __init__(
+        self,
+        identity,
+        *,
+        reject=False,
+        drift=False,
+        failure=None,
+        lane_apply_after=0,
+        lane_operation_result=1,
+        lane_operation_drift=False,
+    ):
         self.hardware_serial = identity.hardware_serial
         self.firmware_sha256 = identity.firmware_sha256
         self.receiver_identity_authority_digest = AUTHORITY_DIGEST
@@ -51,6 +61,60 @@ class _ReceiptDevice:
         self.drift = drift
         self.failure = failure
         self.calls = []
+        self.lane_masks = []
+        self.lane_mask = 0xFF
+        self.status_responses = 0
+        self.receiver_sequence = 0x1000 + self.logical_device
+        self.lane_apply_after = lane_apply_after
+        self.lane_operation_result = lane_operation_result
+        self.lane_operation_drift = lane_operation_drift
+        self.pending_lane_mask = None
+        self.lane_status_polls = 0
+        self.lane_operation_sequence = 0
+
+    def get_stats(self):
+        return {"receiver_status_responses": self.status_responses}
+
+    def query_fresh_receiver_status(self):
+        self.status_responses += 1
+        if self.pending_lane_mask is not None:
+            self.lane_status_polls += 1
+            if (
+                self.lane_apply_after is not None
+                and self.lane_status_polls > self.lane_apply_after
+            ):
+                self.lane_mask = self.pending_lane_mask
+        operation_sequence = self.lane_operation_sequence
+        command = 0x09
+        if self.lane_operation_drift and self.pending_lane_mask is not None:
+            operation_sequence += 1
+            command = 0x0A
+        return {
+            "receiver_status_responses": self.status_responses,
+            "receiver_status_version": 3,
+            "receiver_logical_device": self.logical_device,
+            "receiver_lane_mask": self.lane_mask,
+            "receiver_last_result": self.lane_operation_result,
+            "receiver_operation_sequence": operation_sequence,
+            "receiver_last_processed_command": command,
+        }
+
+    def set_lane_mask(self, lane_mask):
+        self.lane_masks.append(lane_mask)
+        self.lane_mask = lane_mask
+
+    def set_lane_mask_acknowledged(self, lane_mask):
+        self.lane_masks.append(lane_mask)
+        self.pending_lane_mask = lane_mask
+        self.lane_status_polls = 0
+        self.lane_operation_sequence += 1
+        return {
+            "receiver_status_version": 3,
+            "receiver_logical_device": self.logical_device,
+            "receiver_last_result": self.lane_operation_result,
+            "receiver_operation_sequence": self.lane_operation_sequence,
+            "receiver_last_processed_command": 0x09,
+        }
 
     def present_complete_frame(self, frame, *, wall_frame_sequence, frame_digest):
         self.calls.append((tuple(frame), wall_frame_sequence, frame_digest))
@@ -58,19 +122,30 @@ class _ReceiptDevice:
             raise self.failure
         if self.drift:
             self.hardware_serial = "02:00:00:00:ff:ff"
-        sequence = wall_frame_sequence + 1 if self.reject else wall_frame_sequence
+        prior_sequence = self.receiver_sequence
+        self.receiver_sequence = (self.receiver_sequence + 1) & 0xFFFFFFFF
+        sequence = prior_sequence if self.reject else self.receiver_sequence
         return {
             "logical_device": self.logical_device,
             "wall_frame_sequence": wall_frame_sequence,
+            "receiver_accepted_sequence": sequence,
             "frame_digest": frame_digest,
             "status": {
                 "receiver_logical_device": self.logical_device,
-                "receiver_last_accepted_sequence": sequence,
+                "receiver_last_accepted_sequence": self.receiver_sequence,
             },
         }
 
 
-def _receipt_controller(*, reject=None, drift=None, failure=None):
+def _receipt_controller(
+    *,
+    reject=None,
+    drift=None,
+    failure=None,
+    lane_apply_after=0,
+    lane_operation_result=1,
+    lane_operation_drift=False,
+):
     controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
     controller._transport_lock = threading.RLock()
     controller.num_devices = 5
@@ -81,6 +156,7 @@ def _receipt_controller(*, reject=None, drift=None, failure=None):
     controller.receiver_global_strip_offsets = (0, 8, 16, 24, 32)
     controller.receiver_pixel_counts = tuple(width * 138 for width in controller.receiver_strip_counts)
     controller.receiver_pixel_offsets = tuple(offset * 138 for offset in controller.receiver_global_strip_offsets)
+    controller.receiver_lane_masks = (0xFF,) * 5
     controller.reverse_host_strips_by_logical_receiver = (False,) * 5
     controller.device_map = list(ROUTES)
     controller._receiver_identities = _identities()
@@ -93,6 +169,9 @@ def _receipt_controller(*, reject=None, drift=None, failure=None):
             reject=index == reject,
             drift=index == drift,
             failure=failure if index == 3 else None,
+            lane_apply_after=lane_apply_after if index == 4 else 0,
+            lane_operation_result=lane_operation_result if index == 4 else 1,
+            lane_operation_drift=lane_operation_drift if index == 4 else False,
         )
         for index, identity in enumerate(controller.receiver_identities)
     ]
@@ -100,6 +179,45 @@ def _receipt_controller(*, reject=None, drift=None, failure=None):
 
 
 class ReceiverFrameReceiptTests(unittest.TestCase):
+    def test_trusted_single_receiver_lane_mask_is_fresh_and_does_not_persist_topology(self):
+        controller = _receipt_controller()
+
+        prior = controller.capture_trusted_receiver_lane_mask(4)
+        applied = controller.set_trusted_receiver_lane_mask(4, 0x08)
+        restored = controller.set_trusted_receiver_lane_mask(4, prior["lane_mask"])
+
+        self.assertEqual(prior["lane_mask"], 0xFF)
+        self.assertEqual(applied["lane_mask"], 0x08)
+        self.assertEqual(restored["lane_mask"], 0xFF)
+        self.assertEqual(controller.devices[4].lane_masks, [0x08, 0xFF])
+        self.assertTrue(all(not device.lane_masks for device in controller.devices[:4]))
+        self.assertEqual(controller.receiver_lane_masks, (0xFF,) * 5)
+
+    def test_trusted_lane_mask_accepts_delayed_display_application(self):
+        controller = _receipt_controller(lane_apply_after=1)
+
+        receipt = controller.set_trusted_receiver_lane_mask(4, 0x08)
+
+        self.assertEqual(receipt["lane_mask"], 0x08)
+        self.assertEqual(controller.devices[4].lane_status_polls, 2)
+
+    def test_trusted_lane_mask_times_out_when_display_never_applies_it(self):
+        controller = _receipt_controller(lane_apply_after=None)
+
+        with mock.patch(
+            "drivers.multi_device.TRUSTED_LANE_MASK_APPLY_TIMEOUT_SECONDS", 0,
+        ), self.assertRaisesRegex(RuntimeError, "timed out"):
+            controller.set_trusted_receiver_lane_mask(4, 0x08)
+
+    def test_trusted_lane_mask_rejects_operation_drift_or_rejection(self):
+        cases = (
+            (_receipt_controller(lane_operation_drift=True), "operation drifted"),
+            (_receipt_controller(lane_operation_result=2), "was rejected"),
+        )
+        for controller, expected in cases:
+            with self.subTest(expected=expected), self.assertRaisesRegex(RuntimeError, expected):
+                controller.set_trusted_receiver_lane_mask(4, 0x08)
+
     def test_receipt_is_exactly_authority_backed_after_all_five_acknowledgements(self):
         controller = _receipt_controller()
         frame = np.zeros((33, 138, 3), dtype=np.uint8)
@@ -108,6 +226,10 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
 
         self.assertEqual(receipt["authority_digest"], AUTHORITY_DIGEST)
         self.assertEqual(receipt["wall_frame_sequence"], 0)
+        self.assertEqual(
+            [entry["receiver_accepted_sequence"] for entry in receipt["acknowledged_receivers"]],
+            [0x1001, 0x1002, 0x1003, 0x1004, 0x1005],
+        )
         self.assertEqual(
             [entry["logical_device"] for entry in receipt["acknowledged_receivers"]],
             [0, 1, 2, 3, 4],
@@ -126,12 +248,13 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
             with self.subTest(expected=expected), self.assertRaisesRegex(RuntimeError, expected):
                 controller.present_trusted_full_frame("request-1", frame)
 
-    def test_single_receiver_boundary_rejects_a_stale_or_wrong_sequence_status(self):
+    def test_single_receiver_boundary_rejects_a_stale_status(self):
         controller = LEDController.__new__(LEDController)
         controller.logical_device_id = 3
         controller.get_stats = mock.Mock(return_value={
             "receiver_status_responses": 7,
             "receiver_frames_accepted": 12,
+            "receiver_last_accepted_sequence": 0x1234,
         })
         controller.set_all_pixels = mock.Mock()
         controller.query_fresh_receiver_status = mock.Mock(return_value={
@@ -139,7 +262,7 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
             "receiver_frames_accepted": 12,
             "receiver_status_version": 3,
             "receiver_logical_device": 3,
-            "receiver_last_accepted_sequence": 9,
+            "receiver_last_accepted_sequence": 0x1235,
         })
         with self.assertRaisesRegex(RuntimeError, "stale"):
             controller.present_complete_frame(
@@ -152,39 +275,90 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
         controller.get_stats = mock.Mock(return_value={
             "receiver_status_responses": 7,
             "receiver_frames_accepted": 0,
+            "receiver_last_accepted_sequence": 0,
         })
         controller.set_all_pixels = mock.Mock()
         controller.query_fresh_receiver_status = mock.Mock(return_value={
             "receiver_status_responses": 8,
             "receiver_frames_accepted": 0,
+            "receiver_last_accepted_sequence": 0,
             "receiver_status_version": 3,
             "receiver_logical_device": 3,
-            "receiver_last_accepted_sequence": 0,
         })
         with self.assertRaisesRegex(RuntimeError, "accepted-frame counter"):
             controller.present_complete_frame(
                 [(0, 0, 0)], wall_frame_sequence=0, frame_digest="b" * 64
             )
 
-    def test_single_receiver_boundary_accepts_exact_one_frame_increment(self):
+    def test_single_receiver_boundary_accepts_independent_nonzero_receiver_sequence(self):
         controller = LEDController.__new__(LEDController)
         controller.logical_device_id = 3
         controller.get_stats = mock.Mock(return_value={
             "receiver_status_responses": 7,
-            "receiver_frames_accepted": 0,
+            "receiver_frames_accepted": 12,
+            "receiver_last_accepted_sequence": 0x1000,
         })
         controller.set_all_pixels = mock.Mock()
         controller.query_fresh_receiver_status = mock.Mock(return_value={
             "receiver_status_responses": 8,
-            "receiver_frames_accepted": 1,
+            "receiver_frames_accepted": 13,
+            "receiver_status_version": 3,
+            "receiver_logical_device": 3,
+            "receiver_last_accepted_sequence": 0x1001,
+        })
+        receipt = controller.present_complete_frame(
+            [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
+        )
+        self.assertEqual(receipt["wall_frame_sequence"], 9)
+        self.assertEqual(receipt["receiver_accepted_sequence"], 0x1001)
+
+    def test_single_receiver_boundary_rejects_unchanged_or_invalid_receiver_sequence(self):
+        cases = (
+            (0x1000, "did not advance"),
+            (-1, "invalid receiver-assigned"),
+        )
+        for after_sequence, expected in cases:
+            with self.subTest(after_sequence=after_sequence):
+                controller = LEDController.__new__(LEDController)
+                controller.logical_device_id = 3
+                controller.get_stats = mock.Mock(return_value={
+                    "receiver_status_responses": 7,
+                    "receiver_frames_accepted": 12,
+                    "receiver_last_accepted_sequence": 0x1000,
+                })
+                controller.set_all_pixels = mock.Mock()
+                controller.query_fresh_receiver_status = mock.Mock(return_value={
+                    "receiver_status_responses": 8,
+                    "receiver_frames_accepted": 13,
+                    "receiver_status_version": 3,
+                    "receiver_logical_device": 3,
+                    "receiver_last_accepted_sequence": after_sequence,
+                })
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    controller.present_complete_frame(
+                        [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
+                    )
+
+    def test_single_receiver_boundary_accepts_uint32_receiver_sequence_wrap(self):
+        controller = LEDController.__new__(LEDController)
+        controller.logical_device_id = 3
+        controller.get_stats = mock.Mock(return_value={
+            "receiver_status_responses": 7,
+            "receiver_frames_accepted": 0xFFFFFFFF,
+            "receiver_last_accepted_sequence": 0xFFFFFFFF,
+        })
+        controller.set_all_pixels = mock.Mock()
+        controller.query_fresh_receiver_status = mock.Mock(return_value={
+            "receiver_status_responses": 8,
+            "receiver_frames_accepted": 0,
             "receiver_status_version": 3,
             "receiver_logical_device": 3,
             "receiver_last_accepted_sequence": 0,
         })
         receipt = controller.present_complete_frame(
-            [(0, 0, 0)], wall_frame_sequence=0, frame_digest="b" * 64
+            [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
         )
-        self.assertEqual(receipt["wall_frame_sequence"], 0)
+        self.assertEqual(receipt["receiver_accepted_sequence"], 0)
 
     def test_startup_refuses_authority_route_drift_before_controller_construction(self):
         authority = SimpleNamespace(identities=_identities(), authority_digest=AUTHORITY_DIGEST)

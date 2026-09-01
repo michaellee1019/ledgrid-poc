@@ -3265,6 +3265,19 @@ class LEDController:
         self._refresh_configuration()
         self._xfer([CMD_SET_LANE_MASK, int(lane_mask) & 0xFF])
 
+    def set_lane_mask_acknowledged(self, lane_mask):
+        """Set a lane mask and prove the receiver processed this command.
+
+        ``set_lane_mask`` intentionally remains the ordinary fire-and-forget
+        configuration path.  The guarded maintenance transaction uses this
+        stricter form, then separately waits for the display task to report
+        that the requested mask has become physically applied.
+        """
+        if isinstance(lane_mask, bool) or not isinstance(lane_mask, int):
+            raise ValueError("lane_mask must be an integer")
+        self._refresh_configuration()
+        return self._command_status(bytes((CMD_SET_LANE_MASK, lane_mask & 0xFF)))
+
     def set_stagger_phases(self, phases):
         """Spread the lanes' WS2812 rising edges over this many samples.
 
@@ -3571,18 +3584,23 @@ class LEDController:
             before = self.get_stats()
             before_responses = before.get("receiver_status_responses")
             before_accepted = before.get("receiver_frames_accepted")
+            before_sequence = before.get("receiver_last_accepted_sequence")
             if (
                 isinstance(before_responses, bool)
                 or not isinstance(before_responses, int)
                 or isinstance(before_accepted, bool)
                 or not isinstance(before_accepted, int)
                 or not 0 <= before_accepted <= 0xFFFFFFFF
+                or isinstance(before_sequence, bool)
+                or not isinstance(before_sequence, int)
+                or not 0 <= before_sequence <= 0xFFFFFFFF
             ):
                 raise RuntimeError("complete-frame acknowledgement has invalid baseline counters")
             self.set_all_pixels(colors, wall_frame_sequence=wall_frame_sequence)
             status = self.query_fresh_receiver_status()
             after = status.get("receiver_status_responses")
             accepted = status.get("receiver_frames_accepted")
+            receiver_sequence = status.get("receiver_last_accepted_sequence")
             if (
                 isinstance(after, bool)
                 or not isinstance(after, int)
@@ -3598,15 +3616,26 @@ class LEDController:
                 raise RuntimeError(
                     "complete-frame acknowledgement did not advance the accepted-frame counter"
                 )
+            if (
+                isinstance(receiver_sequence, bool)
+                or not isinstance(receiver_sequence, int)
+                or not 0 <= receiver_sequence <= 0xFFFFFFFF
+            ):
+                raise RuntimeError(
+                    "complete-frame acknowledgement has an invalid receiver-assigned sequence"
+                )
+            if receiver_sequence != (before_sequence + 1) & 0xFFFFFFFF:
+                raise RuntimeError(
+                    "complete-frame acknowledgement did not advance the receiver-assigned sequence"
+                )
             if int(status.get("receiver_status_version", 0) or 0) < 3:
                 raise RuntimeError("complete-frame acknowledgement requires receiver status v3")
             if status.get("receiver_logical_device") != self.logical_device_id:
                 raise RuntimeError("complete-frame acknowledgement has the wrong receiver")
-            if status.get("receiver_last_accepted_sequence") != wall_frame_sequence:
-                raise RuntimeError("receiver did not acknowledge the exact frame sequence")
         return {
             "logical_device": self.logical_device_id,
             "wall_frame_sequence": wall_frame_sequence,
+            "receiver_accepted_sequence": receiver_sequence,
             "frame_digest": frame_digest,
             "status": dict(status),
         }
