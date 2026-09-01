@@ -38,7 +38,10 @@ class PluginRegistryTests(unittest.TestCase):
 
     def test_loader_ignores_typing_exports_before_subclass_checks(self):
         """Typing helpers such as Snake's Any must not abort discovery."""
+        import builtins
         import tempfile
+        from typing import Any
+        from unittest import mock
 
         source = """
 from typing import Any
@@ -52,9 +55,21 @@ class ExternalAnimation(AnimationBase):
             plugin_path = Path(temporary_dir) / "external.py"
             plugin_path.write_text(source, encoding="utf-8")
             loader = AnimationPluginLoader(temporary_dir)
+            original_issubclass = builtins.issubclass
+            subclass_candidates = []
+
+            def guarded_issubclass(candidate, parent):
+                self.assertIsNot(candidate, Any)
+                subclass_candidates.append(candidate)
+                return original_issubclass(candidate, parent)
 
             self.assertEqual(loader.scan_plugins(), ["external"])
-            self.assertEqual(loader.load_plugin("external").__name__, "ExternalAnimation")
+            with mock.patch("builtins.issubclass", side_effect=guarded_issubclass):
+                loaded = loader.load_plugin("external")
+
+            self.assertEqual(loaded.__name__, "ExternalAnimation")
+            self.assertNotIn(Any, subclass_candidates)
+            self.assertIn(loaded, subclass_candidates)
 
     def test_current_plugin_startup_loads_saved_plant_glow_scene(self):
         """Startup must discover every retained plugin before restoring the wall scene."""

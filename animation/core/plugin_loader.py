@@ -59,11 +59,16 @@ class AnimationPluginLoader:
         Normalize exports to actual ``type`` instances before asking their
         inheritance question so a typing helper can never break a plugin load.
         """
+        # Inspect membership first. ``typing.Any`` presents as a ``type`` on
+        # Python 3.12, but it is imported from ``typing`` rather than owned by
+        # the plugin module and must never reach ``issubclass``.
+        if getattr(candidate, "__module__", None) != module_name:
+            return False
+        if not isinstance(candidate, type):
+            return False
         return (
-            isinstance(candidate, type)
-            and issubclass(candidate, AnimationBase)
+            issubclass(candidate, AnimationBase)
             and candidate is not AnimationBase
-            and candidate.__module__ == module_name
             and not inspect.isabstract(candidate)
         )
 
