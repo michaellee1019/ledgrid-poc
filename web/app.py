@@ -24,6 +24,7 @@ from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
+from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -43,7 +44,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v7"
+COMPOSER_SHELL_VERSION = "composer-shell-v8"
 
 PAINTER_MASK_TYPES = (
     {
@@ -1425,6 +1426,8 @@ class AnimationWebInterface:
             component = widget["component"]
             if component["component_id"] == EmojiArrangerAnimation.COMPONENT_ID:
                 EmojiArrangerAnimation._normalized_parameters(component["parameters"])
+        if canonical.scene["animation"]["component_id"] == FireflySynchronyAnimation.COMPONENT_ID:
+            FireflySynchronyAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         return canonical
 
     def _fallback_led_info(self) -> Dict[str, int]:
