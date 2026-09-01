@@ -1,6 +1,7 @@
 """Static contract coverage for the Scene v2 desktop Composer workspace."""
 
 from pathlib import Path
+import re
 import unittest
 
 
@@ -39,6 +40,28 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
             self.assertIn(token, self.script)
         self.assertIn("grid-template-columns: repeat(5, minmax(170px, 1fr))", self.css)
         self.assertIn("strip_translation: clock.placement.strip_translation ?? 0", self.script)
+
+    def test_component_instruments_are_nested_before_operations_claims_the_fourth_column(self) -> None:
+        self.assertIn("function nestComponentControls()", self.script)
+        self.assertIn("animationInspector.append(region);", self.script)
+        self.assertIn("region.dataset.animationComponents = componentIds;", self.script)
+        self.assertIn(".desktop-workspace > .inspector[data-animation-components]", self.script)
+        self.assertIn("document.querySelectorAll('[data-animation-components]')", self.script)
+
+        workspace = re.search(r'<div class="desktop-workspace">(?P<body>.*?)</div>\s*</main>', self.html, re.DOTALL)
+        self.assertIsNotNone(workspace)
+        body = workspace.group("body")
+        self.assertLess(body.index('class="library-pane"'), body.index('class="preview-pane"'))
+        self.assertLess(body.index('class="preview-pane"'), body.index('class="inspectors"'))
+        self.assertLess(body.index('class="inspectors"'), body.index('class="operations-pane"'))
+        self.assertEqual(body.count('class="operations-pane"'), 1)
+
+    def test_rendered_layout_probe_covers_both_desktop_widths_and_selected_component_path(self) -> None:
+        probe = Path("tools/browser_qualification/composer_hierarchy_probe.mjs").read_text(encoding="utf-8")
+        self.assertIn("for (const width of [1280, 1440])", probe)
+        self.assertIn("assert.deepEqual(layout.children, ['library-pane', 'preview-pane', 'inspectors', 'operations-pane']);", probe)
+        self.assertIn("Operations was displaced", probe)
+        self.assertIn("await page.selectOption('#animationChoice', 'snake');", probe)
 
 
 if __name__ == "__main__":

@@ -124,6 +124,25 @@
     target.hidden = !visible; target.inert = !visible; target.setAttribute('aria-hidden', String(!visible));
     target.querySelectorAll('button,input,select,textarea').forEach((control) => { control.disabled = !visible; });
   }
+  function nestComponentControls() {
+    const animationInspector = $('#animation-title').closest('.inspector');
+    [
+      ['snake', '#snake-title'],
+      ['canopy_cup', '#canopy-title'],
+      ['cyclic_reef', '#reef-title'],
+      ['maze_chase pinball pixel_quest', '#arcade-trio-title'],
+    ].forEach(([componentIds, headingSelector]) => {
+      const region = document.querySelector(headingSelector)?.closest('.inspector');
+      if (!region) return;
+      region.classList.add('component-controls');
+      region.dataset.animationComponents = componentIds;
+    });
+    document.querySelectorAll('.desktop-workspace > .inspector[data-animation-components]').forEach((region) => {
+      if (region.parentElement === animationInspector) return;
+      region.classList.add('component-controls');
+      animationInspector.append(region);
+    });
+  }
   function presetStatus() {
     let target = $('#animationPresetState');
     if (!target) {
@@ -140,8 +159,8 @@
       const visible = id === componentId; const label = control.closest('label') || control;
       label.hidden = !visible; control.disabled = !visible; control.setAttribute('aria-hidden', String(!visible));
     }));
-    ['snakePresetCards', 'reefPresetCards', 'canopyPresetCards'].forEach((targetId) => {
-      const target = document.getElementById(targetId); const targetComponent = {snakePresetCards: 'snake', reefPresetCards: 'cyclic_reef', canopyPresetCards: 'canopy_cup'}[targetId]; if (target) setComponentRegion(target.closest('.inspector'), targetComponent === componentId);
+    document.querySelectorAll('[data-animation-components]').forEach((region) => {
+      setComponentRegion(region, region.dataset.animationComponents.split(' ').includes(componentId));
     });
     const choices = state.componentPresets[componentId] || [];
     const selected = choices.find((choice) => sameLocalParameters(choice.parameters, state.scene?.animation?.parameters));
@@ -481,7 +500,7 @@
   function syncSecondaryOperations() { $('#secondaryOperations').open = !window.matchMedia('(max-width: 760px)').matches; }
   const phoneLayout = window.matchMedia('(max-width: 760px)');
   phoneLayout.addEventListener('change', syncSecondaryOperations);
-  syncSecondaryOperations(); installPixelStoryControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); wire(); applyScene(defaultScene());
+  syncSecondaryOperations(); installPixelStoryControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); wire(); applyScene(defaultScene());
   if (![...$('#animationChoice').options].some((option) => option.value === 'snake')) $('#animationChoice').append(new Option('Snake Garden', 'snake'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'canopy_cup')) $('#animationChoice').append(new Option('Canopy Cup', 'canopy_cup'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'maze_chase')) $('#animationChoice').append(new Option('Maze Chase', 'maze_chase'));
