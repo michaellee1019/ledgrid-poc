@@ -11,6 +11,12 @@
     scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const number = (id) => Number($(id).value);
+  const plantOptics = Object.freeze([
+    {id: 'illuminate', label: 'Illuminate', enabled: '#plantIlluminateEnabled', strength: '#plantIlluminateStrength', value: '#plantIlluminateValue'},
+    {id: 'shadow', label: 'Shadow', enabled: '#plantShadowEnabled', strength: '#plantShadowStrength', value: '#plantShadowValue'},
+    {id: 'hue_shift', label: 'Hue shift', enabled: '#plantHueShiftEnabled', strength: '#plantHueShiftStrength', value: '#plantHueShiftValue'},
+  ]);
+  const plantOpticIds = new Set(plantOptics.map(({id}) => id));
   const recoveryMatchesStatus = (body) => Boolean(body.recovery?.authoritative && body.status?.current && body.recovery?.basis?.digest === body.status.current.digest && body.recovery?.basis?.revision === body.status.current.revision);
   const emojiParameters = () => ({text: $('#emojiText').value, x_offset: Math.trunc(number('#emojiXOffset')), y_offset: Math.trunc(number('#emojiYOffset')), char_spacing: Math.trunc(number('#emojiCharSpacing')), line_spacing: Math.trunc(number('#emojiLineSpacing')), scroll_speed: number('#emojiScrollSpeed'), pulse_speed: number('#emojiPulseSpeed')});
   const fireflyParameters = (existing = {}) => ({...existing, population: Math.trunc(number('#fireflyPopulation')), synchrony: number('#fireflySynchrony'), wandering: number('#fireflyWandering'), pulse_softness: number('#fireflyPulseSoftness'), meadow_glow: number('#fireflyMeadowGlow')});
@@ -154,6 +160,29 @@
       widgets: [], plants: {effects: {version: 1, active: [], strengths: {}}},
       look: {palette_id: $('#previewPalette').value, pace: number('#wallPace'), presentation_brightness: number('#sceneLuminance')} };
   }
+  function syncPlantOpticControl(optic) {
+    const enabled = $(optic.enabled).checked;
+    const strength = $(optic.strength);
+    strength.disabled = !enabled;
+    $(optic.value).textContent = `${Math.round(Number(strength.value) * 100)}%`;
+  }
+  function renderPlantOpticsStatus() {
+    const enabled = plantOptics.filter((optic) => $(optic.enabled).checked);
+    $('#plantsStatus').textContent = enabled.length ? `${enabled.map(({label}) => label).join(', ')} active as final optics.` : 'No final plant optics active.';
+  }
+  function applyPlantOptics(next) {
+    const effects = next.plants?.effects || {};
+    const active = Array.isArray(effects.active) ? effects.active : [];
+    const strengths = effects.strengths && typeof effects.strengths === 'object' ? effects.strengths : {};
+    const preservedActive = active.filter((id) => !plantOpticIds.has(id));
+    const preservedStrengths = Object.fromEntries(Object.entries(strengths).filter(([id]) => !plantOpticIds.has(id)));
+    plantOptics.forEach((optic) => {
+      if (!$(optic.enabled).checked) return;
+      preservedActive.push(optic.id);
+      preservedStrengths[optic.id] = number(optic.strength);
+    });
+    next.plants = {effects: {version: 1, active: preservedActive, strengths: preservedStrengths}};
+  }
   function sceneFromControls() {
     const next = structuredClone(state.scene || defaultScene());
     next.background.parameters = {...next.background.parameters, gain: number('#backgroundGain')};
@@ -225,6 +254,7 @@
     const emojiIndexes = next.widgets.reduce((indexes, widget, index) => widget.component?.component_id === 'emoji_arranger' ? [...indexes, index] : indexes, []);
     if (emojiIndexes.length === 1) { const emoji = next.widgets[emojiIndexes[0]]; if (state.lastControl === 'emojiEnabled') emoji.visible = $('#emojiEnabled').checked; else if (state.lastControl?.startsWith('emoji')) emoji.component.parameters = emojiParameters(); }
     else if (emojiIndexes.length === 0 && state.lastControl === 'emojiEnabled' && $('#emojiEnabled').checked) next.widgets.push(emojiWidget());
+    applyPlantOptics(next);
     next.look = {palette_id: $('#previewPalette').value, pace: number('#wallPace'), presentation_brightness: number('#sceneLuminance')};
     return next;
   }
@@ -279,7 +309,9 @@
     $('#emojiCharSpacing').value = message.char_spacing ?? 1; $('#emojiLineSpacing').value = message.line_spacing ?? 1; $('#emojiScrollSpeed').value = message.scroll_speed ?? 0; $('#emojiPulseSpeed').value = message.pulse_speed ?? .5;
     if (clocks.length > 1) placementWarning({warning: 'Multiple Clock widgets are preserved; this inspector edits only a scene with one Clock widget.'});
     $('#previewPalette').value = scene.look?.palette_id ?? 'mist'; $('#wallPace').value = scene.look?.pace ?? .7; $('#sceneLuminance').value = scene.look?.presentation_brightness ?? .82;
-    $('#plantsStatus').textContent = scene.plants?.effects?.active?.length ? `${scene.plants.effects.active.length} plant effects active.` : 'No active plant effects.';
+    const plantEffects = scene.plants?.effects || {}; const activeOptics = new Set(plantEffects.active || []); const strengths = plantEffects.strengths || {};
+    plantOptics.forEach((optic) => { $(optic.enabled).checked = activeOptics.has(optic.id); $(optic.strength).value = strengths[optic.id] ?? .5; syncPlantOpticControl(optic); });
+    renderPlantOpticsStatus();
     if (clocks.length <= 1) placementWarning();
     syncComponentPresetUI();
   }
@@ -420,6 +452,10 @@
     // Phrase editing is the ASCII instrument itself: publish each real text
     // input so the Preview and live remix visibly answer while typing.
     ['#asciiPhrase'].forEach((selector) => $(selector).addEventListener('input', edit));
+    plantOptics.forEach((optic) => {
+      $(optic.enabled).addEventListener('change', (event) => { syncPlantOpticControl(optic); renderPlantOpticsStatus(); edit(event); });
+      $(optic.strength).addEventListener('input', (event) => { syncPlantOpticControl(optic); renderPlantOpticsStatus(); edit(event); });
+    });
     $('#removeEmoji').addEventListener('click', async () => { const next = structuredClone(state.scene || defaultScene()); next.widgets = next.widgets.filter((widget) => widget.component?.component_id !== 'emoji_arranger'); state.lastControl = 'removeEmoji'; try { await submit(next, {rememberEdit: true}); applyScene(next); } catch (error) { $('#operationMessage').textContent = error.message; } });
     $('#scenePreview').addEventListener('pointerdown', triggerInstrumentAtPointer);
     $('#librarySearch').addEventListener('input', (event) => { state.query = event.target.value; renderLibrary(); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.addEventListener('click', () => { state.filter = button.dataset.libraryFilter; renderLibrary(); }));

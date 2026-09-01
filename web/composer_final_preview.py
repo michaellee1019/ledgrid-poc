@@ -388,8 +388,11 @@ class ComposerFinalPreview:
         # when an effect is disabled; effect choices adjust that final treatment.
         foliage_factor = .70 - .25 * float(strengths.get("shadow", 0.0))
         globe_factor = .58 - .18 * float(strengths.get("shadow", 0.0))
-        np.multiply(output[geometry.foliage_flat], foliage_factor, out=output[geometry.foliage_flat], casting="unsafe")
-        np.multiply(output[geometry.globes_flat], globe_factor, out=output[geometry.globes_flat], casting="unsafe")
+        # Boolean/fancy indexing returns a copy, so ``out=output[mask]`` would
+        # attenuate only that temporary selection. Write the computed pixels
+        # back explicitly so Shadow reaches the installed-final frame.
+        output[geometry.foliage_flat] = output[geometry.foliage_flat] * foliage_factor
+        output[geometry.globes_flat] = output[geometry.globes_flat] * globe_factor
         illuminate = float(strengths.get("illuminate", 0.0))
         if illuminate:
             edge = geometry.obstacle_edge.ravel()
