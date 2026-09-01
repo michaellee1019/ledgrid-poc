@@ -15,35 +15,48 @@ class ComposerResponsiveWorkspaceTests(unittest.TestCase):
         self.script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
         self.css = (ROOT / "web/static/css/composer_slice.css").read_text(encoding="utf-8")
 
-    def test_one_semantic_workspace_exposes_each_named_section_and_existing_actions(self) -> None:
-        self.assertIn('class="composer-workspace"', self.html)
-        self.assertIn('class="composer-editor"', self.html)
-        self.assertIn('class="composer-rail"', self.html)
-        for section in ("build", "preview", "library", "live"):
-            self.assertIn(f'href="#{section}"', self.html)
-            self.assertIn(f'id="{section}"', self.html)
-        self.assertEqual(self.html.count('id="goLive"'), 1)
-        self.assertEqual(self.html.count('id="stopScene"'), 1)
-        self.assertLess(self.html.index('id="recoveryCard"'), self.html.index('id="build"'))
-        self.assertLess(self.html.index('id="previewIdentity"'), self.html.index('id="desiredIdentity"'))
+    def test_phone_operator_surface_is_single_and_precedes_secondary_editing(self) -> None:
+        for selector in ('id="sceneIdentity"', 'id="connectionState"', 'id="observedIdentity"',
+                         'id="liveAction"', 'id="libraryList"', 'class="inspector look-inspector"'):
+            self.assertEqual(self.html.count(selector), 1, selector)
+        self.assertIn('id="secondaryOperations" class="secondary-operations" open', self.html)
+        self.assertLess(self.html.index('id="liveAction"'), self.html.index('id="secondaryOperations"'))
+        self.assertLess(self.html.index('id="secondaryOperations"'), self.html.index('id="checkScene"'))
+        self.assertNotIn('provider', self.html.lower())
+        self.assertNotIn('staged', self.html.lower())
 
-    def test_desktop_rail_and_narrow_touch_workspace_are_declared_without_duplicate_ui(self) -> None:
-        self.assertIn('grid-template-columns: minmax(0, 1fr) minmax(290px, 360px)', self.css)
-        self.assertIn('.composer-rail { min-width: 0; position: sticky;', self.css)
+    def test_phone_layout_orders_operator_actions_and_look_ahead_of_deep_inspectors(self) -> None:
         self.assertIn('@media (max-width: 760px)', self.css)
-        self.assertIn('.composer-workspace { display: flex; flex-direction: column;', self.css)
-        self.assertIn('.live-card { background: #102126;', self.css)
-        self.assertIn('position: sticky; top: .5rem;', self.css)
-        self.assertIn('.preview-canvas { max-height: 42vh;', self.css)
-        self.assertIn('#previewIdentity { overflow-wrap: anywhere;', self.css)
-        self.assertIn('.button { min-height: 2.75rem;', self.css)
+        for token in (
+            '.desktop-workspace { display: flex; flex-direction: column; align-items: stretch; }',
+            '.operations-pane { order: 1; }',
+            '.library-pane { order: 2; }',
+            '.inspectors { order: 3; display: flex; flex-direction: column;',
+            '.look-inspector { order: -1; }',
+            '.preview-pane { order: 4; }',
+            '.button, input:not([type="checkbox"]) { min-height: 44px; }',
+            'select { height: 44px; min-height: 44px; padding-right: 2.25rem; -webkit-appearance: none; appearance: none;',
+            '.library-filters .button { min-width: 44px; }',
+            '.switch, .secondary-operations > summary, .diagnostics > summary { min-height: 44px; padding: .7rem 0; }',
+        ):
+            self.assertIn(token, self.css)
 
-    def test_semantic_navigation_is_an_isolated_focus_only_owner(self) -> None:
-        navigation = (ROOT / 'web/static/js/composer_navigation.js').read_text(encoding='utf-8')
-        self.assertIn('target.focus({preventScroll:true})', navigation)
-        self.assertIn("window.addEventListener('popstate', projectLocation);", navigation)
-        self.assertNotIn("window.addEventListener('hashchange'", self.script)
-        self.assertNotIn("window.addEventListener('resize'", self.script)
+    def test_secondary_scene_controls_close_only_on_phone_and_remain_keyboard_reachable(self) -> None:
+        self.assertIn("window.matchMedia('(max-width: 760px)')", self.script)
+        self.assertIn("phoneLayout.addEventListener('change', syncSecondaryOperations);", self.script)
+        self.assertIn("$('#secondaryOperations').open = !window.matchMedia('(max-width: 760px)').matches;", self.script)
+        self.assertIn('id="checkScene"', self.html)
+        self.assertIn('class="diagnostics"', self.html)
+        self.assertNotIn('held until Go Live', self.script)
+
+    def test_phone_layout_bounds_preview_identity_and_stretches_each_pane_without_overflow(self) -> None:
+        for token in (
+            'align-items: stretch;',
+            '.library-pane, .preview-pane, .operations-pane { position: static; max-width: 100%;',
+            '.preview-pane .pane-heading > * { min-width: 0; }',
+            '#previewIdentity { min-width: 0; flex: 0 1 auto; }',
+        ):
+            self.assertIn(token, self.css)
 
 
 if __name__ == '__main__':

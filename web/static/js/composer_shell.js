@@ -31,7 +31,7 @@
   function applyUpdate() { if (!waiting) return; if (hasProtectedScene()) return show('Save the current scene before reloading this shell update.', 'update'); activatingUpdate=true; waiting.postMessage({type:'composer-shell-activate'}); }
   function register() {
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v2', {scope:'/'}).then((registration) => {
+    navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v3', {scope:'/'}).then((registration) => {
       if (registration.waiting) updateReady(registration.waiting);
       registration.addEventListener('updatefound', () => { const worker=registration.installing; if (!worker) return; worker.addEventListener('statechange', () => { if (worker.state === 'installed' && navigator.serviceWorker.controller) updateReady(worker); }); });
     });
