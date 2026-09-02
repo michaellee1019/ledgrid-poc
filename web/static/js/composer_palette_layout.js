@@ -24,7 +24,7 @@
   const original = paletteDefinitions.map(([id, , node]) => ({id, node, parent: node.parentElement, next: node.nextSibling}));
   const storageKey = 'ledgrid.composer.desktop-palette-layout.v2';
   const defaultLayout = () => ({
-    groups: [['library'], ['installed-final'], ['background', 'look'], ['animation', 'widgets', 'plants', 'snake', 'canopy', 'reef', 'arcade-trio'], ['operations']],
+    groups: [['library'], ['installed-final'], ['global-scene-controls', 'background', 'look'], ['animation', 'widgets', 'plants', 'snake', 'canopy', 'reef', 'arcade-trio'], ['operations']],
     hidden: [], collapsed: {}, heights: {}, widths: [1, .82, 1.1, 1.35, 1],
   });
   let layout = defaultLayout();

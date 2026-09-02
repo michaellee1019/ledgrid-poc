@@ -12,6 +12,7 @@ from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from web.app import AnimationWebInterface
 from web.composer_final_preview import NATIVE_AURORA_BUNDLE_DIGEST
+from web.scene_look_store import SceneLookStore
 from web.working_draft_store import WorkingDraftStore
 
 
@@ -113,6 +114,7 @@ class ComposerSliceTests(unittest.TestCase):
         self.interface = AnimationWebInterface(
             self.wall, _PreviewManager(), local_mode=True,
         )
+        self.interface.composer_looks = SceneLookStore(Path(self.tmp.name) / "looks.json")
         self.interface.working_draft = WorkingDraftStore(Path(self.tmp.name) / "recovery.json")
         self.client = self.interface.app.test_client()
 
@@ -185,6 +187,35 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         rejected = self.client.post("/api/composer/check", json={"origin": "dashboard"})
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(rejected.get_json()["status"]["state"], "live")
+
+    def test_global_speed_pace_renders_persists_and_publishes_while_live(self) -> None:
+        scene = _current_scene()
+        scene["look"] = {**scene["look"], "pace": 1.35}
+
+        preview = self.client.post(
+            "/api/composer/preview",
+            json={"origin": "composer", "scene": scene},
+        )
+        self.assertEqual(preview.status_code, 200, preview.get_json())
+
+        saved = self.client.post(
+            "/api/composer/looks",
+            json={"name": "Fast global scene", "scene": scene},
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        look_id = saved.get_json()["look"]["id"]
+        reloaded = self.client.get(f"/api/composer/looks/{look_id}")
+        self.assertEqual(reloaded.status_code, 200, reloaded.get_json())
+        self.assertEqual(reloaded.get_json()["look"]["scene"]["look"]["pace"], 1.35)
+
+        live = self.client.post(
+            "/api/composer/scene",
+            json={"origin": "composer", "scene": scene, "client_id": "speed", "client_sequence": 1},
+        )
+        self.assertEqual(live.status_code, 200, live.get_json())
+        self.assertTrue(live.get_json()["published"])
+        self.assertEqual(live.get_json()["desired"], live.get_json()["observed"])
+        self.assertEqual(self.interface.working_draft.get()["scene"]["look"]["pace"], 1.35)
 
     def test_preview_exposes_runtime_widget_placement_diagnostics(self) -> None:
         scene = _current_scene()
