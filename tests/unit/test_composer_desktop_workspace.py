@@ -16,7 +16,7 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
             self.assertIn(token, self.html)
         self.assertIn("grid-template-columns: minmax(175px, 220px) minmax(120px, 150px) minmax(0, 1fr) minmax(245px, 290px)", self.css)
         self.assertIn("overflow-x: hidden", self.css)
-        for retired in ("composer-heading", "composer-nav", "Timeline", "FPS", "Leave Live", "Editing locally", "Tools", "Layers", "Wall"):
+        for retired in ("composer-heading", "composer-nav", "Timeline", "Leave Live", "Editing locally", "Tools", "Layers", "Wall"):
             self.assertNotIn(retired, self.html)
         self.assertNotIn('id="composerShell"', self.html)
         self.assertNotIn("composer_shell.js", self.html)
@@ -51,7 +51,7 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.assertIn("event.key === 'Escape'", self.script)
         self.assertIn("event.key !== 'Tab'", self.script)
         self.assertIn("prior?.focus()", self.script)
-        self.assertIn("Object.values(body.widget_placements || {})", self.script)
+        self.assertIn("placementWarning(body.widget_placements || {})", self.script)
         self.assertIn("previewScheduler.submitAuthored", self.script)
         self.assertIn("setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500)", self.script)
         self.assertIn("state.status?.running && state.status?.armed", self.script)
@@ -98,11 +98,41 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.assertIn("Arrange drag action is not visible", probe)
         self.assertIn("Global scene title controls overflow", probe)
 
+    def test_motion_keeps_authored_target_separate_from_measured_cadence(self) -> None:
+        self.assertEqual(self.html.count('id="targetFps"'), 1)
+        self.assertEqual(self.html.count('id="actualFps"'), 1)
+        self.assertIn('type="range" min="1" max="200" step="1"', self.html)
+        self.assertIn('Host presentation cadence. This does not change Scene pace', self.html)
+        self.assertIn("'/api/config/target-fps'", self.script)
+        self.assertIn("function queueTargetFps", self.script)
+        self.assertIn("function renderActualFps", self.script)
+        self.assertIn("if (state.frameRate.queued == null) syncTargetFps(applied)", self.script)
+        self.assertIn("const DEFAULT_TARGET_FPS = 200", self.script)
+        self.assertIn("value=\"200\"", self.html)
+        self.assertIn("actual_fps", self.script)
+        self.assertIn("target_fps: boundedTargetFps($('#targetFps').value)", self.script)
+        self.assertNotIn('id="plantsStatus"', self.html)
+
+    def test_semantic_controls_cover_every_scene_inspector_and_keep_final_optics_compact(self) -> None:
+        self.assertIn("document.querySelectorAll('.inspectors .inspector')", self.script)
+        self.assertIn("function decorateNumeric", self.script)
+        self.assertIn("function decorateSwitch", self.script)
+        self.assertIn("function decorateChoices", self.script)
+        self.assertIn("function controlLabelText", self.script)
+        self.assertIn("const compactPlantOptic", self.script)
+        self.assertIn("control.setAttribute('aria-hidden', 'true')", self.script)
+        self.assertNotIn("label.firstChild.textContent.trim()", self.script)
+        self.assertIn('id="backgroundGain" type="number" min="0" max="1"', self.html)
+        self.assertIn('class="final-optic-row"', self.html)
+        self.assertEqual(self.html.count('strength <input'), 0)
+        self.assertIn(".final-optic-row { display: grid", self.css)
+
     def test_current_scene_edits_preserve_unrepresented_components_and_show_dirty_state(self) -> None:
         for token in ("const clockIndexes", "clockIndexes.length === 1", "choice !== next.animation.component_id", "next.animation.parameters = {...next.animation.parameters", "state.dirty = true", "Unsaved changes"):
             self.assertIn(token, self.script)
         self.assertIn("grid-template-columns: repeat(5, minmax(170px, 1fr))", self.css)
-        self.assertIn("strip_translation: clock.placement.strip_translation ?? 0", self.script)
+        self.assertIn("strip_translation: Math.trunc(number('#clockAcross'))", self.script)
+        self.assertIn("led_translation: Math.trunc(number('#clockOffset'))", self.script)
 
     def test_component_instruments_are_nested_before_operations_claims_the_fourth_column(self) -> None:
         self.assertIn("function nestComponentControls()", self.script)

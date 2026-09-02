@@ -64,7 +64,11 @@ class ComposerPlantControlsTests(unittest.TestCase):
             self.assertNotIn(forbidden, html)
         self.assertIn("const plantOptics = Object.freeze([", script)
         self.assertIn("const preservedActive = active.filter((id) => !plantOpticIds.has(id));", script)
-        self.assertIn("addEventListener('input', (event) => { syncPlantOpticControl(optic); renderPlantOpticsStatus(); edit(event); });", script)
+        self.assertEqual(html.count('class="final-optic-row"'), 3)
+        self.assertNotIn('id="plantsStatus"', html)
+        self.assertIn("function wirePlantOptic(optic)", script)
+        self.assertIn("strength.addEventListener('pointerdown'", script)
+        self.assertIn("strength.addEventListener('change', commit)", script)
 
     def test_optics_converge_through_preview_live_recovery_and_saved_look(self) -> None:
         neutral = self._with_optics(enabled=False)

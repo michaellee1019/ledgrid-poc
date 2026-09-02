@@ -23,6 +23,7 @@
   const state = { status: {connected: true, running: true, armed: true, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
     scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
     publication: {queued: null, inFlight: null, scheduled: false},
+    frameRate: {queued: null, inFlight: false, timer: null},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
       adoptedLook: null, adoptedVibeId: null,
@@ -46,6 +47,54 @@
     const pace = Number(value);
     $('#sceneSpeed').value = String(pace);
     $('#sceneSpeedValue').textContent = `${pace.toFixed(2)}×`;
+  }
+  const DEFAULT_TARGET_FPS = 200;
+  function boundedTargetFps(value) { return Math.max(1, Math.min(200, Math.round(Number(value) || DEFAULT_TARGET_FPS))); }
+  function syncTargetFps(value) {
+    const target = boundedTargetFps(value);
+    $('#targetFps').value = String(target);
+    $('#targetFpsValue').textContent = `${target} FPS`;
+    return target;
+  }
+  function renderActualFps(observation = state.wall.observation) {
+    const measured = Number(observation?.actual_fps);
+    const output = $('#actualFps');
+    const outputRunning = Boolean(observation?.is_running || state.status?.running);
+    const text = Number.isFinite(measured) && measured > 0 ? `${measured.toFixed(1)} FPS` : (outputRunning ? 'Unavailable' : 'Not running');
+    if (output.textContent !== text) output.textContent = text;
+  }
+  function syncFrameRateObservation(observation = state.wall.observation) {
+    renderActualFps(observation);
+    if (state.frameRate.inFlight || state.frameRate.queued != null) return;
+    const observedTarget = Number(observation?.target_fps);
+    if (Number.isFinite(observedTarget) && observedTarget > 0) syncTargetFps(observedTarget);
+  }
+  async function flushTargetFps() {
+    state.frameRate.timer = null;
+    if (state.frameRate.inFlight || state.frameRate.queued == null) return;
+    const target = state.frameRate.queued;
+    state.frameRate.queued = null;
+    state.frameRate.inFlight = true;
+    try {
+      const result = await requestJson('/api/config/target-fps', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({target_fps: target})});
+      const applied = boundedTargetFps(result.target_fps);
+      state.wall.observation = {...(state.wall.observation || {}), target_fps: applied};
+      // A newer drag value owns the visible control while it waits its turn.
+      // Reconcile the slider only when this response is still the newest
+      // request; otherwise the older response would visibly snap it back.
+      if (state.frameRate.queued == null) syncTargetFps(applied);
+    } catch (error) {
+      $('#operationMessage').textContent = error.message || 'Target FPS could not be updated.';
+    } finally {
+      state.frameRate.inFlight = false;
+      if (state.frameRate.queued != null) flushTargetFps();
+    }
+  }
+  function queueTargetFps(value, {immediate = false} = {}) {
+    const target = syncTargetFps(value);
+    state.frameRate.queued = target;
+    if (state.frameRate.timer != null) window.clearTimeout(state.frameRate.timer);
+    state.frameRate.timer = window.setTimeout(flushTargetFps, immediate ? 0 : 90);
   }
   const plantOptics = Object.freeze([
     {id: 'illuminate', label: 'Illuminate', enabled: '#plantIlluminateEnabled', strength: '#plantIlluminateStrength', value: '#plantIlluminateValue'},
@@ -200,7 +249,7 @@
     mist: ['#172034', '#7193c7', '#e2efff'], neutral: ['#151515', '#777', '#eee'],
     spectrum: ['#d6275c', '#36c5f0', '#f6d743'], ember: ['#2a0c07', '#e0522d', '#ffca70'],
   });
-  function semanticScope() { return [...document.querySelectorAll('.look-inspector, #animationControls, [data-animation-components]')]; }
+  function semanticScope() { return [...document.querySelectorAll('.inspectors .inspector')]; }
   function isSemanticControl(control) { return control.matches('input:not([type="hidden"]), select, textarea') && !control.dataset.semanticInstrument; }
   function dispatchSemanticEdit(control, previous = null) { void edit({target: control}, previous); }
   function finiteControlValue(control) { return String(control.value).trim() !== '' && Number.isFinite(Number(control.value)); }
@@ -215,16 +264,23 @@
   function controlDefault(control) { return control.dataset.semanticDefault; }
   function controlWords(control) { return String(control.id || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^a-z0-9]+/i).filter(Boolean).map((word) => word.toLowerCase()); }
   function isSeedControl(control) { return controlWords(control).includes('seed'); }
+  function controlLabelText(label) {
+    return [...label.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent.trim())
+      .filter(Boolean)
+      .join(' ');
+  }
   function addControlMeta(label, control) {
     const defaults = controlDefault(control); if (defaults == null) return;
-    const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'semantic-reset'; reset.textContent = 'Reset'; reset.setAttribute('aria-label', `Reset ${label.firstChild.textContent.trim()} to default`);
+    const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'semantic-reset'; reset.textContent = 'Reset'; reset.setAttribute('aria-label', `Reset ${controlLabelText(label)} to default`);
     reset.addEventListener('click', () => { control.value = defaults; control.checked = defaults === 'true'; syncSemanticControls(); dispatchSemanticEdit(control); });
     const meta = document.createElement('small'); meta.className = 'semantic-default'; meta.textContent = `Default ${defaults}`;
     label.append(meta, reset);
   }
   function decorateNumeric(label, control) {
     if (control.min === '' || control.max === '') return;
-    const range = document.createElement('input'); range.type = 'range'; range.className = 'semantic-range'; range.min = control.min; range.max = control.max; range.step = control.step && control.step !== 'any' ? control.step : '0.01'; range.setAttribute('aria-label', `${label.firstChild.textContent.trim()} adjustment`);
+    const range = document.createElement('input'); range.type = 'range'; range.className = 'semantic-range'; range.min = control.min; range.max = control.max; range.step = control.step && control.step !== 'any' ? control.step : '0.01'; range.setAttribute('aria-label', `${controlLabelText(label)} adjustment`);
     const wrap = document.createElement('span'); wrap.className = 'semantic-number'; control.classList.add('semantic-exact'); control.before(wrap); wrap.append(range, control);
     const record = {kind: 'number', control, range, lastValue: control.value, dragPrevious: null, dragChanged: false}; semanticControls.push(record);
     const commitRangeGesture = () => {
@@ -254,15 +310,24 @@
   function decorateChoices(label, control) {
     const options = [...control.options]; const palette = control.id === 'previewPalette';
     if (!palette && options.length > 5) { addControlMeta(label, control); return; }
-    const choices = document.createElement('span'); choices.className = palette ? 'semantic-palettes' : 'semantic-choices'; choices.setAttribute('role', 'radiogroup'); choices.setAttribute('aria-label', label.firstChild.textContent.trim());
+    const choices = document.createElement('span'); choices.className = palette ? 'semantic-palettes' : 'semantic-choices'; choices.setAttribute('role', 'radiogroup'); choices.setAttribute('aria-label', controlLabelText(label));
     const buttons = options.map((option, index) => { const button = document.createElement('button'); button.type = 'button'; button.className = palette ? 'semantic-palette' : 'semantic-choice'; button.dataset.value = option.value; button.setAttribute('role', 'radio');
       if (palette) { const swatch = document.createElement('span'); swatch.className = 'semantic-swatch'; (PALETTE_SWATCHES[option.value] || ['#1b2d35', '#4f8290', '#b9e9dc']).forEach((color) => { const stripe = document.createElement('i'); stripe.style.background = color; swatch.append(stripe); }); button.append(swatch, document.createTextNode(option.textContent)); } else button.textContent = option.textContent;
       button.addEventListener('click', () => { control.value = option.value; syncSemanticControls(); dispatchSemanticEdit(control); });
       button.addEventListener('keydown', (event) => { if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; event.preventDefault(); const direction = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1; const next = buttons[(index + direction + buttons.length) % buttons.length]; next.focus(); next.click(); }); choices.append(button); return button; });
-    control.classList.add('semantic-source'); control.after(choices); semanticControls.push({kind: 'choices', control, buttons}); addControlMeta(label, control);
+    control.classList.add('semantic-source'); control.setAttribute('aria-hidden', 'true'); control.tabIndex = -1; control.after(choices); semanticControls.push({kind: 'choices', control, buttons}); addControlMeta(label, control);
   }
   function decorateSwitch(label, control) {
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'semantic-switch'; button.setAttribute('role', 'switch'); button.setAttribute('aria-label', label.firstChild.textContent.trim()); button.addEventListener('click', () => { control.checked = !control.checked; syncSemanticControls(); dispatchSemanticEdit(control); }); control.classList.add('semantic-source'); control.after(button); semanticControls.push({kind: 'switch', control, button}); addControlMeta(label, control);
+    const compactPlantOptic = Boolean(control.closest('.final-optic-row'));
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'semantic-switch'; button.setAttribute('role', 'switch'); button.setAttribute('aria-label', controlLabelText(label)); button.addEventListener('click', () => {
+      control.checked = !control.checked; syncSemanticControls();
+      if (compactPlantOptic) {
+        const optic = plantOptics.find((candidate) => $(candidate.enabled) === control);
+        if (optic) syncPlantOpticControl(optic);
+      }
+      dispatchSemanticEdit(control);
+    }); control.classList.add('semantic-source'); control.setAttribute('aria-hidden', 'true'); control.tabIndex = -1; control.after(button); semanticControls.push({kind: 'switch', control, button});
+    if (!compactPlantOptic) addControlMeta(label, control);
   }
   function decorateExactNumber(label, control) {
     const record = {kind: 'exact', control, lastValue: control.value}; semanticControls.push(record);
@@ -399,9 +464,26 @@
     strength.disabled = !enabled;
     $(optic.value).textContent = `${Math.round(Number(strength.value) * 100)}%`;
   }
-  function renderPlantOpticsStatus() {
-    const enabled = plantOptics.filter((optic) => $(optic.enabled).checked);
-    $('#plantsStatus').textContent = enabled.length ? `${enabled.map(({label}) => label).join(', ')} active as final optics.` : 'No final plant optics active.';
+  function renderPlantOpticsStatus() { /* Compact rows carry their own current state. */ }
+  function wirePlantOptic(optic) {
+    const strength = $(optic.strength);
+    const record = {previous: null, changed: false};
+    const commit = () => {
+      if (!record.previous) return;
+      const previous = record.previous; const changed = record.changed;
+      record.previous = null; record.changed = false;
+      if (changed) dispatchSemanticEdit(strength, previous);
+    };
+    $(optic.enabled).addEventListener('change', (event) => { syncPlantOpticControl(optic); edit(event); });
+    strength.addEventListener('pointerdown', () => { record.previous = structuredClone(state.scene || defaultScene()); record.changed = false; });
+    strength.addEventListener('pointerup', () => { const gesture = record.previous; setTimeout(() => { if (record.previous === gesture) commit(); }, 0); });
+    strength.addEventListener('pointercancel', commit);
+    strength.addEventListener('change', commit);
+    strength.addEventListener('input', (event) => {
+      syncPlantOpticControl(optic);
+      if (!record.previous) { edit(event); return; }
+      record.changed = true; state.dirty = true; schedulePreview();
+    });
   }
   function applyPlantOptics(next) {
     const effects = next.plants?.effects || {};
@@ -483,7 +565,7 @@
     else if (choice === 'christmas_tree') next.animation.parameters = treeParameters(next.animation.parameters);
     else if (choice === 'night_train_windows') next.animation.parameters = trainParameters(next.animation.parameters);
     const clockIndexes = next.widgets.reduce((indexes, widget, index) => widget.component?.component_id === 'clock_overlay' ? [...indexes, index] : indexes, []);
-    if (clockIndexes.length === 1) { const clock = next.widgets[clockIndexes[0]]; if (state.lastControl === 'clockEnabled') clock.visible = $('#clockEnabled').checked; else if (['clockFormat', 'clockSeconds', 'clockTimeOffset'].includes(state.lastControl)) clock.component.parameters = clockParameters(clock.component.parameters); else if (state.lastControl === 'clockOffset') clock.placement = {...clock.placement, mode: 'manual', strip_translation: clock.placement.strip_translation ?? 0, led_translation: Math.trunc(number('#clockOffset'))}; }
+    if (clockIndexes.length === 1) { const clock = next.widgets[clockIndexes[0]]; if (state.lastControl === 'clockEnabled') clock.visible = $('#clockEnabled').checked; else if (['clockFormat', 'clockSeconds', 'clockTimeOffset'].includes(state.lastControl)) clock.component.parameters = clockParameters(clock.component.parameters); else if (['clockAcross', 'clockOffset'].includes(state.lastControl)) clock.placement = {...clock.placement, mode: 'manual', strip_translation: Math.trunc(number('#clockAcross')), led_translation: Math.trunc(number('#clockOffset'))}; }
     else if (clockIndexes.length === 0 && state.lastControl === 'clockEnabled' && $('#clockEnabled').checked) next.widgets.push({id: 'composer-clock', component: {component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget', parameters: clockParameters()}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: -8}});
     const emojiIndexes = next.widgets.reduce((indexes, widget, index) => widget.component?.component_id === 'emoji_arranger' ? [...indexes, index] : indexes, []);
     if (emojiIndexes.length === 1) { const emoji = next.widgets[emojiIndexes[0]]; if (state.lastControl === 'emojiEnabled') emoji.visible = $('#emojiEnabled').checked; else if (state.lastControl?.startsWith('emoji')) emoji.component.parameters = emojiParameters(); }
@@ -539,7 +621,7 @@
     const clocks = (scene.widgets || []).filter((widget) => widget.component?.component_id === 'clock_overlay');
     const clock = clocks.length === 1 ? clocks[0] : null;
     const clockParameters = clock?.component?.parameters || {};
-    $('#clockEnabled').checked = Boolean(clock?.visible); $('#clockFormat').value = clockParameters.format_24h ? '24' : '12'; $('#clockSeconds').checked = clockParameters.show_seconds ?? true; $('#clockTimeOffset').value = clockParameters.clock_offset_minutes ?? 0; $('#clockOffset').value = clock?.placement?.led_translation ?? -8;
+    $('#clockEnabled').checked = Boolean(clock?.visible); $('#clockFormat').value = clockParameters.format_24h ? '24' : '12'; $('#clockSeconds').checked = clockParameters.show_seconds ?? true; $('#clockTimeOffset').value = clockParameters.clock_offset_minutes ?? 0; $('#clockAcross').value = clock?.placement?.strip_translation ?? 0; $('#clockOffset').value = clock?.placement?.led_translation ?? -8;
     const emojis = (scene.widgets || []).filter((widget) => widget.component?.component_id === 'emoji_arranger');
     const emoji = emojis.length === 1 ? emojis[0] : null; const message = emoji?.component?.parameters || {};
     $('#emojiEnabled').checked = Boolean(emoji?.visible); $('#emojiText').value = message.text ?? 'HI🔥'; $('#emojiXOffset').value = message.x_offset ?? 8; $('#emojiYOffset').value = message.y_offset ?? 3;
@@ -553,7 +635,49 @@
     syncComponentPresetUI();
     syncSemanticControls();
   }
-  function placementWarning(placement = null) { const warning = $('#widgetWarning'); warning.hidden = !placement?.warning; warning.textContent = placement?.warning || ''; }
+  function widgetPlacementName(widgetId) {
+    const componentId = (state.scene?.widgets || []).find((widget) => widget.id === widgetId)?.component?.component_id;
+    if (componentId === 'clock_overlay') return 'Clock';
+    if (componentId === 'emoji_arranger') return 'Emoji message';
+    return `Widget ${widgetId}`;
+  }
+  function updatePlacementText(node, text) {
+    if (node && node.textContent !== text) node.textContent = text;
+  }
+  function updatePlacementWarning(node, text) {
+    const hidden = !text;
+    if (hidden && !node.hidden) node.hidden = true;
+    updatePlacementText(node, text);
+    if (!hidden && node.hidden) node.hidden = false;
+  }
+  function placementWarning(placements = null) {
+    const warning = $('#widgetWarning');
+    const clockStatus = $('#clockPlacementStatus');
+    if (placements?.warning) {
+      updatePlacementWarning(warning, placements.warning);
+      updatePlacementText(clockStatus, clockWidgets().length > 1 ? 'Choose a scene with one Clock to edit its position.' : 'Waiting for the Clock position preview.');
+      return;
+    }
+    const entries = Object.entries(placements || {});
+    const clock = clockWidgets()[0];
+    const resolvedClock = clock ? placements?.[clock.id] : null;
+    if (clockStatus) {
+      if (clockWidgets().length > 1) updatePlacementText(clockStatus, 'Choose a scene with one Clock to edit its position.');
+      else if (!clock?.visible) updatePlacementText(clockStatus, 'Turn on Show time to position the Clock.');
+      else if (!resolvedClock) updatePlacementText(clockStatus, 'Waiting for the Clock position preview.');
+      else updatePlacementText(clockStatus, `Clock is at Across ${resolvedClock.strip_translation}, Down ${resolvedClock.led_translation}${resolvedClock.clamped ? ' (kept on the wall)' : ''}.`);
+    }
+    const messages = entries.filter(([, placement]) => placement?.warning).map(([widgetId, placement]) => {
+      const details = [];
+      if (placement.clamped) details.push('the requested position was kept inside the wall');
+      if (placement.plant_overlap_pixels) details.push(`${placement.plant_overlap_pixels} clearance pixel${placement.plant_overlap_pixels === 1 ? '' : 's'} overlap`);
+      if (placement.widget_overlap_pixels) details.push(`${placement.widget_overlap_pixels} pixel${placement.widget_overlap_pixels === 1 ? '' : 's'} overlap an earlier widget`);
+      if (placement.used_fallback) details.push('this is the least-overlapping automatic position');
+      if (!details.length) details.push(placement.warning);
+      return `${widgetPlacementName(widgetId)} at Across ${placement.strip_translation}, Down ${placement.led_translation}: ${details.join('; ')}. Advisory only—the position is still live.`;
+    });
+    updatePlacementWarning(warning, messages.join(' '));
+  }
   function drawFrame(frame) {
     if (!frame || frame.encoding !== 'rgb_u8_base64') throw new Error('Preview returned an unsupported frame.');
     const bytes = Uint8Array.from(atob(frame.pixels), (character) => character.charCodeAt(0));
@@ -565,7 +689,7 @@
   const previewScheduler = new window.ComposerPreviewScheduler({
     request: preview,
     isVisible: () => !document.hidden,
-    onFrame: (body) => { drawFrame(body.frame); $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Installed final runtime frame.'; placementWarning(Object.values(body.widget_placements || {}).find((placement) => placement.warning)); },
+    onFrame: (body) => { drawFrame(body.frame); $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Installed final runtime frame.'; placementWarning(body.widget_placements || {}); },
     onError: (error) => { $('#previewStatus').textContent = error.message || 'Preview could not render.'; if (error.previewUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); },
   });
   const vibeForPalette = Object.freeze({mist: 'quiet', neutral: 'neutral', spectrum: 'vivid', ember: 'cozy'});
@@ -693,7 +817,10 @@
       output: {
         power: Boolean(power), brightness: Math.max(0, Math.min(255, Math.round(brightness))),
         animation_speed_scale: Math.max(0, animationSpeed),
-        target_fps: Math.max(1, Math.min(200, Math.round(Number(observation.target_fps || 30)))),
+        // The target is authored by the Motion control.  Actual FPS is
+        // telemetry only, while Scene pace and renderer source rates stay in
+        // their respective Scene/component contracts.
+        target_fps: boundedTargetFps($('#targetFps').value),
       },
     };
   }
@@ -705,6 +832,7 @@
     ]);
     state.wall.scene = scenePayload.scene || null;
     state.wall.observation = observation;
+    syncFrameRateObservation(observation);
     const shouldAdopt = Boolean(scenePayload.scene && (adopt || (
       !state.wall.dirty && priorRevision != null && priorRevision !== scenePayload.scene.revision
     )));
@@ -936,10 +1064,13 @@
   async function rewind(direction) { const source = direction === 'undo' ? state.history : state.redo; const next = source.pop(); if (!next) return; const opposite = direction === 'undo' ? state.redo : state.history; opposite.push(structuredClone(state.scene)); state.dirty = true; applyScene(next); try { await submit(next); } catch (error) { $('#operationMessage').textContent = error.message; } }
   async function loadLibrary() { const response = await fetch(`${api}/library`); state.library = await response.json(); renderLibrary(); }
   function wire() {
-    ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#clockOffset','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
+    ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
     $('#sceneSpeed').addEventListener('input', (event) => { syncSceneSpeed(event.target.value); edit(event); });
+    $('#targetFps').addEventListener('input', (event) => queueTargetFps(event.target.value));
+    $('#targetFps').addEventListener('change', (event) => queueTargetFps(event.target.value, {immediate: true}));
     $('#resetSceneSpeed').addEventListener('click', () => { syncSceneSpeed(DEFAULT_SCENE_PACE); edit({target: $('#sceneSpeed')}); });
     ['#clockFormat','#clockSeconds','#clockTimeOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
+    ['#clockAcross','#clockOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
     ['#tetrisPieces','#tetrisFallRate','#tetrisRisk','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow'].forEach((selector) => $(selector).addEventListener('input', edit));
     Object.values(atmosphereControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
     Object.values(sculptureControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
@@ -947,10 +1078,7 @@
     // Phrase editing is the ASCII instrument itself: publish each real text
     // input so the Preview and live remix visibly answer while typing.
     ['#asciiPhrase'].forEach((selector) => $(selector).addEventListener('input', edit));
-    plantOptics.forEach((optic) => {
-      $(optic.enabled).addEventListener('change', (event) => { syncPlantOpticControl(optic); renderPlantOpticsStatus(); edit(event); });
-      $(optic.strength).addEventListener('input', (event) => { syncPlantOpticControl(optic); renderPlantOpticsStatus(); edit(event); });
-    });
+    plantOptics.forEach(wirePlantOptic);
     $('#removeEmoji').addEventListener('click', async () => { const next = structuredClone(state.scene || defaultScene()); next.widgets = next.widgets.filter((widget) => widget.component?.component_id !== 'emoji_arranger'); state.lastControl = 'removeEmoji'; try { await submit(next, {rememberEdit: true}); applyScene(next); } catch (error) { $('#operationMessage').textContent = error.message; } });
     $('#scenePreview').addEventListener('pointerdown', triggerInstrumentAtPointer);
     $('#librarySearch').addEventListener('input', (event) => { state.query = event.target.value; renderLibrary(); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.addEventListener('click', () => { state.filter = button.dataset.libraryFilter; renderLibrary(); }));
@@ -973,7 +1101,20 @@
   [['gradient','Gradient Field'],['rainbow','Rainbow River'],['solid','Solid Glow'],['sparkle','Sparkle Night'],['wave','Wave Ribbons']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   [['circadian_window','Circadian Window'],['cloud_canyon','Cloud Canyon'],['desert_wind','Desert Wind'],['moonlit_fog_banks','Moonlit Fog Banks'],['rain_on_glass','Rain on Glass'],['tidal_bioluminescence','Tidal Bioluminescence'],['waterfall_veil','Waterfall Veil']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   [['cellular_tapestry','Cellular Tapestry'],['flow_field_silk','Flow-Field Silk'],['frostwork','Frostwork'],['living_stained_glass','Living Stained Glass'],['quasicrystal_bloom','Quasicrystal Bloom'],['living_ecosystem','Living Ecosystem'],['physarum_network','Physarum Network'],['reaction_diffusion_garden','Reaction-Diffusion Garden'],['wind_in_the_reeds','Wind in the Reeds']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
-  async function refreshStatus() { if (state.refreshInFlight || state.wall.activating) return; state.refreshInFlight = true; try { renderStatus(await requestJson(`${api}/status?client_id=${encodeURIComponent(clientId)}`)); } catch (error) { renderStatus({...state.status, last_error: error.message}); } finally { state.refreshInFlight = false; } }
+  async function refreshStatus() {
+    if (state.refreshInFlight || state.wall.activating) return;
+    state.refreshInFlight = true;
+    try {
+      const [status, observation] = await Promise.all([
+        requestJson(`${api}/status?client_id=${encodeURIComponent(clientId)}`),
+        requestJson('/api/v1/composer/settings/observed'),
+      ]);
+      state.wall.observation = observation;
+      syncFrameRateObservation(observation);
+      renderStatus(status);
+    } catch (error) { renderStatus({...state.status, last_error: error.message}); }
+    finally { state.refreshInFlight = false; }
+  }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene or use Go Live to replace it.`; }
   async function hydrateCurrentScene() {

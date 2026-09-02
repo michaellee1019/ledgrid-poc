@@ -17,6 +17,17 @@ body { margin: 0; overflow-x: hidden; background: #081316; color: #edf4f5; font-
 .scene-speed-control > span { grid-column: 1 / -1; color: #b6c7c9; font-size: .74rem; line-height: 1.35; }
 .scene-speed-control input { width: 100%; min-height: 2rem; padding: 0; accent-color: #83d7c5; }
 .scene-speed-control output { min-width: 3.8rem; color: #b9e9dc; font-variant-numeric: tabular-nums; text-align: right; }
+.target-fps-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .45rem .7rem; }
+.target-fps-control > span { grid-column: 1 / -1; color: #b6c7c9; font-size: .74rem; line-height: 1.35; }
+.target-fps-control input { width: 100%; min-height: 2rem; padding: 0; accent-color: #83d7c5; }
+.target-fps-control output, .actual-fps output { min-width: 4.8rem; color: #b9e9dc; font-variant-numeric: tabular-nums; text-align: right; }
+.actual-fps { display: flex; align-items: baseline; justify-content: space-between; gap: .7rem; margin: .2rem 0 0; color: #b6c7c9; font-size: .85rem; }
+.final-optics { display: grid; gap: .45rem; }
+.final-optic-row { display: grid; grid-template-columns: minmax(6.6rem, .8fr) minmax(0, 1fr) 3.1rem; align-items: center; gap: .55rem; padding: .45rem .55rem; border: 1px solid #29434a; border-radius: 8px; background: #102025; }
+.final-optic-row .switch, .final-optic-row .semantic-control { min-height: 0; padding: 0; border: 0; background: transparent; }
+.final-optic-row .semantic-switch { flex: 0 0 auto; }
+.final-optic-row input[type="range"] { width: 100%; min-width: 0; padding: 0; accent-color: #83d7c5; }
+.final-optic-row output { color: #b9e9dc; font-variant-numeric: tabular-nums; text-align: right; }
 .component-controls { display: grid; gap: .65rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #29434a; }
 .component-controls[hidden] { display: none !important; }
 .pane-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .7rem; margin-bottom: .8rem; }
@@ -161,6 +172,8 @@ dialog li { margin: .6rem 0; }
   .semantic-control { padding: .65rem; }
   .advanced-controls > summary { min-height: 44px; padding: .75rem; }
   .semantic-range { min-height: 44px; }
+  .target-fps-control input, .final-optic-row input[type="range"] { min-height: 44px; }
+  .final-optic-row { grid-template-columns: minmax(6.6rem, .8fr) minmax(0, 1fr) 3.1rem; }
   .semantic-choice, .semantic-palette, .semantic-switch, .semantic-reset, .semantic-randomize { min-height: 44px; }
   .semantic-switch { width: 3.5rem; height: 2rem; }
   .semantic-switch[aria-checked="true"] { background: radial-gradient(circle at 2.55rem center, #eafff9 0 .55rem, transparent .58rem), #4c9f91; }

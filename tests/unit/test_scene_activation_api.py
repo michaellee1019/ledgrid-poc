@@ -249,6 +249,7 @@ class SceneActivationApiTests(unittest.TestCase):
         status.update({
             "updated_at": 1_000.0,
             "is_running": True,
+            "actual_fps": 57.5,
             "global_settings": {"revision": 7, "output": {"power": True}},
             "frame_data": [1, 2, 3],
             "driver_stats": {"aggregate": {"num_devices": 5}},
@@ -266,11 +267,12 @@ class SceneActivationApiTests(unittest.TestCase):
             "schema", "schema_version", "observed_at",
             "controller_session_id", "controller_state_revision",
             "active_identity", "installation_profile_digest", "global_settings",
-            "is_running", "brightness", "target_fps", "animation_speed_scale",
+            "is_running", "brightness", "target_fps", "actual_fps", "animation_speed_scale",
             "vibe", "plant_modifiers",
         })
         self.assertEqual(payload["controller_session_id"], SESSION_ID)
         self.assertEqual(payload["controller_state_revision"], 7)
+        self.assertEqual(payload["actual_fps"], 57.5)
         self.assertEqual(payload["global_settings"], {
             "revision": 7, "output": {"power": True},
         })

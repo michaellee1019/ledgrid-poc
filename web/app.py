@@ -4994,6 +4994,11 @@ class AnimationWebInterface:
             'is_running': bool(status.get('is_running', False)),
             'brightness': status.get('brightness'),
             'target_fps': status.get('target_fps'),
+            # This is intentionally just the measured presentation cadence.
+            # Composer needs it beside the authored target for an operator to
+            # diagnose the output loop; renderer source rates and Scene pace
+            # remain component/Scene concerns and do not belong here.
+            'actual_fps': status.get('actual_fps'),
             'animation_speed_scale': status.get('animation_speed_scale'),
             'vibe': status.get('vibe'),
             'plant_modifiers': status.get('plant_modifiers'),
