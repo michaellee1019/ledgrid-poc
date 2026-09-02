@@ -58,26 +58,34 @@
   }
   function focusAction(id, action) { requestAnimationFrame(() => document.querySelector(`[data-palette-id="${id}"][data-palette-action="${action}"]`)?.focus()); }
 
-  function makeButton(label, glyph, action, id, extra = '') {
+  function makeButton(label, text, action, id, extra = '') {
     const button = document.createElement('button');
     button.type = 'button'; button.className = `button text ${extra}`; button.dataset.paletteAction = action; button.dataset.paletteId = id;
-    button.title = label; button.setAttribute('aria-label', label); button.textContent = glyph;
+    button.title = label; button.setAttribute('aria-label', label); button.textContent = text;
     return button;
   }
   function ensurePaletteFrame(id) {
     const node = nodes.get(id);
     node.classList.add('palette-shell');
     const heading = node.querySelector('.pane-heading');
-    if (!heading.querySelector('.palette-actions')) {
-      const actions = document.createElement('div'); actions.className = 'palette-actions'; actions.setAttribute('aria-label', `${title(id)} palette controls`);
+    if (!heading.querySelector('.palette-header-controls')) {
+      const titleGroup = document.createElement('div'); titleGroup.className = 'palette-title';
+      const eyebrow = heading.querySelector(':scope > .eyebrow'); const headingText = heading.querySelector(':scope > h2');
+      titleGroup.append(eyebrow, headingText); heading.append(titleGroup);
+      const headerControls = document.createElement('div'); headerControls.className = 'palette-header-controls';
+      const collapse = makeButton(`Collapse ${title(id)} palette`, 'Collapse', 'collapse', id, 'palette-collapse');
+      collapse.setAttribute('aria-expanded', 'true');
+      const arranger = document.createElement('details'); arranger.className = 'palette-arrange-menu';
+      const summary = document.createElement('summary'); summary.textContent = 'Arrange';
+      const actions = document.createElement('div'); actions.className = 'palette-actions'; actions.setAttribute('aria-label', `${title(id)} arrangement actions`);
       actions.append(
-        makeButton('Drag to stack or move this palette', '⠿', 'drag', id, 'palette-grab'),
-        makeButton('Move palette left', '←', 'left', id), makeButton('Move palette right', '→', 'right', id),
-        makeButton('Stack this palette with the palette to its left', '⇲', 'stack', id), makeButton('Unstack into its own column', '⇱', 'unstack', id),
-        makeButton('Make palette shorter', '−', 'smaller', id), makeButton('Make palette taller', '+', 'larger', id),
-        makeButton('Collapse palette', '⌃', 'collapse', id), makeButton('Hide palette', '×', 'hide', id),
+        makeButton('Drag to stack or move this palette', '⠿ Drag', 'drag', id, 'palette-grab'),
+        makeButton('Move palette left', 'Move left', 'left', id), makeButton('Move palette right', 'Move right', 'right', id),
+        makeButton('Stack this palette with the palette to its left', 'Stack left', 'stack', id), makeButton('Unstack into its own column', 'Unstack', 'unstack', id),
+        makeButton('Make palette shorter', 'Shorter', 'smaller', id), makeButton('Make palette taller', 'Taller', 'larger', id),
+        makeButton('Hide palette', 'Hide', 'hide', id),
       );
-      heading.append(actions);
+      arranger.append(summary, actions); headerControls.append(collapse, arranger); heading.append(headerControls);
       const resize = document.createElement('div'); resize.className = 'palette-resize-handle'; resize.tabIndex = 0; resize.role = 'separator'; resize.setAttribute('aria-orientation', 'horizontal'); resize.dataset.paletteResize = id; resize.setAttribute('aria-label', `Resize ${title(id)} palette height`); node.append(resize);
     }
     const grab = node.querySelector('[data-palette-action="drag"]');
@@ -94,8 +102,8 @@
     if (actionName === 'unstack' && current >= 0 && layout.groups[current].length > 1) { const position = layout.groups[current].indexOf(id); layout.groups[current].splice(position, 1); layout.groups.splice(current + 1, 0, [id]); layout.widths.splice(current + 1, 0, 1); }
     save(); render(); focusAction(id, actionName); say(`${title(id)} palette updated.`);
   }
-  function restore(id) { layout.hidden = layout.hidden.filter((value) => value !== id); layout.groups.push([id]); layout.widths.push(1); save(); render(); focusAction(id, 'drag'); say(`${title(id)} restored.`); }
-  function reset() { layout = defaultLayout(); try { localStorage.removeItem(storageKey); } catch (_) {} render(); focusAction('background', 'drag'); say('Palette layout reset to the showpiece arrangement.'); }
+  function restore(id) { layout.hidden = layout.hidden.filter((value) => value !== id); layout.groups.push([id]); layout.widths.push(1); save(); render(); focusAction(id, 'collapse'); say(`${title(id)} restored.`); }
+  function reset() { layout = defaultLayout(); try { localStorage.removeItem(storageKey); } catch (_) {} render(); focusAction('background', 'collapse'); say('Palette layout reset to the showpiece arrangement.'); }
   function moveDrop(id, targetGroup, targetIndex) {
     const sourceGroup = groupFor(id);
     if (sourceGroup === targetGroup) {
@@ -114,7 +122,16 @@
   }
   function makeStack(group, groupIndex) {
     const stack = document.createElement('section'); stack.className = 'palette-stack'; stack.dataset.groupIndex = groupIndex; stack.style.setProperty('--stack-width', `${layout.widths[groupIndex] || 1}fr`); stack.setAttribute('aria-label', `Palette column ${groupIndex + 1}`);
-    group.forEach((id) => { const node = nodes.get(id); ensurePaletteFrame(id); node.classList.toggle('is-collapsed', Boolean(layout.collapsed[id])); node.style.setProperty('--palette-height', `${layout.heights[id] || 900}px`); node.querySelector('[data-palette-action="collapse"]').textContent = layout.collapsed[id] ? '⌄' : '⌃'; node.querySelector('[data-palette-action="collapse"]').setAttribute('aria-label', `${layout.collapsed[id] ? 'Expand' : 'Collapse'} ${title(id)} palette`); stack.append(node); });
+    group.forEach((id) => {
+      const node = nodes.get(id); ensurePaletteFrame(id); const collapsed = Boolean(layout.collapsed[id]); const current = groupFor(id);
+      node.classList.toggle('is-collapsed', collapsed); node.style.setProperty('--palette-height', `${layout.heights[id] || 900}px`);
+      const collapse = node.querySelector('[data-palette-action="collapse"]'); collapse.textContent = collapsed ? 'Expand' : 'Collapse'; collapse.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} ${title(id)} palette`); collapse.setAttribute('aria-expanded', String(!collapsed));
+      node.querySelector('[data-palette-action="left"]').disabled = current <= 0;
+      node.querySelector('[data-palette-action="right"]').disabled = current < 0 || current >= layout.groups.length - 1;
+      node.querySelector('[data-palette-action="stack"]').disabled = current <= 0;
+      node.querySelector('[data-palette-action="unstack"]').disabled = current < 0 || layout.groups[current].length <= 1;
+      stack.append(node);
+    });
     return stack;
   }
   function gridColumns() { return layout.groups.map((_, index) => `minmax(170px, ${layout.widths[index] || 1}fr)`).join(' minmax(8px, 8px) '); }
@@ -148,7 +165,9 @@
     board.classList.remove('palette-board'); board.style.removeProperty('--palette-columns'); board.style.removeProperty('grid-template-columns');
     original.forEach((node) => {
       node.classList.remove('palette-shell', 'is-collapsed', 'is-dragging'); node.style.removeProperty('--palette-height');
-      node.querySelector('.palette-actions')?.remove(); node.querySelector('.palette-resize-handle')?.remove();
+      node.querySelector('.palette-header-controls')?.remove(); node.querySelector('.palette-resize-handle')?.remove();
+      const titleGroup = node.querySelector('.palette-title'); const heading = node.querySelector('.pane-heading');
+      if (titleGroup) { heading.prepend(...titleGroup.children); titleGroup.remove(); }
     });
     boardControls = undefined; announce = undefined; board.replaceChildren(...original);
   }

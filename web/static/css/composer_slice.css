@@ -44,7 +44,7 @@ input, select { min-width: 0; padding: .52rem; border: 1px solid #44656a; border
 .semantic-control:focus-within, .semantic-choice:focus-visible, .semantic-palette:focus-visible, .semantic-switch:focus-visible, .semantic-reset:focus-visible { outline: 2px solid #83d7c5; outline-offset: 2px; }
 .field-grid { display: grid; gap: .65rem; }
 .control-disclosure { display: grid; gap: .65rem; }
-.primary-control-grid, .advanced-control-grid { display: grid; gap: .65rem; }
+.primary-control-grid, .advanced-control-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); align-items: start; gap: .65rem; }
 .advanced-controls { overflow: clip; border: 1px solid #29434a; border-radius: 9px; background: #102025; }
 .advanced-controls > summary { min-height: 2.5rem; padding: .65rem .75rem; cursor: pointer; color: #b9e9dc; font-size: .82rem; font-weight: 720; }
 .advanced-controls[open] > summary { border-bottom: 1px solid #29434a; }
@@ -104,10 +104,23 @@ dialog li { margin: .6rem 0; }
   .palette-shell { position: relative; min-width: 0; min-height: 160px; max-height: min(var(--palette-height, 900px), calc(100dvh - 8rem)); overflow: auto; overscroll-behavior: contain; }
   .palette-shell.is-collapsed { min-height: 0; overflow: hidden; }
   .palette-shell.is-collapsed > :not(.pane-heading) { display: none; }
-  .palette-shell .pane-heading { position: static; flex-wrap: wrap; margin: -1rem -1rem .8rem; padding: 1rem 1rem .65rem; background: #152328; border-bottom: 1px solid #29434a; }
+  .palette-shell .pane-heading { position: static; align-items: center; flex-wrap: nowrap; margin: -1rem -1rem .8rem; padding: .75rem 1rem; background: #152328; border-bottom: 1px solid #29434a; }
   .palette-shell.is-collapsed .pane-heading { margin-bottom: -1rem; border-bottom-color: transparent; }
-  .palette-actions { display: flex; flex: 0 0 100%; flex-wrap: wrap; justify-content: flex-start; gap: .12rem; }
-  .palette-actions .button { min-width: 1.8rem; min-height: 1.8rem; padding: .18rem .35rem; font-size: .82rem; }
+  .palette-title { display: flex; flex: 1 1 auto; align-items: baseline; min-width: 0; gap: .6rem; }
+  .palette-title h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .palette-header-controls { display: flex; flex: 0 0 auto; align-items: center; gap: .2rem; }
+  .palette-collapse, .palette-arrange-menu > summary { min-height: 2rem; padding: .35rem .45rem; border-radius: 7px; color: #b9e9dc; font-size: .75rem; font-weight: 720; }
+  .palette-collapse { border: 0; background: transparent; }
+  .palette-arrange-menu { position: relative; }
+  .palette-arrange-menu > summary { display: flex; align-items: center; cursor: pointer; list-style: none; }
+  .palette-arrange-menu > summary:focus-visible { outline: 2px solid #83d7c5; outline-offset: 2px; }
+  .palette-arrange-menu > summary::-webkit-details-marker { display: none; }
+  .palette-arrange-menu > summary::after { content: '⌄'; margin-left: .3rem; }
+  .palette-arrange-menu[open] > summary::after { content: '⌃'; }
+  .palette-actions { position: absolute; z-index: 5; top: calc(100% + .35rem); right: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .25rem; width: 15rem; padding: .45rem; border: 1px solid #4d796f; border-radius: 8px; background: #102024; box-shadow: 0 12px 28px #020809dd; }
+  .palette-actions .button { min-height: 2rem; padding: .35rem .45rem; border: 1px solid #29434a; font-size: .75rem; text-align: left; }
+  .palette-actions .button:disabled { cursor: default; opacity: .35; }
+  .palette-shell > .field-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); align-items: start; }
   .palette-grab { cursor: grab; }
   .palette-shell.is-dragging .palette-grab { cursor: grabbing; }
   .palette-resize-handle { display: block; height: 10px; margin: .75rem -1rem -1rem; cursor: ns-resize; border-top: 2px solid transparent; }
@@ -132,6 +145,7 @@ dialog li { margin: .6rem 0; }
   .preview-stage { min-height: 300px; }
   .preview-canvas { max-height: 55vh; }
   .button, input:not([type="checkbox"]) { min-height: 44px; }
+  .primary-control-grid, .advanced-control-grid { grid-template-columns: 1fr; }
   .semantic-control { padding: .65rem; }
   .advanced-controls > summary { min-height: 44px; padding: .75rem; }
   .semantic-range { min-height: 44px; }

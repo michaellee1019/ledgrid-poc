@@ -23,11 +23,17 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
 
     def test_controller_palettes_collapse_without_sticky_overlap(self) -> None:
         layout = Path("web/static/js/composer_palette_layout.js").read_text(encoding="utf-8")
-        self.assertIn("makeButton('Collapse palette'", layout)
-        self.assertIn("aria-label', `${layout.collapsed[id] ? 'Expand' : 'Collapse'}", layout)
+        self.assertIn("summary.textContent = 'Arrange'", layout)
+        self.assertIn("makeButton(`Collapse ${title(id)} palette`, 'Collapse'", layout)
+        self.assertIn("collapse.setAttribute('aria-expanded', String(!collapsed))", layout)
+        for label in ("⠿ Drag", "Move left", "Move right", "Stack left", "Unstack", "Shorter", "Taller", "Hide"):
+            self.assertIn(f"'{label}'", layout)
+        self.assertNotIn("makeButton('Move palette left', '←'", layout)
         self.assertIn(".palette-shell.is-collapsed", self.css)
         self.assertIn(".palette-shell .pane-heading { position: static", self.css)
         self.assertNotIn(".palette-shell .pane-heading { position: sticky", self.css)
+        self.assertIn("repeat(auto-fit, minmax(min(100%, 12rem), 1fr))", self.css)
+        self.assertIn(".primary-control-grid, .advanced-control-grid { grid-template-columns: 1fr; }", self.css)
 
     def test_scene_v2_edits_publish_and_dialogs_have_keyboard_contracts(self) -> None:
         self.assertIn("'/scene'", self.script)
