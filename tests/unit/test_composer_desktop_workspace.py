@@ -23,6 +23,10 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
 
     def test_controller_palettes_collapse_without_sticky_overlap(self) -> None:
         layout = Path("web/static/js/composer_palette_layout.js").read_text(encoding="utf-8")
+        for palette in ("library", "installed-final", "operations"):
+            self.assertIn(f"['{palette}'", layout)
+        self.assertIn("controlsWorkspace.querySelectorAll('.inspector')", layout)
+        self.assertIn("ledgrid.composer.desktop-palette-layout.v2", layout)
         self.assertIn("summary.textContent = 'Arrange'", layout)
         self.assertIn("makeButton(`Collapse ${title(id)} palette`, 'Collapse'", layout)
         self.assertIn("collapse.setAttribute('aria-expanded', String(!collapsed))", layout)
@@ -30,6 +34,8 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
             self.assertIn(f"'{label}'", layout)
         self.assertNotIn("makeButton('Move palette left', '←'", layout)
         self.assertIn(".palette-shell.is-collapsed", self.css)
+        self.assertIn(".desktop-workspace.palette-board", self.css)
+        self.assertIn("touch-action: pan-y", self.css)
         self.assertIn(".palette-shell .pane-heading { position: static", self.css)
         self.assertNotIn(".palette-shell .pane-heading { position: sticky", self.css)
         self.assertIn("repeat(auto-fit, minmax(min(100%, 12rem), 1fr))", self.css)
@@ -83,8 +89,8 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
     def test_rendered_layout_probe_covers_both_desktop_widths_and_selected_component_path(self) -> None:
         probe = Path("tools/browser_qualification/composer_hierarchy_probe.mjs").read_text(encoding="utf-8")
         self.assertIn("for (const width of [1280, 1440])", probe)
-        self.assertIn("assert.deepEqual(layout.children, ['library-pane', 'preview-pane', 'inspectors', 'operations-pane']);", probe)
-        self.assertIn("Operations was displaced", probe)
+        self.assertIn("'Hide Library'", probe)
+        self.assertIn("dragTo(page.locator('.operations-pane'))", probe)
         self.assertIn("await page.selectOption('#animationChoice', 'snake');", probe)
 
 
