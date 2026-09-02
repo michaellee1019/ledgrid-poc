@@ -65,13 +65,11 @@ class SceneV2EndToEndDemoTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 200, saved.get_json())
         look = saved.get_json()["look"]
         self.assertEqual(look["name"], "Canopy Conway Clock")
-        # Clock color is compatibility input only: Scene v2 resolves its
-        # semantic color from Look, so the persisted/recovered form must drop
-        # that literal without changing any other authored scene bytes.
+        # Scene v2 resolves Clock color from Look, so both the current starter
+        # and its persisted/recovered form omit the retired literal color.
         canonical_named_scene = copy.deepcopy(named_scene)
         clock_parameters = canonical_named_scene["widgets"][0]["component"]["parameters"]
-        self.assertIn("color", clock_parameters)
-        clock_parameters.pop("color")
+        self.assertNotIn("color", clock_parameters)
         self.assertEqual(look["scene"], canonical_named_scene)
         persisted_clock = look["scene"]["widgets"][0]
         self.assertNotIn("color", persisted_clock["component"]["parameters"])
@@ -120,8 +118,8 @@ class SceneV2EndToEndDemoTests(unittest.TestCase):
         self.assertEqual(rejected.get_json()["status"]["desired"], acknowledged["desired"])
         self.assertEqual(rejected.get_json()["status"]["observed"], acknowledged["observed"])
 
-        # Stop makes a following valid edit local.  Only the explicit Go Live
-        # action re-arms and observes that new scene.
+        # Stop is a safe idle. The following valid edit immediately resumes
+        # output, without a separate publication step.
         stopped = self.client.post("/api/composer/stop", json={"client_id": "desktop-firefox"})
         self.assertEqual(stopped.status_code, 200, stopped.get_json())
         self.assertEqual(stopped.get_json()["status"]["state"], "stopped")
@@ -129,14 +127,12 @@ class SceneV2EndToEndDemoTests(unittest.TestCase):
         local["animation"]["parameters"]["seed"] = 909
         local_edit = self.client.post("/api/composer/scene", json=self._request(local, sequence=4))
         self.assertEqual(local_edit.status_code, 200, local_edit.get_json())
-        self.assertFalse(local_edit.get_json()["published"])
-        self.assertEqual(local_edit.get_json()["state"], "stopped")
-        rearmed = self.client.post("/api/composer/go-live", json={"client_id": "desktop-firefox"})
-        self.assertEqual(rearmed.status_code, 200, rearmed.get_json())
-        self.assertEqual(rearmed.get_json()["status"]["desired"], rearmed.get_json()["status"]["observed"])
+        self.assertTrue(local_edit.get_json()["published"])
+        self.assertEqual(local_edit.get_json()["state"], "live")
+        self.assertEqual(local_edit.get_json()["desired"], local_edit.get_json()["observed"])
 
-        # A reconnect never auto-applies an offline local edit.  Reload recovery
-        # returns that exact current scene for the next page lifetime.
+        # Reconnection converges the newest valid offline edit automatically.
+        # Reload recovery returns that exact current scene for the next page.
         self.assertFalse(self.client.post("/api/composer/connection", json={"connected": False}).get_json()["status"]["armed"])
         offline = copy.deepcopy(local)
         offline["look"]["palette_id"] = "ember"
@@ -145,15 +141,15 @@ class SceneV2EndToEndDemoTests(unittest.TestCase):
         self.assertFalse(offline_edit.get_json()["published"])
         reconnected = self.client.post("/api/composer/connection", json={"connected": True})
         self.assertEqual(reconnected.status_code, 200, reconnected.get_json())
-        self.assertEqual(reconnected.get_json()["status"]["state"], "stopped")
-        self.assertFalse(reconnected.get_json()["status"]["armed"])
+        self.assertEqual(reconnected.get_json()["status"]["state"], "live")
+        self.assertTrue(reconnected.get_json()["status"]["armed"])
+        self.assertEqual(
+            reconnected.get_json()["status"]["desired"],
+            reconnected.get_json()["status"]["observed"],
+        )
         recovered = self.client.get("/api/composer/recovery?client_id=mobile-webkit").get_json()
         self.assertTrue(recovered["recovery"]["authoritative"])
         self.assertEqual(recovered["recovery"]["scene"], offline)
-        resumed = self.client.post("/api/composer/go-live", json={"client_id": "mobile-webkit"})
-        self.assertEqual(resumed.status_code, 200, resumed.get_json())
-        self.assertEqual(resumed.get_json()["status"]["state"], "live")
-        self.assertEqual(resumed.get_json()["status"]["desired"], resumed.get_json()["status"]["observed"])
         self.assertEqual(self.wall.commands, [])
 
 

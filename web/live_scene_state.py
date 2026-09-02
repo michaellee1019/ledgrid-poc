@@ -2,7 +2,7 @@
 
 The object in this module deliberately has no wall, receiver, deployment, or
 preview responsibilities.  It is the narrow place where a canonical scene is
-accepted, made current, and (when armed) atomically acknowledged by the local
+accepted, made current, and atomically acknowledged by the local
 adapter.  Keeping that state separate from Flask makes retries and concurrent
 clients deterministic.
 """
@@ -84,7 +84,7 @@ class LiveSceneState:
 
     def submit(self, request: Mapping[str, Any], *, client_id: str = "composer", mutation_id: str | None = None,
                client_sequence: int | None = None) -> dict[str, Any]:
-        """Validate a complete scene then publish it immediately when armed.
+        """Validate a complete scene then publish it immediately.
 
         Canonicalization happens before taking the publication lock, so an
         invalid scene cannot alter desired, observed, revisions, or another
@@ -127,7 +127,17 @@ class LiveSceneState:
                 self._client_owned_revisions[client_id] = self._revision
                 self._client_acknowledged_remote_revisions[client_id] = self._revision
             published = False
-            if self._connected and self._running and self._armed and changed:
+            should_publish = bool(
+                self._connected and self._current is not None and (
+                    changed or not self._running or not self._armed
+                    or self._observed != self._current
+                )
+            )
+            if should_publish:
+                # Stop is a safe idle, not an editing mode. The next valid
+                # submit resumes output without a separate re-arm action.
+                self._running = True
+                self._armed = True
                 self._publish_current_locked()
                 published = True
             result = self.snapshot(client_id=client_id)
@@ -158,9 +168,9 @@ class LiveSceneState:
                     self._control.send_command("stop_scene", basis=self._observed.identity.to_dict())
                     self._adapter.accept_stop(self._observed.identity.to_dict())
                 except TimeoutError as exc:
-                    # Stop has uncertain output semantics after a timeout.  A
-                    # later edit therefore remains local; only an explicit Go
-                    # Live may re-arm and retry publication.
+                    # Stop has uncertain output semantics after a timeout. Keep
+                    # the current scene recoverable; the next valid edit retries
+                    # publication through the normal immediate path.
                     self._running = False
                     self._armed = False
                     self._last_error = str(exc) or "Stop acknowledgement timed out."
@@ -184,7 +194,7 @@ class LiveSceneState:
             return self.snapshot(client_id=client_id)
 
     def set_connected(self, connected: bool) -> dict[str, Any]:
-        """Suspend synchronization on disconnect; reconnection never replays."""
+        """Suspend on disconnect and converge the newest valid scene on reconnect."""
         if not isinstance(connected, bool):
             raise ValueError("connection state must be boolean")
         with self._lock:
@@ -193,8 +203,11 @@ class LiveSceneState:
                 self._armed = False
             elif not self._connected:
                 self._connected = True
-                self._armed = False
-                self._running = False
+                self._running = True
+                self._armed = True
+                self._last_error = None
+                if self._current is not None:
+                    self._publish_current_locked()
             return self.snapshot()
 
     def check(self, request: Mapping[str, Any]) -> dict[str, Any]:
@@ -294,7 +307,7 @@ class LiveSceneState:
     def _readiness_locked(self) -> list[dict[str, str]]:
         blockers: list[dict[str, str]] = []
         if not self._connected:
-            blockers.append({"code": "not_connected", "message": "Composer is disconnected.", "recovery": "Reconnect, then choose Go Live."})
+            blockers.append({"code": "not_connected", "message": "Composer is disconnected.", "recovery": "Reconnect; the newest valid scene will apply automatically."})
         if self._current is None:
             blockers.append({"code": "no_scene", "message": "Choose a valid scene first.", "recovery": "Select a look or make a valid edit."})
         return blockers

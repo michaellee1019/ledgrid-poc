@@ -72,7 +72,7 @@ class SnakeSceneV2Tests(unittest.TestCase):
         animation._paint_cells(cells, colors, .41)
         self.assertTrue(np.array_equal(animation._canvas, expected))
 
-    def test_preview_live_stop_rearm_and_recovery_preserve_snake_identity(self) -> None:
+    def test_preview_live_stop_auto_resume_and_recovery_preserve_snake_identity(self) -> None:
         scene = self.interface.composer_presets.apply(self._scene(), "electric-hive")
         preview = self.client.post("/api/composer/preview", json={"origin": "composer", "scene": scene, "preview": {"monotonic_elapsed": 2.0, "wall_time": "2026-08-31T12:00:00+00:00"}})
         self.assertEqual(preview.status_code, 200); self.assertEqual(preview.get_json()["frame"]["width"], 33)
@@ -81,9 +81,9 @@ class SnakeSceneV2Tests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/composer/stop", json={"client_id": "snake"}).get_json()["status"]["state"], "stopped")
         edited = copy.deepcopy(scene); edited["animation"]["parameters"]["glow"] = .19
         local = self.client.post("/api/composer/scene", json={"origin": "composer", "scene": edited, "client_id": "snake", "client_sequence": 2})
-        self.assertFalse(local.get_json()["published"])
+        self.assertTrue(local.get_json()["published"])
+        self.assertEqual(local.get_json()["state"], "live")
         self.assertEqual(self.client.get("/api/composer/recovery?client_id=snake").get_json()["recovery"]["scene"]["animation"]["component_id"], "snake")
-        self.assertEqual(self.client.post("/api/composer/go-live", json={"client_id": "snake"}).get_json()["status"]["state"], "live")
         self.assertIs(current_component_catalog().require(provider="python", component_id="snake", version=1), SnakeAnimation.component_descriptor())
 
     def test_portal_bloom_glow_remix_keeps_preview_live_and_unshown_params_in_lockstep(self) -> None:

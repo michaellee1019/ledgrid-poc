@@ -24,6 +24,7 @@
     scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
     publication: {queued: null, inFlight: null, scheduled: false},
     frameRate: {queued: null, inFlight: false, timer: null},
+    operatorSpeed: {queued: null, inFlight: false, timer: null},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
       adoptedLook: null, adoptedVibeId: null,
@@ -95,6 +96,28 @@
     state.frameRate.queued = target;
     if (state.frameRate.timer != null) window.clearTimeout(state.frameRate.timer);
     state.frameRate.timer = window.setTimeout(flushTargetFps, immediate ? 0 : 90);
+  }
+  async function flushOperatorSpeed() {
+    state.operatorSpeed.timer = null;
+    if (state.operatorSpeed.inFlight || state.operatorSpeed.queued == null) return;
+    const multiplier = state.operatorSpeed.queued; state.operatorSpeed.queued = null; state.operatorSpeed.inFlight = true;
+    try {
+      await requestJson('/api/config/animation-speed', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({multiplier}),
+      });
+      const baseline = Number(state.wall.bootstrap?.global_control_contract?.operator_speed_baseline || .3);
+      state.wall.observation = {...(state.wall.observation || {}), animation_speed_scale: baseline * multiplier};
+    } catch (error) { $('#operationMessage').textContent = error.message || 'Speed could not be updated.'; }
+    finally {
+      state.operatorSpeed.inFlight = false;
+      if (state.operatorSpeed.queued != null) flushOperatorSpeed();
+    }
+  }
+  function queueOperatorSpeed(value, {immediate = false} = {}) {
+    const multiplier = Math.max(.1, Math.min(2, Number(value) || DEFAULT_SCENE_PACE));
+    syncSceneSpeed(multiplier); state.operatorSpeed.queued = multiplier;
+    if (state.operatorSpeed.timer != null) window.clearTimeout(state.operatorSpeed.timer);
+    state.operatorSpeed.timer = window.setTimeout(flushOperatorSpeed, immediate ? 0 : 45);
   }
   const plantOptics = Object.freeze([
     {id: 'illuminate', label: 'Illuminate', enabled: '#plantIlluminateEnabled', strength: '#plantIlluminateStrength', value: '#plantIlluminateValue'},
@@ -824,7 +847,7 @@
       },
     };
   }
-  async function refreshWallStatus({adopt = false} = {}) {
+  async function refreshWallStatus({adopt = false, preserveAuthored = false} = {}) {
     if (!state.wall.bootstrap) state.wall.bootstrap = await requestJson('/api/v1/composer/bootstrap');
     const priorRevision = state.wall.scene?.revision;
     const [scenePayload, observation] = await Promise.all([
@@ -833,7 +856,7 @@
     state.wall.scene = scenePayload.scene || null;
     state.wall.observation = observation;
     syncFrameRateObservation(observation);
-    const shouldAdopt = Boolean(scenePayload.scene && (adopt || (
+    const shouldAdopt = Boolean(!preserveAuthored && scenePayload.scene && (adopt || (
       !state.wall.dirty && priorRevision != null && priorRevision !== scenePayload.scene.revision
     )));
     if (shouldAdopt) {
@@ -853,12 +876,15 @@
   function renderStatus(payload) {
     const status = payload.status || payload; state.status = status;
     state.revision = Math.max(state.revision || 0, status.revision || 0);
-    state.wall.dirty = Boolean(status.desired?.digest !== status.observed?.digest);
     $('#connectionState').textContent = status.connected ? (status.running ? 'Connected · output running' : 'Connected · output stopped') : 'Disconnected';
     $('#observedIdentity').textContent = identity(status.observed); $('#diagnosticObserved').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
     $('#sceneIdentity').textContent = identity(status.current); $('#saveState').textContent = state.dirty ? 'Unsaved changes' : (state.selection?.kind === 'look' ? 'Saved look' : 'Current scene');
-    $('#liveAction').textContent = status.running && status.armed ? 'Stop' : 'Go Live';
-    $('#operationMessage').textContent = state.authoredValidationError || status.last_error || (status.running && status.armed ? (status.current ? (state.wall.dirty ? 'Applying the newest valid edit.' : 'Live · the current scene is acknowledged.') : 'Live · choose or edit a scene to begin output.') : 'Stopped · Go Live explicitly re-arms output.');
+    const live = Boolean(status.running && status.armed);
+    $('#liveAction').textContent = live ? 'Stop output' : 'Stopped';
+    $('#liveAction').disabled = !live || state.wall.activating;
+    $('#operationMessage').textContent = state.authoredValidationError || status.last_error || (live
+      ? (status.current ? (state.wall.dirty ? 'Applying the newest valid edit.' : 'Live · every valid edit applies automatically.') : 'Live · choose or edit a scene to begin output.')
+      : 'Output stopped · change any control or choose a scene to resume automatically.');
   }
   async function acknowledgeUndo(revision) { state.history = []; state.redo = []; await fetch(`${api}/undo-ack`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, revision})}); }
   function schedulePreview() { const generation = ++state.previewGeneration; const candidate = sceneFromControls(); state.scene = candidate; previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
@@ -878,10 +904,22 @@
       // A result always carries the server's authoritative desired/observed
       // snapshot.  Do not infer output state from an old local draft.
       renderStatus(result.status || result);
+      if (entry.activateWall !== false) {
+        state.wall.activating = true; $('#liveAction').disabled = true;
+        try { await guardedWallActivation(entry.body.scene, true); }
+        catch (wallError) {
+          // The authored scene remains current and recoverable. A later edit
+          // retries from a fresh controller revision without rolling the UI back.
+          renderStatus(wallStatus(wallError.message));
+        } finally {
+          state.wall.activating = false;
+          renderStatus(state.status || wallStatus());
+        }
+      } else state.wall.dirty = Boolean(state.publication.queued);
       entry.resolve(result);
     } catch (error) {
-      // Validation failures leave the live arm untouched. A later queued valid
-      // edit remains eligible to publish; only the explicit Stop action disarms.
+      // Validation failures leave the last valid output untouched. The next
+      // valid edit is always eligible to publish.
       entry.reject(error);
     } finally {
       state.publication.inFlight = null;
@@ -892,14 +930,14 @@
       }
     }
   }
-  function submit(scene, {builtin = false, rememberEdit = false, previous = null} = {}) {
+  function submit(scene, {builtin = false, rememberEdit = false, previous = null, activateWall = true} = {}) {
     if (rememberEdit) remember(previous || structuredClone(state.scene || defaultScene()));
     state.scene = scene; state.wall.dirty = true; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
     const endpoint = builtin ? '/built-ins/open' : '/scene';
     const body = builtin ? {scene, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence} : {origin: 'composer', scene, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence};
     return new Promise((resolve, reject) => {
       const replacement = state.publication.queued;
-      state.publication.queued = {endpoint, body, resolve, reject};
+      state.publication.queued = {endpoint, body, activateWall, resolve, reject};
       // A drag may produce many intermediate states before the first network
       // turn. Superseded drafts were never sent, so they are successful local
       // coalesces rather than errors that could roll the UI back.
@@ -910,7 +948,7 @@
       }
     });
   }
-  async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true, previous}); } catch (error) { if (!state.publication.queued && !state.publication.inFlight) { state.scene = previous; applyScene(previous); } $('#operationMessage').textContent = error.message; } }
+  async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; const speedFastPath = state.lastControl === 'sceneSpeed' && state.status?.running; try { await submit(next, {rememberEdit: true, previous, activateWall: !speedFastPath}); } catch (error) { if (!state.publication.queued && !state.publication.inFlight) { state.scene = previous; applyScene(previous); } $('#operationMessage').textContent = error.message; } }
   async function loadFireworksPresets() {
     try {
       const response = await fetch(`${api}/components/fireworks/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
@@ -1002,7 +1040,7 @@
   }
   function focusable(dialog) { return [...dialog.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter((node) => !node.disabled); }
   function openDialog(dialog) { const prior = document.activeElement; dialog.showModal(); focusable(dialog)[0]?.focus(); const trap = (event) => { if (event.key === 'Escape') { event.preventDefault(); dialog.close(); } if (event.key !== 'Tab') return; const nodes = focusable(dialog); const first = nodes[0]; const last = nodes.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }; dialog.addEventListener('keydown', trap); dialog.addEventListener('close', () => { dialog.removeEventListener('keydown', trap); prior?.focus(); }, {once: true}); }
-  function blockers(result) { const list = $('#readinessList'); list.replaceChildren(); (result.blockers || [{message: result.error || 'Go Live is not ready.', recovery: 'Review connection and current scene.'}]).forEach((blocker) => { const item = document.createElement('li'); item.textContent = `${blocker.message} ${blocker.recovery || ''}`; list.append(item); }); openDialog($('#readinessDialog')); }
+  function blockers(result) { const list = $('#readinessList'); list.replaceChildren(); (result.blockers || [{message: result.error || 'The live update is not ready.', recovery: 'Review the connection and current scene.'}]).forEach((blocker) => { const item = document.createElement('li'); item.textContent = `${blocker.message} ${blocker.recovery || ''}`; list.append(item); }); openDialog($('#readinessDialog')); }
   async function waitForExactActivation(accepted, controllerSessionId) {
     const statusUrl = accepted.status_url || `/api/v1/scene/activations/${encodeURIComponent(accepted.activation_id)}`;
     const startedAt = Date.now();
@@ -1022,7 +1060,11 @@
     throw new Error('The wall did not acknowledge this scene in time.');
   }
   async function guardedWallActivation(scene, power) {
-    await refreshWallStatus();
+    await refreshWallStatus({preserveAuthored: true});
+    if (state.wall.bootstrap?.capabilities?.server_actions?.activation_available !== true) {
+      state.wall.dirty = false;
+      return {local_only: true};
+    }
     const browserScene = browserSceneForWall(scene);
     const globalSettings = globalSettingsForWall(scene, power);
     const checked = await requestJson('/api/v1/scene/checks', {
@@ -1040,23 +1082,25 @@
       }),
     });
     await waitForExactActivation(accepted, checked.basis.controller.session_id);
-    state.dirty = false; state.wall.dirty = false;
-    await refreshWallStatus({adopt: true});
+    // A slider may have produced a newer queued scene while this exact one was
+    // being acknowledged. Never snap the controls back to the older scene.
+    state.wall.dirty = Boolean(state.publication.queued);
+    await refreshWallStatus({preserveAuthored: true});
   }
-  async function liveAction() {
-    if (state.wall.activating) return;
-    const stop = Boolean(state.status?.running && state.status?.armed);
-    state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = stop ? 'Stopping…' : 'Going Live…';
-    $('#operationMessage').textContent = stop ? 'Stopping output; subsequent edits stay local until Go Live.' : 'Re-arming live output with the newest valid scene…';
+  async function stopOutput() {
+    if (state.wall.activating || !state.status?.running || !state.scene) return;
+    state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = 'Stopping…';
+    $('#operationMessage').textContent = 'Stopping output. The next valid edit resumes automatically.';
     try {
-      const result = await requestJson(`${api}/${stop ? 'stop' : 'go-live'}`, {
+      await guardedWallActivation(sceneFromControls(), false);
+      const result = await requestJson(`${api}/stop`, {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId}),
       });
       renderStatus(result.status || result);
-    } catch (error) { renderStatus(state.status || wallStatus(error.message)); blockers({error: error.message, blockers: error.blockers}); }
-    finally { state.wall.activating = false; $('#liveAction').disabled = false; renderStatus(state.status || wallStatus()); }
+    } catch (error) { renderStatus(wallStatus(error.message)); blockers({error: error.message, blockers: error.blockers}); }
+    finally { state.wall.activating = false; renderStatus(state.status || wallStatus()); }
   }
-  async function check() { try { const response = await fetch(`${api}/check`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene: sceneFromControls()})}); const result = await response.json(); $('#checkMessage').textContent = response.ok ? 'This is advisory; it does not change output.' : (result.error || 'Check could not complete.'); const details = $('#checkDetails'); details.replaceChildren(); [['Scene identity', identity(result.basis)], ['Connection', result.status?.connected ? 'Connected' : 'Disconnected'], ['Publication', result.status?.armed ? 'Immediate when edited' : 'Use Go Live to arm output']].forEach(([term, description]) => { const entry = document.createElement('div'); entry.innerHTML = `<dt>${term}</dt><dd>${description}</dd>`; details.append(entry); }); if (result.status) renderStatus(result); openDialog($('#checkDialog')); } catch (error) { $('#operationMessage').textContent = error.message; } }
+  async function check() { try { const response = await fetch(`${api}/check`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene: sceneFromControls()})}); const result = await response.json(); $('#checkMessage').textContent = response.ok ? 'This is advisory; it does not change output.' : (result.error || 'Check could not complete.'); const details = $('#checkDetails'); details.replaceChildren(); [['Scene identity', identity(result.basis)], ['Connection', result.status?.connected ? 'Connected' : 'Disconnected'], ['Publication', result.status?.connected ? 'Every valid edit applies automatically' : 'Edits will apply when the wall reconnects']].forEach(([term, description]) => { const entry = document.createElement('div'); entry.innerHTML = `<dt>${term}</dt><dd>${description}</dd>`; details.append(entry); }); if (result.status) renderStatus(result); openDialog($('#checkDialog')); } catch (error) { $('#operationMessage').textContent = error.message; } }
   async function save(as) { try { const scene = sceneFromControls(); const name = $('#sceneName').value.trim(); if (as || state.selection?.kind !== 'look') { if (!name) throw new Error('Name this scene before Save As.'); const response = await fetch(`${api}/looks`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); state.selection = {kind: 'look', id: result.look.id, name: result.look.name}; }
       else { const response = await fetch(`${api}/looks/save`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); }
       await loadLibrary(); state.dirty = false; $('#saveState').textContent = 'Saved';
@@ -1065,10 +1109,11 @@
   async function loadLibrary() { const response = await fetch(`${api}/library`); state.library = await response.json(); renderLibrary(); }
   function wire() {
     ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
-    $('#sceneSpeed').addEventListener('input', (event) => { syncSceneSpeed(event.target.value); edit(event); });
+    $('#sceneSpeed').addEventListener('input', (event) => { queueOperatorSpeed(event.target.value); edit(event); });
+    $('#sceneSpeed').addEventListener('change', (event) => queueOperatorSpeed(event.target.value, {immediate: true}));
     $('#targetFps').addEventListener('input', (event) => queueTargetFps(event.target.value));
     $('#targetFps').addEventListener('change', (event) => queueTargetFps(event.target.value, {immediate: true}));
-    $('#resetSceneSpeed').addEventListener('click', () => { syncSceneSpeed(DEFAULT_SCENE_PACE); edit({target: $('#sceneSpeed')}); });
+    $('#resetSceneSpeed').addEventListener('click', () => { queueOperatorSpeed(DEFAULT_SCENE_PACE, {immediate: true}); edit({target: $('#sceneSpeed')}); });
     ['#clockFormat','#clockSeconds','#clockTimeOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
     ['#clockAcross','#clockOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
     ['#tetrisPieces','#tetrisFallRate','#tetrisRisk','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow'].forEach((selector) => $(selector).addEventListener('input', edit));
@@ -1082,7 +1127,7 @@
     $('#removeEmoji').addEventListener('click', async () => { const next = structuredClone(state.scene || defaultScene()); next.widgets = next.widgets.filter((widget) => widget.component?.component_id !== 'emoji_arranger'); state.lastControl = 'removeEmoji'; try { await submit(next, {rememberEdit: true}); applyScene(next); } catch (error) { $('#operationMessage').textContent = error.message; } });
     $('#scenePreview').addEventListener('pointerdown', triggerInstrumentAtPointer);
     $('#librarySearch').addEventListener('input', (event) => { state.query = event.target.value; renderLibrary(); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.addEventListener('click', () => { state.filter = button.dataset.libraryFilter; renderLibrary(); }));
-    $('#openScene').addEventListener('click', () => $('#librarySearch').focus()); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', liveAction); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
+    $('#openScene').addEventListener('click', () => $('#librarySearch').focus()); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', stopOutput); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
     document.addEventListener('keydown', (event) => { if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return; event.preventDefault(); rewind(event.shiftKey ? 'redo' : 'undo'); });
   }
   function syncSecondaryOperations() { $('#secondaryOperations').open = !window.matchMedia('(max-width: 760px)').matches; }
@@ -1116,7 +1161,7 @@
     finally { state.refreshInFlight = false; }
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
-  function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene or use Go Live to replace it.`; }
+  function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene to replace it immediately.`; }
   async function hydrateCurrentScene() {
     await refreshStatus();
     let response;
@@ -1128,10 +1173,9 @@
       state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null;
       state.dirty = false; applyScene(state.scene);
     } else { applyScene(defaultScene()); state.scene = defaultScene(); state.dirty = false; }
-    // Default-live is reconciled through the same canonical submit path as an
-    // edit. Reloading therefore republishes only if this is the newest valid
-    // scene, while a deliberately stopped session remains stopped.
-    await submit(state.scene);
+    // Seed an empty server once. Reloading a deliberately stopped current
+    // scene does not restart it; the next real edit does that automatically.
+    if (!body.status?.current) await submit(state.scene);
   }
   hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();

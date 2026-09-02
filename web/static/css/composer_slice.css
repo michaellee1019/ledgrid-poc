@@ -104,20 +104,12 @@ dialog { max-width: 420px; padding: 1.25rem; border: 1px solid #83d7c5; border-r
 dialog::backdrop { background: #020809bb; }
 dialog li { margin: .6rem 0; }
 
-/* Desktop-only, disposable remix layout.  The board uses a tiny grid rather
-   than a docking system so it cannot leak into the authored Scene contract. */
+/* Desktop palettes use direct manipulation: visible drag/collapse controls,
+   stack drop targets, and resize seams. Layout never enters Scene state. */
 @media (min-width: 761px) {
-  .desktop-workspace.palette-board { display: grid; grid-template-rows: auto minmax(0, 1fr); align-content: start; gap: .65rem; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable both-edges; padding-right: .35rem; }
+  .desktop-workspace.palette-board { display: grid; grid-template-rows: minmax(0, 1fr); align-content: stretch; gap: .65rem; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable both-edges; padding-right: .35rem; }
   .palette-board > .control-workspace { display: none; }
-  .palette-arrangebar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: .65rem; padding: .35rem .1rem .15rem; }
-  .palette-arrangebar > div { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; }
-  .palette-arrangebar p { margin: 0; color: #b6c7c9; font-size: .78rem; }
-  .palette-chooser { position: relative; }
-  .palette-chooser > summary { cursor: pointer; color: #b9e9dc; font-size: .84rem; font-weight: 720; }
-  .palette-chooser[open] > summary { margin-bottom: .4rem; }
-  .palette-chooser-list { position: absolute; z-index: 4; right: 0; display: grid; gap: .35rem; min-width: 180px; padding: .55rem; border: 1px solid #4d796f; border-radius: 8px; background: #102024; box-shadow: 0 12px 28px #020809bb; }
-  .palette-chooser-list[hidden] { display: none; }
-  .palette-stack { display: grid; align-content: start; gap: .65rem; min-width: 0; min-height: 140px; max-height: calc(100dvh - 7rem); padding: .18rem; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; border: 1px dashed transparent; border-radius: 12px; }
+  .palette-stack { grid-row: 1; display: grid; align-content: start; gap: .65rem; min-width: 0; min-height: 140px; max-height: calc(100dvh - 2rem); padding: .18rem; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; border: 1px solid transparent; border-radius: 12px; }
   .palette-stack.is-drop-target { border-color: #83d7c5; background: #1d493b55; }
   .palette-shell { position: relative; min-width: 0; min-height: 160px; max-height: min(var(--palette-height, 900px), calc(100dvh - 8rem)); overflow: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-gutter: stable both-edges; }
   .palette-shell.preview-pane { display: flex; }
@@ -131,24 +123,15 @@ dialog li { margin: .6rem 0; }
   .palette-title { display: flex; flex: 1 1 auto; align-items: baseline; min-width: 0; gap: .6rem; }
   .palette-title h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .palette-header-controls { display: flex; flex: 0 0 auto; align-items: center; gap: .2rem; }
-  .palette-collapse, .palette-arrange-menu > summary { min-height: 2rem; padding: .35rem .45rem; border-radius: 7px; color: #b9e9dc; font-size: .75rem; font-weight: 720; }
-  .palette-collapse { border: 0; background: transparent; }
-  .palette-arrange-menu { position: relative; }
-  .palette-arrange-menu > summary { display: flex; align-items: center; cursor: pointer; list-style: none; }
-  .palette-arrange-menu > summary:focus-visible { outline: 2px solid #83d7c5; outline-offset: 2px; }
-  .palette-arrange-menu > summary::-webkit-details-marker { display: none; }
-  .palette-arrange-menu > summary::after { content: '⌄'; margin-left: .3rem; }
-  .palette-arrange-menu[open] > summary::after { content: '⌃'; }
-  .palette-actions { position: absolute; z-index: 5; top: calc(100% + .35rem); right: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .25rem; width: 15rem; padding: .45rem; border: 1px solid #4d796f; border-radius: 8px; background: #102024; box-shadow: 0 12px 28px #020809dd; }
-  .palette-actions .button { min-height: 2rem; padding: .35rem .45rem; border: 1px solid #29434a; font-size: .75rem; text-align: left; }
-  .palette-actions .button:disabled { cursor: default; opacity: .35; }
+  .palette-collapse, .palette-grab { width: 2rem; min-height: 2rem; padding: 0; border: 0; border-radius: 6px; background: transparent; color: #b9e9dc; font-size: 1rem; line-height: 1; }
+  .palette-collapse:hover, .palette-grab:hover { background: #29464c; color: #f1ffff; }
   .palette-shell > .field-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); align-items: start; }
-  .palette-grab { cursor: grab; }
+  .palette-grab { cursor: grab; font-size: 1.15rem; letter-spacing: -.22rem; }
   .palette-shell.is-dragging .palette-grab { cursor: grabbing; }
   .palette-resize-handle { display: block; height: 10px; margin: .75rem -1rem -1rem; cursor: ns-resize; border-top: 2px solid transparent; }
   .palette-resize-handle:hover, .palette-resize-handle:focus-visible { border-top-color: #83d7c5; outline: none; }
-  .palette-column-resizer { align-self: stretch; width: 8px; margin: 0 -0.65rem; padding: 0; border: 0; cursor: col-resize; background: linear-gradient(90deg, transparent 35%, #3d5e63 35% 65%, transparent 65%); }
-  .palette-column-resizer:hover, .palette-column-resizer:focus-visible { background: linear-gradient(90deg, transparent 25%, #83d7c5 25% 75%, transparent 75%); outline: none; }
+  .palette-column-resizer { grid-row: 1; align-self: stretch; width: 8px; margin: 0 -0.65rem; padding: 0; border: 0; cursor: col-resize; background: linear-gradient(90deg, transparent 35%, #3d5e63 35% 65%, transparent 65%); }
+  .palette-column-resizer:hover, .palette-column-resizer:focus-visible, .palette-column-resizer.is-drop-target { background: linear-gradient(90deg, transparent 20%, #83d7c5 20% 80%, transparent 80%); outline: none; }
   .palette-screen-reader { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 }
 @media (max-width: 760px) {

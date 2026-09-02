@@ -26,7 +26,7 @@
     <section class="control-workspace" aria-label="Scene control workspace" tabindex="-1">
     <section class="global-scene-controls inspector" aria-labelledby="global-scene-controls-title">
       <div class="pane-heading"><div><p class="eyebrow">Global scene</p><h2 id="global-scene-controls-title">Motion</h2></div><button id="resetSceneSpeed" class="button text" type="button">Reset</button></div>
-      <label class="scene-speed-control" for="sceneSpeed">Speed <span>Applies to the entire scene, including its background, animation, and widgets.</span><input id="sceneSpeed" type="range" min="0" max="2" step=".05" value=".7" aria-describedby="sceneSpeedValue"><output id="sceneSpeedValue">0.70×</output></label>
+      <label class="scene-speed-control" for="sceneSpeed">Speed <span>Applies immediately to the entire scene, including its background, animation, and widgets.</span><input id="sceneSpeed" type="range" min=".1" max="2" step=".05" value=".7" aria-describedby="sceneSpeedValue"><output id="sceneSpeedValue">0.70×</output></label>
       <label class="target-fps-control" for="targetFps">Target FPS <span>Host presentation cadence. This does not change Scene pace or component source rates.</span><input id="targetFps" type="range" min="1" max="200" step="1" value="200" aria-describedby="targetFpsValue"><output id="targetFpsValue">200 FPS</output></label>
       <p class="actual-fps" aria-label="Measured output frame rate"><span>Actual FPS</span><output id="actualFps">Measuring…</output></p>
     </section>
@@ -57,7 +57,7 @@
     </aside>
   </div>
 </main>
-<dialog id="readinessDialog" aria-labelledby="readiness-title"><h2 id="readiness-title">Go Live needs attention</h2><p id="readinessMessage">Resolve these items, then try again.</p><ul id="readinessList"></ul><button class="button primary" data-dialog-close type="button">Close</button></dialog>
+<dialog id="readinessDialog" aria-labelledby="readiness-title"><h2 id="readiness-title">Live update needs attention</h2><p id="readinessMessage">Resolve these items, then try another edit.</p><ul id="readinessList"></ul><button class="button primary" data-dialog-close type="button">Close</button></dialog>
 <dialog id="checkDialog" aria-labelledby="check-title"><h2 id="check-title">Scene check</h2><p id="checkMessage"></p><dl id="checkDetails"></dl><button class="button primary" data-dialog-close type="button">Close</button></dialog>
 <script src="{{ url_for('static', filename='js/composer_preview_scheduler.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_slice.js', v=shell_version) }}"></script>

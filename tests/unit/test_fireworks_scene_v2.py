@@ -34,7 +34,7 @@ class FireworksSceneV2Tests(unittest.TestCase):
         self.assertNotIn("brightness", result["animation"]["parameters"])
         self.assertEqual(self.client.get("/api/composer/components/fireworks/presets").status_code, 200)
 
-    def test_preview_live_stop_rearm_and_recovery_preserve_fireworks_identity(self) -> None:
+    def test_preview_live_stop_auto_resume_and_recovery_preserve_fireworks_identity(self) -> None:
         scene = self.interface.composer_presets.apply(self._scene(), "grand-finale")
         preview = self.client.post("/api/composer/preview", json={"origin": "composer", "scene": scene, "preview": {"monotonic_elapsed": 2.0, "wall_time": "2026-08-31T12:00:00+00:00"}})
         self.assertEqual(preview.status_code, 200); self.assertEqual(preview.get_json()["frame"]["width"], 33)
@@ -43,9 +43,9 @@ class FireworksSceneV2Tests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/composer/stop", json={"client_id": "fireworks"}).get_json()["status"]["state"], "stopped")
         edited = copy.deepcopy(scene); edited["animation"]["parameters"]["trails"] = .31
         local = self.client.post("/api/composer/scene", json={"origin": "composer", "scene": edited, "client_id": "fireworks", "client_sequence": 2})
-        self.assertFalse(local.get_json()["published"])
+        self.assertTrue(local.get_json()["published"])
+        self.assertEqual(local.get_json()["state"], "live")
         self.assertEqual(self.client.get("/api/composer/recovery?client_id=fireworks").get_json()["recovery"]["scene"]["animation"]["component_id"], "fireworks")
-        self.assertEqual(self.client.post("/api/composer/go-live", json={"client_id": "fireworks"}).get_json()["status"]["state"], "live")
         with self.assertRaisesRegex(ValueError, "non-local parameters"):
             FireworksAnimation._normalized_parameters({"brightness": .4})
         self.assertIs(current_component_catalog().require(provider="python", component_id="fireworks", version=1), FireworksAnimation.component_descriptor())

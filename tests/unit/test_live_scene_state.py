@@ -100,20 +100,19 @@ class LiveSceneStateTests(unittest.TestCase):
         self.assertFalse(again["published"])
         self.assertEqual(len(self.channel.commands), 1)
 
-    def test_stop_keeps_current_edits_local_until_explicit_go_live(self) -> None:
+    def test_stop_is_safe_idle_and_the_next_valid_edit_resumes_output(self) -> None:
         initial = self.state.submit(self._request(1), client_id="a")
         stopped = self.state.stop(client_id="a")
         local = self.state.submit(self._request(2), client_id="a")
         self.assertEqual(stopped["state"], "stopped")
         self.assertIsNone(stopped["observed"])
-        self.assertFalse(local["published"])
-        self.assertEqual(len(self.channel.commands), 2)  # activate then stop
-        resumed = self.state.go_live(client_id="a")
-        self.assertEqual(resumed["state"], "live")
-        self.assertEqual(resumed["observed"], local["desired"])
-        self.assertNotEqual(initial["desired"], resumed["desired"])
+        self.assertTrue(local["published"])
+        self.assertEqual(local["state"], "live")
+        self.assertEqual(local["observed"], local["desired"])
+        self.assertEqual(len(self.channel.commands), 3)  # activate, stop, next edit
+        self.assertNotEqual(initial["desired"], local["desired"])
 
-    def test_go_live_exposes_blockers_and_disconnect_requires_explicit_rearm(self) -> None:
+    def test_reconnect_automatically_converges_the_newest_valid_scene(self) -> None:
         with self.assertRaises(LiveSceneBlocked) as empty:
             self.state.go_live()
         self.assertEqual(empty.exception.blockers[0]["code"], "no_scene")
@@ -123,11 +122,9 @@ class LiveSceneStateTests(unittest.TestCase):
         self.assertEqual(local["state"], "disconnected")
         self.state.set_connected(True)
         reconnected = self.state.snapshot()
-        self.assertEqual(reconnected["state"], "stopped")
-        self.assertFalse(reconnected["armed"])
-        self.assertEqual(len(self.channel.commands), 1)
-        resumed = self.state.go_live(client_id="a")
-        self.assertEqual(resumed["state"], "live")
+        self.assertEqual(reconnected["state"], "live")
+        self.assertTrue(reconnected["armed"])
+        self.assertEqual(reconnected["observed"], local["desired"])
         self.assertEqual(len(self.channel.commands), 2)
 
     def test_newest_client_wins_and_marks_other_client_undo_stale(self) -> None:
@@ -156,7 +153,7 @@ class LiveSceneStateTests(unittest.TestCase):
         resumed = self.state.go_live(client_id="a")
         self.assertEqual(resumed["state"], "live")
 
-    def test_stop_timeout_disarms_and_keeps_following_edits_local_until_go_live(self) -> None:
+    def test_stop_timeout_recovers_on_the_next_valid_edit(self) -> None:
         self.state.submit(self._request(1), client_id="a")
         self.channel.fail_next = True
         with self.assertRaises(TimeoutError):
@@ -166,10 +163,9 @@ class LiveSceneStateTests(unittest.TestCase):
         self.assertFalse(recovering["running"])
         self.assertFalse(recovering["armed"])
         local = self.state.submit(self._request(2), client_id="a")
-        self.assertEqual(local["state"], "recovery")
-        self.assertFalse(local["published"])
-        self.assertEqual(len(self.channel.commands), 1)
-        self.assertEqual(self.state.go_live(client_id="a")["state"], "live")
+        self.assertEqual(local["state"], "live")
+        self.assertTrue(local["published"])
+        self.assertEqual(len(self.channel.commands), 2)
 
     def test_composer_routes_expose_advisory_check_and_live_first_controls(self) -> None:
         """The Flask seam must not reintroduce a Check token or activation route."""
@@ -192,6 +188,11 @@ class LiveSceneStateTests(unittest.TestCase):
         self.assertEqual(published.get_json()["state"], "live")
         self.assertEqual(client.post("/api/composer/stop", json={"client_id": "a"}).get_json()["status"]["state"], "stopped")
         self.assertEqual(client.post("/api/composer/go-live", json={"client_id": "a"}).get_json()["status"]["state"], "live")
+        self.assertEqual(client.post("/api/composer/connection", json={"connected": False}).status_code, 200)
+        self.channel.fail_next = True
+        timed_out = client.post("/api/composer/connection", json={"connected": True})
+        self.assertEqual(timed_out.status_code, 504)
+        self.assertEqual(timed_out.get_json()["status"]["state"], "recovery")
         self.assertEqual(client.post("/api/composer/activate", json={}).status_code, 404)
 
 

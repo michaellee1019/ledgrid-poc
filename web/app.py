@@ -150,7 +150,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v8"
+COMPOSER_SHELL_VERSION = "composer-shell-v9"
 
 PAINTER_MASK_TYPES = (
     {
@@ -756,7 +756,7 @@ class AnimationWebInterface:
 
         @self.app.route('/api/composer/scene', methods=['POST'])
         def api_composer_scene():
-            """Accept the newest valid scene and publish it when Composer is armed."""
+            """Accept and immediately publish the newest valid Composer scene."""
             payload = request.get_json(silent=True) or {}
             try:
                 allowed = {'origin', 'scene', 'client_id', 'mutation_id', 'client_sequence'}
@@ -799,6 +799,9 @@ class AnimationWebInterface:
                 return jsonify({'status': self.composer_live.set_connected(payload['connected'])})
             except (ValueError, TypeError) as exc:
                 return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
+            except TimeoutError as exc:
+                return jsonify({'error': str(exc) or 'Scene acknowledgement timed out.',
+                                'status': self._composer_status_payload()}), 504
 
         @self.app.route('/api/composer/undo-ack', methods=['POST'])
         def api_composer_undo_ack():

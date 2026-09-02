@@ -101,9 +101,14 @@ class ComposerPlantControlsTests(unittest.TestCase):
         stopped = self.client.post("/api/composer/stop", json={"client_id": "plant-controls"})
         self.assertEqual(stopped.status_code, 200, stopped.get_json())
         self.assertFalse(stopped.get_json()["status"]["armed"])
-        rearmed = self.client.post("/api/composer/go-live", json={"client_id": "plant-controls"})
-        self.assertEqual(rearmed.status_code, 200, rearmed.get_json())
-        live = rearmed.get_json()["status"]
+        resumed_scene = copy.deepcopy(changed)
+        resumed_scene["look"]["pace"] = 1.1
+        resumed = self.client.post("/api/composer/scene", json={
+            "origin": "composer", "scene": resumed_scene,
+            "client_id": "plant-controls", "client_sequence": 2,
+        })
+        self.assertEqual(resumed.status_code, 200, resumed.get_json())
+        live = resumed.get_json()
         self.assertTrue(live["armed"])
         self.assertEqual(live["current"], live["desired"])
         self.assertEqual(live["current"], live["observed"])

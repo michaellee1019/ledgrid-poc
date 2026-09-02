@@ -314,8 +314,10 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         self.assertIn("status: {connected: true, running: true, armed: true", script)
         self.assertIn("publication: {queued: null, inFlight: null, scheduled: false}", script)
         self.assertIn("replacement?.resolve({coalesced: true});", script)
-        self.assertIn("await submit(state.scene);", script)
-        self.assertIn("${api}/${stop ? 'stop' : 'go-live'}", script)
+        self.assertIn("if (!body.status?.current) await submit(state.scene);", script)
+        self.assertIn("try { await guardedWallActivation(entry.body.scene, true); }", script)
+        self.assertIn("`${api}/stop`", script)
+        self.assertNotIn("`${api}/go-live`", script)
 
     def test_invalid_authored_feedback_survives_status_poll_until_a_successful_edit(self) -> None:
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")

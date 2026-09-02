@@ -6,27 +6,6 @@ import {chromium} from 'playwright';
 const composerUrl = process.argv[2];
 if (!composerUrl) throw new Error('Usage: composer_hierarchy_probe.mjs <composer-url>');
 
-async function openPaletteChooser(page) {
-  const chooser = page.locator('#paletteChooser');
-  if (!await chooser.evaluate((node) => node.open)) await chooser.locator('summary').click();
-}
-
-async function closePaletteChooser(page) {
-  const chooser = page.locator('#paletteChooser');
-  if (await chooser.evaluate((node) => node.open)) await chooser.locator('summary').click();
-  await page.waitForFunction(() => !document.querySelector('#paletteChooser')?.open);
-}
-
-async function openPaletteArrangeMenu(page, id) {
-  const palette = page.locator(`[data-palette-id="${id}"][data-palette-action="collapse"]`).locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " palette-shell ")]');
-  const arrange = palette.locator('.palette-arrange-menu');
-  if (!await arrange.evaluate((node) => node.open)) await arrange.locator('summary').click();
-  await page.waitForFunction((paletteId) => document.querySelector(`[data-palette-id="${paletteId}"][data-palette-action="collapse"]`)?.closest('.palette-shell')?.querySelector('.palette-arrange-menu')?.open, id);
-  const drag = page.locator(`[data-palette-id="${id}"][data-palette-action="drag"]`);
-  assert.equal(await drag.isVisible(), true, `${id} Arrange drag action is not visible`);
-  return drag;
-}
-
 const browser = await chromium.launch({headless: true});
 try {
   for (const width of [1280, 1440]) {
@@ -47,9 +26,9 @@ try {
     for (const title of ['library-title', 'preview-title', 'global-scene-controls-title', 'operations-title']) {
       assert.ok(layout.paletteNames.includes(title), `Missing movable palette ${title} at ${width}px`);
     }
-    assert.ok(layout.controls.every((text) => text.includes('Collapse') && text.includes('Arrange')), `Title-bar controls diverged at ${width}px`);
+    assert.ok(layout.controls.every((text) => text.includes('⠿') && text.includes('⌄')), `Direct title-bar controls diverged at ${width}px`);
 
-    const globalTitleControls = await page.locator('.global-scene-controls .pane-heading > button, .global-scene-controls .palette-header-controls > .palette-collapse, .global-scene-controls .palette-arrange-menu > summary').evaluateAll((nodes) => {
+    const globalTitleControls = await page.locator('.global-scene-controls .pane-heading > button, .global-scene-controls .palette-header-controls > button').evaluateAll((nodes) => {
       const paletteRect = document.querySelector('.global-scene-controls').getBoundingClientRect();
       const palette = {left: paletteRect.left, right: paletteRect.right, top: paletteRect.top, bottom: paletteRect.bottom};
       return nodes.map((node) => {
@@ -60,47 +39,49 @@ try {
     assert.ok(globalTitleControls.length >= 3, `Global scene title controls missing at ${width}px`);
     assert.ok(globalTitleControls.every(({left, right, top, bottom, palette}) => left >= palette.left && right <= palette.right && top >= palette.top && bottom <= palette.bottom), `Global scene title controls overflow at ${width}px: ${JSON.stringify(globalTitleControls)}`);
 
-    await openPaletteChooser(page);
-    await page.getByRole('button', {name: 'Hide Library'}).click();
-    await page.waitForFunction(() => !document.querySelector('.library-pane'));
-    await page.getByRole('button', {name: 'Show Library'}).click();
-    await page.waitForFunction(() => document.querySelector('.library-pane.palette-shell'));
-    await page.getByRole('button', {name: 'Reset layout'}).click();
-    await page.waitForFunction(() => document.querySelectorAll('.palette-shell').length >= 8);
-    await closePaletteChooser(page);
-
     await page.locator('[data-palette-id="global-scene-controls"][data-palette-action="collapse"]').click();
     await page.waitForFunction(() => document.querySelector('.global-scene-controls')?.classList.contains('is-collapsed'));
     await page.locator('[data-palette-id="global-scene-controls"][data-palette-action="collapse"]').click();
-    await openPaletteChooser(page);
-    await page.getByRole('button', {name: 'Hide Global scene'}).click();
-    await page.waitForFunction(() => !document.querySelector('.global-scene-controls'));
-    await page.getByRole('button', {name: 'Show Global scene'}).click();
-    await page.waitForFunction(() => document.querySelector('.global-scene-controls.palette-shell #sceneSpeed'));
-    await page.getByRole('button', {name: 'Reset layout'}).click();
-    await page.waitForFunction(() => {
-      const global = document.querySelector('.global-scene-controls');
-      const background = document.querySelector('.library-pane')?.parentElement?.nextElementSibling?.nextElementSibling;
-      return global?.parentElement?.querySelector('#background-title') && document.querySelector('#sceneSpeed');
+
+    const speedApplied = page.waitForResponse((response) =>
+      response.url().endsWith('/api/config/animation-speed')
+      && response.request().method() === 'POST'
+      && response.status() === 200,
+    );
+    await page.locator('#sceneSpeed').evaluate((slider) => {
+      slider.value = '1.25';
+      slider.dispatchEvent(new Event('input', {bubbles: true}));
     });
-    await closePaletteChooser(page);
+    const speedBody = await (await speedApplied).json();
+    assert.equal(speedBody.multiplier, 1.25, 'Speed did not use the immediate controller path');
 
     await page.locator('[data-palette-id="operations"][data-palette-action="collapse"]').click();
     await page.waitForFunction(() => document.querySelector('.operations-pane')?.classList.contains('is-collapsed'));
     await page.locator('[data-palette-id="operations"][data-palette-action="collapse"]').click();
-    await (await openPaletteArrangeMenu(page, 'library')).dragTo(page.locator('.operations-pane'));
+    const directDrag = page.locator('[data-palette-id="library"][data-palette-action="drag"]');
+    assert.equal(await directDrag.isVisible(), true, 'Direct drag handle is not visible');
+    await directDrag.dragTo(page.locator('.operations-pane'));
     await page.waitForFunction(() => {
       const library = document.querySelector('.library-pane');
       const operations = document.querySelector('.operations-pane');
       return library?.parentElement === operations?.parentElement;
     });
 
-    await page.selectOption('#animationChoice', 'snake');
-    await page.waitForFunction(() => {
-      const snake = document.querySelector('[data-animation-components="snake"]');
-      const canopy = document.querySelector('[data-animation-components="canopy_cup"]');
-      return snake && !snake.hidden && canopy?.hidden;
-    });
+    const currentAnimation = await page.locator('#animationChoice').inputValue();
+    const targetAnimation = currentAnimation === 'snake' ? 'canopy_cup' : 'snake';
+    const sceneApplied = page.waitForResponse((response) =>
+      response.url().endsWith('/api/composer/scene')
+      && response.request().method() === 'POST'
+      && response.status() === 200,
+    );
+    await page.selectOption('#animationChoice', targetAnimation);
+    const sceneBody = await (await sceneApplied).json();
+    assert.equal(sceneBody.published, true, 'A normal edit did not publish immediately');
+    await page.waitForFunction((animation) => {
+      const selected = document.querySelector(`[data-animation-components="${animation}"]`);
+      const other = document.querySelector(`[data-animation-components="${animation === 'snake' ? 'canopy_cup' : 'snake'}"]`);
+      return selected && !selected.hidden && other?.hidden;
+    }, targetAnimation);
     await context.close();
   }
 } finally {
