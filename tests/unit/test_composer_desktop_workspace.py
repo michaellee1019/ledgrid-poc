@@ -18,11 +18,23 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.assertIn("overflow-x: hidden", self.css)
         for retired in ("composer-heading", "composer-nav", "Timeline", "FPS", "Leave Live", "Editing locally", "Tools", "Layers", "Wall"):
             self.assertNotIn(retired, self.html)
+        self.assertNotIn('id="composerShell"', self.html)
+        self.assertNotIn("composer_shell.js", self.html)
+
+    def test_controller_palettes_collapse_without_sticky_overlap(self) -> None:
+        layout = Path("web/static/js/composer_palette_layout.js").read_text(encoding="utf-8")
+        self.assertIn("makeButton('Collapse palette'", layout)
+        self.assertIn("aria-label', `${layout.collapsed[id] ? 'Expand' : 'Collapse'}", layout)
+        self.assertIn(".palette-shell.is-collapsed", self.css)
+        self.assertIn(".palette-shell .pane-heading { position: static", self.css)
+        self.assertNotIn(".palette-shell .pane-heading { position: sticky", self.css)
 
     def test_scene_v2_edits_publish_and_dialogs_have_keyboard_contracts(self) -> None:
         self.assertIn("'/scene'", self.script)
         self.assertIn("'/built-ins/open'", self.script)
-        self.assertIn("`${api}/go-live`", self.script)
+        self.assertIn("'/api/v1/scene/checks'", self.script)
+        self.assertIn("'Idempotency-Key': newUuid()", self.script)
+        self.assertIn("await waitForExactActivation", self.script)
         self.assertIn("`${api}/undo-ack`", self.script)
         self.assertIn("event.key === 'Escape'", self.script)
         self.assertIn("event.key !== 'Tab'", self.script)
@@ -30,10 +42,15 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.assertIn("Object.values(body.widget_placements || {})", self.script)
         self.assertIn("previewScheduler.submitAuthored", self.script)
         self.assertIn("setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500)", self.script)
-        self.assertIn("state.status?.running && state.status?.armed && state.status?.current", self.script)
-        self.assertIn("if (!state.status?.current && state.scene) await submit(structuredClone(state.scene));", self.script)
+        self.assertIn("state.status?.running && state.status?.current && !state.wall.dirty", self.script)
+        self.assertIn("await refreshWallStatus({adopt: true})", self.script)
+        self.assertIn("composerSceneFromWall", self.script)
+        self.assertIn("state.wall.adoptedVibeId", self.script)
+        self.assertIn("const lookUnchanged", self.script)
+        self.assertIn("if (componentId === 'clock_overlay') delete managedParameters.color;", self.script)
+        self.assertIn("state.wall.observation?.installation_profile_digest", self.script)
         self.assertIn("state.revision = Math.max(state.revision || 0, status.revision || 0);", self.script)
-        self.assertIn("const newerRemoteRevision", self.script)
+        self.assertIn("controller_state_revision", self.script)
 
     def test_current_scene_edits_preserve_unrepresented_components_and_show_dirty_state(self) -> None:
         for token in ("const clockIndexes", "clockIndexes.length === 1", "choice !== next.animation.component_id", "next.animation.parameters = {...next.animation.parameters", "state.dirty = true", "Unsaved changes"):

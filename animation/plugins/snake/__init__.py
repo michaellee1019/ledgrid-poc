@@ -64,6 +64,9 @@ class SnakeAnimation(AnimationBase):
         self._pixels = np.zeros((self.get_pixel_count(), 3), dtype=np.uint8)
         self._canvas = np.zeros((self.width, self.height, 3), dtype=np.uint8)
         self._trail = np.zeros((self.width, self.height, 3), dtype=np.float32)
+        self._snake_palette_cache: dict[
+            float, tuple[str, str, int, tuple[np.ndarray, ...], np.ndarray]
+        ] = {}
         self._presentation_context: ResolvedScene | None = None
         self._last_tick: int | None = None
         self._last_render_key: tuple[Any, ...] | None = None
@@ -140,7 +143,7 @@ class SnakeAnimation(AnimationBase):
         return {"ruleset": self.params["ruleset"], "moves": self.moves, "food_eaten": self.food_eaten, "deaths": self.deaths, "alive_snakes": sum(bool(s.body) for s in self.snakes), "walls": len(self.walls), "effective_moves_per_second": self.params["move_cadence"]}
 
     def _reset_world(self) -> None:
-        self._rng = random.Random(self.params["seed"]); self._trail.fill(0.); self._last_tick = None; self._last_render_key = None; self.moves = self.food_eaten = self.deaths = 0; self.food.clear(); self._build_terrain()
+        self._rng = random.Random(self.params["seed"]); self._trail.fill(0.); self._snake_palette_cache.clear(); self._last_tick = None; self._last_render_key = None; self.moves = self.food_eaten = self.deaths = 0; self.food.clear(); self._build_terrain()
         self.snakes = [SnakeAgent(hue_offset=index / self.params["snake_count"]) for index in range(self.params["snake_count"])]
         for snake in self.snakes: self._spawn_snake(snake)
         self._replenish_food()
@@ -232,11 +235,39 @@ class SnakeAnimation(AnimationBase):
         wall = np.asarray(primary) * .18 + np.asarray(background) * .82
         for cell in self.walls: self._canvas[cell] = wall.astype(np.uint8)
         for index, cell in enumerate(self.portals): self._paint_cell(cell, np.asarray((primary, accent)[index % 2]), self.params["glow"] * .45)
-        for index, cell in enumerate(sorted(self.food)): self._paint_cell(cell, self._snake_color((index * .23 + phase_time * .12) % 1., palette_id, .9), self.params["glow"] * .5)
+        food_cells = sorted(self.food)
+        self._paint_cells(
+            food_cells,
+            tuple(
+                self._snake_color((index * .23 + phase_time * .12) % 1., palette_id, .9)
+                for index in range(len(food_cells))
+            ),
+            self.params["glow"] * .5,
+        )
         for snake in self.snakes:
             length = max(1, len(snake.body))
-            for index, cell in enumerate(reversed(snake.body)): self._paint_cell(cell, self._snake_color((snake.hue_offset + index / length * .32) % 1., palette_id, .65 + .35 * index / length), self.params["glow"] * .32)
-            if snake.head is not None: self._paint_cell(snake.head, self._snake_color((snake.hue_offset + .18) % 1., palette_id, 1.), self.params["glow"] * .65)
+            style = self.params["visual_style"]
+            cached = self._snake_palette_cache.get(snake.hue_offset)
+            if cached is None or cached[:3] != (palette_id, style, length):
+                body_colors = tuple(
+                    self._snake_color(
+                        (snake.hue_offset + index / length * .32) % 1.,
+                        palette_id,
+                        .65 + .35 * index / length,
+                    )
+                    for index in range(length)
+                )
+                cached = (
+                    palette_id,
+                    style,
+                    length,
+                    body_colors,
+                    self._snake_color((snake.hue_offset + .18) % 1., palette_id, 1.),
+                )
+                self._snake_palette_cache[snake.hue_offset] = cached
+            _, _, _, body_colors, head_color = cached
+            self._paint_cells(tuple(reversed(snake.body)), body_colors, self.params["glow"] * .32)
+            if snake.head is not None: self._paint_cell(snake.head, head_color, self.params["glow"] * .65)
         self._pixels[:] = self._canvas.reshape(self.get_pixel_count(), 3)
 
     def _paint_background(self, palette_id: str, phase_time: float) -> None:
@@ -251,10 +282,49 @@ class SnakeAnimation(AnimationBase):
     def _paint_cell(self, cell: Cell, color: np.ndarray, glow: float) -> None:
         x, y = cell
         if not (0 <= x < self.width and 0 <= y < self.height): return
-        self._canvas[x, y] = np.maximum(self._canvas[x, y], np.asarray(color, dtype=np.uint8)); halo = np.asarray(color, dtype=np.float32) * glow
+        self._canvas[x, y] = np.maximum(self._canvas[x, y], np.asarray(color, dtype=np.uint8)); halo = (np.asarray(color, dtype=np.float32) * glow).astype(np.uint8)
         for dx, dy in DIRECTIONS:
             nx, ny = x + dx, y + dy
-            if 0 <= nx < self.width and 0 <= ny < self.height: self._canvas[nx, ny] = np.maximum(self._canvas[nx, ny], halo.astype(np.uint8))
+            if 0 <= nx < self.width and 0 <= ny < self.height: self._canvas[nx, ny] = np.maximum(self._canvas[nx, ny], halo)
+
+    def _paint_cells(
+        self,
+        cells: tuple[Cell, ...] | list[Cell],
+        colors: tuple[np.ndarray, ...],
+        glow: float,
+    ) -> None:
+        if not cells:
+            return
+        coordinates = np.asarray(cells, dtype=np.intp)
+        valid = (
+            (coordinates[:, 0] >= 0)
+            & (coordinates[:, 0] < self.width)
+            & (coordinates[:, 1] >= 0)
+            & (coordinates[:, 1] < self.height)
+        )
+        if not np.any(valid):
+            return
+        coordinates = coordinates[valid]
+        center = np.asarray(colors, dtype=np.uint8)[valid]
+        halo = (np.asarray(colors, dtype=np.float32) * glow).astype(np.uint8)[valid]
+        np.maximum.at(
+            self._canvas,
+            (coordinates[:, 0], coordinates[:, 1]),
+            center,
+        )
+        for dx, dy in DIRECTIONS:
+            neighbors = coordinates + (dx, dy)
+            neighbor_valid = (
+                (neighbors[:, 0] >= 0)
+                & (neighbors[:, 0] < self.width)
+                & (neighbors[:, 1] >= 0)
+                & (neighbors[:, 1] < self.height)
+            )
+            np.maximum.at(
+                self._canvas,
+                (neighbors[neighbor_valid, 0], neighbors[neighbor_valid, 1]),
+                halo[neighbor_valid],
+            )
 
     def _snake_color(self, hue: float, palette_id: str, value: float) -> np.ndarray:
         _, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"]); style_hue = {"classic": .31, "neon": .61, "fire": .05, "ice": .54, "sunset": .96, "prism": hue * 1.7}.get(self.params["visual_style"], hue); rgb = np.asarray(colorsys.hsv_to_rgb(style_hue % 1., .72 if self.params["visual_style"] == "classic" else .88, value)) * 255.; return np.clip(rgb * .4 + (np.asarray(primary) * .62 + np.asarray(accent) * .38) * .6, 0., 255.)

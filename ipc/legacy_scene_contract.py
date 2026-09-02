@@ -958,6 +958,50 @@ def _validate_browser_parameters(
             valid_type = isinstance(parameter, (int, float)) and not isinstance(parameter, bool)
         elif type_name == "str":
             valid_type = isinstance(parameter, str)
+        elif type_name == "cells":
+            valid_type = isinstance(parameter, list)
+            if valid_type:
+                max_items = definition.get("max_items", 4554)
+                if (
+                    isinstance(max_items, bool)
+                    or not isinstance(max_items, int)
+                    or not 0 <= max_items <= 4554
+                ):
+                    raise SceneValidationError(
+                        f"{label}.{name} catalog max_items is invalid"
+                    )
+                if len(parameter) > max_items:
+                    raise SceneValidationError(
+                        f"{label}.{name} must contain at most {max_items} cells"
+                    )
+                strip_min = int(definition.get("strip_min", 0))
+                strip_max = int(definition.get("strip_max", 32))
+                led_min = int(definition.get("led_min", 0))
+                led_max = int(definition.get("led_max", 137))
+                for index, cell in enumerate(parameter):
+                    if (
+                        not isinstance(cell, (list, tuple))
+                        or len(cell) != 2
+                        or any(
+                            isinstance(coordinate, bool)
+                            or not isinstance(coordinate, int)
+                            for coordinate in cell
+                        )
+                    ):
+                        raise SceneValidationError(
+                            f"{label}.{name}[{index}] must be [strip, led] integers"
+                        )
+                    strip, led = cell
+                    if not strip_min <= strip <= strip_max:
+                        raise SceneValidationError(
+                            f"{label}.{name}[{index}] strip must be from "
+                            f"{strip_min} to {strip_max}"
+                        )
+                    if not led_min <= led <= led_max:
+                        raise SceneValidationError(
+                            f"{label}.{name}[{index}] led must be from "
+                            f"{led_min} to {led_max}"
+                        )
         else:
             raise SceneValidationError(
                 f"{label}.{name} uses unsupported catalog type {type_name!r}"

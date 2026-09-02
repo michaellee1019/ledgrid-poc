@@ -61,7 +61,8 @@ BUNDLED_PROFILE_URL = (
 
 
 def build_bootstrap(
-    repo_root: Path, *, bundled_profile_url: str | None = None
+    repo_root: Path, *, bundled_profile_url: str | None = None,
+    runtime_asset_root: Path | None = None,
 ) -> dict[str, Any]:
     controller = PreviewLEDController(DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP)
     flags = AnimationPipelineFeatureFlags(
@@ -86,6 +87,7 @@ def build_bootstrap(
         )
         payload = interface._browser_composer_bootstrap(
             observe_installation_profile=False,
+            runtime_asset_root=runtime_asset_root,
         )
 
     _profile, profile_digest = build_profile()
@@ -123,11 +125,16 @@ def build_bootstrap(
 
 
 def encoded_bootstrap(
-    repo_root: Path, *, bundled_profile_url: str | None = None
+    repo_root: Path, *, bundled_profile_url: str | None = None,
+    runtime_asset_root: Path | None = None,
 ) -> bytes:
     return (
         json.dumps(
-            build_bootstrap(repo_root.resolve(), bundled_profile_url=bundled_profile_url),
+            build_bootstrap(
+                repo_root.resolve(),
+                bundled_profile_url=bundled_profile_url,
+                runtime_asset_root=runtime_asset_root,
+            ),
             indent=2,
             sort_keys=True,
         )

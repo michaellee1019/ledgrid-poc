@@ -10,6 +10,11 @@ from pathlib import Path
 import numpy as np
 
 from animation.core.manager import AnimationManager, PreviewLEDController
+from animation.core.presentation_contracts import (
+    ComponentProvider,
+    ComponentRef,
+    SceneState,
+)
 from animation.plugins.lava_lamp import LavaLampAnimation
 from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
 from web.app import AnimationWebInterface
@@ -60,6 +65,28 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         for expected, actual in zip(left_frames, right_frames): np.testing.assert_array_equal(expected, actual)
         self.assertEqual(left_frames[-1].shape, (33 * 138, 3))
         self.assertLessEqual(left.cadence_snapshot()["simulation_hz"], 100.0)
+
+    def test_strict_live_manager_accepts_and_renders_lava_lamp(self) -> None:
+        manager = AnimationManager(self.controller, auto_start=False)
+        manager._launch_animation_loop = lambda: None
+        component = ComponentRef(
+            plugin_id="lava_lamp",
+            provider=ComponentProvider.PYTHON,
+            resolved_parameters=dict(LavaLampAnimation.DEFAULTS),
+        )
+        try:
+            self.assertTrue(manager.start_scene(SceneState(
+                revision=1,
+                background=component,
+                overlays=(),
+                known_python_fallback=component,
+            )))
+            self.assertEqual(
+                manager.render_composed_scene_frame().pixels.shape,
+                (33 * 138, 3),
+            )
+        finally:
+            manager.stop_animation(clear_leds=False)
 
     def test_all_eighteen_presets_are_tracked_local_and_visually_distinct(self) -> None:
         paths = sorted((ROOT / "animation/plugins/lava_lamp/presets").glob("*.json"))

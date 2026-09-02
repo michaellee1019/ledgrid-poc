@@ -16,7 +16,7 @@ import numpy as np
 from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.compositing import OverlayFrame
-from animation.core.presentation_contracts import ResolvedScene
+from animation.core.presentation_contracts import AnimationRuntimeContext, ResolvedScene
 from animation.plugins.clock import ClockAnimation
 
 
@@ -103,7 +103,7 @@ class ClockOverlayAnimation(AnimationBase):
         self._last_pixels = self._buffers[0]
         self._last_key: Optional[tuple[Any, ...]] = None
         self._revision = 0
-        self._presentation_context: ResolvedScene | None = None
+        self._semantic_color = self.SEMANTIC_PALETTES["neutral"]
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         return {
@@ -121,20 +121,49 @@ class ClockOverlayAnimation(AnimationBase):
         """Isolated wall-time source so tests and callers can provide fixed time."""
         return datetime.now().astimezone() + timedelta(minutes=int(self.params["clock_offset_minutes"]))
 
-    def on_presentation_context_changed(
-        self, old: ResolvedScene | None, new: ResolvedScene,
+    def set_presentation_context(
+        self, context: AnimationRuntimeContext | ResolvedScene,
     ) -> None:
-        """Accept the semantic Palette resolved by the Scene v2 runtime."""
+        """Accept both installed-final Preview and live-manager contexts."""
+
+        if isinstance(context, ResolvedScene):
+            if context.palette is None or not isinstance(
+                context.palette.get("palette_id"), str
+            ):
+                raise ValueError("Clock Overlay requires a semantic Scene v2 palette")
+            color = self.SEMANTIC_PALETTES.get(
+                context.palette["palette_id"], self.SEMANTIC_PALETTES["neutral"]
+            )
+            if color != self._semantic_color:
+                self._semantic_color = color
+                self._last_key = None
+            return
+        super().set_presentation_context(context)
+
+    def on_presentation_context_changed(
+        self,
+        old: AnimationRuntimeContext | None,
+        new: AnimationRuntimeContext,
+    ) -> None:
+        """Accept the semantic HUD color resolved by the live runtime."""
 
         del old
-        if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
-            raise ValueError("Clock Overlay requires a semantic Scene v2 palette")
-        self._presentation_context = new
-
-    def set_presentation_context(self, context: ResolvedScene) -> None:
-        """Public context hook used by the canonical runtime before rendering."""
-
-        self.on_presentation_context_changed(self._presentation_context, context)
+        color = new.palette_roles.get("hud")
+        if (
+            not isinstance(color, (list, tuple))
+            or len(color) != 3
+            or any(
+                isinstance(channel, bool)
+                or not isinstance(channel, int)
+                or not 0 <= channel <= 255
+                for channel in color
+            )
+        ):
+            raise ValueError("Clock Overlay requires the semantic hud palette role")
+        semantic_color = tuple(color)
+        if semantic_color != self._semantic_color:
+            self._semantic_color = semantic_color
+            self._last_key = None
 
     @staticmethod
     def _time_key(now: datetime, show_seconds: bool) -> tuple[int, ...]:
@@ -204,12 +233,7 @@ class ClockOverlayAnimation(AnimationBase):
         return result
 
     def _color_key(self) -> tuple[int, int, int]:
-        palette_id = (
-            self._presentation_context.palette["palette_id"]
-            if self._presentation_context is not None and self._presentation_context.palette is not None
-            else "neutral"
-        )
-        return self.SEMANTIC_PALETTES.get(str(palette_id), self.SEMANTIC_PALETTES["neutral"])
+        return self._semantic_color
 
     def _paint_digital(self, now: datetime, output: np.ndarray) -> None:
         visual = output.reshape(self.width, self.height, 4)[:, ::-1]

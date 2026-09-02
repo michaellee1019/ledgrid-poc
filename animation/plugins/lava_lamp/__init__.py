@@ -197,6 +197,11 @@ class LavaLampAnimation(AnimationBase):
     def set_presentation_context(self, context: ResolvedScene) -> None:
         self.on_presentation_context_changed(self._presentation_context, context)
 
+    def render_resolved_scene(self, context: ResolvedScene) -> RenderedFrame:
+        """Render from the strict Scene v2 context used by the live manager."""
+        self.set_presentation_context(context)
+        return self.generate_frame(context.phase_time, self.frame_count)
+
     def _reconcile_blob_count(self) -> None:
         target = max(3, min(12, int(self.params.get("blob_count", 7))))
         while int(np.count_nonzero(self.active)) < target:

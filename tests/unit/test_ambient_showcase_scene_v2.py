@@ -16,7 +16,7 @@ from web.app import AnimationWebInterface
 from web.composer_final_preview import current_component_catalog
 
 ROOT=Path(__file__).resolve().parents[2]
-FAMILIES={"gradient":(GradientAnimation,5),"rainbow":(RainbowAnimation,4),"solid":(SolidColorAnimation,5),"sparkle":(SparkleAnimation,5),"wave":(WaveAnimation,6)}
+FAMILIES={"gradient":(GradientAnimation,5),"rainbow":(RainbowAnimation,4),"solid":(SolidColorAnimation,5),"sparkle":(SparkleAnimation,6),"wave":(WaveAnimation,6)}
 
 class AmbientShowcaseSceneV2Tests(unittest.TestCase):
     def setUp(self): self.interface=AnimationWebInterface(_WallChannel(),_PreviewManager(),local_mode=True); self.client=self.interface.app.test_client()

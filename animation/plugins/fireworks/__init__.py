@@ -180,7 +180,9 @@ class FireworksAnimation(AnimationBase):
 
     def _paint(self, palette_id: str, phase_time: float) -> None:
         background, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
-        canvas = self._pixels.reshape(self.width, self.height, 3); canvas[:] = np.asarray(background, dtype=np.uint8)
+        # The simulation uses screen coordinates (y=0 at the top), while the
+        # canonical wall frame uses physical LED 0 at the bottom.
+        canvas = self._pixels.reshape(self.width, self.height, 3)[:, ::-1]; canvas[:] = np.asarray(background, dtype=np.uint8)
         twinkle = float(self.params["twinkle"])
         for spark in self._sparks:
             life = spark.age / spark.lifetime; color = self._spark_color(spark.hue, primary, accent)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import gc
 import hashlib
@@ -73,6 +74,27 @@ def _catalog_payload() -> Mapping[str, Any]:
             "timingAdapter": vibe.get("timing_adapter", "legacy_speed_param"),
             "requiredPackages": ["pillow"] if plugin_id == "gif_animation" else [],
         })
+    for source_path in sorted((repo_root / "animation/plugins").glob("*.py")):
+        if source_path.name == "__init__.py":
+            continue
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        class_names = [
+            node.name for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name.endswith("Animation")
+        ]
+        if len(class_names) != 1:
+            raise RuntimeError(
+                f"flat browser plugin must define one animation class: {source_path}"
+            )
+        entries.append({
+            "pluginId": source_path.stem,
+            "className": class_names[0],
+            "role": "background",
+            "frameFormat": "rgb",
+            "timingAdapter": "scaled_context",
+            "requiredPackages": [],
+        })
+    entries.sort(key=lambda item: item["pluginId"])
     return {"plugins": entries}
 
 

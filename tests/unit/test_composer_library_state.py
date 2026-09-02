@@ -68,8 +68,12 @@ class ComposerLibraryApiTests(unittest.TestCase):
         first = self.client.get('/api/composer/library').get_json()
         self.assertEqual([(item['kind'], item['id']) for item in first['items']], [
             ('starter', 'aurora'), ('starter', 'aurora_clock'), ('starter', 'aurora_conway'), ('starter', 'aurora_conway_clock'),
+            ('starter', 'human_conway_chaos'), ('starter', 'human_fancy_coral'),
+            ('starter', 'human_neon_microverse'), ('starter', 'human_twilight_sparkle'),
+            ('starter', 'human_avalanche_factory'),
         ])
-        saved = self.client.post('/api/composer/looks', json={'name': 'Evening Garden', 'draft': _scene()}).get_json()['look']
+        scene = self.client.get('/api/composer/starters/aurora').get_json()['starter']['scene']
+        saved = self.client.post('/api/composer/looks', json={'name': 'Evening Garden', 'scene': scene}).get_json()['look']
         favorite = self.client.post('/api/composer/library/favorites', json={'reference': {'kind': 'look', 'id': saved['id']}})
         self.assertEqual(favorite.status_code, 200)
         recent = self.client.post('/api/composer/library/recents', json={'reference': {'kind': 'look', 'id': saved['id']}})

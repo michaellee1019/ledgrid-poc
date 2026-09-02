@@ -4,12 +4,41 @@
   const api = root.dataset.apiRoot;
   const $ = (selector) => document.querySelector(selector);
   const nativeDigest = 'd0b8c0f9c7d55a8f58b6156e20c59afe6e4c5a7e2821cb6b3a29d9af81c296bf';
+  function newUuid() {
+    const browserCrypto = typeof globalThis.crypto === 'object' ? globalThis.crypto : null;
+    if (typeof browserCrypto?.randomUUID === 'function') return browserCrypto.randomUUID();
+    if (typeof browserCrypto?.getRandomValues === 'function') {
+      const bytes = browserCrypto.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    return `composer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
   // A page lifetime client id makes a reload a new mutation stream.  Reusing
   // an id while resetting its sequence would make the next authored edit stale.
-  const clientId = crypto.randomUUID();
+  const clientId = newUuid();
   const state = { status: null, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
-    scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null };
+    scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
+    wall: {
+      bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
+      adoptedLook: null, adoptedVibeId: null,
+    } };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
+  const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  async function requestJson(url, options = {}) {
+    let response;
+    try { response = await fetch(url, {cache: 'no-store', ...options}); }
+    catch (_) { const error = new Error('Wall server unavailable.'); error.code = 'offline'; throw error; }
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(body.error || `Wall request failed (${response.status}).`);
+      error.code = body.code; error.status = response.status; error.blockers = body.blockers;
+      throw error;
+    }
+    return body;
+  }
   const number = (id) => Number($(id).value);
   const plantOptics = Object.freeze([
     {id: 'illuminate', label: 'Illuminate', enabled: '#plantIlluminateEnabled', strength: '#plantIlluminateStrength', value: '#plantIlluminateValue'},
@@ -29,6 +58,7 @@
   // deliberately exposes only the six immediate race controls.
   const canopyParameters = (existing = {}) => ({...existing, world_theme: $('#canopyWorld').value, qualifying_heats: Math.trunc(number('#canopyHeats')), course_difficulty: number('#canopyCourse'), enemy_density: number('#canopyDensity'), rivalry: number('#canopyRivalry'), powerup_rate: number('#canopyPowerups')});
   const reefParameters = (existing = {}) => ({...existing, species_count: Math.trunc(number('#reefSpecies')), takeover_threshold: Math.trunc(number('#reefThreshold')), mutation: number('#reefMutation'), grazers: Math.trunc(number('#reefGrazers')), boundary_glow: number('#reefGlow'), topology: $('#reefTopology').value, pace: number('#reefPace'), seed: Math.trunc(number('#reefSeed'))});
+  const tetrisParameters = (existing = {}) => ({...existing, tetromino_count: Math.trunc(number('#tetrisPieces')), fall_rate: number('#tetrisFallRate'), bot_imperfection: number('#tetrisRisk'), smooth_drop: $('#tetrisSmoothDrop').checked});
   const lavaInteractionParameters = (parameters = {}) => Object.fromEntries(['interaction_radius', 'interaction_strength'].filter((name) => Object.hasOwn(parameters, name)).map((name) => [name, parameters[name]]));
   const snakeParameters = (existing = {}) => ({...existing, move_cadence: number('#snakeCadence'), snake_count: Math.trunc(number('#snakeCount')), food_count: Math.trunc(number('#snakeFood')), growth_per_food: Math.trunc(number('#snakeGrowth')), ruleset: $('#snakeRules').value, obstacles: $('#snakeObstacles').value, trails: number('#snakeTrails'), glow: number('#snakeGlow'), seed: Math.trunc(number('#snakeSeed'))});
   const mazeParameters = (existing = {}) => ({...existing, chase_cadence_hz: number('#mazeCadence'), difficulty: number('#mazeDifficulty'), show_ai_targets: $('#mazeRadar').checked});
@@ -77,7 +107,7 @@
   const componentPresetTargets = Object.freeze({aurora_curtains: 'aurora-curtains-preset-cards', conway_life: 'conway-life-preset-cards', tetris: 'tetris-preset-cards', firefly_synchrony: 'firefly-synchrony-preset-cards', fireworks: 'fireworksPresetCards', flame_burst: 'flame-burst-preset-cards', fluid_tank: 'fluid-tank-preset-cards', lava_lamp: 'lavaPresetCards', snake: 'snakePresetCards', cyclic_reef: 'reefPresetCards', canopy_cup: 'canopyPresetCards', maze_chase: 'mazePresetCards', pinball: 'pinballPresetCards', pixel_quest: 'questPresetCards', ascii_drop: 'asciiDropPresetCards', emoji: 'emojiAnimationPresetCards', christmas_tree: 'christmasTreePresetCards', night_train_windows: 'nightTrainPresetCards', gradient: 'gradient-preset-cards', rainbow: 'rainbow-preset-cards', solid: 'solid-preset-cards', sparkle: 'sparkle-preset-cards', wave: 'wave-preset-cards'});
   const atmospherePresetTargets = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
   const sculpturePresetTargets = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
-  const componentControls = Object.freeze({aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], flame_burst: ['#flameCadence', '#flameSize', '#flameEmbers', '#flameFlicker'], fluid_tank: ['#fluidFlow', '#fluidCurrent', '#fluidBubbles', '#fluidSurface'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed'], snake: ['#snakeCadence', '#snakeCount', '#snakeFood', '#snakeGrowth', '#snakeRules', '#snakeObstacles', '#snakeTrails', '#snakeGlow', '#snakeSeed'], canopy_cup: ['#canopyWorld', '#canopyHeats', '#canopyCourse', '#canopyDensity', '#canopyRivalry', '#canopyPowerups'], cyclic_reef: ['#reefSpecies', '#reefThreshold', '#reefMutation', '#reefGrazers', '#reefGlow', '#reefTopology', '#reefPace', '#reefSeed'], maze_chase: ['#mazeCadence', '#mazeDifficulty', '#mazeRadar'], pinball: ['#pinballTicks', '#pinballChaos'], pixel_quest: ['#questCadence', '#questDifficulty', '#questHud'], ascii_drop: ['#asciiPhrase', '#asciiStory', '#asciiSpeed', '#asciiDensity'], emoji: ['#emojiFace', '#emojiMood', '#emojiAnimationPulse', '#emojiAnimationScale'], christmas_tree: ['#treeSeason', '#treeHeight', '#treeSnowfall'], night_train_windows: ['#trainRoute', '#trainSpeed', '#trainGlow'], gradient: ['#gradientDirection','#gradientDrift','#gradientMotion','#gradientSeed'], rainbow: ['#rainbowBands','#rainbowTravel','#rainbowDirection','#rainbowSeed'], solid: ['#solidGlow','#solidBreath','#solidSeed'], sparkle: ['#sparkleDensity','#sparkleLinger','#sparkleTwinkle','#sparkleNight','#sparkleSeed'], wave: ['#waveAxis','#waveFrequency','#waveTravel','#waveShape','#waveDirection','#waveSeed']});
+  const componentControls = Object.freeze({aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], tetris: ['#tetrisPieces', '#tetrisFallRate', '#tetrisRisk', '#tetrisSmoothDrop'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], flame_burst: ['#flameCadence', '#flameSize', '#flameEmbers', '#flameFlicker'], fluid_tank: ['#fluidFlow', '#fluidCurrent', '#fluidBubbles', '#fluidSurface'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed'], snake: ['#snakeCadence', '#snakeCount', '#snakeFood', '#snakeGrowth', '#snakeRules', '#snakeObstacles', '#snakeTrails', '#snakeGlow', '#snakeSeed'], canopy_cup: ['#canopyWorld', '#canopyHeats', '#canopyCourse', '#canopyDensity', '#canopyRivalry', '#canopyPowerups'], cyclic_reef: ['#reefSpecies', '#reefThreshold', '#reefMutation', '#reefGrazers', '#reefGlow', '#reefTopology', '#reefPace', '#reefSeed'], maze_chase: ['#mazeCadence', '#mazeDifficulty', '#mazeRadar'], pinball: ['#pinballTicks', '#pinballChaos'], pixel_quest: ['#questCadence', '#questDifficulty', '#questHud'], ascii_drop: ['#asciiPhrase', '#asciiStory', '#asciiSpeed', '#asciiDensity'], emoji: ['#emojiFace', '#emojiMood', '#emojiAnimationPulse', '#emojiAnimationScale'], christmas_tree: ['#treeSeason', '#treeHeight', '#treeSnowfall'], night_train_windows: ['#trainRoute', '#trainSpeed', '#trainGlow'], gradient: ['#gradientDirection','#gradientDrift','#gradientMotion','#gradientSeed'], rainbow: ['#rainbowBands','#rainbowTravel','#rainbowDirection','#rainbowSeed'], solid: ['#solidGlow','#solidBreath','#solidSeed'], sparkle: ['#sparkleDensity','#sparkleLinger','#sparkleTwinkle','#sparkleNight','#sparkleSeed'], wave: ['#waveAxis','#waveFrequency','#waveTravel','#waveShape','#waveDirection','#waveSeed']});
   const atmosphereControls = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, atmosphereSpecs[id].fields.map(([name]) => `#${atmosphereControlId(id, name)}`)])));
   const sculptureControls = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, sculptureSpecs[id].fields.map(([name]) => `#${sculptureControlId(id, name)}`)])));
 
@@ -87,6 +117,21 @@
     field('emojiFace', 'Emoji type', 'smile', [['smile','Smile'],['heart','Heart']]); field('emojiMood', 'Emoji mood', 'golden', [['golden','Golden'],['neon','Neon'],['rose','Rose'],['ice','Ice']]); field('emojiAnimationPulse', 'Emoji pulse', '.8'); field('emojiAnimationScale', 'Emoji scale', '1');
     field('treeSeason', 'Tree season', 'classic', [['classic','Classic'],['party','Party'],['quiet','Quiet'],['blizzard','Blizzard']]); field('treeHeight', 'Tree height', '58'); field('treeSnowfall', 'Tree snowfall', '.35');
     field('trainRoute', 'Train route', 'sleeper', [['sleeper','Sleeper'],['moonlit','Moonlit'],['ember','Ember'],['synthwave','Synthwave']]); field('trainSpeed', 'Train pace', '1'); field('trainGlow', 'Window glow', '.65');
+  }
+  function installTetrisControls() {
+    const target = $('#animationControls');
+    const numberField = (id, label, value, minimum, maximum, step) => {
+      const wrapper = document.createElement('label'); wrapper.textContent = label;
+      const control = document.createElement('input'); control.id = id; control.type = 'number';
+      control.min = minimum; control.max = maximum; control.step = step; control.value = value;
+      wrapper.append(control); target.append(wrapper);
+    };
+    numberField('tetrisPieces', 'Pieces', '5', '1', '128', '1');
+    numberField('tetrisFallRate', 'Fall rate', '3', '.2', '5', '.1');
+    numberField('tetrisRisk', 'Bot risk', '.18', '0', '.6', '.01');
+    const wrapper = document.createElement('label'); wrapper.textContent = 'Smooth drop';
+    const control = document.createElement('input'); control.id = 'tetrisSmoothDrop'; control.type = 'checkbox'; control.checked = true;
+    wrapper.append(control); target.append(wrapper);
   }
   function installAmbientControls() {
     const field = (id, label, value, options = null) => { const wrapper = document.createElement('label'); wrapper.textContent = label; const control = document.createElement(options ? 'select' : 'input'); control.id = id; if (options) options.forEach(([key, name]) => control.append(new Option(name, key))); else { control.type = 'number'; control.step = '.01'; } control.value = value; wrapper.append(control); $('#animationControls').append(wrapper); };
@@ -377,7 +422,7 @@
       : choice === 'conway_life'
       ? {component_id: 'conway_life', version: 1, provider: 'python', role: 'animation', parameters: {seed: number('#lifeSeed'), rule: 'B3/S23', initial_density: .14, generations_per_second: number('#lifeRate'), seed_cells: []}}
       : choice === 'tetris'
-        ? {component_id: 'tetris', version: 1, provider: 'python', role: 'animation', parameters: {}}
+        ? {component_id: 'tetris', version: 1, provider: 'python', role: 'animation', parameters: tetrisParameters({seed: 4201, smooth_drop_strength: .6, smooth_drop_max_pieces: 32, render_fps: 150, high_density_render_fps: 150})}
         : choice === 'firefly_synchrony'
           ? {component_id: 'firefly_synchrony', version: 1, provider: 'python', role: 'animation', parameters: fireflyParameters({seed: 7319, coupling_radius: 8})}
           : choice === 'fireworks'
@@ -413,6 +458,7 @@
     else if (atmosphereIds.includes(choice)) next.animation.parameters = atmosphereParameters(choice, next.animation.parameters);
     else if (ambientIds.includes(choice)) next.animation.parameters = ambientParameters(choice, next.animation.parameters);
     else if (choice === 'conway_life') next.animation.parameters = {...next.animation.parameters, seed: number('#lifeSeed'), generations_per_second: number('#lifeRate')};
+    else if (choice === 'tetris') next.animation.parameters = tetrisParameters(next.animation.parameters);
     else if (choice === 'aurora_curtains') next.animation.parameters = {...next.animation.parameters, curtain_density: number('#curtainDensity'), fold_depth: number('#foldDepth'), glow_intensity: number('#glowIntensity')};
     else if (choice === 'firefly_synchrony') next.animation.parameters = fireflyParameters(next.animation.parameters);
     else if (choice === 'fireworks') next.animation.parameters = fireworksParameters();
@@ -456,6 +502,8 @@
       document.getElementById(atmosphereControlId(animation.component_id, name)).value = parameters[name] ?? atmosphereSpecs[animation.component_id].defaults[name];
     });
     $('#lifeSeed').value = parameters.seed ?? 4201; $('#lifeRate').value = parameters.generations_per_second ?? 5;
+    const tetris = animation.component_id === 'tetris' ? parameters : {};
+    $('#tetrisPieces').value = tetris.tetromino_count ?? 5; $('#tetrisFallRate').value = tetris.fall_rate ?? 3; $('#tetrisRisk').value = tetris.bot_imperfection ?? .18; $('#tetrisSmoothDrop').checked = tetris.smooth_drop ?? true;
     const aurora = animation.component_id === 'aurora_curtains' ? parameters : {};
     $('#curtainDensity').value = aurora.curtain_density ?? .56; $('#foldDepth').value = aurora.fold_depth ?? .58;
     $('#glowIntensity').value = aurora.glow_intensity ?? .62; $('#backgroundGain').value = scene.background?.parameters?.gain ?? .62;
@@ -513,24 +561,178 @@
     onFrame: (body) => { drawFrame(body.frame); $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Installed final runtime frame.'; placementWarning(Object.values(body.widget_placements || {}).find((placement) => placement.warning)); },
     onError: (error) => { $('#previewStatus').textContent = error.message || 'Preview could not render.'; if (error.previewUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); },
   });
+  const vibeForPalette = Object.freeze({mist: 'quiet', neutral: 'neutral', spectrum: 'vivid', ember: 'cozy'});
+  const paletteForVibe = Object.freeze({quiet: 'mist', neutral: 'neutral', vivid: 'spectrum', celebration: 'spectrum', cozy: 'ember'});
+  function managedWallComponent(componentId, role = 'background') {
+    return state.wall.bootstrap?.components?.find((component) => (
+      component.provider === 'python' && component.plugin_id === componentId && component.role === role
+      && component.browser_capabilities?.managed_identity
+    ));
+  }
+  function wallComponentReference(componentId, parameters, role = 'background') {
+    const component = managedWallComponent(componentId, role);
+    const managed = component?.browser_capabilities?.managed_identity;
+    if (!managed) throw new Error(`${componentId} is not activation-ready on this wall.`);
+    const managedParameters = structuredClone(parameters || {});
+    // Older starter/saved scenes carry a Clock-local color.  Clock now derives
+    // color from the Scene palette, so do not send that retired field through
+    // the strict managed activation schema.
+    if (componentId === 'clock_overlay') delete managedParameters.color;
+    return {
+      provider: managed.provider, component_id: managed.component_id,
+      component_digest: managed.component_digest, runtime_digest: managed.runtime_digest,
+      parameter_schema_version: managed.parameter_schema_version,
+      parameters: managedParameters,
+    };
+  }
+  function observedWallIdentity(scene = state.wall.scene, observation = state.wall.observation) {
+    const active = observation?.active_identity?.scene_identity;
+    if (!scene || !active?.digest) return null;
+    return {revision: Number.isSafeInteger(scene.revision) ? scene.revision : active.revision, digest: active.digest};
+  }
+  function wallStatus(lastError = null) {
+    const observation = state.wall.observation;
+    const selected = observedWallIdentity();
+    const running = Boolean(observation?.is_running && selected);
+    return {
+      connected: Boolean(observation?.controller_session_id), running, armed: running,
+      current: selected, desired: selected, observed: running ? selected : null,
+      revision: Number(observation?.controller_state_revision || selected?.revision || 0),
+      last_error: lastError,
+    };
+  }
+  function composerSceneFromWall(scene, observation) {
+    const selected = scene?.background?.provider === 'python' ? scene.background : scene?.known_python_fallback;
+    if (!selected?.plugin_id) throw new Error('The selected wall scene has no editable Python animation.');
+    const parameters = {...structuredClone(selected.resolved_parameters || {}), ...structuredClone(selected.parameter_overrides || {})};
+    const clock = (scene.overlays || []).find((overlay) => overlay.slot_id === 'clock_overlay' && overlay.enabled);
+    const speedBaseline = Number(state.wall.bootstrap?.global_control_contract?.operator_speed_baseline || .3);
+    const vibeId = observation?.vibe?.state?.vibe_id || observation?.vibe?.vibe_id || 'neutral';
+    const plantModifiers = observation?.plant_modifiers || {version: 1, active: [], strengths: {}};
+    return {
+      schema: 'ledgrid.scene.v2',
+      background: {
+        component_id: 'native_aurora', version: 1, provider: 'receiver_native', role: 'background',
+        bundle_digest: nativeDigest,
+        parameters: {gain: 0, source_fps: 30, seed: Math.trunc(Number(parameters.seed || 0))},
+      },
+      animation: {component_id: selected.plugin_id, version: 1, provider: 'python', role: 'animation', parameters},
+      widgets: clock ? [{
+        id: 'clock', visible: true,
+        component: {
+          component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget',
+          parameters: {...structuredClone(clock.component?.resolved_parameters || {}), ...structuredClone(clock.component?.parameter_overrides || {})},
+        },
+        placement: {
+          mode: 'manual', strip_translation: Math.trunc(Number(clock.placement?.strip_translation || 0)),
+          led_translation: Math.trunc(Number(clock.placement?.led_translation ?? -8)),
+        },
+      }] : [],
+      plants: {effects: {
+        version: 1, active: structuredClone(plantModifiers.active || []),
+        strengths: structuredClone(plantModifiers.strengths || {}),
+      }},
+      look: {
+        palette_id: paletteForVibe[vibeId] || 'neutral',
+        pace: Math.max(0, Math.min(2, Number(observation?.animation_speed_scale || speedBaseline) / speedBaseline)),
+        presentation_brightness: Math.max(0, Math.min(2, Number(observation?.brightness ?? 128) / 255)),
+      },
+    };
+  }
+  function browserSceneForWall(scene) {
+    const background = wallComponentReference(scene.animation.component_id, scene.animation.parameters);
+    const layers = [];
+    const clock = (scene.widgets || []).find((widget) => widget.visible && widget.component?.component_id === 'clock_overlay');
+    if (clock) layers.push({
+      role: 'clock', component: wallComponentReference('clock_overlay', clock.component.parameters, 'overlay'),
+      enabled: true, opacity: 255, blend_mode: 'source_over',
+    });
+    const profileDigest = state.wall.observation?.installation_profile_digest
+      || state.wall.bootstrap?.installation_profile?.digest;
+    if (!/^[0-9a-f]{64}$/.test(profileDigest || '')) throw new Error('The wall has no managed installation profile.');
+    return {
+      schema: 'ledgrid.browser-scene', schema_version: 1,
+      revision: Math.max(1, Number(state.wall.scene?.revision || 1)),
+      background, layers, installation_profile: {digest: profileDigest}, fallback: structuredClone(background),
+    };
+  }
+  function globalSettingsForWall(scene, power) {
+    const observation = state.wall.observation || {};
+    const bootstrap = state.wall.bootstrap || {};
+    const lookUnchanged = Boolean(state.wall.adoptedLook
+      && JSON.stringify(scene.look || {}) === JSON.stringify(state.wall.adoptedLook));
+    const vibeId = lookUnchanged && state.wall.adoptedVibeId
+      ? state.wall.adoptedVibeId
+      : (vibeForPalette[scene.look?.palette_id] || 'neutral');
+    const profile = bootstrap.vibe_profiles?.find((item) => item.vibe_id === vibeId)
+      || bootstrap.vibe_profiles?.find((item) => item.vibe_id === 'neutral');
+    if (!profile?.resolved_profile_digest) throw new Error('The selected wall vibe is unavailable.');
+    const allowedModifiers = new Set(bootstrap.global_control_contract?.plant_modifier_ids || []);
+    const active = (scene.plants?.effects?.active || []).filter((id) => allowedModifiers.has(id));
+    const strengths = Object.fromEntries(active.map((id) => [id, Math.max(0, Math.min(1, Number(scene.plants.effects.strengths?.[id] ?? .5)))]));
+    const revision = Number(observation.active_identity?.global_settings_identity?.revision ?? observation.controller_state_revision);
+    if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('The wall settings observation has no usable revision.');
+    const baseline = Number(bootstrap.global_control_contract?.operator_speed_baseline || .3);
+    const brightness = lookUnchanged
+      ? Number(observation.brightness ?? 128)
+      : Math.round(Number(scene.look?.presentation_brightness ?? .5) * 255);
+    const animationSpeed = lookUnchanged
+      ? Number(observation.animation_speed_scale ?? baseline)
+      : baseline * Math.max(0, Math.min(2, Number(scene.look?.pace ?? 1)));
+    return {
+      schema: 'ledgrid.global-settings-state', schema_version: 1, revision,
+      vibe: {vibe_id: profile.vibe_id, profile_version: profile.profile_version, resolved_profile_digest: profile.resolved_profile_digest},
+      plant_modifiers: {version: 1, active, strengths},
+      output: {
+        power: Boolean(power), brightness: Math.max(0, Math.min(255, Math.round(brightness))),
+        animation_speed_scale: Math.max(0, animationSpeed),
+        target_fps: Math.max(1, Math.min(200, Math.round(Number(observation.target_fps || 30)))),
+      },
+    };
+  }
+  async function refreshWallStatus({adopt = false} = {}) {
+    if (!state.wall.bootstrap) state.wall.bootstrap = await requestJson('/api/v1/composer/bootstrap');
+    const priorRevision = state.wall.scene?.revision;
+    const [scenePayload, observation] = await Promise.all([
+      requestJson('/api/v1/scene'), requestJson('/api/v1/composer/settings/observed'),
+    ]);
+    state.wall.scene = scenePayload.scene || null;
+    state.wall.observation = observation;
+    const shouldAdopt = Boolean(scenePayload.scene && (adopt || (
+      !state.wall.dirty && priorRevision != null && priorRevision !== scenePayload.scene.revision
+    )));
+    if (shouldAdopt) {
+      const current = composerSceneFromWall(scenePayload.scene, observation);
+      if (![...$('#animationChoice').options].some((option) => option.value === current.animation.component_id)) {
+        $('#animationChoice').append(new Option(current.animation.component_id.replaceAll('_', ' '), current.animation.component_id));
+      }
+      state.scene = current; state.selection = null; state.history = []; state.redo = []; state.dirty = false; state.wall.dirty = false;
+      state.wall.adoptedLook = structuredClone(current.look);
+      state.wall.adoptedVibeId = observation?.vibe?.state?.vibe_id || observation?.vibe?.vibe_id || null;
+      $('#sceneName').value = `Currently playing · ${current.animation.component_id.replaceAll('_', ' ')}`;
+      applyScene(current); schedulePreview();
+    }
+    renderStatus(wallStatus());
+    return scenePayload;
+  }
   function renderStatus(payload) {
     const status = payload.status || payload; state.status = status;
     state.revision = Math.max(state.revision || 0, status.revision || 0);
     $('#connectionState').textContent = status.connected ? (status.running ? 'Connected · output running' : 'Connected · output stopped') : 'Disconnected';
     $('#observedIdentity').textContent = identity(status.observed); $('#diagnosticObserved').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
     $('#sceneIdentity').textContent = identity(status.current); $('#saveState').textContent = state.dirty ? 'Unsaved changes' : (state.selection?.kind === 'look' ? 'Saved look' : 'Current scene');
-    $('#liveAction').textContent = status.running && status.armed && status.current ? 'Stop' : 'Go Live';
-    $('#operationMessage').textContent = state.authoredValidationError || status.last_error || (status.armed ? 'Changes publish immediately.' : 'Use Go Live to arm output.');
+    $('#liveAction').textContent = status.running && status.armed && status.current && !state.wall.dirty ? 'Stop' : 'Go Live';
+    $('#operationMessage').textContent = state.authoredValidationError || status.last_error || (status.running ? (state.wall.dirty ? 'Draft differs from the wall. Use Go Live to publish it.' : 'Exact controller observation is live.') : 'Use Go Live to start this scene.');
   }
   async function acknowledgeUndo(revision) { state.history = []; state.redo = []; await fetch(`${api}/undo-ack`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, revision})}); }
   function schedulePreview() { const generation = ++state.previewGeneration; const candidate = sceneFromControls(); state.scene = candidate; previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
   function remember(previous) { state.history.push(previous); if (state.history.length > 40) state.history.shift(); state.redo = []; }
   async function submit(scene, {builtin = false, rememberEdit = false, previous = null} = {}) {
     if (rememberEdit) remember(previous || structuredClone(state.scene || defaultScene()));
-    state.scene = scene; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
+    state.scene = scene; state.wall.dirty = true; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
     const endpoint = builtin ? '/built-ins/open' : '/scene';
-    const body = builtin ? {scene, client_id: clientId, mutation_id: crypto.randomUUID(), client_sequence: ++state.sequence} : {origin: 'composer', scene, client_id: clientId, mutation_id: crypto.randomUUID(), client_sequence: ++state.sequence};
-    try { const response = await fetch(`${api}${endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const result = await response.json(); state.authoredValidationError = response.ok ? null : (result.error || 'Current scene could not be accepted.'); renderStatus(result); if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result}); return result; }
+    const body = builtin ? {scene, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence} : {origin: 'composer', scene, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence};
+    try { const response = await fetch(`${api}${endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const result = await response.json(); state.authoredValidationError = response.ok ? null : (result.error || 'Current scene could not be accepted.'); if (state.status) renderStatus(state.status); if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result}); return result; }
     finally { state.submitting = false; }
   }
   async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true, previous}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }
@@ -618,7 +820,7 @@
   function renderLibrary() { const target = $('#libraryList'); target.replaceChildren(); const items = filteredItems(); $('#libraryEmpty').hidden = items.length > 0; items.forEach((item) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.setAttribute('aria-current', String(state.selection?.kind === item.kind && state.selection?.id === item.id)); button.innerHTML = `<span>${item.name}</span><span class="library-kind">${item.kind === 'starter' ? 'Built-in' : 'Saved'}</span>`; button.addEventListener('click', () => openItem(item)); const row = document.createElement('li'); row.append(button); target.append(row); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.classList.toggle('active', button.dataset.libraryFilter === state.filter)); }
   async function openItem(item) {
     try {
-      if (item.kind === 'look') { const response = await fetch(`${api}/looks/${item.id}/open`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, mutation_id: crypto.randomUUID(), client_sequence: ++state.sequence})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); state.scene = result.look.scene; $('#sceneName').value = result.look.name; renderStatus(result.status); }
+      if (item.kind === 'look') { const response = await fetch(`${api}/looks/${item.id}/open`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); state.scene = result.look.scene; $('#sceneName').value = result.look.name; }
       else { const starterResponse = await fetch(`${api}/starters/${item.id}`); const starter = (await starterResponse.json()).starter; applyScene(starter.scene); await submit(starter.scene, {builtin: true}); $('#sceneName').value = starter.name; }
       state.selection = item; state.history = []; state.redo = []; state.dirty = false; applyScene(state.scene); schedulePreview(); renderLibrary(); renderStatus(state.status);
     } catch (error) { $('#operationMessage').textContent = error.message || 'Scene could not be opened.'; }
@@ -626,7 +828,55 @@
   function focusable(dialog) { return [...dialog.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter((node) => !node.disabled); }
   function openDialog(dialog) { const prior = document.activeElement; dialog.showModal(); focusable(dialog)[0]?.focus(); const trap = (event) => { if (event.key === 'Escape') { event.preventDefault(); dialog.close(); } if (event.key !== 'Tab') return; const nodes = focusable(dialog); const first = nodes[0]; const last = nodes.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }; dialog.addEventListener('keydown', trap); dialog.addEventListener('close', () => { dialog.removeEventListener('keydown', trap); prior?.focus(); }, {once: true}); }
   function blockers(result) { const list = $('#readinessList'); list.replaceChildren(); (result.blockers || [{message: result.error || 'Go Live is not ready.', recovery: 'Review connection and current scene.'}]).forEach((blocker) => { const item = document.createElement('li'); item.textContent = `${blocker.message} ${blocker.recovery || ''}`; list.append(item); }); openDialog($('#readinessDialog')); }
-  async function liveAction() { try { if (state.status?.running && state.status?.armed && state.status?.current) { const response = await fetch(`${api}/stop`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId})}); const result = await response.json(); renderStatus(result); if (!response.ok) throw new Error(result.error); } else { if (!state.status?.current && state.scene) await submit(structuredClone(state.scene)); const response = await fetch(`${api}/go-live`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId})}); const result = await response.json(); renderStatus(result); if (!response.ok) { blockers(result); return; } } } catch (error) { $('#operationMessage').textContent = error.message || 'Operation was not acknowledged.'; } }
+  async function waitForExactActivation(accepted, controllerSessionId) {
+    const statusUrl = accepted.status_url || `/api/v1/scene/activations/${encodeURIComponent(accepted.activation_id)}`;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 120000) {
+      const status = await requestJson(statusUrl);
+      if (status.activation_id !== accepted.activation_id) throw new Error('The activation acknowledgement changed identity.');
+      if (status.controller?.session_id !== controllerSessionId) throw new Error('The wall restarted before it observed this scene.');
+      if (status.phase === 'active') {
+        if (JSON.stringify(status.requested_identity) !== JSON.stringify(status.observed_identity)) {
+          throw new Error('The wall did not observe the exact checked scene.');
+        }
+        return status;
+      }
+      if (['failed', 'timed_out', 'rolled_back'].includes(status.phase)) throw new Error(status.error || `Activation ${status.phase}.`);
+      await sleep(500);
+    }
+    throw new Error('The wall did not acknowledge this scene in time.');
+  }
+  async function guardedWallActivation(scene, power) {
+    await refreshWallStatus();
+    const browserScene = browserSceneForWall(scene);
+    const globalSettings = globalSettingsForWall(scene, power);
+    const checked = await requestJson('/api/v1/scene/checks', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scene: browserScene, global_settings: globalSettings}),
+    });
+    if (!checked.check_token || !checked.basis?.controller) throw new Error('The wall returned an incomplete Check authorization.');
+    const accepted = await requestJson('/api/v1/scene', {
+      method: 'PUT', headers: {'Content-Type': 'application/json', 'Idempotency-Key': newUuid()},
+      body: JSON.stringify({
+        check_token: checked.check_token,
+        expected_controller_session_id: checked.basis.controller.session_id,
+        expected_controller_state_revision: checked.basis.controller.state_revision,
+        scene: browserScene, global_settings: globalSettings,
+      }),
+    });
+    await waitForExactActivation(accepted, checked.basis.controller.session_id);
+    state.dirty = false; state.wall.dirty = false;
+    await refreshWallStatus({adopt: true});
+  }
+  async function liveAction() {
+    if (state.wall.activating || !state.scene) return;
+    const stop = Boolean(state.status?.running && state.status?.current && !state.wall.dirty);
+    state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = stop ? 'Stopping…' : 'Checking…';
+    $('#operationMessage').textContent = stop ? 'Checking the exact controller revision before Stop…' : 'Checking this scene against the exact controller revision…';
+    try { await guardedWallActivation(sceneFromControls(), !stop); }
+    catch (error) { renderStatus(wallStatus(error.message)); blockers({error: error.message, blockers: error.blockers}); }
+    finally { state.wall.activating = false; $('#liveAction').disabled = false; renderStatus(state.status || wallStatus()); }
+  }
   async function check() { try { const response = await fetch(`${api}/check`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene: sceneFromControls()})}); const result = await response.json(); $('#checkMessage').textContent = response.ok ? 'This is advisory; it does not change output.' : (result.error || 'Check could not complete.'); const details = $('#checkDetails'); details.replaceChildren(); [['Scene identity', identity(result.basis)], ['Connection', result.status?.connected ? 'Connected' : 'Disconnected'], ['Publication', result.status?.armed ? 'Immediate when edited' : 'Use Go Live to arm output']].forEach(([term, description]) => { const entry = document.createElement('div'); entry.innerHTML = `<dt>${term}</dt><dd>${description}</dd>`; details.append(entry); }); if (result.status) renderStatus(result); openDialog($('#checkDialog')); } catch (error) { $('#operationMessage').textContent = error.message; } }
   async function save(as) { try { const scene = sceneFromControls(); const name = $('#sceneName').value.trim(); if (as || state.selection?.kind !== 'look') { if (!name) throw new Error('Name this scene before Save As.'); const response = await fetch(`${api}/looks`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); state.selection = {kind: 'look', id: result.look.id, name: result.look.name}; }
       else { const response = await fetch(`${api}/looks/save`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); }
@@ -635,9 +885,9 @@
   async function rewind(direction) { const source = direction === 'undo' ? state.history : state.redo; const next = source.pop(); if (!next) return; const opposite = direction === 'undo' ? state.redo : state.history; opposite.push(structuredClone(state.scene)); state.dirty = true; applyScene(next); try { await submit(next); } catch (error) { $('#operationMessage').textContent = error.message; } }
   async function loadLibrary() { const response = await fetch(`${api}/library`); state.library = await response.json(); renderLibrary(); }
   function wire() {
-    ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#clockOffset','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiLineSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#wallPace','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
+    ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#clockOffset','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiLineSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#wallPace','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
     ['#clockFormat','#clockSeconds','#clockTimeOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
-    ['#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow'].forEach((selector) => $(selector).addEventListener('input', edit));
+    ['#tetrisPieces','#tetrisFallRate','#tetrisRisk','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow'].forEach((selector) => $(selector).addEventListener('input', edit));
     Object.values(atmosphereControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
     Object.values(sculptureControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
     Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave')).forEach((selector) => $(selector).addEventListener('input', edit));
@@ -657,7 +907,7 @@
   function syncSecondaryOperations() { $('#secondaryOperations').open = !window.matchMedia('(max-width: 760px)').matches; }
   const phoneLayout = window.matchMedia('(max-width: 760px)');
   phoneLayout.addEventListener('change', syncSecondaryOperations);
-  syncSecondaryOperations(); installPixelStoryControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); applyScene(defaultScene());
+  syncSecondaryOperations(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); applyScene(defaultScene());
   if (![...$('#animationChoice').options].some((option) => option.value === 'snake')) $('#animationChoice').append(new Option('Snake Garden', 'snake'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'canopy_cup')) $('#animationChoice').append(new Option('Canopy Cup', 'canopy_cup'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'maze_chase')) $('#animationChoice').append(new Option('Maze Chase', 'maze_chase'));
@@ -670,9 +920,25 @@
   [['gradient','Gradient Field'],['rainbow','Rainbow River'],['solid','Solid Glow'],['sparkle','Sparkle Night'],['wave','Wave Ribbons']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   [['circadian_window','Circadian Window'],['cloud_canyon','Cloud Canyon'],['desert_wind','Desert Wind'],['moonlit_fog_banks','Moonlit Fog Banks'],['rain_on_glass','Rain on Glass'],['tidal_bioluminescence','Tidal Bioluminescence'],['waterfall_veil','Waterfall Veil']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   [['cellular_tapestry','Cellular Tapestry'],['flow_field_silk','Flow-Field Silk'],['frostwork','Frostwork'],['living_stained_glass','Living Stained Glass'],['quasicrystal_bloom','Quasicrystal Bloom'],['living_ecosystem','Living Ecosystem'],['physarum_network','Physarum Network'],['reaction_diffusion_garden','Reaction-Diffusion Garden'],['wind_in_the_reeds','Wind in the Reeds']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
-  async function refreshStatus() { if (state.refreshInFlight) return; state.refreshInFlight = true; try { const response = await fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Local Composer server unavailable.'); const status = body.status; const newerRemoteRevision = Boolean(recoveryMatchesStatus(body) && status.revision > (state.revision || 0)); if (newerRemoteRevision) { state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null; state.history = []; state.redo = []; state.dirty = false; applyScene(state.scene); schedulePreview(); } renderStatus(status); if (newerRemoteRevision && status.undo_invalidated) acknowledgeUndo(status.undo_invalidation_revision); } catch (error) { $('#operationMessage').textContent = error.message; } finally { state.refreshInFlight = false; } }
+  async function refreshStatus() { if (state.refreshInFlight || state.wall.activating) return; state.refreshInFlight = true; try { await refreshWallStatus(); } catch (error) { renderStatus(wallStatus(error.message)); } finally { state.refreshInFlight = false; } }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene or use Go Live to replace it.`; }
-  async function hydrateCurrentScene() { let response; try { response = await fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`); } catch (_) { const error = new Error('Local Composer server unavailable.'); error.serverUnavailable = true; throw error; } const body = await response.json(); if (!response.ok) { const error = new Error(body.error || 'Current scene recovery is unavailable.'); if (response.status >= 500) { error.serverUnavailable = true; throw error; } recoverFromInvalidRecovery(body); return; } if (body.recovery && (recoveryMatchesStatus(body) || !body.status.current)) { state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null; state.dirty = false; state.revision = body.status.revision || 0; applyScene(state.scene); renderStatus(body.status); } else { state.revision = body.status.revision || 0; applyScene(defaultScene()); renderStatus(body.status); } }
+  async function hydrateCurrentScene() {
+    try {
+      const payload = await refreshWallStatus({adopt: true});
+      if (payload.scene) return;
+    } catch (wallError) {
+      $('#operationMessage').textContent = `${wallError.message} Loading the last local draft instead.`;
+    }
+    let response;
+    try { response = await fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`); }
+    catch (_) { const error = new Error('Local Composer server unavailable.'); error.serverUnavailable = true; throw error; }
+    const body = await response.json();
+    if (!response.ok) { const error = new Error(body.error || 'Current scene recovery is unavailable.'); if (response.status >= 500) { error.serverUnavailable = true; throw error; } recoverFromInvalidRecovery(body); return; }
+    if (body.recovery) {
+      state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null;
+      state.dirty = false; state.wall.dirty = true; applyScene(state.scene); renderStatus(wallStatus());
+    } else { applyScene(defaultScene()); state.wall.dirty = true; renderStatus(wallStatus()); }
+  }
   hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();

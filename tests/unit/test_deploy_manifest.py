@@ -79,6 +79,7 @@ class DeployManifestTests(unittest.TestCase):
             "config/installation_qualification_budget.json",
             "config/plant_globe_map_32x138.json",
             "scripts/start_systemd.sh",
+            "web/composer_preset_membership.v1.json",
         )
         for path in tracked:
             self._write(path)

@@ -748,6 +748,85 @@ class SceneActivationApiTests(unittest.TestCase):
         self.assertEqual(response.get_json()["code"], "activation_precondition_required")
         self.assertEqual(self.channel.list_activation_commands(), [])
 
+    def test_check_rejects_browser_catalog_parameter_removed_from_live_manager(self) -> None:
+        browser_catalog = deepcopy(self.interface._browser_scene_catalog())
+        browser_gradient = next(
+            item for item in browser_catalog if item["plugin_id"] == "gradient"
+        )
+        browser_gradient["parameter_schema"]["brightness"] = {
+            "type": "float", "min": 0.0, "max": 1.0, "default": 1.0,
+        }
+        self.interface._browser_scene_catalog = lambda: deepcopy(browser_catalog)
+        stale_scene = deepcopy(self.scene)
+        stale_scene["background"]["parameters"]["brightness"] = 0.9
+        stale_scene["fallback"] = deepcopy(stale_scene["background"])
+
+        response = self.client.post("/api/v1/scene/checks", json={
+            "scene": stale_scene,
+            "global_settings": self.globals,
+        })
+
+        self.assertEqual(response.status_code, 400, response.get_json())
+        self.assertEqual(response.get_json()["code"], "invalid_check")
+        self.assertIn("Unsupported parameter for gradient: brightness", response.get_json()["error"])
+        self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_check_migrates_retired_clock_color_without_weakening_other_parameters(self) -> None:
+        legacy_scene = deepcopy(self.scene)
+        legacy_scene["layers"][0]["component"]["parameters"]["color"] = [255, 224, 128]
+
+        checked = self.client.post("/api/v1/scene/checks", json={
+            "scene": legacy_scene,
+            "global_settings": self.globals,
+        })
+
+        self.assertEqual(checked.status_code, 201, checked.get_json())
+        normalized, _scene = self.interface._validated_browser_activation_scene(
+            legacy_scene
+        )
+        self.assertNotIn(
+            "color", normalized["layers"][0]["component"]["parameters"]
+        )
+        self.assertIn(
+            "speed", normalized["layers"][0]["component"]["parameters"]
+        )
+        self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_check_adapts_legacy_clock_catalog_role_to_scene_v1_overlay(self) -> None:
+        clock = next(
+            component for component in self.interface.preview_manager.components
+            if component["plugin_id"] == "clock_overlay"
+        )
+        clock["role"] = "background"
+
+        checked = self._check()
+
+        self.assertEqual(checked.status_code, 201, checked.get_json())
+        normalized_clock = next(
+            component for component in self.interface._component_catalog()
+            if component["plugin_id"] == "clock_overlay"
+        )
+        self.assertEqual(normalized_clock["role"], "overlay")
+        self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_check_uses_plugin_loader_for_overlay_implementation_readiness(self) -> None:
+        class _Loader:
+            @staticmethod
+            def get_plugin(component_id: str):
+                return object() if component_id in {"gradient", "clock_overlay"} else None
+
+            @staticmethod
+            def get_plugin_dir(_component_id: str):
+                return None
+
+        self.interface.preview_manager.plugin_loader = _Loader()
+        self.interface.preview_manager.get_animation_info = lambda _component_id: None
+
+        checked = self._check()
+
+        self.assertEqual(checked.status_code, 201, checked.get_json())
+        self.assertEqual(self.channel.list_activation_commands(), [])
+
     def test_guarded_activation_is_pending_durable_and_exactly_idempotent(self) -> None:
         checked = self._check().get_json()
         body = self._activation_body(checked)

@@ -7,14 +7,19 @@ from web.starter_looks import get_starter, list_starters
 
 
 class ComposerStarterTests(ComposerLooksTests):
-    def test_exact_four_current_starters_and_remix_is_independent(self):
+    def test_current_starters_include_human_authored_looks_and_remix_is_independent(self):
         starters = self.client.get('/api/composer/starters').get_json()['starters']
-        self.assertEqual([item['id'] for item in starters], ['aurora', 'aurora_clock', 'aurora_conway', 'aurora_conway_clock'])
+        self.assertEqual([item['id'] for item in starters], [
+            'aurora', 'aurora_clock', 'aurora_conway', 'aurora_conway_clock',
+            'human_conway_chaos', 'human_fancy_coral',
+            'human_neon_microverse', 'human_twilight_sparkle',
+            'human_avalanche_factory',
+        ])
         detail = self.client.get('/api/composer/starters/aurora_conway_clock').get_json()['starter']
         self.assertEqual(detail['name'], 'Fern Gully Cup')
         self.assertEqual(detail['scene']['animation']['component_id'], 'canopy_cup')
         self.assertEqual(detail['scene']['animation']['parameters']['seed'], 1107)
-        self.assertEqual(detail['scene']['widgets'][0]['component']['parameters']['color'], [190, 255, 190])
+        self.assertNotIn('color', detail['scene']['widgets'][0]['component']['parameters'])
         remix = self.client.post('/api/composer/starters/aurora_conway_clock/remix', json={
             'name': 'Mine', 'draft': {'origin': 'composer', 'scene': detail['scene']},
         })
@@ -25,13 +30,26 @@ class ComposerStarterTests(ComposerLooksTests):
         scenes = [get_starter(item['id'])['scene'] for item in list_starters()]
         self.assertEqual(
             [scene['animation']['component_id'] for scene in scenes],
-            ['aurora_curtains', 'firefly_synchrony', 'fireworks', 'canopy_cup'],
+            [
+                'aurora_curtains', 'firefly_synchrony', 'fireworks', 'canopy_cup',
+                'conway_life', 'cyclic_reef', 'living_ecosystem', 'sparkle',
+                'tetris',
+            ],
         )
-        self.assertEqual([len(scene['widgets']) for scene in scenes], [0, 1, 0, 1])
-        self.assertEqual([scene['look']['palette_id'] for scene in scenes], ['mist', 'ember', 'spectrum', 'neutral'])
-        self.assertEqual([scene['background']['parameters']['seed'] for scene in scenes], [4201, 12107, 808, 1107])
+        self.assertEqual([len(scene['widgets']) for scene in scenes], [0, 1, 0, 1, 0, 0, 0, 0, 0])
+        self.assertEqual(
+            [scene['look']['palette_id'] for scene in scenes],
+            ['mist', 'ember', 'spectrum', 'neutral', 'spectrum', 'mist', 'spectrum', 'mist', 'ember'],
+        )
+        self.assertEqual(
+            [scene['background']['parameters']['seed'] for scene in scenes],
+            [4201, 12107, 808, 1107, 1971, 7319, 616, 6146, 4201],
+        )
         self.assertEqual(scenes[1]['widgets'][0]['component']['parameters']['clock_offset_minutes'], 0)
         self.assertEqual(scenes[3]['widgets'][0]['component']['parameters']['clock_offset_minutes'], 60)
+        for scene in scenes:
+            for widget in scene['widgets']:
+                self.assertNotIn('color', widget['component']['parameters'])
 
         def keys(value):
             if isinstance(value, dict):

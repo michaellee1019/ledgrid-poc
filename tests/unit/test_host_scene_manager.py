@@ -12,7 +12,7 @@ import numpy as np
 
 from animation.core.base import AnimationBase, RenderedFrame, StatefulAnimationBase
 from animation.core.manager import AnimationManager
-from animation.core.presentation_contracts import OverlayFrame
+from animation.core.presentation_contracts import ComponentProvider, ComponentRef, OverlayFrame
 
 
 class _Controller:
@@ -462,6 +462,24 @@ class HostSceneManagerTests(unittest.TestCase):
                     )
         finally:
             manager.stop_animation(clear_leds=False)
+
+    def test_clock_widget_is_adapted_only_at_the_scene_v1_manager_boundary(self):
+        descriptor = next(
+            item for item in self.manager.list_components()
+            if item["plugin_id"] == "clock_overlay"
+        )
+        self.assertEqual(descriptor["role"], "overlay")
+        self.assertEqual(self.manager._plugin_role("clock_overlay"), "overlay")
+
+        resolved = self.manager._scene_descriptor(
+            ComponentRef(
+                plugin_id="clock_overlay",
+                provider=ComponentProvider.PYTHON,
+            ),
+            "overlay",
+        )
+
+        self.assertEqual(resolved["role"], "overlay")
 
     def test_targeted_interactions_never_broadcast(self):
         background, overlay = self.start()

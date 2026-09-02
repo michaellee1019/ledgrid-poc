@@ -110,10 +110,10 @@ class ConwayLifeAnimation(AnimationBase):
     def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
         return {
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 1971, "description": "Deterministic initial-world seed"},
-            "rule": {"type": "string", "options": ["B3/S23", "B36/S23"], "default": "B3/S23", "description": "Life birth/survival rule"},
+            "rule": {"type": "str", "options": ["B3/S23", "B36/S23"], "default": "B3/S23", "description": "Life birth/survival rule"},
             "initial_density": {"type": "float", "min": 0.0, "max": 0.4, "default": 0.14, "description": "Seeded live-cell density"},
             "generations_per_second": {"type": "float", "min": 0.5, "max": 20.0, "default": 5.0, "description": "Local scaled-time generation cadence"},
-            "seed_cells": {"type": "cells", "default": [], "description": "Optional deterministic [strip, led] live cells"},
+            "seed_cells": {"type": "cells", "default": [], "max_items": 4554, "strip_min": 0, "strip_max": 32, "led_min": 0, "led_max": 137, "description": "Optional deterministic [strip, led] live cells"},
         }
 
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:

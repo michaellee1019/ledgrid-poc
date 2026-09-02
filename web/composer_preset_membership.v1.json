@@ -95,6 +95,7 @@
         "arcade-afterlife",
         "aurora-garden",
         "bioluminescent-tide",
+        "chaos",
         "classic-green",
         "deep-space-acorn",
         "earth-cities",
@@ -113,6 +114,7 @@
       "provider": "python",
       "component_version": 1,
       "preset_ids": [
+        "fancy-coral",
         "night",
         "quiet",
         "showcase"
@@ -402,7 +404,8 @@
         "confetti-storm",
         "diamond-dust",
         "emerald-fireflies",
-        "starlight"
+        "starlight",
+        "twilight-sparkle"
       ]
     },
     "tetris": {

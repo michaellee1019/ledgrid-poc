@@ -11,7 +11,6 @@
 </head>
 <body>
 <main class="composer" data-api-root="/api/composer">
-  <section id="composerShell" class="composer-shell" hidden aria-live="polite"><p id="composerShellMessage"></p><button id="composerShellRetry" class="button secondary" type="button" hidden>Reload Composer</button><button id="composerShellUpdate" class="button secondary" type="button" hidden>Reload update</button></section>
   <div class="desktop-workspace">
     <aside class="library-pane" aria-labelledby="library-title">
       <div class="pane-heading"><p class="eyebrow">Library</p><h1 id="library-title">Scenes</h1></div>
@@ -54,7 +53,6 @@
 </main>
 <dialog id="readinessDialog" aria-labelledby="readiness-title"><h2 id="readiness-title">Go Live needs attention</h2><p id="readinessMessage">Resolve these items, then try again.</p><ul id="readinessList"></ul><button class="button primary" data-dialog-close type="button">Close</button></dialog>
 <dialog id="checkDialog" aria-labelledby="check-title"><h2 id="check-title">Scene check</h2><p id="checkMessage"></p><dl id="checkDetails"></dl><button class="button primary" data-dialog-close type="button">Close</button></dialog>
-<script src="{{ url_for('static', filename='js/composer_shell.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_preview_scheduler.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_slice.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_palette_layout.js', v=shell_version) }}"></script>

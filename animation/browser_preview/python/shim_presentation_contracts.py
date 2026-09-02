@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -23,6 +23,21 @@ class TimingAdapter(str, Enum):
     LEGACY_SPEED_PARAM = "legacy_speed_param"
     SCALED_CONTEXT = "scaled_context"
     WALL_CLOCK = "wall_clock"
+
+
+@dataclass(frozen=True)
+class ResolvedScene:
+    """Portable resolved Scene v2 context consumed by browser renderers."""
+
+    canonical_scene: Mapping[str, Any]
+    canonical_bytes: bytes
+    digest: str
+    descriptor: Any
+    parameters: Mapping[str, Any]
+    palette: Mapping[str, Any] | None
+    phase_time: float
+    plant_inputs: Mapping[str, float]
+    trace: Tuple[str, ...] = ()
 
 
 def _normalize_dirty_ranges(
@@ -50,6 +65,44 @@ def _normalize_dirty_ranges(
         else:
             normalized.append((start, end))
     return tuple(normalized)
+
+
+@dataclass(frozen=True)
+class BaseFrame:
+    """Canonical, C-contiguous RGB8 base plane."""
+
+    pixels: np.ndarray
+    changed: bool = True
+    dirty_ranges: Optional[Tuple[Tuple[int, int], ...]] = None
+    contract_version: int = FRAME_CONTRACT_VERSION
+    schema: str = FRAME_CONTRACT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != FRAME_CONTRACT_SCHEMA:
+            raise ValueError(f"frame schema must be {FRAME_CONTRACT_SCHEMA!r}")
+        if self.contract_version != FRAME_CONTRACT_VERSION:
+            raise ValueError(
+                f"frame contract_version must be {FRAME_CONTRACT_VERSION}"
+            )
+        if not isinstance(self.changed, bool):
+            raise TypeError("changed must be a bool")
+        if (
+            not isinstance(self.pixels, np.ndarray)
+            or self.pixels.dtype != np.uint8
+            or self.pixels.ndim != 2
+            or self.pixels.shape[1:] != (3,)
+            or self.pixels.shape[0] <= 0
+            or not self.pixels.flags.c_contiguous
+        ):
+            raise ValueError(
+                "pixels must be a non-empty C-contiguous uint8 array with shape (N, 3)"
+            )
+        dirty_ranges = _normalize_dirty_ranges(
+            self.dirty_ranges, self.pixels.shape[0]
+        )
+        if not self.changed and dirty_ranges:
+            raise ValueError("changed=False cannot carry non-empty dirty_ranges")
+        object.__setattr__(self, "dirty_ranges", dirty_ranges)
 
 
 @dataclass(frozen=True)
@@ -103,4 +156,4 @@ class OverlayFrame:
         object.__setattr__(self, "dirty_ranges", dirty_ranges)
 
 
-__all__ = ["OverlayFrame", "TimingAdapter"]
+__all__ = ["BaseFrame", "OverlayFrame", "ResolvedScene", "TimingAdapter"]

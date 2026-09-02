@@ -75,7 +75,11 @@ def build_stage(repo_root: Path, stage: Path) -> dict[str, object]:
     profile_path = stage / profile_name(profile_digest)
     profile_path.write_bytes(profile)
     (stage / BOOTSTRAP_NAME).write_bytes(
-        encoded_bootstrap(repo_root, bundled_profile_url=profile_url(profile_digest))
+        encoded_bootstrap(
+            repo_root,
+            bundled_profile_url=profile_url(profile_digest),
+            runtime_asset_root=stage,
+        )
     )
     prior = _previous_generation(_generated_path(repo_root))
     cache_version = "g-" + generation_digest(repo_root, profile_digest, stage)[:20]
@@ -144,6 +148,19 @@ def validate_asset_set(repo_root: Path, directory: Path) -> None:
     )
     if manifest != expected_manifest:
         raise ValueError("offline manifest is stale or does not match the staged shell")
+    bootstrap = json.loads((directory / BOOTSTRAP_NAME).read_text(encoding="utf-8"))
+    for component in bootstrap.get("components", ()):
+        runtime = component.get("browser_runtime", {})
+        asset_url = runtime.get("asset_url")
+        if not runtime.get("supported") or not isinstance(asset_url, str):
+            continue
+        asset = directory / Path(asset_url).name
+        expected_digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+        if runtime.get("digest") != expected_digest:
+            raise ValueError(
+                "Composer bootstrap runtime digest does not match staged asset: "
+                + asset.name
+            )
 
 
 def check_published(repo_root: Path) -> dict[str, object]:

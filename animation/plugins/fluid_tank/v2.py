@@ -69,7 +69,7 @@ class FluidTankAnimation(AnimationBase):
         if self._rng.random()<self.params["surface_energy"]*.018:self._pulses.append((float(self._rng.random()),.35+.4*self.params["surface_energy"]))
         self._pulses=self._pulses[-self.MAX_PULSES:]
     def _paint(self,palette_id:str)->None:
-        low,water,highlight=self.SEMANTIC_PALETTES.get(palette_id,self.SEMANTIC_PALETTES["neutral"]);canvas=self._pixels.reshape(self.width,self.height,3)
+        low,water,highlight=self.SEMANTIC_PALETTES.get(palette_id,self.SEMANTIC_PALETTES["neutral"]);canvas=self._pixels.reshape(self.width,self.height,3)[:,::-1]
         phase=self._phase; current=self.params["current"]; energy=self.params["surface_energy"]; surface=.38+.10*np.sin(self._x*math.tau*(1.2+current*2.)+phase*3.)+.035*np.sin(self._x*math.tau*5.-phase*5.)*energy
         depth=np.clip((self._y-surface)/(.62+.12*np.sin(phase*.3)),0.,1.); shimmer=np.maximum(0.,np.sin(self._x*math.tau*8.+phase*11.-self._y*4.))*energy
         bubbles=np.maximum(0.,np.sin((self._x*11.+self._y*29.-phase*(7.+self.params["bubble_lift"]*12.))*math.tau))**18*self.params["bubble_lift"]

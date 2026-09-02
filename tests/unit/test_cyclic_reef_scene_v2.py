@@ -27,7 +27,7 @@ class CyclicReefSceneV2Tests(unittest.TestCase):
 
     def test_exact_authored_choices_are_atomic_component_parameters(self) -> None:
         choices = self.interface.composer_presets.choices("cyclic_reef")
-        self.assertEqual([choice["preset_id"] for choice in choices], ["night", "quiet", "showcase"])
+        self.assertEqual([choice["preset_id"] for choice in choices], ["fancy-coral", "night", "quiet", "showcase"])
         scene = self._scene()
         result = self.interface.composer_presets.apply(scene, "showcase")
         self.assertEqual(result["background"], scene["background"])

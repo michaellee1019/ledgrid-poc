@@ -20,6 +20,7 @@ from ipc.runtime_control import (
     ControllerActivationConflictError,
     ControllerActivationCoordinator,
     ControllerActivationPublicationError,
+    manager_component_catalog,
     manager_controller_runtime_digests,
 )
 from ipc.scene_contract import (
@@ -377,6 +378,21 @@ class _DisabledReceiverProfileController:
 
 
 class RuntimeActivationTransactionTests(unittest.TestCase):
+    def test_controller_catalog_adapts_only_clock_widget_to_scene_v1_overlay(self) -> None:
+        source = [
+            _component("gradient"),
+            _component("clock_overlay", role="widget"),
+            {**_component("receiver_clock", role="widget"), "provider": "receiver_native"},
+        ]
+        manager = SimpleNamespace(list_components=lambda: source)
+
+        catalog = manager_component_catalog(manager)
+
+        self.assertEqual(catalog[0]["role"], "background")
+        self.assertEqual(catalog[1]["role"], "overlay")
+        self.assertEqual(catalog[2]["role"], "widget")
+        self.assertEqual(source[1]["role"], "widget")
+
     def setUp(self) -> None:
         self.catalog = _catalog()
         initial_document = normalize_browser_scene_document(

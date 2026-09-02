@@ -56,6 +56,22 @@ class SnakeSceneV2Tests(unittest.TestCase):
         self.assertEqual(first.params["snake_count"], 7); self.assertEqual(first.params["trails"], .2)
         self.assertFalse(np.array_equal(before_edit, first.generate_frame(3.5, 5).pixels))
 
+    def test_batched_body_paint_matches_cell_by_cell_composition(self) -> None:
+        animation = SnakeAnimation(PreviewLEDController(strips=33, leds_per_strip=138))
+        rng = np.random.default_rng(1976)
+        baseline = rng.integers(0, 256, animation._canvas.shape, dtype=np.uint8)
+        cells = [(0, 0), (5, 5), (5, 5), (32, 137), (16, 70)]
+        colors = tuple(rng.random(3) * 255.0 for _ in cells)
+
+        animation._canvas[:] = baseline
+        for cell, color in zip(cells, colors):
+            animation._paint_cell(cell, color, .41)
+        expected = animation._canvas.copy()
+
+        animation._canvas[:] = baseline
+        animation._paint_cells(cells, colors, .41)
+        self.assertTrue(np.array_equal(animation._canvas, expected))
+
     def test_preview_live_stop_rearm_and_recovery_preserve_snake_identity(self) -> None:
         scene = self.interface.composer_presets.apply(self._scene(), "electric-hive")
         preview = self.client.post("/api/composer/preview", json={"origin": "composer", "scene": scene, "preview": {"monotonic_elapsed": 2.0, "wall_time": "2026-08-31T12:00:00+00:00"}})

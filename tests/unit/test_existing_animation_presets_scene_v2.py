@@ -21,7 +21,7 @@ from web.app import AnimationWebInterface
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_IDS = {
     "aurora_curtains": ["night", "quiet", "showcase", "solar-morning"],
-    "conway_life": ["arcade-afterlife", "aurora-garden", "bioluminescent-tide", "classic-green", "deep-space-acorn", "earth-cities", "gosper-foundry", "ice-crystal", "maximum-chaos", "neon-glider-storm", "oscillator-orchard", "pulsar-observatory", "r-pentomino-laboratory", "solar-embers", "synthwave-sunset"],
+    "conway_life": ["arcade-afterlife", "aurora-garden", "bioluminescent-tide", "chaos", "classic-green", "deep-space-acorn", "earth-cities", "gosper-foundry", "ice-crystal", "maximum-chaos", "neon-glider-storm", "oscillator-orchard", "pulsar-observatory", "r-pentomino-laboratory", "solar-embers", "synthwave-sunset"],
     "tetris": ["avalanche-factory", "classic-quartet", "cooperative-swarm", "impossible-shift", "solo-zen"],
     "firefly_synchrony": ["lantern-meadow", "night", "quiet", "showcase"],
     "maze_chase": ["classic-chase", "family-maze", "hunter-vision", "midnight-pursuit", "nightmare-tunnel"],
@@ -63,7 +63,7 @@ class ExistingAnimationPresetSceneV2Tests(unittest.TestCase):
         return scene
 
     def test_exactly_the_twenty_eight_checked_component_cards_are_local(self) -> None:
-        self.assertEqual(sum(len(ids) for ids in EXPECTED_IDS.values()), 42)
+        self.assertEqual(sum(len(ids) for ids in EXPECTED_IDS.values()), 43)
         for component_id, expected_ids in EXPECTED_IDS.items():
             directory = ROOT / "animation" / "plugins" / component_id / "presets"
             paths = sorted(directory.glob("*.json"))

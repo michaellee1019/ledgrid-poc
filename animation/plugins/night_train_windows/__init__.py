@@ -45,7 +45,7 @@ class NightTrainWindowsAnimation(AnimationBase):
         del frame_count
         p=self._normalized_parameters(self._context.parameters if self._context else self.params);phase=max(0.,float(self._context.phase_time if self._context else time_elapsed));palette=str(self._context.palette["palette_id"]) if self._context else "neutral";key=(int(phase*20),palette,tuple(p.items()))
         if key==self._key:return RenderedFrame(self._pixels,changed=False,dirty_ranges=())
-        sky,hill,warm=self._ROUTE[p["route"]];tint={"neutral":(1,1,1),"mist":(.72,.88,1),"spectrum":(1,.62,1),"ember":(1,.62,.4)}.get(palette,(1,1,1));c=self._pixels.reshape(self.width,self.height,3);c[:]=sky;rng=np.random.default_rng(p["seed"]);stars=int(self.width*self.height*.008*p["star_density"])
+        sky,hill,warm=self._ROUTE[p["route"]];tint={"neutral":(1,1,1),"mist":(.72,.88,1),"spectrum":(1,.62,1),"ember":(1,.62,.4)}.get(palette,(1,1,1));c=self._pixels.reshape(self.width,self.height,3)[:,::-1];c[:]=sky;rng=np.random.default_rng(p["seed"]);stars=int(self.width*self.height*.008*p["star_density"])
         for x,y in zip(rng.integers(0,self.width,stars),rng.integers(0,int(self.height*.7),stars)):c[x,y]=(145,180,220)
         y=np.arange(self.height);shift=int(phase*7*p["travel_speed"])
         for x in range(self.width):

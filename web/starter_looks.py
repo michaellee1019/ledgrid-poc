@@ -1,4 +1,4 @@
-"""Four immutable, deliberately different Scene v2 Composer built-ins."""
+"""Immutable Scene v2 starting scenes shown in the Composer Library."""
 
 from copy import deepcopy
 
@@ -21,14 +21,14 @@ def _animation(component_id: str, parameters: dict) -> dict:
     }
 
 
-def _clock(*, color: list[int], offset: int = 0) -> dict:
+def _clock(*, offset: int = 0) -> dict:
     return {
         "id": "clock", "component": {
             "component_id": "clock_overlay", "version": 1,
             "provider": "python", "role": "widget",
             "parameters": {
                 "format_24h": True, "show_seconds": True,
-                "clock_offset_minutes": offset, "color": color,
+                "clock_offset_minutes": offset,
             },
         },
         "visible": True,
@@ -68,7 +68,7 @@ _STARTERS = (
                 "synchrony": 1.15, "wandering": .42, "pulse_softness": .72,
                 "meadow_glow": .42,
             }),
-            widgets=[_clock(color=[255, 224, 128])], palette="ember", pace=.7, brightness=.8,
+            widgets=[_clock()], palette="ember", pace=.7, brightness=.8,
             plant_effects={"version": 1, "active": ["illuminate"], "strengths": {"illuminate": .25}},
         ),
     ),
@@ -93,8 +93,68 @@ _STARTERS = (
                 "course_difficulty": .86, "enemy_density": .35, "rivalry": .32,
                 "powerup_rate": .9, "show_hud": True,
             }),
-            widgets=[_clock(color=[190, 255, 190], offset=60)], palette="neutral", pace=.85, brightness=.86,
+            widgets=[_clock(offset=60)], palette="neutral", pace=.85, brightness=.86,
             plant_effects={"version": 1, "active": ["refract"], "strengths": {"refract": .2}},
+        ),
+    ),
+    (
+        "human_conway_chaos", "Chaos",
+        _scene(
+            background=_background(gain=.35, seed=1971),
+            animation=_animation("conway_life", {
+                "seed": 1971, "rule": "B3/S23", "initial_density": .3,
+                "generations_per_second": 20.0, "seed_cells": [],
+            }),
+            widgets=[], palette="spectrum", pace=1.0, brightness=.88,
+        ),
+    ),
+    (
+        "human_fancy_coral", "Fancy Coral",
+        _scene(
+            background=_background(gain=.4, seed=7319),
+            animation=_animation("cyclic_reef", {
+                "seed": 7319, "species_count": 5, "takeover_threshold": 2,
+                "mutation": .002, "grazers": 4, "boundary_glow": .55,
+                "topology": "wrap", "pace": 1.0,
+            }),
+            widgets=[], palette="mist", pace=.9, brightness=.82,
+        ),
+    ),
+    (
+        "human_neon_microverse", "Neon Microverse",
+        _scene(
+            background=_background(gain=.38, seed=616),
+            animation=_animation("living_ecosystem", {
+                "motion": .55, "density": .62, "background_level": .22,
+                "seed": 616, "migration": .55, "predator_pressure": .38,
+                "canopy_density": .58, "mutation": .1, "night_life": .42,
+            }),
+            widgets=[], palette="spectrum", pace=1.0, brightness=.76,
+        ),
+    ),
+    (
+        "human_twilight_sparkle", "Twilight Sparkle",
+        _scene(
+            background=_background(gain=.25, seed=6146),
+            animation=_animation("sparkle", {
+                "density": .31, "linger": .92, "twinkle": .82,
+                "night": .14, "seed": 6146,
+            }),
+            widgets=[], palette="mist", pace=.7, brightness=.78,
+        ),
+    ),
+    (
+        "human_avalanche_factory", "Avalanche Factory",
+        _scene(
+            background=_background(gain=.2, seed=4201),
+            animation=_animation("tetris", {
+                "seed": 4201, "tetromino_count": 48,
+                "bot_imperfection": .28, "fall_rate": 3.2,
+                "smooth_drop": False, "smooth_drop_strength": 0.0,
+                "smooth_drop_max_pieces": 16, "render_fps": 100.0,
+                "high_density_render_fps": 90.0,
+            }),
+            widgets=[], palette="ember", pace=1.0, brightness=.9,
         ),
     ),
 )

@@ -21,6 +21,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from animation.core.base import RenderedFrame, StatefulAnimationBase
+from animation.core.presentation_contracts import OverlayFrame
 from animation.core.manager import AnimationManager
 from animation.core.plugin_loader import AnimationPluginLoader
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
@@ -29,77 +30,87 @@ from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 STRESS_SCENARIOS = {
     "gradient-plant-visuals": {
         "plugin": "gradient", "fps": 200.0,
-        "config": {"animated": True, "plant_modifiers": {
+        "config": {"direction": "diagonal", "drift": 2.0, "motion": 1.0},
+        "plant_modifiers": {
             "active": ["illuminate", "shadow", "refract"],
             "strengths": {"illuminate": 1.0, "shadow": 1.0, "refract": 1.0},
-        }},
+        },
     },
     "sparkle-plant-stack": {
         "plugin": "sparkle", "fps": 200.0,
-        "config": {"sparkle_probability": 0.1, "plant_modifiers": {
+        "config": {"density": 1.0, "linger": 1.0, "twinkle": 1.0, "night": .55},
+        "plant_modifiers": {
             "active": ["illuminate", "attractor", "habitat", "emitter"],
             "strengths": {"illuminate": 1.0, "attractor": 1.0, "habitat": 1.0, "emitter": 1.0},
-        }},
+        },
     },
     "snake-plant-obstacle": {
         "plugin": "snake", "fps": 200.0,
-        "config": {"snake_count": 3, "food_count": 5, "plant_modifiers": {
+        "config": {"snake_count": 3, "food_count": 5, "obstacles": "pillars"},
+        "plant_modifiers": {
             "active": ["obstacle"], "strengths": {"obstacle": 1.0},
-        }},
+        },
     },
     "snake-plant-portal": {
         "plugin": "snake", "fps": 200.0,
-        "config": {"snake_count": 3, "plant_modifiers": {
+        "config": {"snake_count": 3, "ruleset": "portal"},
+        "plant_modifiers": {
             "active": ["portal"], "strengths": {"portal": 1.0},
-        }},
+        },
     },
     "pinball-plant-bumper": {
         "plugin": "pinball", "fps": 200.0,
-        "config": {"chaos": 1.0, "speed": 3.0, "plant_modifiers": {
+        "config": {"chaos": 1.0, "table_tick_hz": 90.0, "render_fps": 120.0},
+        "plant_modifiers": {
             "active": ["bumper"], "strengths": {"bumper": 1.0},
-        }},
+        },
     },
     "pinball-plant-portal": {
         "plugin": "pinball", "fps": 200.0,
-        "config": {"chaos": 1.0, "speed": 3.0, "plant_modifiers": {
+        "config": {"chaos": 1.0, "table_tick_hz": 90.0, "render_fps": 120.0},
+        "plant_modifiers": {
             "active": ["portal"], "strengths": {"portal": 1.0},
-        }},
+        },
     },
     "canopy-cup-max-action": {
         "plugin": "canopy_cup", "fps": 200.0,
         "config": {
-            "render_fps": 90.0, "course_difficulty": 1.4,
+            "course_difficulty": 1.4,
             "enemy_density": 1.0, "rivalry": 1.0, "powerup_rate": 1.0,
-            "plant_modifiers": {
+            "show_hud": True,
+        },
+        "plant_modifiers": {
                 "active": ["illuminate", "obstacle", "emitter"],
                 "strengths": {"illuminate": 1.0, "obstacle": 1.0, "emitter": 1.0},
-            },
         },
     },
     "lava-lamp-max-action": {
         "plugin": "lava_lamp", "fps": 200.0,
         "config": {
-            "blob_count": 12, "blob_scale": 1.2, "speed": 4.0,
-            "glow": 1.0, "background": "ember",
-            "plant_modifiers": {
+            "blob_count": 12, "blob_scale": 1.8, "viscosity": 0.0,
+            "heat": 1.0, "turbulence": 1.0, "glow": 1.0,
+            "interaction_radius": 16.0, "interaction_strength": 2.0,
+        },
+        "plant_modifiers": {
                 "active": ["refract", "bumper", "emitter"],
                 "strengths": {"refract": 1.0, "bumper": 1.0, "emitter": 1.0},
-            },
         },
     },
     "conway-plant-emitter-habitat": {
         "plugin": "conway_life", "fps": 200.0,
-        "config": {"random_density": 0.14, "generations_per_second": 5.0,
-                   "plant_modifiers": {"active": ["habitat", "emitter"],
-                   "strengths": {"habitat": 1.0, "emitter": 1.0}}},
+        "config": {"initial_density": 0.4, "generations_per_second": 20.0,
+                   "rule": "B36/S23"},
+        "plant_modifiers": {"active": ["habitat", "emitter"],
+                   "strengths": {"habitat": 1.0, "emitter": 1.0}},
     },
     "fluid-plant-stack": {
         "plugin": "fluid_tank", "fps": 200.0,
-        "config": {"drop_rate": 1.0, "flow_steps": 2, "max_drop_rate": 240.0,
-                   "plant_modifiers": {
+        "config": {"flow_rate": 2.0, "current": 1.0,
+                   "bubble_lift": 1.0, "surface_energy": 1.0},
+        "plant_modifiers": {
             "active": ["refract", "slow_zone", "obstacle"],
             "strengths": {"refract": 1.0, "slow_zone": 1.0, "obstacle": 1.0},
-        }},
+        },
     },
     "clock-animated": {
         "plugin": "clock",
@@ -113,10 +124,11 @@ STRESS_SCENARIOS = {
         "plugin": "snake",
         "fps": 90.0,
         "config": {
-            "snake_count": 12, "initial_length": 30, "max_length": 800,
-            "food_count": 30, "visual_style": "prism", "background": "aurora",
-            "trail_strength": 1.0, "glow": 1.0,
-            "moves_per_second": 30.0, "speed": 4.0, "render_fps": 90.0,
+            "snake_count": 12, "initial_length": 24, "max_length": 320,
+            "food_count": 24, "growth_per_food": 12,
+            "visual_style": "prism", "background": "aurora",
+            "trails": 1.0, "trail_decay": .2, "glow": 1.0,
+            "move_cadence": 24.0, "ruleset": "battle", "obstacles": "zigzag",
         },
     },
     "plant-glow-conway": {
@@ -190,7 +202,7 @@ def benchmark(args):
         plugins = loader.load_all_plugins()
 
     work_items = [
-        (name, animation_class, "default", {}, args.fps)
+        (name, animation_class, "default", {}, args.fps, None)
         for name, animation_class in sorted(plugins.items())
         if (loader.plugin_manifests.get(name) or {}).get("role") != "overlay"
     ]
@@ -205,12 +217,16 @@ def benchmark(args):
                 scenario_name,
                 scenario["config"],
                 scenario["fps"],
+                scenario.get("plant_modifiers"),
             ))
     if args.plugin:
         work_items = [item for item in work_items if item[0] == args.plugin]
 
     results = []
-    for name, animation_class, scenario_name, config, scenario_fps in work_items:
+    for (
+        name, animation_class, scenario_name, config, scenario_fps,
+        plant_modifiers,
+    ) in work_items:
         if issubclass(animation_class, StatefulAnimationBase):
             results.append({"plugin": name, "scenario": scenario_name, "kind": "stateful"})
             continue
@@ -218,6 +234,8 @@ def benchmark(args):
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 animation = animation_class(controller, config)
+                if plant_modifiers:
+                    animation.set_runtime_plant_modifiers(plant_modifiers)
                 animation.start()
                 for frame_count in range(args.warmup):
                     animation.generate_frame(frame_count / scenario_fps, frame_count)
@@ -229,7 +247,7 @@ def benchmark(args):
                     started = time.perf_counter()
                     rendered = animation.generate_frame(frame_count / scenario_fps, frame_count)
                     timings.append((time.perf_counter() - started) * 1000.0)
-                    if not isinstance(rendered, RenderedFrame) or rendered.changed:
+                    if bool(getattr(rendered, "changed", True)):
                         changed_frames += 1
 
                 # Allocation tracking substantially slows Python-heavy effects,
@@ -242,10 +260,11 @@ def benchmark(args):
                 _current, peak = tracemalloc.get_traced_memory()
                 tracemalloc.stop()
 
-            pixels = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
+            pixels = getattr(rendered, "pixels", rendered)
             if not isinstance(pixels, np.ndarray):
                 raise TypeError(f"returned {type(pixels).__name__}, expected ndarray")
-            expected_shape = (controller.total_leds, 3)
+            channels = 4 if isinstance(rendered, OverlayFrame) else 3
+            expected_shape = (controller.total_leds, channels)
             if pixels.shape != expected_shape or pixels.dtype != np.uint8:
                 raise ValueError(f"returned {pixels.dtype} {pixels.shape}, expected uint8 {expected_shape}")
 

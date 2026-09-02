@@ -46,7 +46,7 @@ class ChristmasTreeAnimation(AnimationBase):
         del frame_count
         p=self._normalized_parameters(self._context.parameters if self._context else self.params); phase=max(0.,float(self._context.phase_time if self._context else time_elapsed));palette=str(self._context.palette["palette_id"]) if self._context else "neutral";key=(int(phase*20),palette,tuple(p.items()))
         if key==self._key:return RenderedFrame(self._pixels,changed=False,dirty_ranges=())
-        bg,green,ornaments=self._SEASON[p["season"]];tint={"neutral":(1,1,1),"mist":(.75,.9,1),"spectrum":(1,.65,1),"ember":(1,.65,.4)}.get(palette,(1,1,1));c=self._pixels.reshape(self.width,self.height,3);c[:]=bg;center=self.width//2; bottom=self.height-7; top=max(4,bottom-p["tree_height"]);rng=np.random.default_rng(p["seed"])
+        bg,green,ornaments=self._SEASON[p["season"]];tint={"neutral":(1,1,1),"mist":(.75,.9,1),"spectrum":(1,.65,1),"ember":(1,.65,.4)}.get(palette,(1,1,1));c=self._pixels.reshape(self.width,self.height,3)[:,::-1];c[:]=bg;center=self.width//2; bottom=self.height-7; top=max(4,bottom-p["tree_height"]);rng=np.random.default_rng(p["seed"])
         for y in range(top,bottom):
             half=max(1,int((y-top+1)/(bottom-top+1)*(self.width*.43)));c[max(0,center-half):min(self.width,center+half+1),y]=np.asarray(green)*np.asarray(tint)
         c[max(0,center-1):min(self.width,center+2),bottom:min(self.height,bottom+6)]=(112,57,20); c[center, max(0,top-2):top+2]=(255,225,100)

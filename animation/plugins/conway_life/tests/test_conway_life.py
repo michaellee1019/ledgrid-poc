@@ -1,4 +1,4 @@
-"""Deterministic Scene-v1 lifecycle tests for the Conway overlay."""
+"""Deterministic Scene-v2 lifecycle tests for the Conway animation."""
 
 from __future__ import annotations
 
@@ -35,10 +35,10 @@ class ConwayLifeAnimationTests(unittest.TestCase):
     def _live(animation: ConwayLifeAnimation) -> set[tuple[int, int]]:
         return set(map(tuple, np.argwhere(animation._grid)))
 
-    def test_current_overlay_declaration_and_frame_contract(self) -> None:
+    def test_current_animation_declaration_and_frame_contract(self) -> None:
         animation = ConwayLifeAnimation(self.controller)
         descriptor = animation.component_descriptor()
-        self.assertEqual((descriptor.provider.value, descriptor.role.value), ("python", "overlay"))
+        self.assertEqual((descriptor.provider.value, descriptor.role.value), ("python", "animation"))
         self.assertEqual(descriptor.timing_policy.value, "scaled_context")
         self.assertEqual(descriptor.optional_simulation_inputs, ("foliage_density", "globe_proximity", "occlusion"))
         self.assertEqual(animation.FRAME_FORMAT, "rgba_uint8_premultiplied_strip_major")

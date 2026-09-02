@@ -88,6 +88,34 @@ console.log(JSON.stringify({
         self.assertNotIn("globalSettings", preset)
         self.assertNotIn("globalSettings", reopen)
 
+    def test_initial_wall_observation_owns_the_default_scene_without_replaying_it(self) -> None:
+        source = COMPOSER_SOURCE.read_text(encoding="utf-8")
+        loader = source[
+            source.index("async function loadObservedSceneOnce()"):
+            source.index("async function applyUrlState")
+        ]
+        connectivity = source[
+            source.index("async function runConnectivityCheck"):
+            source.index("function showOfflineReadiness")
+        ]
+        self.assertIn("await loadObservedSceneOnce();", connectivity)
+        self.assertIn("globalActions().current_scene_url || '/api/v1/scene'", loader)
+        self.assertIn("sync.explicitDraft", loader)
+        self.assertIn("observedBackgroundIdentityMatches", loader)
+        identity = source[
+            source.index("function observedBackgroundIdentityMatches"):
+            source.index("async function loadObservedSceneOnce")
+        ]
+        self.assertIn("activeIdentity?.scene_identity?.revision", identity)
+        self.assertIn("activeIdentity?.installation_profile_digest", identity)
+        self.assertIn("activeSceneRevision === sceneRevision", identity)
+        self.assertIn("...observedComponentParameters(scene.background)", loader)
+        self.assertIn("clock?.component", loader)
+        self.assertIn("state.liveWall.enabled = active", loader)
+        self.assertIn("Currently playing ·", loader)
+        self.assertIn("scheduleApply: false", loader)
+        self.assertNotIn("queueImmediateApply(", loader)
+
 
 if __name__ == "__main__":
     unittest.main()

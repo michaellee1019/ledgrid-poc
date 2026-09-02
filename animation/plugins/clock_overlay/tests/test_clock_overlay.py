@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from types import MappingProxyType
 import unittest
 
 import numpy as np
@@ -12,7 +11,7 @@ from animation.core.component_catalog import ComponentCatalog, ComponentDescript
 from animation.core.compositing import BaseFrame, HostSceneCompositor, PlacedOverlay
 from animation.core.manager import PreviewLEDController
 from animation.core.plugin_loader import AnimationPluginLoader
-from animation.core.presentation_contracts import ResolvedScene
+from animation.core.presentation_contracts import AnimationRuntimeContext, ResolvedScene
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from ipc.scene_contract import normalize_composer_scene
@@ -151,14 +150,42 @@ class ClockOverlayTests(unittest.TestCase):
 
     def test_fixed_wall_time_changes_clock_pixels_only_with_the_semantic_palette(self) -> None:
         clock = _FixedClock(self.controller, {"color": [1, 2, 3]})
-        descriptor = clock.component_descriptor()
+
+        def context(color: tuple[int, int, int]) -> AnimationRuntimeContext:
+            return AnimationRuntimeContext(
+                wall_time=1_788_174_430.0,
+                unscaled_elapsed=0.0,
+                scaled_elapsed=0.0,
+                frame_index=0,
+                scene_epoch=1,
+                global_width=33,
+                height=138,
+                local_strip_offset=0,
+                local_width=33,
+                vibe_id="neutral",
+                vibe_profile_version=1,
+                palette_roles={"hud": color},
+                capability_values={},
+                installation_profile_view={},
+                plant_modifiers={"version": 1, "active": [], "strengths": {}},
+            )
+
+        mist = clock.generate_frame_with_context(context((170, 228, 245)))
+        ember = clock.generate_frame_with_context(context((255, 202, 92)))
+
+        np.testing.assert_array_equal(mist.pixels[:, 3], ember.pixels[:, 3])
+        self.assertFalse(np.array_equal(mist.pixels[:, :3], ember.pixels[:, :3]))
+        self.assertNotIn("color", clock.params)
+
+    def test_installed_final_preview_accepts_resolved_scene_palette(self) -> None:
+        clock = _FixedClock(self.controller)
 
         def context(palette_id: str) -> ResolvedScene:
             return ResolvedScene(
-                canonical_scene=MappingProxyType({}), canonical_bytes=b"clock-test", digest="0" * 64,
-                descriptor=descriptor, parameters=MappingProxyType({}),
-                palette=MappingProxyType({"palette_id": palette_id}), phase_time=0.0,
-                plant_inputs=MappingProxyType({}),
+                canonical_scene={}, canonical_bytes=b"{}", digest="0" * 64,
+                descriptor=object(), parameters={},
+                palette={"palette_id": palette_id}, phase_time=0.0,
+                plant_inputs={},
             )
 
         clock.set_presentation_context(context("mist"))
@@ -168,7 +195,6 @@ class ClockOverlayTests(unittest.TestCase):
 
         np.testing.assert_array_equal(mist.pixels[:, 3], ember.pixels[:, 3])
         self.assertFalse(np.array_equal(mist.pixels[:, :3], ember.pixels[:, :3]))
-        self.assertNotIn("color", clock.params)
 
     def test_seconds_and_minute_caches_follow_only_wall_time_boundaries(self) -> None:
         clock = _FixedClock(self.controller)

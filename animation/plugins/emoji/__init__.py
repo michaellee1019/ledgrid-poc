@@ -47,7 +47,7 @@ class EmojiAnimation(AnimationBase):
         del frame_count
         params=self._normalized_parameters(self._context.parameters if self._context else self.params); phase=max(0.,float(self._context.phase_time if self._context else time_elapsed)); palette=str(self._context.palette["palette_id"]) if self._context else "neutral"; key=(round(phase*20),palette,tuple(params.items()))
         if key==self._key:return RenderedFrame(self._pixels,changed=False,dirty_ranges=())
-        bg,primary,accent=self._MOOD[params["mood"]]; tint={"neutral":(1,1,1),"mist":(.72,.9,1),"spectrum":(1,.6,1),"ember":(1,.62,.35)}.get(palette,(1,1,1)); canvas=self._pixels.reshape(self.width,self.height,3); canvas[:]=bg
+        bg,primary,accent=self._MOOD[params["mood"]]; tint={"neutral":(1,1,1),"mist":(.72,.9,1),"spectrum":(1,.6,1),"ember":(1,.62,.35)}.get(palette,(1,1,1)); canvas=self._pixels.reshape(self.width,self.height,3)[:,::-1]; canvas[:]=bg
         pattern=EMOJI_PATTERNS["heart" if params["face"]=="heart" else "smile"]; h,w=len(pattern),len(pattern[0]); unit=max(1,int(min(self.width/(w+3),self.height/(h+10))*params["scale"])); left=(self.width-w*unit)//2; bottom=(self.height-h*unit)//2; pulse=.72+.28*(.5+.5*math.sin(phase*math.tau*params["pulse_hz"]));
         for row,line in enumerate(pattern):
             for col,cell in enumerate(line):

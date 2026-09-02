@@ -182,7 +182,8 @@ class FireflySynchronyAnimation(AnimationBase):
     def _paint(self, palette_id: str) -> None:
         palette = self.palette_roles(palette_id)
         night, meadow, firefly = (np.asarray(palette[role], dtype=np.float32) for role in self.PALETTE_ROLES)
-        canvas = self._pixels.reshape(self.width, self.height, 3)
+        # Firefly simulation coordinates are top-down; wall LED indices are not.
+        canvas = self._pixels.reshape(self.width, self.height, 3)[:, ::-1]
         gradient = np.linspace(0.0, 1.0, self.height, dtype=np.float32)[None, :, None] ** 3
         canvas[:] = np.clip(night + meadow * float(self.params["meadow_glow"]) * gradient, 0.0, 255.0).astype(np.uint8)
         softness = float(self.params["pulse_softness"])

@@ -77,6 +77,9 @@ class AnimationBase(ABC):
         self._framework_modifier_geometry: Optional[int] = None
         self._framework_modifier_cached_frame: Optional[np.ndarray] = None
         self._presentation_context: Optional[AnimationRuntimeContext] = None
+        self._runtime_installation_profile_view: Optional[
+            InstallationProfileRuntimeView
+        ] = None
         self._presentation_lock = threading.RLock()
         
         # Animation metadata
@@ -152,6 +155,10 @@ class AnimationBase(ABC):
             self._sync_authored_params()
             old = self._presentation_context
             self._presentation_context = context
+            self.set_runtime_plant_modifiers(context.plant_modifiers)
+            self.set_runtime_installation_profile(
+                context.installation_profile_view
+            )
             if old is None or old.presentation_identity != context.presentation_identity:
                 self._framework_modifier_cached_frame = None
                 if (
@@ -162,6 +169,20 @@ class AnimationBase(ABC):
                     self._plant_mask_cache.invalidate()
                     self._managed_plant_mask_variants.clear()
                 self.on_presentation_context_changed(old, context)
+
+    def set_runtime_plant_modifiers(self, state: Mapping[str, Any]) -> None:
+        """Install manager-owned plant state without changing authored params."""
+        runtime_state = PlantModifierState.from_payload(state)
+        with self._presentation_lock:
+            if runtime_state.to_dict() != self._plant_modifier_state.to_dict():
+                self._plant_modifier_state = runtime_state
+                self._framework_modifier_cached_frame = None
+
+    def set_runtime_installation_profile(self, view: Any) -> None:
+        """Install manager-owned geometry without changing authored params."""
+        self._runtime_installation_profile_view = (
+            view if isinstance(view, InstallationProfileRuntimeView) else None
+        )
 
     def on_presentation_context_changed(
         self,
@@ -406,10 +427,13 @@ class AnimationBase(ABC):
     def get_plant_masks(self, clearance: Optional[int] = None) -> PlantMaskGeometry:
         """Use selected global geometry, or the legacy JSON cache by default."""
         context = self._presentation_context
-        if context is not None and isinstance(
-            context.installation_profile_view, InstallationProfileRuntimeView
-        ):
-            view = context.installation_profile_view
+        context_view = getattr(context, 'installation_profile_view', None)
+        view = (
+            context_view
+            if isinstance(context_view, InstallationProfileRuntimeView)
+            else self._runtime_installation_profile_view
+        )
+        if isinstance(view, InstallationProfileRuntimeView):
             masks = view.plant_masks
             if clearance is None:
                 return masks

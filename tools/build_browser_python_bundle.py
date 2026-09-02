@@ -69,11 +69,26 @@ def discover_python_plugins(repo_root: Path) -> tuple[BrowserPlugin, ...]:
         if not source_path.is_file():
             raise FileNotFoundError(f"Python plugin source is missing: {source_path}")
         tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
-        if class_name not in {node.name for node in tree.body if isinstance(node, ast.ClassDef)}:
+        exported_names = {
+            node.name for node in tree.body if isinstance(node, ast.ClassDef)
+        }
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                exported_names.update(
+                    alias.asname or alias.name.rsplit(".", 1)[-1]
+                    for alias in node.names
+                )
+        if class_name not in exported_names:
             raise ValueError(
                 f"manifest class {class_name!r} is not defined by {source_path}"
             )
         role = payload.get("role", "full_scene" if plugin_id == "clock" else "background")
+        # Scene v2 names Clock Overlay's canonical role ``widget``.  The
+        # browser-scene v1 transport still exposes that fixed slot as an
+        # ``overlay`` and requires premultiplied RGBA, so keep the adapter at
+        # this bundle boundary instead of rejecting the canonical manifest.
+        if role == "widget":
+            role = "overlay"
         if role not in {"background", "overlay", "full_scene"}:
             raise ValueError(f"unsupported component role {role!r}: {manifest_path}")
         vibe = payload.get("vibe") if isinstance(payload.get("vibe"), dict) else {}
@@ -90,6 +105,52 @@ def discover_python_plugins(repo_root: Path) -> tuple[BrowserPlugin, ...]:
             timing_adapter=timing_adapter,
             required_packages=required_packages,
         ))
+    for source_path in sorted((repo_root / "animation/plugins").glob("*.py")):
+        if source_path.name == "__init__.py":
+            continue
+        plugin_id = source_path.stem
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        class_nodes = [
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name.endswith("Animation")
+        ]
+        if len(class_nodes) != 1:
+            raise ValueError(
+                f"flat browser plugin must define one animation class: {source_path}"
+            )
+        timing_adapter = "legacy_speed_param"
+        for statement in class_nodes[0].body:
+            if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+                continue
+            target = statement.targets[0]
+            if (
+                isinstance(target, ast.Tuple)
+                and isinstance(statement.value, ast.Tuple)
+                and len(target.elts) == len(statement.value.elts)
+            ):
+                declarations = zip(target.elts, statement.value.elts)
+            else:
+                declarations = ((target, statement.value),)
+            for name, value in declarations:
+                if (
+                    isinstance(name, ast.Name)
+                    and name.id == "TIMING_POLICY"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    timing_adapter = value.value
+        if timing_adapter not in {"legacy_speed_param", "scaled_context", "wall_clock"}:
+            raise ValueError(
+                f"unsupported timing adapter {timing_adapter!r}: {source_path}"
+            )
+        plugins.append(BrowserPlugin(
+            plugin_id=plugin_id,
+            class_name=class_nodes[0].name,
+            role="background",
+            timing_adapter=timing_adapter,
+            required_packages=(),
+        ))
+    plugins.sort(key=lambda plugin: plugin.plugin_id)
     if not plugins:
         raise ValueError("no shipped Python animations were discovered")
     return tuple(plugins)
@@ -127,6 +188,11 @@ def source_mapping(repo_root: Path) -> Dict[str, Path]:
     members: Dict[str, Path] = {
         "animation/__init__.py": browser_sources / "shim_animation.py",
         "animation/core/__init__.py": browser_sources / "shim_core.py",
+        "animation/core/base.py": browser_sources / "shim_base.py",
+        "animation/core/component_catalog.py": (
+            repo_root / "animation/core/component_catalog.py"
+        ),
+        "animation/core/compositing.py": browser_sources / "shim_compositing.py",
         "animation/core/installation_profile.py": (
             repo_root / "animation/core/installation_profile.py"
         ),
@@ -144,9 +210,13 @@ def source_mapping(repo_root: Path) -> Dict[str, Path]:
     for source_path in sorted((repo_root / "animation/libraries").glob("*.py")):
         members[f"animation/libraries/{source_path.name}"] = source_path
     for plugin in plugins:
-        members[f"animation/plugins/{plugin.plugin_id}/__init__.py"] = (
-            repo_root / "animation/plugins" / plugin.plugin_id / "__init__.py"
-        )
+        plugin_root = repo_root / "animation/plugins" / plugin.plugin_id
+        if plugin_root.is_dir():
+            for source_path in sorted(plugin_root.glob("*.py")):
+                members[f"animation/plugins/{plugin.plugin_id}/{source_path.name}"] = source_path
+        else:
+            source_path = repo_root / "animation/plugins" / f"{plugin.plugin_id}.py"
+            members[f"animation/plugins/{plugin.plugin_id}.py"] = source_path
     # Keep the package's 36 small shipped assets intact: preset filenames and
     # normalization metadata remain unchanged, while deflate contains transfer size.
     asset_root = repo_root / "animation/plugins/gif_animation/assets"

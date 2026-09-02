@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import unittest
 from dataclasses import replace
@@ -131,6 +132,36 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertIn("/static/js/composer_slice.js", html)
         self.assertNotIn("/static/css/composer.css", html)
 
+    def test_http_browser_uuid_fallback_is_rfc4122_shaped(self) -> None:
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        helper = script[
+            script.index("function newUuid()") : script.index(
+                "  // A page lifetime client id"
+            )
+        ]
+        javascript = """
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const context = {
+  crypto: {getRandomValues(bytes) {
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = index;
+    return bytes;
+  }},
+  Uint8Array,
+};
+vm.runInNewContext(process.argv[1] + '; result = newUuid();', context);
+assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+"""
+        completed = subprocess.run(
+            ["node", "-e", javascript, helper],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(script.count("browserCrypto.randomUUID()"), 1)
+        self.assertEqual(script.count("mutation_id: newUuid()"), 3)
+
     def test_advisory_check_and_scene_submission_keep_wall_channel_inert(self) -> None:
         scene = _current_scene()
         checked = self.client.post("/api/composer/check", json={"origin": "composer", "scene": scene})
@@ -239,7 +270,7 @@ class ComposerSliceTests(unittest.TestCase):
             )
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
         self.assertIn("const endpoint = builtin ? '/built-ins/open' : '/scene';", script)
-        self.assertIn("renderStatus(result);", script)
+        self.assertIn("if (state.status) renderStatus(state.status);", script)
         self.assertIn("refreshInFlight", script)
         self.assertIn("recoveryMatchesStatus", script)
 
@@ -259,7 +290,7 @@ class ComposerSliceTests(unittest.TestCase):
         )
         self.assertLess(
             submit.index("state.authoredValidationError = response.ok ? null :"),
-            submit.index("renderStatus(result)"),
+            submit.index("renderStatus(state.status)"),
         )
         refresh = script[
             script.index("async function refreshStatus") : script.index(

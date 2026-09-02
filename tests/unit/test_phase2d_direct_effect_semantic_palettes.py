@@ -497,7 +497,7 @@ class DirectEffectSemanticPaletteTests(unittest.TestCase):
         expected_counts = {
             "fireworks": 5,
             "flame_burst": 5,
-            "sparkle": 5,
+            "sparkle": 6,
             "wave": 6,
             "pixel_chase": 0,
         }

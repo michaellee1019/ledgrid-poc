@@ -293,6 +293,32 @@ class BrowserScenePortableContractTests(unittest.TestCase):
                 preview_only, catalog=self.catalog, purpose="activation"
             )
 
+    def test_bounded_cell_coordinates_are_portable_activation_parameters(self) -> None:
+        catalog = deepcopy(self.catalog)
+        descriptor = next(
+            item for item in catalog if item["plugin_id"] == "gradient"
+        )
+        descriptor["parameter_schema"]["seed_cells"] = {
+            "type": "cells", "default": [], "max_items": 4,
+            "strip_min": 0, "strip_max": 32,
+            "led_min": 0, "led_max": 137,
+        }
+        descriptor["defaults"]["seed_cells"] = []
+        valid = deepcopy(self.document)
+        for slot in ("background", "fallback"):
+            valid[slot]["parameters"]["seed_cells"] = [[0, 0], [32, 137]]
+        normalize_browser_scene_document(
+            valid, catalog=catalog, purpose="activation"
+        )
+
+        invalid = deepcopy(valid)
+        for slot in ("background", "fallback"):
+            invalid[slot]["parameters"]["seed_cells"] = [[33, 0]]
+        with self.assertRaisesRegex(SceneValidationError, "strip must be from 0 to 32"):
+            normalize_browser_scene_document(
+                invalid, catalog=catalog, purpose="activation"
+            )
+
     def test_bounded_json_rejects_pollution_depth_size_count_and_nonfinite_values(self) -> None:
         nested: dict = {}
         cursor = nested

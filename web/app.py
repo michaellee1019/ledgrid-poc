@@ -7,6 +7,7 @@ real time.
 """
 
 import base64
+from copy import deepcopy
 import hashlib
 import inspect
 import json
@@ -1284,8 +1285,8 @@ class AnimationWebInterface:
                 response.headers['Cache-Control'] = 'no-store'
                 return response
             try:
-                document, scene = self._validated_browser_scene_document(
-                    payload.get('scene'), purpose='activation'
+                document, scene = self._validated_browser_activation_scene(
+                    payload.get('scene')
                 )
                 settings = self._canonical_activation_global_settings(
                     payload.get('global_settings')
@@ -2466,22 +2467,39 @@ class AnimationWebInterface:
             raw = getter()
             if isinstance(raw, dict):
                 raw = raw.get('components', [])
-            return decorate_catalog(raw or [], provider_policy=policy)
+            catalog = decorate_catalog(raw or [], provider_policy=policy)
+            return self._scene_v1_component_roles(catalog)
         loader = getattr(self.preview_manager, 'plugin_loader', None)
         if loader is not None:
             catalog_getter = getattr(loader, 'component_catalog', None)
             if callable(catalog_getter):
-                return decorate_catalog(
-                    catalog_getter(), provider_policy=policy
+                return self._scene_v1_component_roles(
+                    decorate_catalog(catalog_getter(), provider_policy=policy)
                 )
         # Small test doubles and legacy local integrations may expose only the
         # animation list.  Keep this adapter explicit and Python/background-only.
-        return decorate_catalog(({
+        catalog = decorate_catalog(({
             **item,
             'plugin_id': item.get('plugin_id', item.get('plugin_name')),
             'provider': item.get('provider', 'python'),
             'role': item.get('role', 'background'),
         } for item in self.preview_manager.list_animations()), provider_policy=policy)
+        return self._scene_v1_component_roles(catalog)
+
+    @staticmethod
+    def _scene_v1_component_roles(
+        catalog: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Adapt Scene v2 Widget ownership to the browser-scene v1 overlay slot."""
+        adapted = []
+        for component in catalog:
+            if (
+                component.get('provider') == 'python'
+                and component.get('plugin_id') == 'clock_overlay'
+            ):
+                component = {**component, 'role': 'overlay'}
+            adapted.append(component)
+        return adapted
 
     @staticmethod
     def _command_id(command: Any) -> Any:
@@ -2883,8 +2901,8 @@ class AnimationWebInterface:
         Dict[str, Any],
     ]:
         catalog = self._browser_scene_catalog()
-        document, host_scene = self._validated_browser_scene_document(
-            browser_scene, purpose='activation'
+        document, host_scene = self._validated_browser_activation_scene(
+            browser_scene
         )
         settings = self._canonical_activation_global_settings(global_settings)
         controller_status = (
@@ -2955,7 +2973,8 @@ class AnimationWebInterface:
         }), 428
 
     def _browser_composer_bootstrap(
-        self, *, observe_installation_profile: bool = True
+        self, *, observe_installation_profile: bool = True,
+        runtime_asset_root: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Build the complete read model needed after the app shell loads.
 
@@ -3054,7 +3073,11 @@ class AnimationWebInterface:
             if runtime.get('supported'):
                 asset_url = runtime.get('asset_url')
                 asset_path = (
-                    self.project_root / 'web' / str(asset_url).lstrip('/')
+                    (
+                        runtime_asset_root / Path(asset_url).name
+                        if runtime_asset_root is not None
+                        else self.project_root / 'web' / asset_url.lstrip('/')
+                    )
                     if isinstance(asset_url, str)
                     else None
                 )
@@ -3105,7 +3128,14 @@ class AnimationWebInterface:
                 'class_name': class_name,
                 'name': str(raw.get('name') or plugin_id.replace('_', ' ').title()),
                 'description': str(raw.get('description') or ''),
-                'role': str(raw.get('role') or 'background'),
+                # Scene v2 owns Clock Overlay as a Widget.  Browser scene v1
+                # still transports that fixed premultiplied plane through its
+                # single overlay slot, so adapt the role at this boundary.
+                'role': (
+                    'overlay'
+                    if provider == 'python' and plugin_id == 'clock_overlay'
+                    else str(raw.get('role') or 'background')
+                ),
                 'icon': str(raw.get('icon') or '✦'),
                 'parameter_schema': schema,
                 'defaults': defaults,
@@ -3251,6 +3281,7 @@ class AnimationWebInterface:
                     'validate_scene_url': '/api/v1/scene/validate',
                     'check_scene_url': '/api/v1/scene/checks',
                     'activate_scene_url': '/api/v1/scene',
+                    'current_scene_url': '/api/v1/scene',
                     'activation_status_url_template': (
                         '/api/v1/scene/activations/{activation_id}'
                     ),
@@ -3398,6 +3429,44 @@ class AnimationWebInterface:
                     'resolved by this manager'
                 )
         scene = browser_scene_to_host_scene(document, catalog=catalog)
+        return document, scene
+
+    def _validated_browser_activation_scene(
+        self, payload: Any,
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """Bind a browser document to the running manager before Check.
+
+        The deployed browser catalog can briefly lag the controller catalog
+        during a source update.  Browser normalization is still required for
+        its managed runtime identities, but it cannot be the final activation
+        authority: translate the document, then run the same provider,
+        parameter, preset, and implementation checks as the live host API.
+        """
+        migrated = deepcopy(payload)
+        if isinstance(migrated, dict):
+            for layer in migrated.get('layers', []):
+                if not isinstance(layer, dict):
+                    continue
+                component = layer.get('component')
+                if not isinstance(component, dict):
+                    continue
+                parameters = component.get('parameters')
+                if (
+                    component.get('provider') == 'python'
+                    and component.get('component_id') == 'clock_overlay'
+                    and isinstance(parameters, dict)
+                ):
+                    # Scene v2 originally authored Clock color locally.  The
+                    # current Clock resolves it from the semantic Scene palette,
+                    # so accept old saved scenes without forwarding that retired
+                    # field into the strict managed-component contract.
+                    parameters.pop('color', None)
+        document, _scene = self._validated_browser_scene_document(
+            migrated, purpose='activation'
+        )
+        scene = self._validated_scene_request(
+            document, browser_purpose='activation'
+        )
         return document, scene
 
     def _validated_browser_composer_import(
@@ -3638,7 +3707,12 @@ class AnimationWebInterface:
                     f'Provider-qualified component {provider}:{component_id} does not exist'
                 )
             if provider == 'python':
-                getter = getattr(self.preview_manager, 'get_animation_info', None)
+                loader = getattr(self.preview_manager, 'plugin_loader', None)
+                getter = getattr(loader, 'get_plugin', None)
+                if not callable(getter):
+                    # Compatibility for small integrations that expose only
+                    # the legacy background-animation information surface.
+                    getter = getattr(self.preview_manager, 'get_animation_info', None)
                 try:
                     loaded = getter(component_id) if callable(getter) else None
                 except (KeyError, TypeError, ValueError):
@@ -4585,9 +4659,22 @@ class AnimationWebInterface:
             if not self._legacy_preset_is_ambiguous(animation_name) else None
         )
         runtime_dir = self._animation_preset_dir(animation_name, provider)
-        for preset_dir in (curated_dir, legacy_dir, runtime_dir):
+        # A reviewed curated record replaces its exact pre-curation legacy
+        # save. Provider-qualified runtime records remain last so a genuinely
+        # newer user save can still override the shipped starting point.
+        for preset_dir in (legacy_dir, curated_dir, runtime_dir):
             if preset_dir is not None and preset_dir.is_dir():
                 paths.update({path.stem: path for path in sorted(preset_dir.glob('*.json'))})
+
+        # Runtime records keep their exact IDs and can still override a curated
+        # record with that exact ID. A separator-only legacy alias, however,
+        # is the pre-curation copy of the same look (for example
+        # ``twilight_sparkle`` beside ``twilight-sparkle``).  Preserve it on
+        # disk but suppress the duplicate card once the reviewed look ships.
+        curated_ids = {
+            path.stem for path in curated_dir.glob('*.json')
+        } if curated_dir is not None and curated_dir.is_dir() else set()
+        curated_aliases = {preset_id.replace('_', '-') for preset_id in curated_ids}
 
         if animation_name == 'clock_overlay' and provider == 'python':
             # The plugin-owned manifest is the source of truth for curated Clock
@@ -4604,6 +4691,12 @@ class AnimationWebInterface:
             # Deployment recovery snapshots are controller bookkeeping, not
             # authored looks.  Never present them as Composer starting points.
             if path.stem == 'before-deploy':
+                continue
+            if (
+                path.parent != curated_dir
+                and path.stem not in curated_ids
+                and path.stem.replace('_', '-') in curated_aliases
+            ):
                 continue
             payload = self._read_json_file(path)
             if (
@@ -4628,16 +4721,10 @@ class AnimationWebInterface:
     def _load_animation_preset(
         self, animation_name: str, preset_id: str, provider: str = 'python'
     ) -> Optional[Dict[str, Any]]:
-        """Read an exact-provider preset, safely migrating only unique legacy data."""
+        """Read runtime, reviewed curated, then unique legacy preset data."""
         path = self._animation_preset_path(animation_name, preset_id, provider)
         if path is None:
             return None
-        if not path.is_file():
-            legacy_dir = (
-                self._legacy_animation_preset_dir(animation_name)
-                if not self._legacy_preset_is_ambiguous(animation_name) else None
-            )
-            path = legacy_dir / path.name if legacy_dir is not None else path
         if not path.is_file() and provider == 'python':
             curated_dir = self._curated_animation_preset_dir(animation_name)
             path = curated_dir / path.name if curated_dir is not None else path
@@ -4645,6 +4732,12 @@ class AnimationWebInterface:
                 converted_ids = self._clock_overlay_conversion_preset_ids()
                 if converted_ids is None or preset_id not in converted_ids:
                     return None
+        if not path.is_file():
+            legacy_dir = (
+                self._legacy_animation_preset_dir(animation_name)
+                if not self._legacy_preset_is_ambiguous(animation_name) else None
+            )
+            path = legacy_dir / path.name if legacy_dir is not None else path
         if not path.is_file():
             return None
         payload = self._read_json_file(path)

@@ -26,6 +26,10 @@ FAST_CONFIG_FILES = {
     PurePosixPath("config/plant_pixel_map.json"),
     PurePosixPath("config/plant_pixel_map_32x138.json"),
     PurePosixPath("config/webcam_pixel_map.json"),
+    # ComponentPresetCatalog loads this release-owned membership at web
+    # process startup.  Omitting it from a fast release makes the candidate
+    # controller healthy while the web process exits before readiness.
+    PurePosixPath("web/composer_preset_membership.v1.json"),
 }
 FAST_RUNTIME_FILES = {
     # Every immutable app release is a valid systemd target.  Omitting the

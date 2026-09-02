@@ -2195,12 +2195,32 @@ def manager_scene_provider_policy(manager: Any) -> SceneProviderPolicy:
 
 
 def manager_component_catalog(manager: Any) -> list[dict]:
+    def scene_v1_catalog(items: Any) -> list[dict]:
+        """Adapt Scene v2 product roles at the legacy controller boundary."""
+
+        catalog = []
+        for descriptor in list(items or []):
+            if not isinstance(descriptor, Mapping):
+                catalog.append(descriptor)
+                continue
+            item = dict(descriptor)
+            if (
+                item.get("provider", "python") == "python"
+                and item.get("plugin_id") == "clock_overlay"
+            ):
+                # Clock is authored as a Scene v2 widget.  Scene v1 carries
+                # composited layers using its older background/overlay roles,
+                # so translate only this known transport representation.
+                item["role"] = "overlay"
+            catalog.append(item)
+        return catalog
+
     getter = getattr(manager, "list_components", None)
     if callable(getter):
         result = getter()
         if isinstance(result, dict):
             result = result.get("components", [])
-        return list(result or [])
+        return scene_v1_catalog(result)
     loader = getattr(manager, "plugin_loader", None)
     if loader is None:
         return []
@@ -2214,7 +2234,7 @@ def manager_component_catalog(manager: Any) -> list[dict]:
             "provider": manifest.get("provider", "python"),
             "role": manager._plugin_role(plugin_id),
         })
-    return catalog
+    return scene_v1_catalog(catalog)
 
 
 def manager_controller_runtime_digests(manager: Any) -> dict[str, str]:

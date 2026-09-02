@@ -130,6 +130,9 @@ class BrowserPythonBundleTests(unittest.TestCase):
 
         with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:
             names = archive.namelist()
+            self.assertIn("animation/core/component_catalog.py", names)
+            self.assertIn("animation/core/compositing.py", names)
+            self.assertIn("animation/core/base.py", names)
             self.assertEqual(names, sorted(names))
             self.assertTrue(all(
                 info.date_time == (1980, 1, 1, 0, 0, 0)
@@ -147,9 +150,9 @@ class BrowserPythonBundleTests(unittest.TestCase):
         authoritative_ids = loader.scan_plugins()
         discovered = discover_python_plugins(REPO_ROOT)
         self.assertEqual([item.plugin_id for item in discovered], authoritative_ids)
-        # The installation also ships one receiver-native plugin, which is
-        # intentionally excluded from the browser Python runtime bundle.
-        self.assertEqual(len(discovered), 50)
+        # Discovery and the authoritative Python catalog must remain in exact
+        # lockstep as standalone plugins are added or removed.
+        self.assertEqual(len(discovered), len(authoritative_ids))
         self.assertEqual(
             {item["pluginId"]: item["className"] for item in manifest["plugins"]},
             dict(SUPPORTED_PLUGINS),
@@ -177,6 +180,25 @@ class BrowserPythonBundleTests(unittest.TestCase):
         )
         self.assertEqual(overlay_spec["role"], "overlay")
         self.assertEqual(overlay_spec["frameFormat"], "premultiplied-rgba")
+
+    def test_bundle_imports_the_current_scene_and_overlay_dependencies_in_isolation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import sys; "
+                        f"sys.path.insert(0, {str(BUNDLE_PATH)!r}); "
+                        "import animation.plugins.sparkle; "
+                        "import animation.plugins.clock_overlay"
+                    ),
+                ],
+                cwd=temporary,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_worker_protocol_is_pinned_multi_instance_and_has_no_server_endpoint(self):
         worker = WORKER_PATH.read_text(encoding="utf-8")

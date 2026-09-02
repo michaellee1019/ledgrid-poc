@@ -24,6 +24,7 @@ from PIL import Image
 
 from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
 from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
+from animation.core.component_catalog import ComponentDescriptor
 from animation.core.compositing import (
     HostForegroundCompositor,
     HostSceneCompositor,
@@ -72,6 +73,8 @@ from animation.core.presentation_contracts import (
     OverlayFrame,
     OverlayPlacement,
     OverlayRef,
+    NEUTRAL_PLANT_INPUTS,
+    ResolvedScene,
     ResolvedVibe,
     SceneState,
     StalePolicy,
@@ -806,7 +809,19 @@ class AnimationManager:
                         resolved_vibe=resolved,
                         operator_tempo_scale=operator_tempo,
                     )
-                    animation.set_presentation_context(context)
+                    animation.set_runtime_plant_modifiers(
+                        context.plant_modifiers
+                    )
+                    animation.set_runtime_installation_profile(
+                        context.installation_profile_view
+                    )
+                    if (
+                        callable(getattr(animation, 'render_resolved_scene', None))
+                        and not self._scene_allows_compatibility_components
+                    ):
+                        component['force_changed'] = True
+                    else:
+                        animation.set_presentation_context(context)
             return
 
         animation = self.current_animation
@@ -1039,16 +1054,14 @@ class AnimationManager:
         self.plant_aware = bool(state.active)
         self._legacy_plant_aware_bridge = True
         with self._scene_state_guard():
-            if self.current_animation:
+            scene_mode = bool(getattr(self, '_scene_mode', False))
+            if self.current_animation and not scene_mode:
                 self.current_animation.update_parameters({
                     'plant_aware': self.plant_aware,
                     'plant_modifiers': state.to_dict(),
                 })
-            if getattr(self, '_scene_mode', False) and self._scene_overlay:
-                self._scene_overlay['animation'].update_parameters({
-                    'plant_aware': self.plant_aware,
-                    'plant_modifiers': state.to_dict(),
-                })
+        if scene_mode:
+            self._refresh_active_presentation_context()
         self._update_preview_plant_state()
         if changed:
             self._receiver_plant_revision = (
@@ -1066,16 +1079,14 @@ class AnimationManager:
         self._legacy_plant_aware_bridge = False
         self.plant_aware = bool(self.plant_modifier_state.active)
         with self._scene_state_guard():
-            if self.current_animation:
+            scene_mode = bool(getattr(self, '_scene_mode', False))
+            if self.current_animation and not scene_mode:
                 self.current_animation.update_parameters({
                     'plant_aware': False,
                     'plant_modifiers': self.plant_modifier_state.to_dict(),
                 })
-            if getattr(self, '_scene_mode', False) and self._scene_overlay:
-                self._scene_overlay['animation'].update_parameters({
-                    'plant_aware': False,
-                    'plant_modifiers': self.plant_modifier_state.to_dict(),
-                })
+        if scene_mode:
+            self._refresh_active_presentation_context()
         self._update_preview_plant_state()
         if changed:
             self._receiver_plant_revision = (
@@ -1114,7 +1125,12 @@ class AnimationManager:
     ) -> List[Dict[str, Any]]:
         """Return the descriptor-only component catalog used by scene clients."""
         catalog = self.plugin_loader.component_catalog()
-        catalog = [self._bind_managed_native_descriptor(item) for item in catalog]
+        catalog = [
+            self._scene_v1_component_descriptor(
+                self._bind_managed_native_descriptor(item)
+            )
+            for item in catalog
+        ]
         catalog.extend(receiver_static_component_catalog(self.feature_flags))
         return [
             descriptor for descriptor in catalog
@@ -1241,6 +1257,8 @@ class AnimationManager:
         if ref.provider is not ComponentProvider.PYTHON:
             raise ValueError(f"unsupported live scene provider: {ref.provider.value}")
         descriptor = self.plugin_loader.get_component_descriptor(ref.plugin_id)
+        if descriptor is not None:
+            descriptor = self._scene_v1_component_descriptor(descriptor)
         if (
             descriptor is None
             and allow_compatibility_component
@@ -1408,6 +1426,10 @@ class AnimationManager:
 
     def _plugin_role(self, plugin_name: str) -> str:
         """Resolve a role through the Phase 2B Python compatibility adapter."""
+        if plugin_name == 'clock_overlay':
+            # Clock is a Scene v2 widget, represented as the one fixed overlay
+            # while it crosses the legacy Scene v1 controller boundary.
+            return 'overlay'
         manifest = self.plugin_loader.plugin_manifests.get(plugin_name) or {}
         role = manifest.get('role')
         if role is None and isinstance(manifest.get('component'), dict):
@@ -1421,6 +1443,53 @@ class AnimationManager:
         ):
             return 'full_scene'
         return 'background'
+
+    def _scene_v1_component_descriptor(
+        self, descriptor: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Translate the strict product descriptor at the Scene v1 boundary."""
+
+        item = dict(descriptor)
+        if item.get('provider', 'python') == 'python':
+            component_id = item.get('plugin_id')
+            animation_class = self.plugin_loader.loaded_plugins.get(component_id)
+            descriptor_getter = getattr(
+                animation_class, 'component_descriptor', None
+            )
+            try:
+                product_descriptor = (
+                    descriptor_getter() if callable(descriptor_getter) else None
+                )
+            except (AttributeError, TypeError, ValueError):
+                product_descriptor = None
+            product_defaults = (
+                product_descriptor.default_parameters()
+                if isinstance(product_descriptor, ComponentDescriptor)
+                else None
+            )
+            product_parameters = (
+                set(product_defaults) if product_defaults is not None else None
+            )
+            schema = item.get('parameter_schema')
+            if isinstance(schema, dict):
+                item['parameter_schema'] = {
+                    name: definition for name, definition in schema.items()
+                    if name not in SCENE_EXTERNAL_COMPONENT_PARAMETERS
+                    and (
+                        product_parameters is None
+                        or name in product_parameters
+                    )
+                }
+            if product_defaults is not None:
+                item['defaults'] = product_defaults
+            elif isinstance(item.get('defaults'), dict):
+                item['defaults'] = {
+                    name: value for name, value in item['defaults'].items()
+                    if name not in SCENE_EXTERNAL_COMPONENT_PARAMETERS
+                }
+            if component_id == 'clock_overlay':
+                item['role'] = 'overlay'
+        return item
     
     def get_animation_info(self, animation_name: str) -> Optional[Dict[str, Any]]:
         """Get legacy RGB-animation details, excluding scene-only overlays."""
@@ -1435,6 +1504,20 @@ class AnimationManager:
         )
         effective['plant_modifiers'] = self.plant_modifier_state.to_dict()
         return effective
+
+    def _scene_component_config(
+        self,
+        config: Optional[Dict[str, Any]],
+        *,
+        allow_compatibility: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Keep installation-owned state out of strict Scene v2 parameters."""
+        compatibility = (
+            getattr(self, '_scene_allows_compatibility_components', False)
+            if allow_compatibility is None
+            else bool(allow_compatibility)
+        )
+        return self._component_config(config) if compatibility else dict(config or {})
 
     def _scene_state_guard(self) -> threading.RLock:
         lock = getattr(self, '_scene_lock', None)
@@ -2189,14 +2272,22 @@ class AnimationManager:
         try:
             background_config = dict(scene.background.resolved_parameters)
             background = background_class(
-                self.controller, self._component_config(background_config)
+                self.controller,
+                self._scene_component_config(
+                    background_config,
+                    allow_compatibility=_allow_compatibility_components,
+                ),
             )
             if isinstance(background, StatefulAnimationBase):
                 raise TypeError("Stateful animations cannot participate in composed scenes")
             if overlay_ref is not None:
                 overlay_config = dict(overlay_ref.component.resolved_parameters)
                 overlay = overlay_class(
-                    self.controller, self._component_config(overlay_config)
+                    self.controller,
+                    self._scene_component_config(
+                        overlay_config,
+                        allow_compatibility=_allow_compatibility_components,
+                    ),
                 )
                 if isinstance(overlay, StatefulAnimationBase):
                     raise TypeError(
@@ -4143,7 +4234,60 @@ class AnimationManager:
             operator_tempo_scale=operator_tempo,
             plant_modifiers=plant_modifiers,
         )
-        rendered = animation.generate_frame_with_context(context)
+        animation.set_runtime_plant_modifiers(context.plant_modifiers)
+        animation.set_runtime_installation_profile(
+            context.installation_profile_view
+        )
+        resolved_renderer = getattr(animation, 'render_resolved_scene', None)
+        if (
+            callable(resolved_renderer)
+            and not self._scene_allows_compatibility_components
+        ):
+            descriptor = animation.component_descriptor()
+            palette_id = {
+                'neutral': 'neutral',
+                'quiet': 'mist',
+                'cozy': 'ember',
+                'vivid': 'spectrum',
+                'celebration': 'spectrum',
+            }.get(resolved_vibe.state.vibe_id, 'neutral')
+            canonical_scene = {
+                'animation': {
+                    'provider': descriptor.provider.value,
+                    'component_id': descriptor.component_id,
+                    'version': descriptor.version,
+                    'role': descriptor.role.value,
+                    'parameters': dict(component['config']),
+                },
+                'look': {'palette_id': palette_id, 'pace': 1.0},
+            }
+            canonical_bytes = json.dumps(
+                canonical_scene, sort_keys=True, separators=(',', ':')
+            ).encode('utf-8')
+            required_inputs = (
+                descriptor.required_simulation_inputs
+                + descriptor.optional_simulation_inputs
+            )
+            resolved_context = ResolvedScene(
+                canonical_scene=canonical_scene,
+                canonical_bytes=canonical_bytes,
+                digest=hashlib.sha256(canonical_bytes).hexdigest(),
+                descriptor=descriptor,
+                parameters=dict(component['config']),
+                palette=(
+                    {'palette_id': palette_id}
+                    if descriptor.palette_policy.value == 'semantic'
+                    else None
+                ),
+                phase_time=context.scaled_elapsed,
+                plant_inputs={
+                    name: NEUTRAL_PLANT_INPUTS.get(name, 0.0)
+                    for name in required_inputs
+                },
+            )
+            rendered = resolved_renderer(resolved_context)
+        else:
+            rendered = animation.generate_frame_with_context(context)
         component['calls'] += 1
         component['frame_index'] += 1
 
@@ -4171,10 +4315,42 @@ class AnimationManager:
             )
         else:
             if isinstance(rendered, OverlayFrame):
-                raise TypeError(
-                    f"background {component['name']} returned OverlayFrame"
+                descriptor_getter = getattr(animation, 'component_descriptor', None)
+                descriptor = (
+                    descriptor_getter() if callable(descriptor_getter) else None
                 )
-            if isinstance(rendered, BaseFrame):
+                if (
+                    descriptor is None
+                    or getattr(descriptor.role, 'value', descriptor.role) != 'animation'
+                    or getattr(
+                        descriptor.alpha_behavior, 'value',
+                        descriptor.alpha_behavior,
+                    ) != 'premultiplied_rgba'
+                ):
+                    raise TypeError(
+                        f"background {component['name']} returned OverlayFrame"
+                    )
+                # Browser Scene v2 can place a qualified premultiplied Animation
+                # over its receiver-background preview.  The host fallback has
+                # one opaque background slot, so source-over-black is exactly
+                # the premultiplied RGB plane.  Reuse one component-owned buffer
+                # rather than allocating at the animation's source cadence.
+                pixels = component.get('opaque_background_pixels')
+                if pixels is None:
+                    pixels = np.empty(
+                        (self.controller.total_leds, 3), dtype=np.uint8
+                    )
+                    component['opaque_background_pixels'] = pixels
+                if rendered.changed or force_changed:
+                    np.copyto(pixels, rendered.pixels[:, :3])
+                frame = BaseFrame(
+                    pixels,
+                    changed=rendered.changed or force_changed,
+                    dirty_ranges=(
+                        None if force_changed else rendered.dirty_ranges
+                    ),
+                )
+            elif isinstance(rendered, BaseFrame):
                 frame = rendered
             else:
                 changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
