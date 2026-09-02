@@ -270,9 +270,21 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
             )
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
         self.assertIn("const endpoint = builtin ? '/built-ins/open' : '/scene';", script)
-        self.assertIn("if (state.status) renderStatus(state.status);", script)
+        self.assertIn("async function flushPublication()", script)
+        self.assertIn("renderStatus(result.status || result);", script)
         self.assertIn("refreshInFlight", script)
         self.assertIn("recoveryMatchesStatus", script)
+
+    def test_browser_defaults_live_and_coalesces_to_the_newest_valid_scene(self) -> None:
+        html = Path("web/templates/composer.html").read_text(encoding="utf-8")
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="liveAction" class="button primary wide" type="button">Stop</button>', html)
+        self.assertIn("status: {connected: true, running: true, armed: true", script)
+        self.assertIn("publication: {queued: null, inFlight: null, scheduled: false}", script)
+        self.assertIn("replacement?.resolve({coalesced: true});", script)
+        self.assertIn("await submit(state.scene);", script)
+        self.assertIn("${api}/${stop ? 'stop' : 'go-live'}", script)
 
     def test_invalid_authored_feedback_survives_status_poll_until_a_successful_edit(self) -> None:
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
@@ -282,7 +294,7 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
             script,
         )
         submit = script[
-            script.index("async function submit") : script.index("async function edit")
+            script.index("async function flushPublication") : script.index("async function edit")
         ]
         self.assertIn(
             "state.authoredValidationError = response.ok ? null :",
@@ -290,7 +302,7 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         )
         self.assertLess(
             submit.index("state.authoredValidationError = response.ok ? null :"),
-            submit.index("renderStatus(state.status)"),
+            submit.index("renderStatus(result.status || result)"),
         )
         refresh = script[
             script.index("async function refreshStatus") : script.index(

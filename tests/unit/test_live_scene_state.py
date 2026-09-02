@@ -68,6 +68,8 @@ class LiveSceneStateTests(unittest.TestCase):
         self.assertEqual(after["desired"], before["desired"])
         self.assertEqual(after["observed"], before["observed"])
         self.assertEqual(after["revision"], before["revision"])
+        self.assertTrue(after["armed"])
+        self.assertEqual(after["state"], "live")
 
     def test_retries_and_delayed_sequences_cannot_replace_newer_scene(self) -> None:
         first = self.state.submit(self._request(1), client_id="a", mutation_id="drag-1", client_sequence=1)

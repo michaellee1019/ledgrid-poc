@@ -19,8 +19,9 @@
   // A page lifetime client id makes a reload a new mutation stream.  Reusing
   // an id while resetting its sequence would make the next authored edit stale.
   const clientId = newUuid();
-  const state = { status: null, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
+  const state = { status: {connected: true, running: true, armed: true, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
     scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
+    publication: {queued: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
       adoptedLook: null, adoptedVibeId: null,
@@ -718,24 +719,64 @@
   function renderStatus(payload) {
     const status = payload.status || payload; state.status = status;
     state.revision = Math.max(state.revision || 0, status.revision || 0);
+    state.wall.dirty = Boolean(status.desired?.digest !== status.observed?.digest);
     $('#connectionState').textContent = status.connected ? (status.running ? 'Connected · output running' : 'Connected · output stopped') : 'Disconnected';
     $('#observedIdentity').textContent = identity(status.observed); $('#diagnosticObserved').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
     $('#sceneIdentity').textContent = identity(status.current); $('#saveState').textContent = state.dirty ? 'Unsaved changes' : (state.selection?.kind === 'look' ? 'Saved look' : 'Current scene');
-    $('#liveAction').textContent = status.running && status.armed && status.current && !state.wall.dirty ? 'Stop' : 'Go Live';
-    $('#operationMessage').textContent = state.authoredValidationError || status.last_error || (status.running ? (state.wall.dirty ? 'Draft differs from the wall. Use Go Live to publish it.' : 'Exact controller observation is live.') : 'Use Go Live to start this scene.');
+    $('#liveAction').textContent = status.running && status.armed ? 'Stop' : 'Go Live';
+    $('#operationMessage').textContent = state.authoredValidationError || status.last_error || (status.running && status.armed ? (status.current ? (state.wall.dirty ? 'Applying the newest valid edit.' : 'Live · the current scene is acknowledged.') : 'Live · choose or edit a scene to begin output.') : 'Stopped · Go Live explicitly re-arms output.');
   }
   async function acknowledgeUndo(revision) { state.history = []; state.redo = []; await fetch(`${api}/undo-ack`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, revision})}); }
   function schedulePreview() { const generation = ++state.previewGeneration; const candidate = sceneFromControls(); state.scene = candidate; previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
   function remember(previous) { state.history.push(previous); if (state.history.length > 40) state.history.shift(); state.redo = []; }
-  async function submit(scene, {builtin = false, rememberEdit = false, previous = null} = {}) {
+  async function flushPublication() {
+    state.publication.scheduled = false;
+    if (state.publication.inFlight || !state.publication.queued) return;
+    const entry = state.publication.queued;
+    state.publication.queued = null;
+    state.publication.inFlight = entry;
+    state.submitting = true;
+    try {
+      const response = await fetch(`${api}${entry.endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(entry.body)});
+      const result = await response.json();
+      state.authoredValidationError = response.ok ? null : (result.error || 'Current scene could not be accepted.');
+      if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result});
+      // A result always carries the server's authoritative desired/observed
+      // snapshot.  Do not infer output state from an old local draft.
+      renderStatus(result.status || result);
+      entry.resolve(result);
+    } catch (error) {
+      // Validation failures leave the live arm untouched. A later queued valid
+      // edit remains eligible to publish; only the explicit Stop action disarms.
+      entry.reject(error);
+    } finally {
+      state.publication.inFlight = null;
+      state.submitting = false;
+      if (state.publication.queued && !state.publication.scheduled) {
+        state.publication.scheduled = true;
+        queueMicrotask(flushPublication);
+      }
+    }
+  }
+  function submit(scene, {builtin = false, rememberEdit = false, previous = null} = {}) {
     if (rememberEdit) remember(previous || structuredClone(state.scene || defaultScene()));
     state.scene = scene; state.wall.dirty = true; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
     const endpoint = builtin ? '/built-ins/open' : '/scene';
     const body = builtin ? {scene, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence} : {origin: 'composer', scene, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence};
-    try { const response = await fetch(`${api}${endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const result = await response.json(); state.authoredValidationError = response.ok ? null : (result.error || 'Current scene could not be accepted.'); if (state.status) renderStatus(state.status); if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result}); return result; }
-    finally { state.submitting = false; }
+    return new Promise((resolve, reject) => {
+      const replacement = state.publication.queued;
+      state.publication.queued = {endpoint, body, resolve, reject};
+      // A drag may produce many intermediate states before the first network
+      // turn. Superseded drafts were never sent, so they are successful local
+      // coalesces rather than errors that could roll the UI back.
+      replacement?.resolve({coalesced: true});
+      if (!state.publication.inFlight && !state.publication.scheduled) {
+        state.publication.scheduled = true;
+        queueMicrotask(flushPublication);
+      }
+    });
   }
-  async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true, previous}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }
+  async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true, previous}); } catch (error) { if (!state.publication.queued && !state.publication.inFlight) { state.scene = previous; applyScene(previous); } $('#operationMessage').textContent = error.message; } }
   async function loadFireworksPresets() {
     try {
       const response = await fetch(`${api}/components/fireworks/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
@@ -869,12 +910,16 @@
     await refreshWallStatus({adopt: true});
   }
   async function liveAction() {
-    if (state.wall.activating || !state.scene) return;
-    const stop = Boolean(state.status?.running && state.status?.current && !state.wall.dirty);
-    state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = stop ? 'Stopping…' : 'Checking…';
-    $('#operationMessage').textContent = stop ? 'Checking the exact controller revision before Stop…' : 'Checking this scene against the exact controller revision…';
-    try { await guardedWallActivation(sceneFromControls(), !stop); }
-    catch (error) { renderStatus(wallStatus(error.message)); blockers({error: error.message, blockers: error.blockers}); }
+    if (state.wall.activating) return;
+    const stop = Boolean(state.status?.running && state.status?.armed);
+    state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = stop ? 'Stopping…' : 'Going Live…';
+    $('#operationMessage').textContent = stop ? 'Stopping output; subsequent edits stay local until Go Live.' : 'Re-arming live output with the newest valid scene…';
+    try {
+      const result = await requestJson(`${api}/${stop ? 'stop' : 'go-live'}`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId}),
+      });
+      renderStatus(result.status || result);
+    } catch (error) { renderStatus(state.status || wallStatus(error.message)); blockers({error: error.message, blockers: error.blockers}); }
     finally { state.wall.activating = false; $('#liveAction').disabled = false; renderStatus(state.status || wallStatus()); }
   }
   async function check() { try { const response = await fetch(`${api}/check`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene: sceneFromControls()})}); const result = await response.json(); $('#checkMessage').textContent = response.ok ? 'This is advisory; it does not change output.' : (result.error || 'Check could not complete.'); const details = $('#checkDetails'); details.replaceChildren(); [['Scene identity', identity(result.basis)], ['Connection', result.status?.connected ? 'Connected' : 'Disconnected'], ['Publication', result.status?.armed ? 'Immediate when edited' : 'Use Go Live to arm output']].forEach(([term, description]) => { const entry = document.createElement('div'); entry.innerHTML = `<dt>${term}</dt><dd>${description}</dd>`; details.append(entry); }); if (result.status) renderStatus(result); openDialog($('#checkDialog')); } catch (error) { $('#operationMessage').textContent = error.message; } }
@@ -920,16 +965,11 @@
   [['gradient','Gradient Field'],['rainbow','Rainbow River'],['solid','Solid Glow'],['sparkle','Sparkle Night'],['wave','Wave Ribbons']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   [['circadian_window','Circadian Window'],['cloud_canyon','Cloud Canyon'],['desert_wind','Desert Wind'],['moonlit_fog_banks','Moonlit Fog Banks'],['rain_on_glass','Rain on Glass'],['tidal_bioluminescence','Tidal Bioluminescence'],['waterfall_veil','Waterfall Veil']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   [['cellular_tapestry','Cellular Tapestry'],['flow_field_silk','Flow-Field Silk'],['frostwork','Frostwork'],['living_stained_glass','Living Stained Glass'],['quasicrystal_bloom','Quasicrystal Bloom'],['living_ecosystem','Living Ecosystem'],['physarum_network','Physarum Network'],['reaction_diffusion_garden','Reaction-Diffusion Garden'],['wind_in_the_reeds','Wind in the Reeds']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
-  async function refreshStatus() { if (state.refreshInFlight || state.wall.activating) return; state.refreshInFlight = true; try { await refreshWallStatus(); } catch (error) { renderStatus(wallStatus(error.message)); } finally { state.refreshInFlight = false; } }
+  async function refreshStatus() { if (state.refreshInFlight || state.wall.activating) return; state.refreshInFlight = true; try { renderStatus(await requestJson(`${api}/status?client_id=${encodeURIComponent(clientId)}`)); } catch (error) { renderStatus({...state.status, last_error: error.message}); } finally { state.refreshInFlight = false; } }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene or use Go Live to replace it.`; }
   async function hydrateCurrentScene() {
-    try {
-      const payload = await refreshWallStatus({adopt: true});
-      if (payload.scene) return;
-    } catch (wallError) {
-      $('#operationMessage').textContent = `${wallError.message} Loading the last local draft instead.`;
-    }
+    await refreshStatus();
     let response;
     try { response = await fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`); }
     catch (_) { const error = new Error('Local Composer server unavailable.'); error.serverUnavailable = true; throw error; }
@@ -937,8 +977,12 @@
     if (!response.ok) { const error = new Error(body.error || 'Current scene recovery is unavailable.'); if (response.status >= 500) { error.serverUnavailable = true; throw error; } recoverFromInvalidRecovery(body); return; }
     if (body.recovery) {
       state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null;
-      state.dirty = false; state.wall.dirty = true; applyScene(state.scene); renderStatus(wallStatus());
-    } else { applyScene(defaultScene()); state.wall.dirty = true; renderStatus(wallStatus()); }
+      state.dirty = false; applyScene(state.scene);
+    } else { applyScene(defaultScene()); state.scene = defaultScene(); state.dirty = false; }
+    // Default-live is reconciled through the same canonical submit path as an
+    // edit. Reloading therefore republishes only if this is the newest valid
+    // scene, while a deliberately stopped session remains stopped.
+    await submit(state.scene);
   }
   hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();
