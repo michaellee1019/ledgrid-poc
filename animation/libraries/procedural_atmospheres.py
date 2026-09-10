@@ -11,7 +11,7 @@ import numpy as np
 from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.plant_awareness import PlantModifierState
-from animation.core.presentation_contracts import ResolvedScene
+from animation.core.presentation_contracts import OverlayFrame, ResolvedScene
 
 
 MOOD_PALETTES: Mapping[str, Mapping[str, tuple[float, float, float]]] = {
@@ -73,6 +73,11 @@ class ProceduralAtmosphereBase(AnimationBase):
     # Only the three accepted adapters opt in.  Other legacy atmospheres keep
     # their exact component-local palette behavior until separately reviewed.
     SCENE_SEMANTIC_PALETTE = False
+    # Rain and Waterfall opt into the Scene v2 foreground plane below.  Keep
+    # the remaining atmosphere family on its original opaque RGB path until a
+    # component-specific composition review accepts a change.
+    PREMULTIPLIED_RGBA = False
+    FRAME_FORMAT = "rgb_uint8_strip_major"
 
     def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
         super().__init__(controller, config)
@@ -92,7 +97,14 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._y = np.linspace(0.0, 1.0, self.height, dtype=np.float32)[None, :]
         self._rgb = np.empty((self.width, self.height, 3), dtype=np.float32)
         self._field = np.empty((self.width, self.height), dtype=np.float32)
+        self._coverage = np.zeros((self.width, self.height), dtype=np.float32)
         self._cached_frame = None
+        self._rgba_buffers = (
+            np.zeros((self.get_pixel_count(), 4), dtype=np.uint8),
+            np.zeros((self.get_pixel_count(), 4), dtype=np.uint8),
+        ) if self.PREMULTIPLIED_RGBA else ()
+        self._rgba_buffer_index = 0
+        self._rgba_revision = 0
         self._last_source_tick = None
         self._last_presentation_key = None
         self._last_elapsed = None
@@ -103,10 +115,12 @@ class ProceduralAtmosphereBase(AnimationBase):
     @classmethod
     @lru_cache(maxsize=None)
     def component_descriptor(cls) -> ComponentDescriptor:
-        """Describe this renderer as an opaque, semantic Scene v2 animation."""
+        """Describe this renderer's qualified Scene v2 frame contract."""
         return ComponentDescriptor(
             component_id=cls.COMPONENT_ID, version=1, provider="python", role="animation",
-            timing_policy="scaled_context", alpha_behavior="opaque", palette_policy="semantic",
+            timing_policy="scaled_context",
+            alpha_behavior=("premultiplied_rgba" if cls.PREMULTIPLIED_RGBA else "opaque"),
+            palette_policy="semantic",
             plant_capabilities=("effect_intent",), fidelity_exceptions=(),
             defaults=cls.COMPONENT_DEFAULTS, parameter_normalizer=cls._normalized_parameters,
         )
@@ -222,6 +236,8 @@ class ProceduralAtmosphereBase(AnimationBase):
         presentation_key = self._presentation_key(tick)
         same_source_tick = self._last_source_tick == tick and self._cached_frame is not None
         if same_source_tick and self._last_presentation_key == presentation_key:
+            if self.PREMULTIPLIED_RGBA:
+                return OverlayFrame(self._cached_frame, revision=self._rgba_revision, changed=False, dirty_ranges=())
             return self.rendered_frame(self._cached_frame, changed=False)
 
         if not same_source_tick:
@@ -234,10 +250,25 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._last_source_tick = tick
         self._last_presentation_key = presentation_key
         self._render_scene(self._simulation_time)
-        self._apply_background()
+        if not self.PREMULTIPLIED_RGBA:
+            self._apply_background()
         self._apply_plant_modifiers()
         self._rgb *= float(np.clip(self.params.get("brightness", .46), 0.0, 1.0))
         np.clip(self._rgb, 0.0, 255.0, out=self._rgb)
+        if self.PREMULTIPLIED_RGBA:
+            # Start every source frame transparent.  ``_coverage`` is a
+            # component-local wet-material mask, not an RGB substrate, so the
+            # receiver-native background remains visible between droplets.
+            alpha = np.rint(np.clip(self._coverage, 0.0, 1.0) * 255.0).astype(np.uint8)
+            self._rgba_buffer_index = 1 - self._rgba_buffer_index
+            frame = self._rgba_buffers[self._rgba_buffer_index]
+            frame.fill(0)
+            frame[:, 3] = alpha.reshape(-1)
+            rgb = np.rint(self._rgb * (alpha[..., None] / 255.0)).astype(np.uint8)
+            frame[:, :3] = np.minimum(rgb.reshape((-1, 3)), frame[:, 3:4])
+            self._cached_frame = frame
+            self._rgba_revision += 1
+            return OverlayFrame(frame, revision=self._rgba_revision, changed=True)
         frame = self.next_frame_buffer(clear=False)
         np.copyto(frame, self._rgb.reshape((-1, 3)), casting="unsafe")
         self._cached_frame = frame
@@ -339,7 +370,18 @@ class ProceduralAtmosphereBase(AnimationBase):
             track = np.exp(-((dx / (.018 + .012 * density)) ** 2))
             tail = np.exp(-np.maximum(0.0, head - self._y) * (20.0 - 8.0 * density))
             trails += track * tail * (self._y <= head + .018)
+        if self.PREMULTIPLIED_RGBA:
+            # Tracks read as refractive highlights while sparse city glints
+            # retain enough coverage to describe wet glass without veiling the
+            # native background behind the foreground plane.
+            glints = np.maximum(city - .125, 0.0) * 1.8
+            self._coverage[:] = np.clip(np.sqrt(trails) * (.42 + .38 * density) + glints, 0.0, .84)
         self._paint(np.clip(field + trails * (.14 + .16 * density), 0, 1), trails * .12)
+        if self.PREMULTIPLIED_RGBA:
+            # The glass highlights need enough chroma after premultiplication
+            # to remain legible over both native background luminance ranges.
+            accent_gain = self._semantic_mood_curve()[3] if self._semantic_palette_id() is not None else 1.0
+            self._rgb += trails[..., None] * self._palette()[2] * (.76 * accent_gain)
 
     def _aurora(self, t: float, density: float) -> None:
         field = np.full_like(self._field, .025)
@@ -375,7 +417,14 @@ class ProceduralAtmosphereBase(AnimationBase):
             streams += np.exp(-((dx / (.012 + .01 * density)) ** 2)) * pulse
         ledges = (np.sin(self._x * 19.0 + self._y * 48.0 + self._phase[10]) > .94).astype(np.float32)
         mist = np.exp(-((self._y - (.72 + .08 * np.sin(self._x * 11.0))) / .06) ** 2) * density
+        if self.PREMULTIPLIED_RGBA:
+            # Streams carry the strongest coverage, with ledges and mist
+            # contributing a deliberately bounded, translucent breakup.
+            self._coverage[:] = np.clip(streams * (.25 + .34 * density) + ledges * .16 + mist * .26, 0.0, .86)
         self._paint(np.clip(field + streams * .23 + ledges * .05 + mist * .1, 0, 1), mist * .22)
+        if self.PREMULTIPLIED_RGBA:
+            high = self._palette()[2]
+            self._rgb += (streams[..., None] * .42 + mist[..., None] * .30) * high
 
     def _tidal(self, t: float, density: float) -> None:
         surface = .47 + .035 * np.sin(self._x * 8.0 - t * .42) + .018 * np.sin(self._x * 19.0 + t * .25)

@@ -88,7 +88,10 @@ class AtmosphereShowcaseSceneV2Tests(unittest.TestCase):
             animation = renderer(self.controller, renderer.COMPONENT_DEFAULTS)
             left = animation.generate_frame(.0, 0).pixels.copy()
             right = animation.generate_frame(.2, 1).pixels.copy()
-            self.assertEqual(left.shape, (33 * 138, 3)); self.assertEqual(left.dtype, np.uint8)
+            channels = 4 if renderer in {RainOnGlassAnimation, WaterfallVeilAnimation} else 3
+            self.assertEqual(left.shape, (33 * 138, channels)); self.assertEqual(left.dtype, np.uint8)
+            if channels == 4:
+                self.assertTrue(np.all(left[:, :3] <= left[:, 3:4]))
             self.assertFalse(np.array_equal(left, right))
             fingerprints.add(left.tobytes())
             scene = self._scene(component_id); scene["animation"]["parameters"] = dict(renderer.COMPONENT_DEFAULTS)
@@ -141,10 +144,16 @@ class AtmosphereShowcaseSceneV2Tests(unittest.TestCase):
                     candidate = copy.deepcopy(source)
                     candidate["look"]["palette_id"] = palette_id
                     candidate["animation"]["parameters"]["mood"] = mood
-                    context = resolve_scene(candidate, catalog, monotonic_elapsed=2.0)
-                    mood_frames.append(renderer(self.controller, candidate["animation"]["parameters"]).render_resolved_scene(context).pixels)
+                    canonical = normalize_composer_scene({"origin": "composer", "scene": candidate}, catalog)
+                    mood_frames.append(ComposerFinalPreview(catalog, ROOT).render(
+                        canonical, 2.0, datetime(2026, 9, 1).astimezone(),
+                    ).pixels.copy())
                 delta = np.abs(mood_frames[0].astype(np.int16) - mood_frames[1].astype(np.int16))
-                self.assertGreater(float(delta.mean()), 4.0, f"{component_id}/{palette_id} mood separation")
+                # Rain and Waterfall now occupy a deliberately sparse RGBA
+                # plane.  Their local mood only paints wet material, while
+                # Cloud retains its full opaque scene coverage.
+                minimum_mean = .12 if renderer.PREMULTIPLIED_RGBA else 4.0
+                self.assertGreater(float(delta.mean()), minimum_mean, f"{component_id}/{palette_id} mood separation")
                 self.assertGreater(int(delta.max()), 12, f"{component_id}/{palette_id} mood separation")
 
         self.assertTrue(all(len(fingerprints) == 4 for fingerprints in palette_fingerprints.values()))

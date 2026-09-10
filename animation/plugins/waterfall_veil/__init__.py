@@ -14,6 +14,8 @@ class WaterfallVeilAnimation(ProceduralAtmosphereBase):
     PLANT_MODIFIER_SUPPORT = frozenset({"shadow", "illuminate", "emitter"})
     COMPONENT_ID = "waterfall_veil"
     SCENE_SEMANTIC_PALETTE = True
+    PREMULTIPLIED_RGBA = True
+    FRAME_FORMAT = "rgba_uint8_premultiplied_strip_major"
     COMPONENT_DEFAULTS = {
         "motion": .42, "density": .46, "mood": "garden", "background": "soft",
         "background_level": .18, "source_fps": 30.0, "seed": 4401,
