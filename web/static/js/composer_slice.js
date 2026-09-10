@@ -1095,6 +1095,7 @@
     lava_lamp: {label: 'Lava Lamp', accepted: 'Lava stirred on the installed final scene.', rejected: 'Lava Lamp did not accept that stir.'},
     flame_burst: {label: 'Flame Burst', accepted: 'Flame Burst ignited on the installed final scene.', rejected: 'Flame Burst did not accept that ignition.'},
     fluid_tank: {label: 'Fluid Tank', accepted: 'Fluid Tank pulsed on the installed final scene.', rejected: 'Fluid Tank did not accept that flow pulse.'},
+    pinball: {label: 'Arcade Pinball', accepted: 'Pinball flipper nudged on the installed final scene.', rejected: 'Arcade Pinball did not accept that flipper nudge.'},
   });
   async function triggerInstrumentAtPointer(event) {
     const componentId = state.scene?.animation?.component_id;

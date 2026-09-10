@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import math
 import random
+import threading
+from collections import deque
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -41,6 +43,14 @@ class PinballAnimation(AnimationBase):
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
     CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
     PLANT_MODIFIER_SUPPORT = frozenset()
+    INTERACTION_TYPES = frozenset(("primary",))
+    COMPOSER_INTERACTIONS = {
+        "point": {"kind": "primary", "label": "Flip and nudge local preview"},
+    }
+    MAX_PENDING_PRIMARY_EVENTS = 1
+    MAX_PRIMARY_SPEED = 124.0
+    PRIMARY_FLIPPER_KICK = 36.0
+    PRIMARY_NUDGE_KICK = 16.0
     DEFAULTS = MappingProxyType({"table_tick_hz": 40.5, "render_fps": 100.0, "chaos": .72, "seed": 95})
     COMPONENT_DESCRIPTOR = ComponentDescriptor(
         component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE,
@@ -109,6 +119,13 @@ class PinballAnimation(AnimationBase):
         self.last_elapsed: Optional[float] = None
         self.last_render_elapsed: Optional[float] = None
         self.last_rendered_frame: Optional[np.ndarray] = None
+        # Input is deliberately a one-slot transient queue. It never becomes
+        # Scene state, and a pointer-event burst cannot create later catch-up.
+        self._interaction_lock = threading.Lock()
+        self._primary_events = deque(maxlen=self.MAX_PENDING_PRIMARY_EVENTS)
+        self._primary_interactions_received = 0
+        self._primary_interactions_applied = 0
+        self._primary_flipper_flash = 0.0
         self.bursts: List[Burst] = []
         self.lamps = [False] * 5
         self._next_mode_at = 5.5
@@ -210,6 +227,55 @@ class PinballAnimation(AnimationBase):
         light = source.max(axis=1, keepdims=True) / 255.0
         np.clip(source * .56 + light * tint * 112.0, 0, 255, out=source)
         frame[:] = source.astype(np.uint8)
+
+    def handle_interaction(
+        self, kind: str, x: float, y: float, strength: float = 1.0,
+    ) -> bool:
+        """Queue one bounded flipper/nudge input for the next simulation tick."""
+        values = (x, y, strength)
+        if (
+            kind != "primary"
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in values
+            )
+        ):
+            return False
+        x_value, y_value, strength_value = map(float, values)
+        if (
+            not 0.0 <= x_value < self.width
+            or not 0.0 <= y_value < self.height
+            or not 0.0 < strength_value <= 1.0
+        ):
+            return False
+        with self._interaction_lock:
+            self._primary_events.append((x_value, y_value, strength_value))
+            self._primary_interactions_received += 1
+        # The input needs a fresh presentation, but it does not advance
+        # simulation time. _update consumes the event at the next source tick.
+        self.last_render_elapsed = None
+        return True
+
+    def _drain_primary_interaction(self) -> None:
+        with self._interaction_lock:
+            event = self._primary_events.pop() if self._primary_events else None
+            self._primary_events.clear()
+        if event is None:
+            return
+        x, _y, strength = event
+        center = (self.width - 1) * 0.5
+        horizontal = (x - center) / max(1.0, center)
+        self.ball_vx += horizontal * self.PRIMARY_NUDGE_KICK * strength
+        self.ball_vy -= self.PRIMARY_FLIPPER_KICK * strength
+        speed = math.hypot(self.ball_vx, self.ball_vy)
+        if speed > self.MAX_PRIMARY_SPEED:
+            scale = self.MAX_PRIMARY_SPEED / speed
+            self.ball_vx *= scale
+            self.ball_vy *= scale
+        self._primary_flipper_flash = 0.16
+        self._primary_interactions_applied += 1
 
     # Drawing helpers operate in logical top-to-bottom table coordinates.
     def _pixel(self, image: np.ndarray, x: int, y: int, color: Color, additive: bool = False):
@@ -563,6 +629,7 @@ class PinballAnimation(AnimationBase):
         if dt <= 0.0:
             return
         self._sim_time += dt
+        self._drain_primary_interaction()
         if self._plant_portal_cooldown_updates > 0:
             self._plant_portal_cooldown_updates -= 1
         if (self._plant_portal_exit_region is not None
@@ -576,6 +643,7 @@ class PinballAnimation(AnimationBase):
         self._hit_flash = max(0.0, self._hit_flash - dt * 4.0)
         self._failure_flash = max(0.0, self._failure_flash - dt * 2.5)
         self._success_flash = max(0.0, self._success_flash - dt * 2.2)
+        self._primary_flipper_flash = max(0.0, self._primary_flipper_flash - dt)
         self.display_score += (self.score - self.display_score) * min(1.0, dt * 12.0)
 
         for burst in self.bursts:
@@ -817,7 +885,7 @@ class PinballAnimation(AnimationBase):
             )
 
         # Flippers alternate rapidly with layered neon edges.
-        flip = int(phase * 9.0) % 2
+        flip = 1 if self._primary_flipper_flash > 0.0 else int(phase * 9.0) % 2
         fy = self.height - 16
         center = self.width // 2
         self._line(canvas, 4, fy + flip + 1, center - 2, fy - 2 + flip, self.MAGENTA)
@@ -874,4 +942,7 @@ class PinballAnimation(AnimationBase):
             "plant_bumper_hits": self._plant_bumper_hits,
             "plant_teleports": self._plant_teleports,
             "plant_hazards": self._plant_hazards,
+            "primary_interactions_received": self._primary_interactions_received,
+            "primary_interactions_applied": self._primary_interactions_applied,
+            "primary_interaction_pending": bool(self._primary_events),
         }

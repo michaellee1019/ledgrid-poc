@@ -2144,7 +2144,7 @@ class AnimationWebInterface:
                         raise ValueError('Composer interaction requires a live observed scene')
                     canonical = self._composer_recovery_scene(composer['current_scene'])
                     component_id = canonical.scene['animation']['component_id']
-                    if component_id not in {"lava_lamp", "flame_burst", "fluid_tank"}:
+                    if component_id not in {"lava_lamp", "flame_burst", "fluid_tank", "pinball"}:
                         raise ValueError('the published Composer animation does not accept primary interaction')
                     if kind != 'primary':
                         raise ValueError("interaction 'primary' is required by the published Composer animation")
