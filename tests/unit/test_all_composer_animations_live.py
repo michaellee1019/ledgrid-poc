@@ -116,7 +116,6 @@ class AllComposerAnimationsLiveTests(unittest.TestCase):
         by_id = {
             item["plugin_id"]: item for item in catalog
             if item.get("provider") == "python"
-            and item.get("role") == "background"
         }
         profile_digest = bootstrap["installation_profile"]["digest"]
         controller = PreviewLEDController(strips=33, leds_per_strip=138)
@@ -128,6 +127,21 @@ class AllComposerAnimationsLiveTests(unittest.TestCase):
                 component_id = descriptor.component_id
                 with self.subTest(component=component_id):
                     published = by_id[component_id]
+                    if published["role"] == "animation":
+                        # Browser-scene v1 has a background-only activation
+                        # document. Premultiplied Scene-v2 animations publish
+                        # separately into the animation slot instead of being
+                        # coerced through that RGB legacy binding.
+                        self.assertEqual(
+                            published["scene_compatibility"],
+                            {
+                                "selectable": True,
+                                "slots": ["animation"],
+                                "diagnostic": None,
+                            },
+                        )
+                        self.assertTrue(published["browser_runtime"]["supported"])
+                        continue
                     managed = published["browser_capabilities"]["managed_identity"]
                     binding = {
                         "provider": managed["provider"],

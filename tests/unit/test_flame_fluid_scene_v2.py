@@ -60,7 +60,8 @@ class FlameFluidSceneV2Tests(unittest.TestCase):
             for index in range(90):
                 a, b = left.generate_frame(index / 20, index), right.generate_frame(index / 20, index)
                 np.testing.assert_array_equal(a.pixels, b.pixels); frames.append(a.pixels.copy())
-            self.assertEqual(frames[-1].shape, (33 * 138, 3)); self.assertLessEqual(left.cadence_snapshot()["simulation_hz"], 30.0)
+            channels = 4 if renderer is FlameBurstAnimation else 3
+            self.assertEqual(frames[-1].shape, (33 * 138, channels)); self.assertLessEqual(left.cadence_snapshot()["simulation_hz"], 30.0)
             self.assertTrue(left.handle_interaction("primary", 8., 60., 1.)); self.assertFalse(left.handle_interaction("secondary", 8., 60., 1.)); self.assertFalse(left.handle_interaction("primary", 33., 60., 1.))
             varied = renderer(self.controller, {"seed": 77, **modified})
             varied.generate_frame(0., 0)
@@ -120,14 +121,23 @@ class FlameFluidSceneV2Tests(unittest.TestCase):
         client = interface.app.test_client()
         for sequence, renderer in enumerate((LavaLampAnimation, FlameBurstAnimation, FluidTankAnimation), start=1):
             scene = _current_scene(); scene["animation"] = {"component_id": renderer.COMPONENT_ID, "version": 1, "provider": "python", "role": "animation", "parameters": dict(renderer.DEFAULTS)}
-            client.post("/api/composer/scene", json={"origin": "composer", "scene": scene, "client_id": "published", "client_sequence": sequence})
+            client.post("/api/composer/scene", json={"origin": "composer", "scene": scene, "client_id": "published", "client_sequence": sequence * 10})
             self.assertEqual(client.post("/api/composer/stop", json={"client_id": "published"}).status_code, 200)
-            self.assertEqual(client.post("/api/composer/go-live", json={"client_id": "published"}).status_code, 200)
+            resumed_scene = copy.deepcopy(scene)
+            resumed_scene["look"]["pace"] = 1.0 + sequence / 10.0
+            resumed = client.post("/api/composer/scene", json={
+                "origin": "composer", "scene": resumed_scene,
+                "client_id": "published", "client_sequence": sequence * 10 + 1,
+            })
+            self.assertEqual(resumed.status_code, 200, resumed.get_json())
+            self.assertTrue(resumed.get_json()["published"])
+            self.assertEqual(resumed.get_json()["state"], "live")
+            self.assertTrue(resumed.get_json()["armed"])
             accepted = client.post("/api/interaction", json={"kind": "primary", "x": 8., "y": 60., "strength": 1.})
             self.assertEqual(accepted.status_code, 200); self.assertEqual(accepted.get_json()["component_id"], renderer.COMPONENT_ID)
             self.assertEqual(client.post("/api/interaction", json={"kind": "secondary", "x": 8., "y": 60., "strength": 1.}).status_code, 400)
         unrelated = _current_scene()
-        client.post("/api/composer/scene", json={"origin": "composer", "scene": unrelated, "client_id": "published", "client_sequence": 4})
+        client.post("/api/composer/scene", json={"origin": "composer", "scene": unrelated, "client_id": "published", "client_sequence": 40})
         self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8., "y": 60., "strength": 1.}).status_code, 400)
         client.post("/api/composer/stop", json={"client_id": "published"})
         self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8., "y": 60., "strength": 1.}).status_code, 400)

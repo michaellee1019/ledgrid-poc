@@ -148,6 +148,19 @@ class BrowserComposerCatalogAcceptanceTests(unittest.TestCase):
 
         self.assertNotIn("python:painter", by_key)
 
+    def test_event_rgba_animations_keep_their_canonical_browser_contract(self) -> None:
+        payload = self._bootstrap(AnimationPipelineFeatureFlags())
+        by_key = {component["key"]: component for component in payload["components"]}
+        for plugin_id in ("fireworks", "flame_burst"):
+            with self.subTest(component=plugin_id):
+                component = by_key[f"python:{plugin_id}"]
+                self.assertEqual(component["role"], "animation")
+                self.assertEqual(
+                    component["scene_compatibility"],
+                    {"selectable": True, "slots": ["animation"], "diagnostic": None},
+                )
+                self.assertEqual(self.python_roles[plugin_id], "animation")
+
     def test_every_python_browser_payload_uses_managed_profile_geometry_only(self) -> None:
         payload = self._bootstrap(AnimationPipelineFeatureFlags())
         retired = {"plant_mask_path", "plant_globe_mask_path"}

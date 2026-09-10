@@ -18,6 +18,50 @@ BUNDLE_PATH = REPO_ROOT / "web/static/generated/composer/ledgrid_python_runtime.
 RESULT_PREFIX = "BROWSER_MATRIX_RESULT="
 
 
+EVENT_RGBA_MATRIX_SCRIPT = r'''
+import json
+import pathlib
+import sys
+
+bundle_root = pathlib.Path(sys.argv[1])
+repo_root = pathlib.Path(sys.argv[2])
+profile_path = pathlib.Path(sys.argv[3])
+profile_digest = sys.argv[4]
+sys.path.insert(0, str(bundle_root))
+from ledgrid_browser_runtime import BrowserPreviewRuntime, PLUGIN_SPECS
+
+cases = {
+    "fireworks": [
+        ("default", {}),
+        ("grand-finale", json.loads((repo_root / "animation/plugins/fireworks/presets/grand-finale.json").read_text())["params"]),
+    ],
+    "flame_burst": [
+        ("default", {}),
+        ("afterburner", json.loads((repo_root / "animation/plugins/flame_burst/presets/afterburner.json").read_text())["params"]),
+    ],
+}
+result = []
+for plugin_id, plugin_cases in cases.items():
+    spec = PLUGIN_SPECS[plugin_id]
+    assert spec.role == "animation", spec
+    assert spec.frame_format == "premultiplied-rgba", spec
+    for label, params in plugin_cases:
+        runtime = BrowserPreviewRuntime()
+        runtime.bind_installation_profile_path(str(profile_path), profile_digest)
+        ready = runtime.initialize(
+            plugin_id, spec.class_name, {"width": 33, "height": 138}, params,
+            installation_profile_digest=profile_digest,
+        )
+        assert ready["role"] == "animation", ready
+        assert ready["frameFormat"] == "premultiplied-rgba", ready
+        rendered = runtime.render(1.0, 1, wall_time=1787774401.0)
+        assert rendered["frameFormat"] == "premultiplied-rgba", rendered
+        assert len(runtime.frame_bytes) == 33 * 138 * 4
+        result.append(f"{plugin_id}:{label}")
+print("BROWSER_EVENT_RGBA_RESULT=" + json.dumps(result))
+'''
+
+
 MATRIX_SCRIPT = r'''
 import json
 import pathlib
@@ -49,7 +93,7 @@ def render_case(label, plugin_id, class_name, params):
         spec = PLUGIN_SPECS[plugin_id]
         assert ready["role"] == spec.role
         assert ready["frameFormat"] == spec.frame_format
-        channels = 4 if spec.role == "overlay" else 3
+        channels = 4 if spec.frame_format == "premultiplied-rgba" else 3
         first = runtime.render(0.0, 0, wall_time=1787774400.0)
         expected_length = 33 * 138 * channels
         assert len(runtime.frame_bytes) == expected_length
@@ -109,6 +153,19 @@ elif clock_overlay.frame_format != "premultiplied-rgba":
         "error": "clock_overlay must transfer premultiplied RGBA", "traceback": "",
     })
 
+for plugin_id in ("fireworks", "flame_burst"):
+    spec = PLUGIN_SPECS.get(plugin_id)
+    if spec is None or spec.role != "animation":
+        failures.append({
+            "case": f"catalog:{plugin_id}", "plugin": plugin_id,
+            "error": f"{plugin_id} must be published as an animation", "traceback": "",
+        })
+    elif spec.frame_format != "premultiplied-rgba":
+        failures.append({
+            "case": f"catalog:{plugin_id}", "plugin": plugin_id,
+            "error": f"{plugin_id} must transfer premultiplied RGBA", "traceback": "",
+        })
+
 result = {
     "plugins": defaults_rendered,
     "presets": presets_rendered,
@@ -123,6 +180,29 @@ if failures:
 
 
 class BrowserPythonCatalogMatrixTests(unittest.TestCase):
+    def test_event_rgba_defaults_and_representative_presets_render_from_bundle(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:
+                archive.extractall(temp_dir)
+            completed = subprocess.run(
+                [
+                    sys.executable, "-c", EVENT_RGBA_MATRIX_SCRIPT, temp_dir,
+                    str(REPO_ROOT),
+                    str(REPO_ROOT / "tests/fixtures/installation_profile_v1.bin"),
+                    (REPO_ROOT / "tests/fixtures/installation_profile_v1.bin")
+                    .read_bytes()[68:100].hex(),
+                ],
+                cwd=temp_dir,
+                text=True,
+                capture_output=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn(
+            'BROWSER_EVENT_RGBA_RESULT=["fireworks:default", "fireworks:grand-finale", '
+            '"flame_burst:default", "flame_burst:afterburner"]',
+            completed.stdout,
+        )
+
     def test_every_authoritative_python_animation_and_preset_renders_two_frames(self):
         loader = AnimationPluginLoader()
         authoritative_plugins = loader.scan_plugins()
@@ -154,6 +234,7 @@ class BrowserPythonCatalogMatrixTests(unittest.TestCase):
         self.assertEqual(result["plugins"], len(authoritative_plugins))
         self.assertEqual(result["presets"], len(authoritative_presets))
         self.assertGreaterEqual(result["roleCounts"].get("overlay", 0), 1)
+        self.assertGreaterEqual(result["roleCounts"].get("animation", 0), 2)
         self.assertGreaterEqual(result["fixedWallClockFrames"], 6)
 
 

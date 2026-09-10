@@ -28,6 +28,7 @@ class BrowserPlugin:
     plugin_id: str
     class_name: str
     role: str
+    frame_format: str
     timing_adapter: str
     required_packages: tuple[str, ...]
 
@@ -36,12 +37,61 @@ class BrowserPlugin:
             "pluginId": self.plugin_id,
             "className": self.class_name,
             "role": self.role,
-            "frameFormat": (
-                "premultiplied-rgba" if self.role == "overlay" else "rgb"
-            ),
+            "frameFormat": self.frame_format,
             "timingAdapter": self.timing_adapter,
             "requiredPackages": list(self.required_packages),
         }
+
+
+def browser_component_format(
+    payload: Mapping[str, object], plugin_id: str,
+) -> tuple[str, str]:
+    """Project canonical manifest metadata into the browser runtime contract.
+
+    Mature manifests predate Scene v2 and expose a flattened ``role``.  Newer
+    components retain that field only for the host's legacy loader, while their
+    nested ``component`` record is authoritative for the Composer role and
+    alpha format.  Keep the compatibility adapter at this bundle boundary so
+    browser previews never turn a premultiplied animation into an RGB base.
+    """
+    descriptor = payload.get("component")
+    if isinstance(descriptor, Mapping):
+        declared_role = descriptor.get("role")
+        alpha_behavior = descriptor.get("alpha_behavior")
+        if not isinstance(declared_role, str):
+            raise ValueError(
+                f"component descriptor role must be a string: {plugin_id}"
+            )
+        canonical_role = "overlay" if declared_role == "widget" else declared_role
+        if canonical_role not in {
+            "background", "animation", "overlay", "full_scene"
+        }:
+            raise ValueError(
+                f"unsupported component role {declared_role!r}: {plugin_id}"
+            )
+        if alpha_behavior not in {"none", "opaque", "premultiplied_rgba"}:
+            raise ValueError(
+                f"unsupported component alpha behavior {alpha_behavior!r}: {plugin_id}"
+            )
+        # Legacy browser scenes transport opaque Python renderers as RGB
+        # backgrounds. Only Scene-v2 premultiplied Animation planes need a
+        # distinct transport role and four-channel frame contract here.
+        if (
+            canonical_role == "animation"
+            and alpha_behavior == "premultiplied_rgba"
+        ):
+            return canonical_role, "premultiplied-rgba"
+
+    role = payload.get(
+        "role", "full_scene" if plugin_id == "clock" else "background"
+    )
+    # Scene v2 names Clock Overlay's canonical role ``widget``.  The browser
+    # transport exposes that fixed slot as an ``overlay``.
+    if role == "widget":
+        role = "overlay"
+    if role not in {"background", "overlay", "full_scene"}:
+        raise ValueError(f"unsupported component role {role!r}: {plugin_id}")
+    return role, "premultiplied-rgba" if role == "overlay" else "rgb"
 
 
 def discover_python_plugins(repo_root: Path) -> tuple[BrowserPlugin, ...]:
@@ -82,15 +132,7 @@ def discover_python_plugins(repo_root: Path) -> tuple[BrowserPlugin, ...]:
             raise ValueError(
                 f"manifest class {class_name!r} is not defined by {source_path}"
             )
-        role = payload.get("role", "full_scene" if plugin_id == "clock" else "background")
-        # Scene v2 names Clock Overlay's canonical role ``widget``.  The
-        # browser-scene v1 transport still exposes that fixed slot as an
-        # ``overlay`` and requires premultiplied RGBA, so keep the adapter at
-        # this bundle boundary instead of rejecting the canonical manifest.
-        if role == "widget":
-            role = "overlay"
-        if role not in {"background", "overlay", "full_scene"}:
-            raise ValueError(f"unsupported component role {role!r}: {manifest_path}")
+        role, frame_format = browser_component_format(payload, plugin_id)
         vibe = payload.get("vibe") if isinstance(payload.get("vibe"), dict) else {}
         timing_adapter = vibe.get("timing_adapter", "legacy_speed_param")
         if timing_adapter not in {"legacy_speed_param", "scaled_context", "wall_clock"}:
@@ -102,6 +144,7 @@ def discover_python_plugins(repo_root: Path) -> tuple[BrowserPlugin, ...]:
             plugin_id=plugin_id,
             class_name=class_name,
             role=role,
+            frame_format=frame_format,
             timing_adapter=timing_adapter,
             required_packages=required_packages,
         ))
@@ -147,6 +190,7 @@ def discover_python_plugins(repo_root: Path) -> tuple[BrowserPlugin, ...]:
             plugin_id=plugin_id,
             class_name=class_nodes[0].name,
             role="background",
+            frame_format="rgb",
             timing_adapter=timing_adapter,
             required_packages=(),
         ))

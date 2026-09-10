@@ -25,7 +25,7 @@ class SceneV2VerticalOrientationTests(unittest.TestCase):
         )
 
     def wall(self, rendered) -> np.ndarray:
-        return rendered.pixels.reshape(self.WIDTH, self.HEIGHT, 3)
+        return rendered.pixels.reshape(self.WIDTH, self.HEIGHT, -1)
 
     def test_fireworks_launch_from_physical_bottom(self) -> None:
         animation = FireworksAnimation(
@@ -37,8 +37,7 @@ class SceneV2VerticalOrientationTests(unittest.TestCase):
             rendered = animation.generate_frame(frame / 24.0, frame)
         self.assertIsNotNone(rendered)
         wall = self.wall(rendered)
-        background = np.asarray((4, 9, 18), dtype=np.uint8)
-        active = np.any(wall != background, axis=2)
+        active = wall[:, :, 3] > 0
         _, leds = np.nonzero(active)
         self.assertGreater(leds.size, 0)
         self.assertLess(int(leds.max()), self.HEIGHT // 2)

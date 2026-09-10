@@ -38,7 +38,7 @@ FIXED_OVERLAY_SLOT = "clock_overlay"
 COMPILED_RAINBOW_PLUGIN_ID = "compiled_rainbow"
 SUPPORTED_PROVIDERS = frozenset(("python",))
 KNOWN_PROVIDERS = frozenset(("python", "receiver_native"))
-SUPPORTED_ROLES = frozenset(("background", "overlay", "full_scene"))
+SUPPORTED_ROLES = frozenset(("background", "animation", "overlay", "full_scene"))
 GLOBAL_SETTINGS_SCHEMA = "ledgrid.global-settings-state"
 GLOBAL_SETTINGS_VERSION = 1
 SCENE_ACTIVATION_BASIS_SCHEMA = "ledgrid.scene-activation-basis"
@@ -757,6 +757,8 @@ def decorate_catalog(
             )
         elif role == "background":
             slots = ["background"]
+        elif role == "animation":
+            slots = ["animation"]
         elif role == "overlay" and component_id == FIXED_OVERLAY_SLOT:
             slots = [FIXED_OVERLAY_SLOT]
         elif role == "overlay":

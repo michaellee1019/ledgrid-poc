@@ -64,13 +64,49 @@ def _catalog_payload() -> Mapping[str, Any]:
         if payload.get("provider", "python") != "python":
             continue
         plugin_id = manifest_path.parent.name
-        role = payload.get("role", "full_scene" if plugin_id == "clock" else "background")
+        descriptor = payload.get("component")
+        if isinstance(descriptor, Mapping):
+            declared_role = descriptor.get("role")
+            alpha_behavior = descriptor.get("alpha_behavior")
+            if not isinstance(declared_role, str):
+                raise RuntimeError(
+                    f"component descriptor role must be a string: {plugin_id}"
+                )
+            canonical_role = "overlay" if declared_role == "widget" else declared_role
+            if canonical_role not in {
+                "background", "animation", "overlay", "full_scene"
+            }:
+                raise RuntimeError(
+                    f"unsupported component role {declared_role!r}: {plugin_id}"
+                )
+            if alpha_behavior not in {"none", "opaque", "premultiplied_rgba"}:
+                raise RuntimeError(
+                    f"unsupported component alpha behavior {alpha_behavior!r}: {plugin_id}"
+                )
+            if (
+                canonical_role == "animation"
+                and alpha_behavior == "premultiplied_rgba"
+            ):
+                role = canonical_role
+                frame_format = "premultiplied-rgba"
+            else:
+                role = payload.get(
+                    "role", "full_scene" if plugin_id == "clock" else "background"
+                )
+                role = "overlay" if role == "widget" else role
+                frame_format = "premultiplied-rgba" if role == "overlay" else "rgb"
+        else:
+            role = payload.get(
+                "role", "full_scene" if plugin_id == "clock" else "background"
+            )
+            role = "overlay" if role == "widget" else role
+            frame_format = "premultiplied-rgba" if role == "overlay" else "rgb"
         vibe = payload.get("vibe") if isinstance(payload.get("vibe"), dict) else {}
         entries.append({
             "pluginId": plugin_id,
             "className": payload["class"],
             "role": role,
-            "frameFormat": "premultiplied-rgba" if role == "overlay" else "rgb",
+            "frameFormat": frame_format,
             "timingAdapter": vibe.get("timing_adapter", "legacy_speed_param"),
             "requiredPackages": ["pillow"] if plugin_id == "gif_animation" else [],
         })

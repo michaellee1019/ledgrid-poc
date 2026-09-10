@@ -3058,6 +3058,10 @@ class AnimationWebInterface:
 
         components: List[Dict[str, Any]] = []
         runtime_digests: Dict[Path, str] = {}
+        canonical_descriptors = {
+            (descriptor.provider.value, descriptor.component_id): descriptor
+            for descriptor in self.composer_catalog.descriptors
+        }
         for raw in sorted(
             raw_components,
             key=lambda item: (
@@ -3069,6 +3073,33 @@ class AnimationWebInterface:
             provider = raw.get('provider')
             if not isinstance(plugin_id, str) or not isinstance(provider, str):
                 continue
+            descriptor = canonical_descriptors.get((provider, plugin_id))
+            rgba_animation = bool(
+                descriptor is not None
+                and descriptor.role.value == 'animation'
+                and descriptor.alpha_behavior.value == 'premultiplied_rgba'
+            )
+            canonical_role = (
+                descriptor.role.value if rgba_animation
+                else str(raw.get('role') or 'background')
+            )
+            # Browser scene v1 carries Widgets through its fixed overlay slot;
+            # every other Composer role is published verbatim.
+            browser_role = 'overlay' if canonical_role == 'widget' else canonical_role
+            scene_compatibility = json.loads(json.dumps(
+                raw.get('scene_compatibility') or {}
+            ))
+            if rgba_animation:
+                # The legacy loader decorates its flattened manifests before
+                # this browser projection.  Replace that stale compatibility
+                # result with the resolved Composer descriptor's exact slot.
+                scene_compatibility = {
+                    'selectable': True,
+                    'slots': [
+                        plugin_id if canonical_role == 'widget' else browser_role
+                    ],
+                    'diagnostic': None,
+                }
 
             schema = raw.get('parameter_schema')
             schema = json.loads(json.dumps(schema)) if isinstance(schema, dict) else {}
@@ -3189,23 +3220,14 @@ class AnimationWebInterface:
                 'class_name': class_name,
                 'name': str(raw.get('name') or plugin_id.replace('_', ' ').title()),
                 'description': str(raw.get('description') or ''),
-                # Scene v2 owns Clock Overlay as a Widget.  Browser scene v1
-                # still transports that fixed premultiplied plane through its
-                # single overlay slot, so adapt the role at this boundary.
-                'role': (
-                    'overlay'
-                    if provider == 'python' and plugin_id == 'clock_overlay'
-                    else str(raw.get('role') or 'background')
-                ),
+                'role': browser_role,
                 'icon': str(raw.get('icon') or '✦'),
                 'parameter_schema': schema,
                 'defaults': defaults,
                 'presets': preset_records,
                 'browser_runtime': runtime,
                 'provider_collision': plugin_id in collisions,
-                'scene_compatibility': json.loads(json.dumps(
-                    raw.get('scene_compatibility') or {}
-                )),
+                'scene_compatibility': scene_compatibility,
                 'compatibility': json.loads(json.dumps(
                     raw.get('compatibility') or {}
                 )),

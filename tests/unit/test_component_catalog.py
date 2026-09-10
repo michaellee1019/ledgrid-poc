@@ -56,8 +56,8 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
@@ -183,10 +183,10 @@ class ComponentCatalogTests(unittest.TestCase):
         self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("firefly_synchrony", "animation", "scaled_context"))
         self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("opaque", "semantic", ("effect_intent",)))
 
-    def test_fireworks_is_a_qualified_semantic_opaque_animation(self) -> None:
+    def test_fireworks_is_a_qualified_semantic_rgba_animation(self) -> None:
         descriptor = FireworksAnimation.component_descriptor()
         self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("fireworks", "animation", "scaled_context"))
-        self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("opaque", "semantic", ("effect_intent",)))
+        self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("premultiplied_rgba", "semantic", ("effect_intent",)))
 
     def test_snake_is_a_qualified_semantic_opaque_animation(self) -> None:
         descriptor = SnakeAnimation.component_descriptor()

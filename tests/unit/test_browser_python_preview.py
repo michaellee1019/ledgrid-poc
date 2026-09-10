@@ -180,6 +180,14 @@ class BrowserPythonBundleTests(unittest.TestCase):
         )
         self.assertEqual(overlay_spec["role"], "overlay")
         self.assertEqual(overlay_spec["frameFormat"], "premultiplied-rgba")
+        for plugin_id in ("fireworks", "flame_burst"):
+            with self.subTest(plugin_id=plugin_id):
+                event_spec = next(
+                    item for item in manifest["plugins"]
+                    if item["pluginId"] == plugin_id
+                )
+                self.assertEqual(event_spec["role"], "animation")
+                self.assertEqual(event_spec["frameFormat"], "premultiplied-rgba")
 
     def test_bundle_imports_the_current_scene_and_overlay_dependencies_in_isolation(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,6 +1,7 @@
 """Focused Scene v2 behavior checks for the Fireworks instrument."""
 
 import unittest
+from hashlib import sha256
 
 import numpy as np
 
@@ -17,7 +18,8 @@ class FireworksAnimationTests(unittest.TestCase):
         left, right = FireworksAnimation(self.controller, params), FireworksAnimation(self.controller, params)
         for frame in range(90):
             a, b = left.generate_frame(frame / 24, frame), right.generate_frame(frame / 24, frame)
-            self.assertEqual(a.pixels.shape, (33 * 138, 3)); self.assertEqual(a.pixels.dtype, np.uint8)
+            self.assertEqual(a.pixels.shape, (33 * 138, 4)); self.assertEqual(a.pixels.dtype, np.uint8)
+            self.assertTrue(np.all(a.pixels[:, :3] <= a.pixels[:, 3:4]))
             np.testing.assert_array_equal(a.pixels, b.pixels)
         self.assertGreater(left.cadence_snapshot()["bursts"], 1)
         self.assertLessEqual(left.semantic_snapshot()["sparks"], FireworksAnimation.MAX_SPARKS)
@@ -32,6 +34,33 @@ class FireworksAnimationTests(unittest.TestCase):
         for alias in ("brightness", "speed", "plant_aware", "launch_rate", "output_power"):
             with self.assertRaisesRegex(ValueError, "non-local parameters"):
                 FireworksAnimation(self.controller, {alias: 1})
+
+    def test_every_supported_high_density_shell_value_is_distinct_and_bounded(self) -> None:
+        fingerprints = set()
+        for population in (72, 80, 90, 120):
+            with self.subTest(shell_population=population):
+                left = FireworksAnimation(
+                    self.controller,
+                    {"seed": 731, "launch_cadence": 4.0,
+                     "shell_population": population, "burst_style": "ring"},
+                )
+                right = FireworksAnimation(
+                    self.controller,
+                    {"seed": 731, "launch_cadence": 4.0,
+                     "shell_population": population, "burst_style": "ring"},
+                )
+                digest = sha256()
+                for frame in range(180):
+                    left_frame = left.generate_frame(frame / 24.0, frame)
+                    right_frame = right.generate_frame(frame / 24.0, frame)
+                    np.testing.assert_array_equal(left_frame.pixels, right_frame.pixels)
+                    digest.update(left_frame.pixels.tobytes())
+                    self.assertLessEqual(
+                        left.semantic_snapshot()["sparks"],
+                        FireworksAnimation.MAX_SPARKS,
+                    )
+                fingerprints.add(digest.digest())
+        self.assertEqual(len(fingerprints), 4)
 
 
 if __name__ == "__main__":
