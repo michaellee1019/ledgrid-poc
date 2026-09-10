@@ -9,6 +9,7 @@ small view atomically when the selected content digest changes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 import re
 import threading
 from types import MappingProxyType
@@ -30,7 +31,11 @@ from animation.core.installation_profile_topology import (
     IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
     InstallationProfileTopology,
 )
-from animation.core.plant_awareness import GLOBE_REGION_ORDER, PlantMaskGeometry
+from animation.core.plant_awareness import (
+    GLOBE_REGION_ORDER,
+    InstallationGeometryContact,
+    PlantMaskGeometry,
+)
 
 
 EMPTY_INSTALLATION_PROFILE_DIGEST = "0" * 64
@@ -257,6 +262,14 @@ class InstallationProfileRuntimeView:
         """PlantMaskGeometry-compatible global host geometry."""
 
         return self.plant_masks
+
+    @cached_property
+    def geometry_contact(self) -> InstallationGeometryContact:
+        """Return the immutable, provider-qualified contact descriptor."""
+
+        return InstallationGeometryContact.from_geometry(
+            self.plant_masks, identity=self.presentation_identity
+        )
 
     @property
     def topology_identity(self) -> TopologyIdentity:

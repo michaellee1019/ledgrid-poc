@@ -21,6 +21,7 @@ import numpy as np
 from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
 from animation.core.compositing import normalize_optional_dirty_ranges
 from animation.core.installation_profile_runtime import InstallationProfileRuntimeView
+from animation.core.plant_awareness import InstallationGeometryContact
 
 
 COMPONENT_DESCRIPTOR_SCHEMA = "ledgrid.component-descriptor"
@@ -678,6 +679,7 @@ class AnimationRuntimeContext:
     capability_values: Mapping[str, Any]
     installation_profile_view: Mapping[str, Any] | InstallationProfileRuntimeView
     plant_modifiers: Mapping[str, Any]
+    installation_geometry_contact: InstallationGeometryContact | None = None
     resolved_profile_digest: Optional[str] = None
     tempo_scale: float = 1.0
     luminance_scale: float = 1.0
@@ -724,6 +726,13 @@ class AnimationRuntimeContext:
                     "installation_profile_view", self.installation_profile_view
                 ),
             )
+        if (
+            self.installation_geometry_contact is not None
+            and not isinstance(self.installation_geometry_contact, InstallationGeometryContact)
+        ):
+            raise TypeError(
+                "installation_geometry_contact must be an InstallationGeometryContact"
+            )
         _validate_palette_roles(self.palette_roles)
 
     @property
@@ -750,6 +759,7 @@ class AnimationRuntimeContext:
             tuple(self.palette_roles.items()),
             tuple(self.capability_values.items()),
             self.installation_profile_identity,
+            self.installation_geometry_identity,
             tuple(self.plant_modifiers.items()),
         )
 
@@ -760,6 +770,11 @@ class AnimationRuntimeContext:
         if isinstance(self.installation_profile_view, InstallationProfileRuntimeView):
             return self.installation_profile_view.presentation_identity
         return tuple(self.installation_profile_view.items())
+
+    @property
+    def installation_geometry_identity(self) -> tuple[Any, ...] | None:
+        contact = self.installation_geometry_contact
+        return None if contact is None else (contact.identity, contact.available, contact.status)
 
 
 @dataclass(frozen=True)
@@ -994,6 +1009,7 @@ class ResolvedScene:
     palette: Mapping[str, Any] | None
     phase_time: float
     plant_inputs: Mapping[str, float]
+    installation_geometry: InstallationGeometryContact | None = None
     trace: tuple[str, ...] = PIPELINE_TRACE
 
 

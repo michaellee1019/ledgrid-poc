@@ -41,13 +41,14 @@ from animation.core.native_background_library import (
 from animation.core.installation_profile_runtime import (
     EMPTY_INSTALLATION_PROFILE_DIGEST,
     InstallationProfileSelection,
+    InstallationProfileRuntimeView,
     InstallationProfileRuntimeError,
 )
 from animation.core.installation_profile_topology import (
     IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
     InstallationProfileTopology,
 )
-from animation.core.plant_awareness import PlantModifierState
+from animation.core.plant_awareness import InstallationGeometryContact, PlantModifierState
 from animation.core.receiver_presentation import (
     ReceiverPresentationContext,
     quantize_q8_8,
@@ -575,6 +576,15 @@ class AnimationManager:
         with self._installation_profile_guard():
             return self._installation_profile_selection.status()
 
+    def get_installation_profile_runtime_view(self) -> InstallationProfileRuntimeView | None:
+        """Return the selected immutable geometry for installed presentation clients."""
+
+        if getattr(self, "_installation_profile_selection", None) is None:
+            return None
+        with self._installation_profile_guard():
+            view = self._installation_profile_selection.view
+            return view if isinstance(view, InstallationProfileRuntimeView) else None
+
     def select_installation_profile(
         self, digest_or_none: Optional[str]
     ) -> Dict[str, Any]:
@@ -671,6 +681,29 @@ class AnimationManager:
             return {}
         return view
 
+    def _installation_geometry_contact(
+        self, animation: AnimationBase
+    ) -> InstallationGeometryContact | None:
+        """Resolve geometry only for a provider that explicitly declares it."""
+
+        if not bool(getattr(animation, "INSTALLATION_GEOMETRY_CONTACT", False)):
+            return None
+        view = self._installation_profile_view()
+        if isinstance(view, InstallationProfileRuntimeView):
+            return view.geometry_contact
+        key = (int(self.controller.strip_count), int(self.controller.leds_per_strip))
+        cache = getattr(self, "_unavailable_installation_geometry_contacts", None)
+        if cache is None:
+            cache = {}
+            self._unavailable_installation_geometry_contacts = cache
+        contact = cache.get(key)
+        if contact is None:
+            contact = InstallationGeometryContact.unavailable(
+                *key, status="installation geometry is unavailable"
+            )
+            cache[key] = contact
+        return contact
+
     def _validate_installation_profile_geometry(self, view) -> None:
         if view is None:
             return
@@ -750,6 +783,7 @@ class AnimationManager:
                 self.plant_modifier_state.to_dict()
                 if plant_modifiers is None else plant_modifiers
             ),
+            installation_geometry_contact=self._installation_geometry_contact(animation),
         )
 
     def _advance_runtime_context(
@@ -4543,6 +4577,11 @@ class AnimationManager:
         render = getattr(presentation_runtime, "render", None)
         if not callable(render):
             raise TypeError("presentation_runtime must render Scene v2 contexts")
+        set_installation_profile = getattr(
+            presentation_runtime, "set_installation_profile", None
+        )
+        if callable(set_installation_profile):
+            set_installation_profile(self.get_installation_profile_runtime_view())
         frame = render(ScenePresentationContext(canonical, monotonic_elapsed, wall_time))
         pixels = getattr(frame, "pixels", None)
         if not isinstance(pixels, np.ndarray) or pixels.shape != (

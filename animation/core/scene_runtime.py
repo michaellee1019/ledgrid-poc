@@ -19,6 +19,10 @@ from animation.core.base import RenderedFrame
 from animation.core.component_catalog import AlphaBehavior, ComponentCatalog, ComponentDescriptor, PalettePolicy
 from animation.core.compositing import BaseFrame, HostSceneCompositor, OverlayFrame, PlacedOverlay
 from animation.core.presentation_contracts import NEUTRAL_PLANT_INPUTS, ResolvedScene
+from animation.core.plant_awareness import (
+    INSTALLATION_GEOMETRY_CONTACT_INPUT,
+    InstallationGeometryContact,
+)
 from animation.core.widget_placement import (
     WidgetPlacementResolution, resolve_widget_placement, translated_widget_coverage,
 )
@@ -70,7 +74,7 @@ class RuntimeFrame:
 
 BackgroundRenderer = Callable[[ResolvedScene, int], BaseFrame]
 ComponentFactory = Callable[[ComponentDescriptor, Any, Mapping[str, Any]], Any]
-PlantInputResolver = Callable[[Mapping[str, Any], ComponentDescriptor], Mapping[str, float]]
+PlantInputResolver = Callable[[Mapping[str, Any], ComponentDescriptor], Mapping[str, Any]]
 PlantOptics = Callable[[np.ndarray, Mapping[str, Any]], np.ndarray]
 WidgetPlacementResolver = Callable[[Mapping[str, Any], int, int, int], tuple[int, int]]
 WidgetSafeGeometry = Callable[[Mapping[str, Any], int, int], np.ndarray]
@@ -133,6 +137,7 @@ class CanonicalSceneRuntime:
         self._scale_work = np.empty((total, 3), dtype=np.float32)
         self._last_output: np.ndarray | None = None
         self._last_pipeline_signature: tuple[Any, ...] | None = None
+        self._unavailable_geometry_contact: InstallationGeometryContact | None = None
 
     @staticmethod
     def _controller_geometry(controller: Any) -> tuple[int, int]:
@@ -155,6 +160,11 @@ class CanonicalSceneRuntime:
     def set_master_brightness(self, value: float) -> float:
         self._master_brightness = self._factor(value, "master_brightness")
         return self._master_brightness
+
+    def invalidate_installation_geometry(self) -> None:
+        """Request a presentation refresh without replacing component state."""
+
+        self._last_pipeline_signature = None
 
     def activate(self, canonical: CanonicalScene) -> SceneIdentity:
         self._require_canonical_basis(canonical)
@@ -288,11 +298,44 @@ class CanonicalSceneRuntime:
         return _ComponentSlot(key, factory(descriptor, self.controller, frozen), frozen)
 
     def _context(self, canonical: CanonicalScene, descriptor: ComponentDescriptor, parameters: Mapping[str, Any], elapsed: float) -> ResolvedScene:
-        supplied = self._plant_input_resolver(canonical.scene["plants"], descriptor)
+        input_names = (
+            descriptor.optional_simulation_inputs + descriptor.required_simulation_inputs
+        )
+        # Do not touch calibrated geometry for a component that did not declare
+        # any simulation inputs.  Final optics stay on their independent pass.
+        supplied = (
+            self._plant_input_resolver(canonical.scene["plants"], descriptor)
+            if input_names else {}
+        )
         if not isinstance(supplied, Mapping):
             raise CanonicalSceneRuntimeError("plant input resolver must return a mapping")
         plant_inputs: dict[str, float] = {}
+        geometry_contact = None
+        if descriptor.accepts_installation_geometry_contact:
+            supplied_contact = supplied.get(INSTALLATION_GEOMETRY_CONTACT_INPUT)
+            if supplied_contact is None:
+                if self._unavailable_geometry_contact is None:
+                    self._unavailable_geometry_contact = InstallationGeometryContact.unavailable(
+                        self.strip_count,
+                        self.leds_per_strip,
+                        status="installation geometry is unavailable",
+                    )
+                geometry_contact = self._unavailable_geometry_contact
+            elif not isinstance(supplied_contact, InstallationGeometryContact):
+                raise CanonicalSceneRuntimeError(
+                    "installation geometry contact must be an InstallationGeometryContact"
+                )
+            else:
+                geometry_contact = supplied_contact
+            if geometry_contact.geometry.foliage.shape != (
+                self.strip_count, self.leds_per_strip
+            ):
+                raise CanonicalSceneRuntimeError(
+                    "installation geometry contact dimensions do not match the controller"
+                )
         for name in descriptor.required_simulation_inputs:
+            if name == INSTALLATION_GEOMETRY_CONTACT_INPUT:
+                continue
             if name not in supplied:
                 raise CanonicalSceneRuntimeError(f"required plant simulation input {name!r} is missing")
             value = supplied[name]
@@ -300,13 +343,19 @@ class CanonicalSceneRuntime:
                 raise CanonicalSceneRuntimeError(f"plant simulation input {name!r} must be finite")
             plant_inputs[name] = float(value)
         for name in descriptor.optional_simulation_inputs:
+            if name == INSTALLATION_GEOMETRY_CONTACT_INPUT:
+                continue
             value = supplied.get(name, NEUTRAL_PLANT_INPUTS.get(name, 0.0))
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
                 raise CanonicalSceneRuntimeError(f"plant simulation input {name!r} must be finite")
             plant_inputs[name] = float(value)
         palette = _freeze_mapping({"palette_id": canonical.scene["look"]["palette_id"]}) if descriptor.palette_policy is PalettePolicy.SEMANTIC else None
-        return ResolvedScene(_freeze_mapping(canonical.scene), canonical.canonical_bytes, canonical.identity.digest,
-                             descriptor, parameters, palette, elapsed * float(canonical.scene["look"]["pace"]), _freeze_mapping(plant_inputs))
+        return ResolvedScene(
+            _freeze_mapping(canonical.scene), canonical.canonical_bytes,
+            canonical.identity.digest, descriptor, parameters, palette,
+            elapsed * float(canonical.scene["look"]["pace"]),
+            _freeze_mapping(plant_inputs), geometry_contact,
+        )
 
     def _render_plane(self, slot: _ComponentSlot, descriptor: ComponentDescriptor, context: ResolvedScene) -> OverlayFrame:
         instance = slot.instance

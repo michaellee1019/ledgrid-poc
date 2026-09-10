@@ -19,7 +19,7 @@ from animation.core.receiver_optics import HUE_STRENGTH_MAX, apply_hue_shift_u8
 from animation.core.receiver_presentation import quantize_q8_8
 
 from animation.core.plant_awareness import (
-    FRAMEWORK_VISUAL_MODIFIERS, PlantMaskCache, PlantMaskGeometry,
+    FRAMEWORK_VISUAL_MODIFIERS, InstallationGeometryContact, PlantMaskCache, PlantMaskGeometry,
     PlantModifierState, plant_parameter_schema,
 )
 
@@ -45,6 +45,9 @@ class AnimationBase(ABC):
     """Base class for all LED animations"""
 
     PLANT_MODIFIER_SUPPORT = frozenset()
+    # A component must opt in explicitly before manager-owned installation
+    # geometry is exposed.  It is never an authored parameter or legacy cache.
+    INSTALLATION_GEOMETRY_CONTACT = False
     INTERACTION_TYPES = frozenset()
     TIMING_ADAPTER = TimingAdapter.LEGACY_SPEED_PARAM
     VIBE_CAPABILITIES = frozenset()
@@ -80,6 +83,9 @@ class AnimationBase(ABC):
         self._runtime_installation_profile_view: Optional[
             InstallationProfileRuntimeView
         ] = None
+        self._unavailable_installation_geometry_contacts: Dict[
+            Tuple[int, int], InstallationGeometryContact
+        ] = {}
         self._presentation_lock = threading.RLock()
         
         # Animation metadata
@@ -458,6 +464,28 @@ class AnimationBase(ABC):
             self._managed_plant_mask_variants[key] = cached
             return cached
         return self._plant_mask_cache.get(clearance)
+
+    def get_installation_geometry_contact(self) -> InstallationGeometryContact | None:
+        """Return provider-owned contact geometry only for an explicit opt-in."""
+
+        if not self.INSTALLATION_GEOMETRY_CONTACT:
+            return None
+        context = self._presentation_context
+        contact = getattr(context, "installation_geometry_contact", None)
+        if isinstance(contact, InstallationGeometryContact):
+            return contact
+        view = self._runtime_installation_profile_view
+        if isinstance(view, InstallationProfileRuntimeView):
+            return view.geometry_contact
+        width, height = self.get_strip_info()
+        key = (width, height)
+        contact = self._unavailable_installation_geometry_contacts.get(key)
+        if contact is None:
+            contact = InstallationGeometryContact.unavailable(
+                width, height, status="installation geometry is unavailable"
+            )
+            self._unavailable_installation_geometry_contacts[key] = contact
+        return contact
     
     def get_info(self) -> Dict[str, Any]:
         """Get animation metadata"""

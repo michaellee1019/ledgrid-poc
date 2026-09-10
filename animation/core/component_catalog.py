@@ -12,6 +12,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
+from animation.core.plant_awareness import INSTALLATION_GEOMETRY_CONTACT_INPUT
+
 
 def _freeze_default(value: Any) -> Any:
     """Make catalog defaults recursively immutable and detached from callers."""
@@ -132,6 +134,15 @@ class ComponentDescriptor:
             raise ValueError("simulation inputs cannot be both optional and required")
         if (optional_inputs or required_inputs) and PlantCapability.SIMULATION_INPUTS not in capabilities:
             raise ValueError("simulation inputs require the simulation_inputs plant capability")
+        if INSTALLATION_GEOMETRY_CONTACT_INPUT in required_inputs:
+            raise ValueError("installation geometry contact must remain an optional runtime input")
+        if INSTALLATION_GEOMETRY_CONTACT_INPUT in optional_inputs and (
+            self.provider is not ComponentProvider.PYTHON
+            or self.role is not ComponentRole.ANIMATION
+        ):
+            raise ValueError(
+                "installation geometry contact is limited to Python Animation providers"
+            )
         object.__setattr__(self, "optional_simulation_inputs", optional_inputs)
         object.__setattr__(self, "required_simulation_inputs", required_inputs)
         if not isinstance(self.defaults, Mapping):
@@ -145,6 +156,12 @@ class ComponentDescriptor:
         """Return a mutable JSON-ready copy without exposing catalog state."""
 
         return _thaw_default(self.defaults)
+
+    @property
+    def accepts_installation_geometry_contact(self) -> bool:
+        """Whether this exact provider explicitly accepts installed geometry."""
+
+        return INSTALLATION_GEOMETRY_CONTACT_INPUT in self.optional_simulation_inputs
 
     def validate_scene_v2(self) -> None:
         """Retain a named validation hook for scene-boundary callers."""

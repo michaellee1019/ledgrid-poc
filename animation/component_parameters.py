@@ -12,15 +12,17 @@ _PARAMETER_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 # These parameters remain owned by the scene/presentation pipeline and must
 # never be captured inside a component preset or renderer-local payload.
 SCENE_EXTERNAL_COMPONENT_PARAMETERS = frozenset((
-    "plant_aware", "plant_modifiers", "vibe", "output",
+    "plant_aware", "plant_modifiers", "plant_clearance", "plant_mask_path",
+    "plant_globe_mask_path", "installation_geometry_contact", "vibe", "output",
 ))
 
 # These names used to have ambiguous, global meaning.  Scene v1 deliberately
 # has no compatibility bridge for them, including inside component parameters.
 LEGACY_PARAMETER_ALIASES = frozenset({
     "speed", "rate", "brightness", "saturation", "value", "color_value",
-    "color_saturation", "plant_aware", "plant_modifiers", "wall_clock",
-    "full_scene", "global_palette", "global_vibe", "output",
+    "color_saturation", "plant_aware", "plant_modifiers", "plant_clearance",
+    "plant_mask_path", "plant_globe_mask_path", "installation_geometry_contact",
+    "wall_clock", "full_scene", "global_palette", "global_vibe", "output",
 })
 
 

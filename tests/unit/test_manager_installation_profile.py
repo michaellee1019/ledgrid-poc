@@ -9,11 +9,13 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import numpy as np
 
 from animation.core.base import AnimationBase, RenderedFrame
 from animation.core.compositing import HostForegroundCompositor, HostSceneCompositor
+from animation.core.component_catalog import ComponentCatalog, ComponentDescriptor
 from animation.core.installation_profile_library import InstallationProfileLibrary
 from animation.core.installation_profile_runtime import (
     EMPTY_INSTALLATION_PROFILE_DIGEST,
@@ -22,6 +24,7 @@ from animation.core.installation_profile_runtime import (
 )
 from animation.core.manager import AnimationManager
 from animation.core.presentation_contracts import OverlayFrame
+from ipc.scene_contract import normalize_composer_scene
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -105,6 +108,12 @@ class _ProfileOverlay(_ProfileProbe):
         return OverlayFrame(
             self._overlay, revision=0, changed=False, dirty_ranges=()
         )
+
+
+class _GeometryContactProbe(_ProfileProbe):
+    """A future qualified provider used to test the shared boundary only."""
+
+    INSTALLATION_GEOMETRY_CONTACT = True
 
 
 class _AutoStartProbeManager(AnimationManager):
@@ -288,6 +297,70 @@ class ManagerInstallationProfileTests(unittest.TestCase):
                 isinstance(view, InstallationProfileRuntimeView)
                 or dict(view) == {}
             )
+
+    def test_qualified_contact_tracks_profile_revision_without_touching_state(self):
+        manager = self.manager(installation_profile_library=self.library)
+        animation = _GeometryContactProbe(manager.controller)
+        manager.current_animation = animation
+        manager.current_animation_name = "geometry_contact_probe"
+        before = manager._runtime_context(
+            animation, unscaled_elapsed=3.0, scaled_elapsed=3.0, frame_index=17
+        )
+        self.assertIsNotNone(before.installation_geometry_contact)
+        self.assertFalse(before.installation_geometry_contact.available)
+        semantic = dict(animation.semantic_state)
+        rng = animation.rng.getstate()
+
+        manager.select_installation_profile(self.digest)
+        self.assertIs(
+            animation.presentation_context.installation_geometry_contact,
+            manager._installation_profile_selection.view.geometry_contact,
+        )
+        after = manager._runtime_context(
+            animation, unscaled_elapsed=3.0, scaled_elapsed=3.0, frame_index=17
+        )
+        self.assertIs(
+            after.installation_geometry_contact,
+            manager._installation_profile_selection.view.geometry_contact,
+        )
+        self.assertTrue(after.installation_geometry_contact.available)
+        self.assertEqual(dict(animation.semantic_state), semantic)
+        self.assertEqual(animation.rng.getstate(), rng)
+        self.assertEqual((manager.frame_count, manager._scaled_elapsed), (0, 0.0))
+
+    def test_installed_final_runtime_receives_live_selected_geometry_before_render(self):
+        manager = self.manager(installation_profile_library=self.library)
+        manager.select_installation_profile(self.digest)
+        catalog = ComponentCatalog([
+            ComponentDescriptor("native", 1, "receiver_native", "background", "scaled_context", "none", "semantic", ("final_optics",), (), defaults={"bundle_digest": "a" * 64}),
+            ComponentDescriptor("probe", 1, "python", "animation", "scaled_context", "opaque", "semantic", ("none",), ()),
+        ])
+        canonical = normalize_composer_scene({"origin": "composer", "scene": {
+            "schema": "ledgrid.scene.v2",
+            "background": {"component_id": "native", "version": 1, "provider": "receiver_native", "role": "background", "parameters": {"bundle_digest": "a" * 64}, "bundle_digest": "a" * 64},
+            "animation": {"component_id": "probe", "version": 1, "provider": "python", "role": "animation", "parameters": {}},
+            "widgets": [], "plants": {"effects": {"version": 1, "active": [], "strengths": {}}},
+            "look": {"palette_id": "neutral", "pace": 1.0, "presentation_brightness": 1.0},
+        }}, catalog)
+
+        class Presentation:
+            def __init__(self):
+                self.view = None
+
+            def set_installation_profile(self, view):
+                self.view = view
+
+            def render(self, _context):
+                return SimpleNamespace(
+                    pixels=np.zeros((33 * 138, 3), dtype=np.uint8),
+                    changed=True, dirty_ranges=None,
+                )
+
+        presentation = Presentation()
+        manager.render_scene_v2_presentation(
+            presentation, canonical, monotonic_elapsed=1.0, wall_time=None
+        )
+        self.assertIs(presentation.view, manager.get_installation_profile_runtime_view())
 
     def test_racing_selectors_serialize_status_and_finish_with_matching_context(self):
         manager = self.manager(installation_profile_library=self.library)

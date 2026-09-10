@@ -20,7 +20,12 @@ import numpy as np
 from animation.core.component_catalog import ComponentCatalog, ComponentDescriptor
 from animation.core.compositing import BaseFrame
 from animation.core.manager import PreviewLEDController
-from animation.core.plant_awareness import PlantMaskCache
+from animation.core.installation_profile_runtime import InstallationProfileRuntimeView
+from animation.core.plant_awareness import (
+    INSTALLATION_GEOMETRY_CONTACT_INPUT,
+    InstallationGeometryContact,
+    PlantMaskCache,
+)
 from animation.core.scene_runtime import (
     CanonicalSceneRuntime, RuntimeFrame, ScenePresentationContext,
 )
@@ -242,6 +247,9 @@ class InstalledFinalSceneRuntime:
         self._wall_time = datetime.now().astimezone()
         self._native = _NativeAuroraPreview(33, 138)
         self._geometry = PlantMaskCache(_PlantGeometryOwner(33, 138, project_root))
+        self._installation_profile_view: InstallationProfileRuntimeView | None = None
+        self._geometry_contact: InstallationGeometryContact | None = None
+        self._geometry_contact_source: int | None = None
         self._runtime = CanonicalSceneRuntime(
             self.controller,
             catalog,
@@ -267,6 +275,24 @@ class InstalledFinalSceneRuntime:
                 self._runtime.activate(canonical)
                 self._active_digest = canonical.identity.digest
             return self._runtime.render_presentation(presentation)
+
+    def set_installation_profile(
+        self, view: InstallationProfileRuntimeView | None
+    ) -> None:
+        """Swap immutable runtime-owned geometry without touching Scene state."""
+
+        if view is not None and not isinstance(view, InstallationProfileRuntimeView):
+            raise TypeError("installation profile view must be immutable runtime geometry")
+        if view is self._installation_profile_view:
+            return
+        self._installation_profile_view = view
+        self._geometry_contact = None
+        self._geometry_contact_source = None
+        self._runtime.invalidate_installation_geometry()
+
+    def _installation_geometry(self):
+        view = self._installation_profile_view
+        return view.plant_masks if isinstance(view, InstallationProfileRuntimeView) else self._geometry.get()
 
     def _set_wall_time(self, wall_time: Any) -> None:
         if not isinstance(wall_time, datetime) or wall_time.tzinfo is None:
@@ -378,24 +404,37 @@ class InstalledFinalSceneRuntime:
             return EmojiArrangerAnimation(controller, parameters)
         raise ValueError(f"Composer preview cannot render Widget {descriptor.component_id!r}")
 
-    def _plant_inputs(self, _plants: Mapping[str, Any], _descriptor: ComponentDescriptor) -> Mapping[str, float]:
-        geometry = self._geometry.get()
+    def _plant_inputs(self, _plants: Mapping[str, Any], descriptor: ComponentDescriptor) -> Mapping[str, Any]:
+        geometry = self._installation_geometry()
         total = float(self.controller.total_leds)
-        return {
+        inputs: dict[str, Any] = {
             "foliage_density": geometry.foliage_count / total,
             "globe_proximity": geometry.globe_count / total,
             "occlusion": (geometry.foliage_count + geometry.globe_count) / total,
         }
+        if descriptor.accepts_installation_geometry_contact:
+            view = self._installation_profile_view
+            if isinstance(view, InstallationProfileRuntimeView):
+                self._geometry_contact = view.geometry_contact
+                self._geometry_contact_source = id(geometry)
+            elif self._geometry_contact_source != id(geometry):
+                self._geometry_contact = InstallationGeometryContact.from_geometry(
+                    geometry,
+                    identity=("composer-final-preview", id(geometry), 33, 138),
+                )
+                self._geometry_contact_source = id(geometry)
+            inputs[INSTALLATION_GEOMETRY_CONTACT_INPUT] = self._geometry_contact
+        return inputs
 
     def _widget_safe_geometry(self, _plants: Mapping[str, Any], _strips: int, _leds: int) -> np.ndarray:
         """Bind Widget placement to the calibrated installation clearance map."""
 
-        return self._geometry.get().safe_flat
+        return self._installation_geometry().safe_flat
 
     def _plant_optics(self, pixels: np.ndarray, plants: Mapping[str, Any]) -> np.ndarray:
         """Apply calibrated foliage/globe presentation once after composition."""
 
-        geometry = self._geometry.get()
+        geometry = self._installation_geometry()
         output = pixels.copy()
         effects = plants["effects"]
         strengths = effects["strengths"]

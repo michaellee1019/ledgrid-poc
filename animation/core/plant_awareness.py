@@ -12,6 +12,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 import numpy as np
@@ -38,6 +39,10 @@ GLOBE_REGION_ORDER = (
     "top_left", "top_right", "upper_middle", "middle_left", "middle_right",
     "lower_left", "lower_right",
 )
+
+# This name is a provider-owned runtime input, never an authored component
+# parameter.  A descriptor must opt in before the installed runtime resolves it.
+INSTALLATION_GEOMETRY_CONTACT_INPUT = "installation_geometry_contact"
 
 
 @dataclass(frozen=True)
@@ -147,6 +152,152 @@ class PlantMaskGeometry:
         safe = ~self.clearance_flat
         safe.setflags(write=False)
         return safe
+
+
+def _readonly(value: Any, *, dtype: np.dtype[Any]) -> np.ndarray:
+    result = np.array(value, dtype=dtype, order="C", copy=True)
+    result.setflags(write=False)
+    return result
+
+
+def _empty_geometry(width: int, height: int, *, error: str) -> PlantMaskGeometry:
+    """Return the deterministic all-safe fallback without reading calibration."""
+
+    logical_shape = (width, height)
+    empty = _readonly(np.zeros(logical_shape, dtype=np.bool_), dtype=np.dtype(np.bool_))
+    distance = _readonly(
+        np.full(logical_shape, float(max(width, height)), dtype=np.float32),
+        dtype=np.dtype(np.float32),
+    )
+    normals = _readonly(np.zeros(logical_shape, dtype=np.float32), dtype=np.dtype(np.float32))
+    regions = MappingProxyType({name: empty for name in GLOBE_REGION_ORDER})
+    return PlantMaskGeometry(
+        foliage=empty,
+        globes=empty,
+        obstacle=empty,
+        clearance=empty,
+        foliage_flat=empty.reshape(-1),
+        globes_flat=empty.reshape(-1),
+        obstacle_flat=empty.reshape(-1),
+        clearance_flat=empty.reshape(-1),
+        foliage_count=0,
+        globe_count=0,
+        globe_regions=0,
+        foliage_edge=empty,
+        globe_edge=empty,
+        obstacle_edge=empty,
+        distance=distance,
+        normal_x=normals,
+        normal_y=normals,
+        globe_region_masks=regions,
+        error=error,
+    )
+
+
+def _immutable_geometry(geometry: PlantMaskGeometry) -> PlantMaskGeometry:
+    """Freeze one canonical mask geometry for provider-qualified consumers."""
+
+    width, height = geometry.foliage.shape
+    logical_shape = (width, height)
+    if geometry.foliage.ndim != 2 or any(
+        getattr(geometry, name).shape != logical_shape
+        for name in (
+            "globes", "obstacle", "clearance", "foliage_edge", "globe_edge",
+            "obstacle_edge", "distance", "normal_x", "normal_y",
+        )
+    ):
+        return _empty_geometry(width, height, error="malformed installation geometry")
+    foliage = _readonly(geometry.foliage, dtype=np.dtype(np.bool_))
+    globes = _readonly(geometry.globes, dtype=np.dtype(np.bool_))
+    obstacle = _readonly(geometry.obstacle, dtype=np.dtype(np.bool_))
+    clearance = _readonly(geometry.clearance, dtype=np.dtype(np.bool_))
+    regions = MappingProxyType({
+        name: _readonly(
+            geometry.globe_region_masks.get(name, np.zeros(logical_shape, dtype=np.bool_)),
+            dtype=np.dtype(np.bool_),
+        )
+        for name in GLOBE_REGION_ORDER
+    })
+    return PlantMaskGeometry(
+        foliage=foliage,
+        globes=globes,
+        obstacle=obstacle,
+        clearance=clearance,
+        foliage_flat=foliage.reshape(-1),
+        globes_flat=globes.reshape(-1),
+        obstacle_flat=obstacle.reshape(-1),
+        clearance_flat=clearance.reshape(-1),
+        foliage_count=int(np.count_nonzero(foliage)),
+        globe_count=int(np.count_nonzero(globes)),
+        globe_regions=sum(int(np.any(regions[name])) for name in GLOBE_REGION_ORDER),
+        foliage_edge=_readonly(geometry.foliage_edge, dtype=np.dtype(np.bool_)),
+        globe_edge=_readonly(geometry.globe_edge, dtype=np.dtype(np.bool_)),
+        obstacle_edge=_readonly(geometry.obstacle_edge, dtype=np.dtype(np.bool_)),
+        distance=_readonly(geometry.distance, dtype=np.dtype(np.float32)),
+        normal_x=_readonly(geometry.normal_x, dtype=np.dtype(np.float32)),
+        normal_y=_readonly(geometry.normal_y, dtype=np.dtype(np.float32)),
+        globe_region_masks=regions,
+        error="",
+    )
+
+
+@dataclass(frozen=True)
+class InstallationGeometryContact:
+    """Read-only installation geometry supplied only to qualified providers.
+
+    ``exact_globe_cores`` is for collision/contact and scoring.  ``clearance``
+    is deliberately separate for planning and safe placement.  This object does
+    not paint pixels or interpret contact; those remain component responsibilities.
+    """
+
+    identity: Tuple[Any, ...]
+    geometry: PlantMaskGeometry
+    available: bool
+    status: str
+
+    @classmethod
+    def from_geometry(
+        cls, geometry: PlantMaskGeometry, *, identity: Tuple[Any, ...]
+    ) -> "InstallationGeometryContact":
+        if not isinstance(geometry, PlantMaskGeometry):
+            raise TypeError("geometry must be PlantMaskGeometry")
+        if geometry.foliage.ndim != 2:
+            raise ValueError("installation geometry must be strip-major")
+        width, height = geometry.foliage.shape
+        if geometry.error:
+            return cls.unavailable(width, height, identity=identity, status=geometry.error)
+        frozen = _immutable_geometry(geometry)
+        if frozen.error:
+            return cls.unavailable(width, height, identity=identity, status=frozen.error)
+        return cls(tuple(identity), frozen, True, "ready")
+
+    @classmethod
+    def unavailable(
+        cls, width: int, height: int, *, identity: Tuple[Any, ...] = (), status: str
+    ) -> "InstallationGeometryContact":
+        if type(width) is not int or type(height) is not int or width < 1 or height < 1:
+            raise ValueError("installation geometry fallback dimensions must be positive integers")
+        return cls(tuple(identity), _empty_geometry(width, height, error=status), False, status)
+
+    @property
+    def exact_globe_cores(self) -> np.ndarray:
+        return self.geometry.globes
+
+    @property
+    def named_globe_regions(self) -> Mapping[str, np.ndarray]:
+        return self.geometry.globe_region_masks
+
+    @property
+    def foliage(self) -> np.ndarray:
+        return self.geometry.foliage
+
+    @property
+    def clearance(self) -> np.ndarray:
+        return self.geometry.clearance
+
+    @property
+    def safe(self) -> np.ndarray:
+        return self.geometry.safe
 
 
 def plant_parameter_schema() -> Mapping[str, Mapping[str, Any]]:

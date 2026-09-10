@@ -4830,6 +4830,12 @@ class AnimationWebInterface:
                         'requested_digest': requested_digest,
                         'selection': selection,
                     }
+                    selected_view = getattr(
+                        self.preview_manager,
+                        'get_installation_profile_runtime_view',
+                        lambda: None,
+                    )()
+                    self.composer_preview.set_installation_profile(selected_view)
         return led_info
 
     def _status_payload(self, decode_frame: bool = False) -> Dict[str, Any]:
