@@ -162,7 +162,8 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(script.count("browserCrypto.randomUUID()"), 1)
-        self.assertEqual(script.count("mutation_id: newUuid()"), 3)
+        self.assertEqual(script.count("mutation_id: newUuid()"), 2)
+        self.assertIn("const selectionMutation = newUuid(); const selectionSequence = ++state.sequence;", script)
 
     def test_advisory_check_and_scene_submission_keep_wall_channel_inert(self) -> None:
         scene = _current_scene()
@@ -300,7 +301,7 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
                 provider="python", component_id="alert", version=1,
             )
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        self.assertIn("const endpoint = builtin ? '/built-ins/open' : '/scene';", script)
+        self.assertIn("const requestEndpoint = endpoint || (builtin ? '/built-ins/open' : '/scene');", script)
         self.assertIn("async function flushPublication()", script)
         self.assertIn("renderStatus(result.status || result);", script)
         self.assertIn("refreshInFlight", script)
@@ -312,12 +313,72 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
 
         self.assertIn('id="liveAction" class="button primary wide" type="button">Stop</button>', html)
         self.assertIn("status: {connected: true, running: true, armed: true", script)
-        self.assertIn("publication: {queued: null, inFlight: null, scheduled: false}", script)
+        self.assertIn("publication: {queued: null, afterStop: null, inFlight: null, scheduled: false}", script)
         self.assertIn("replacement?.resolve({coalesced: true});", script)
         self.assertIn("if (!body.status?.current) await submit(state.scene);", script)
-        self.assertIn("try { await guardedWallActivation(entry.body.scene, true); }", script)
+        self.assertIn("try { await guardedWallActivation(entry.scene, true, entry.targetFps); }", script)
+        self.assertNotIn("activateWall", script)
+        self.assertNotIn("queueOperatorSpeed", script)
+        self.assertNotIn("queueTargetFps", script)
+        self.assertNotIn("Check authorization", script)
+        self.assertIn("window.addEventListener('online', refreshStatus);", script)
+        self.assertIn("if (status.undo_invalidated) await acknowledgeUndo(status.undo_invalidation_revision);", script)
         self.assertIn("`${api}/stop`", script)
         self.assertNotIn("`${api}/go-live`", script)
+
+    def test_all_live_intents_share_the_serialized_newest_scene_publisher(self) -> None:
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        self.assertIn("await submit(body.look.scene, {", script)
+        self.assertIn("endpoint: `/looks/${item.id}/open`", script)
+        self.assertIn("targetFps = boundedTargetFps($('#targetFps').value)", script)
+        self.assertIn("globalSettingsForWall(scene, power, targetFps)", script)
+        self.assertIn("if (state.wall.dirty || state.publication.queued || state.publication.afterStop || state.publication.inFlight) return;", script)
+        self.assertIn("if (status.connected && state.wall.dirty && state.scene", script)
+        self.assertIn("state.publication.afterStop", script)
+        self.assertIn("{kind: 'stop', scene: structuredClone(state.scene), resolve, reject}", script)
+
+    def test_stale_library_lookups_are_discarded_before_they_can_publish_or_mutate_controls(self) -> None:
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        helper = script[
+            script.index("const beginIntent") : script.index("  const sleep")
+        ]
+        javascript = """
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const context = {state: {intent: 0}, assert};
+vm.runInNewContext(process.argv[1] + '; first = beginIntent(); newerEdit = beginIntent(); firstCurrent = intentIsCurrent(first); newerCurrent = intentIsCurrent(newerEdit); stopped = beginIntent(); editCurrentAfterStop = intentIsCurrent(newerEdit);', context);
+assert.equal(context.firstCurrent, false);
+assert.equal(context.newerCurrent, true);
+assert.equal(context.editCurrentAfterStop, false);
+"""
+        completed = subprocess.run(["node", "-e", javascript, helper], check=False, capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(script.count("if (!intentIsCurrent(intentToken)) return;"), 3)
+        self.assertEqual(script.count("if (!intentIsCurrent(intentToken) || publication.coalesced) return;"), 2)
+        self.assertIn("if (!intentIsCurrent(intentToken)) return;\n      state.selection = item;", script)
+        self.assertIn("if (intentIsCurrent(intentToken) && error.status !== 409)", script)
+        self.assertIn("beginIntent();\n    if (!state.scene) return Promise.resolve();", script)
+        self.assertIn("await submit(state.scene, {intentToken: state.intent})", script)
+
+        in_flight_javascript = """
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const context = {state: {intent: 0}, assert};
+const run = vm.runInNewContext(process.argv[1] + `
+  ;(async () => {
+    const lookupIntent = beginIntent();
+    let resolveSubmit;
+    const submitted = new Promise((resolve) => { resolveSubmit = resolve; });
+    const completion = submitted.then(() => intentIsCurrent(lookupIntent));
+    beginIntent();
+    resolveSubmit();
+    assert.equal(await completion, false);
+  })()
+`, context);
+Promise.resolve(run).catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+        in_flight = subprocess.run(["node", "-e", in_flight_javascript, helper], check=False, capture_output=True, text=True)
+        self.assertEqual(in_flight.returncode, 0, in_flight.stderr)
 
     def test_invalid_authored_feedback_survives_status_poll_until_a_successful_edit(self) -> None:
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")

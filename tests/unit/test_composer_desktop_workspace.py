@@ -58,7 +58,8 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.assertIn("font: 13px/1.35", self.css)
         self.assertIn("min-height: 1.9rem", self.css)
         self.assertIn("pace: number('#sceneSpeed')", self.script)
-        self.assertIn("function queueOperatorSpeed", self.script)
+        self.assertIn("$('#sceneSpeed').addEventListener('input', edit)", self.script)
+        self.assertNotIn("function queueOperatorSpeed", self.script)
 
     def test_workspace_dom_keeps_preview_between_library_and_controls(self) -> None:
         workspace = re.search(r'<div class="desktop-workspace">(?P<body>.*?)</div>\s*</main>', self.html, re.DOTALL)

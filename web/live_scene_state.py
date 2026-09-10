@@ -32,14 +32,6 @@ class LiveSceneStale(LiveSceneStateError):
     """A delayed mutation from one client must not replace a newer one."""
 
 
-class LiveSceneBlocked(LiveSceneStateError):
-    """Go Live needs an explicit recovery action before it can proceed."""
-
-    def __init__(self, blockers: list[dict[str, str]]) -> None:
-        super().__init__("Go Live is not ready")
-        self.blockers = blockers
-
-
 @dataclass(frozen=True)
 class _RequestResult:
     sequence: int | None
@@ -69,6 +61,10 @@ class LiveSceneState:
         self._connected = True
         self._running = True
         self._armed = True
+        # A user stop is deliberately distinct from a transport disconnect.
+        # Reconnecting a controller may converge a live scene, but must never
+        # turn output back on after the user explicitly stopped it.
+        self._stopped_by_user = False
         self._current: CanonicalScene | None = None
         self._desired: CanonicalScene | None = None
         self._observed: CanonicalScene | None = None
@@ -118,6 +114,11 @@ class LiveSceneState:
                 self._client_sequences[client_id] = sequence
 
             changed = self._current is None or self._current.identity != canonical.identity
+            resumed = self._stopped_by_user
+            # Canonicalization above is intentionally outside the lock.  Only
+            # a valid interaction can clear an explicit Stop; bad input keeps
+            # both the last valid output and the stopped state intact.
+            self._stopped_by_user = False
             if changed:
                 self._revision += 1
                 self._current = canonical
@@ -129,13 +130,13 @@ class LiveSceneState:
             published = False
             should_publish = bool(
                 self._connected and self._current is not None and (
-                    changed or not self._running or not self._armed
+                    changed or resumed or not self._running or not self._armed
                     or self._observed != self._current
                 )
             )
             if should_publish:
                 # Stop is a safe idle, not an editing mode. The next valid
-                # submit resumes output without a separate re-arm action.
+                # submit resumes output without a separate recovery action.
                 self._running = True
                 self._armed = True
                 self._publish_current_locked()
@@ -159,6 +160,7 @@ class LiveSceneState:
         with self._lock:
             if not self._running:
                 return self.snapshot(client_id=client_id)
+            self._stopped_by_user = True
             if not self._connected:
                 self._running = False
                 self._armed = False
@@ -180,19 +182,6 @@ class LiveSceneState:
             self._last_error = None
             return self.snapshot(client_id=client_id)
 
-    def go_live(self, *, client_id: str = "composer") -> dict[str, Any]:
-        """Explicitly arm and publish the current scene after Stop/reconnect."""
-        client_id = self._client_id(client_id)
-        with self._lock:
-            blockers = self._readiness_locked()
-            if blockers:
-                raise LiveSceneBlocked(blockers)
-            self._running = True
-            self._armed = True
-            self._last_error = None
-            self._publish_current_locked()
-            return self.snapshot(client_id=client_id)
-
     def set_connected(self, connected: bool) -> dict[str, Any]:
         """Suspend on disconnect and converge the newest valid scene on reconnect."""
         if not isinstance(connected, bool):
@@ -203,10 +192,10 @@ class LiveSceneState:
                 self._armed = False
             elif not self._connected:
                 self._connected = True
-                self._running = True
-                self._armed = True
+                self._running = not self._stopped_by_user
+                self._armed = not self._stopped_by_user
                 self._last_error = None
-                if self._current is not None:
+                if self._current is not None and not self._stopped_by_user:
                     self._publish_current_locked()
             return self.snapshot()
 
@@ -275,7 +264,6 @@ class LiveSceneState:
                 "undo_invalidated": undo_invalidated,
                 "undo_invalidation_revision": self._revision if undo_invalidated else None,
                 "last_error": self._last_error,
-                "readiness": self._readiness_locked(),
                 "wall_mutations": 0,
             }
             if include_current_scene:
@@ -303,14 +291,6 @@ class LiveSceneState:
         self._observed = self._current
         self._observed_revision = self._desired_revision
         self._last_error = None
-
-    def _readiness_locked(self) -> list[dict[str, str]]:
-        blockers: list[dict[str, str]] = []
-        if not self._connected:
-            blockers.append({"code": "not_connected", "message": "Composer is disconnected.", "recovery": "Reconnect; the newest valid scene will apply automatically."})
-        if self._current is None:
-            blockers.append({"code": "no_scene", "message": "Choose a valid scene first.", "recovery": "Select a look or make a valid edit."})
-        return blockers
 
     @staticmethod
     def _client_id(value: Any) -> str:

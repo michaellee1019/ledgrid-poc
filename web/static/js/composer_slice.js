@@ -21,15 +21,15 @@
   // an id while resetting its sequence would make the next authored edit stale.
   const clientId = newUuid();
   const state = { status: {connected: true, running: true, armed: true, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
-    scene: null, history: [], redo: [], sequence: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
-    publication: {queued: null, inFlight: null, scheduled: false},
-    frameRate: {queued: null, inFlight: false, timer: null},
-    operatorSpeed: {queued: null, inFlight: false, timer: null},
+    scene: null, history: [], redo: [], sequence: 0, intent: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
+    publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
       adoptedLook: null, adoptedVibeId: null,
     } };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
+  const beginIntent = () => ++state.intent;
+  const intentIsCurrent = (intent) => intent === state.intent;
   const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
   async function requestJson(url, options = {}) {
     let response;
@@ -66,58 +66,11 @@
   }
   function syncFrameRateObservation(observation = state.wall.observation) {
     renderActualFps(observation);
-    if (state.frameRate.inFlight || state.frameRate.queued != null) return;
+    // Never let a polling observation replace a value the operator just
+    // authored.  The queued entry carries that exact target to activation.
+    if (state.wall.dirty || state.publication.queued || state.publication.afterStop || state.publication.inFlight) return;
     const observedTarget = Number(observation?.target_fps);
     if (Number.isFinite(observedTarget) && observedTarget > 0) syncTargetFps(observedTarget);
-  }
-  async function flushTargetFps() {
-    state.frameRate.timer = null;
-    if (state.frameRate.inFlight || state.frameRate.queued == null) return;
-    const target = state.frameRate.queued;
-    state.frameRate.queued = null;
-    state.frameRate.inFlight = true;
-    try {
-      const result = await requestJson('/api/config/target-fps', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({target_fps: target})});
-      const applied = boundedTargetFps(result.target_fps);
-      state.wall.observation = {...(state.wall.observation || {}), target_fps: applied};
-      // A newer drag value owns the visible control while it waits its turn.
-      // Reconcile the slider only when this response is still the newest
-      // request; otherwise the older response would visibly snap it back.
-      if (state.frameRate.queued == null) syncTargetFps(applied);
-    } catch (error) {
-      $('#operationMessage').textContent = error.message || 'Target FPS could not be updated.';
-    } finally {
-      state.frameRate.inFlight = false;
-      if (state.frameRate.queued != null) flushTargetFps();
-    }
-  }
-  function queueTargetFps(value, {immediate = false} = {}) {
-    const target = syncTargetFps(value);
-    state.frameRate.queued = target;
-    if (state.frameRate.timer != null) window.clearTimeout(state.frameRate.timer);
-    state.frameRate.timer = window.setTimeout(flushTargetFps, immediate ? 0 : 90);
-  }
-  async function flushOperatorSpeed() {
-    state.operatorSpeed.timer = null;
-    if (state.operatorSpeed.inFlight || state.operatorSpeed.queued == null) return;
-    const multiplier = state.operatorSpeed.queued; state.operatorSpeed.queued = null; state.operatorSpeed.inFlight = true;
-    try {
-      await requestJson('/api/config/animation-speed', {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({multiplier}),
-      });
-      const baseline = Number(state.wall.bootstrap?.global_control_contract?.operator_speed_baseline || .3);
-      state.wall.observation = {...(state.wall.observation || {}), animation_speed_scale: baseline * multiplier};
-    } catch (error) { $('#operationMessage').textContent = error.message || 'Speed could not be updated.'; }
-    finally {
-      state.operatorSpeed.inFlight = false;
-      if (state.operatorSpeed.queued != null) flushOperatorSpeed();
-    }
-  }
-  function queueOperatorSpeed(value, {immediate = false} = {}) {
-    const multiplier = Math.max(.1, Math.min(2, Number(value) || DEFAULT_SCENE_PACE));
-    syncSceneSpeed(multiplier); state.operatorSpeed.queued = multiplier;
-    if (state.operatorSpeed.timer != null) window.clearTimeout(state.operatorSpeed.timer);
-    state.operatorSpeed.timer = window.setTimeout(flushOperatorSpeed, immediate ? 0 : 45);
   }
   const plantOptics = Object.freeze([
     {id: 'illuminate', label: 'Illuminate', enabled: '#plantIlluminateEnabled', strength: '#plantIlluminateStrength', value: '#plantIlluminateValue'},
@@ -810,7 +763,7 @@
       background, layers, installation_profile: {digest: profileDigest}, fallback: structuredClone(background),
     };
   }
-  function globalSettingsForWall(scene, power) {
+  function globalSettingsForWall(scene, power, targetFps) {
     const observation = state.wall.observation || {};
     const bootstrap = state.wall.bootstrap || {};
     const lookUnchanged = Boolean(state.wall.adoptedLook
@@ -843,7 +796,7 @@
         // The target is authored by the Motion control.  Actual FPS is
         // telemetry only, while Scene pace and renderer source rates stay in
         // their respective Scene/component contracts.
-        target_fps: boundedTargetFps($('#targetFps').value),
+        target_fps: targetFps,
       },
     };
   }
@@ -883,10 +836,14 @@
     $('#liveAction').textContent = live ? 'Stop output' : 'Stopped';
     $('#liveAction').disabled = !live || state.wall.activating;
     $('#operationMessage').textContent = state.authoredValidationError || status.last_error || (live
-      ? (status.current ? (state.wall.dirty ? 'Applying the newest valid edit.' : 'Live · every valid edit applies automatically.') : 'Live · choose or edit a scene to begin output.')
+      ? (status.current ? (state.wall.dirty ? 'Publishing the newest valid edit.' : 'Live · every valid edit applies automatically.') : 'Live · choose or edit a scene to begin output.')
       : 'Output stopped · change any control or choose a scene to resume automatically.');
   }
-  async function acknowledgeUndo(revision) { state.history = []; state.redo = []; await fetch(`${api}/undo-ack`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, revision})}); }
+  async function acknowledgeUndo(revision) {
+    state.history = []; state.redo = [];
+    const result = await requestJson(`${api}/undo-ack`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, revision})});
+    renderStatus(result.status || result);
+  }
   function schedulePreview() { const generation = ++state.previewGeneration; const candidate = sceneFromControls(); state.scene = candidate; previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
   function remember(previous) { state.history.push(previous); if (state.history.length > 40) state.history.shift(); state.redo = []; }
   async function flushPublication() {
@@ -897,25 +854,28 @@
     state.publication.inFlight = entry;
     state.submitting = true;
     try {
+      if (entry.kind === 'stop') {
+        await stopOutputNow(entry.scene);
+        entry.resolve({stopped: true});
+        return;
+      }
       const response = await fetch(`${api}${entry.endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(entry.body)});
       const result = await response.json();
       state.authoredValidationError = response.ok ? null : (result.error || 'Current scene could not be accepted.');
-      if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result});
+      if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result, status: response.status});
       // A result always carries the server's authoritative desired/observed
       // snapshot.  Do not infer output state from an old local draft.
       renderStatus(result.status || result);
-      if (entry.activateWall !== false) {
-        state.wall.activating = true; $('#liveAction').disabled = true;
-        try { await guardedWallActivation(entry.body.scene, true); }
-        catch (wallError) {
-          // The authored scene remains current and recoverable. A later edit
-          // retries from a fresh controller revision without rolling the UI back.
-          renderStatus(wallStatus(wallError.message));
-        } finally {
-          state.wall.activating = false;
-          renderStatus(state.status || wallStatus());
-        }
-      } else state.wall.dirty = Boolean(state.publication.queued);
+      state.wall.activating = true; $('#liveAction').disabled = true;
+      try { await guardedWallActivation(entry.scene, true, entry.targetFps); }
+      catch (wallError) {
+        // The authored scene remains current and recoverable. A later edit
+        // retries from a fresh controller revision without rolling the UI back.
+        renderStatus(wallStatus(wallError.message));
+      } finally {
+        state.wall.activating = false;
+        renderStatus(state.status || wallStatus());
+      }
       entry.resolve(result);
     } catch (error) {
       // Validation failures leave the last valid output untouched. The next
@@ -924,20 +884,31 @@
     } finally {
       state.publication.inFlight = null;
       state.submitting = false;
+      if (!state.publication.queued && state.publication.afterStop) {
+        state.publication.queued = state.publication.afterStop;
+        state.publication.afterStop = null;
+      }
       if (state.publication.queued && !state.publication.scheduled) {
         state.publication.scheduled = true;
         queueMicrotask(flushPublication);
       }
     }
   }
-  function submit(scene, {builtin = false, rememberEdit = false, previous = null, activateWall = true} = {}) {
+  function submit(scene, {builtin = false, endpoint = null, requestBody = null, intentToken = null, rememberEdit = false, previous = null} = {}) {
+    if (intentToken != null && !intentIsCurrent(intentToken)) return Promise.resolve({coalesced: true});
+    if (intentToken == null) beginIntent();
     if (rememberEdit) remember(previous || structuredClone(state.scene || defaultScene()));
     state.scene = scene; state.wall.dirty = true; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
-    const endpoint = builtin ? '/built-ins/open' : '/scene';
-    const body = builtin ? {scene, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence} : {origin: 'composer', scene, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence};
+    const sceneSnapshot = structuredClone(scene);
+    const targetFps = boundedTargetFps($('#targetFps').value);
+    const requestEndpoint = endpoint || (builtin ? '/built-ins/open' : '/scene');
+    const body = requestBody || (builtin ? {scene: sceneSnapshot, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence} : {origin: 'composer', scene: sceneSnapshot, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence});
     return new Promise((resolve, reject) => {
-      const replacement = state.publication.queued;
-      state.publication.queued = {endpoint, body, activateWall, resolve, reject};
+      const entry = {kind: 'publish', endpoint: requestEndpoint, body, scene: sceneSnapshot, targetFps, resolve, reject};
+      const stopping = state.publication.queued?.kind === 'stop' || state.publication.inFlight?.kind === 'stop';
+      const replacement = stopping ? state.publication.afterStop : state.publication.queued;
+      if (stopping) state.publication.afterStop = entry;
+      else state.publication.queued = entry;
       // A drag may produce many intermediate states before the first network
       // turn. Superseded drafts were never sent, so they are successful local
       // coalesces rather than errors that could roll the UI back.
@@ -948,7 +919,7 @@
       }
     });
   }
-  async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; const speedFastPath = state.lastControl === 'sceneSpeed' && state.status?.running; try { await submit(next, {rememberEdit: true, previous, activateWall: !speedFastPath}); } catch (error) { if (!state.publication.queued && !state.publication.inFlight) { state.scene = previous; applyScene(previous); } $('#operationMessage').textContent = error.message; } }
+  async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true, previous}); } catch (error) { if (!state.publication.queued && !state.publication.inFlight) { state.scene = previous; applyScene(previous); } $('#operationMessage').textContent = error.message; } }
   async function loadFireworksPresets() {
     try {
       const response = await fetch(`${api}/components/fireworks/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
@@ -987,7 +958,7 @@
     try {
       const response = await fetch(`${api}/components/clock_overlay/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
       const target = $('#clockPresetCards'); target.replaceChildren();
-      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { const clocks = clockWidgets(); if (clocks.length > 1) { placementWarning({warning: 'Multiple Clock widgets are preserved; choose one before applying a Clock preset.'}); return; } const previous = structuredClone(state.scene || defaultScene()); const next = structuredClone(state.scene || defaultScene()); const clock = clockWidgets(next)[0]; if (clock) clock.component.parameters = preset.parameters; else next.widgets.push({id: 'composer-clock', component: {component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget', parameters: preset.parameters}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: -8}}); state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
+      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { const clocks = clockWidgets(); if (clocks.length > 1) { placementWarning({warning: 'Multiple Clock widgets are preserved; choose one before using a Clock preset.'}); return; } const previous = structuredClone(state.scene || defaultScene()); const next = structuredClone(state.scene || defaultScene()); const clock = clockWidgets(next)[0]; if (clock) clock.component.parameters = preset.parameters; else next.widgets.push({id: 'composer-clock', component: {component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget', parameters: preset.parameters}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: -8}}); state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
       state.componentPresets.clock_overlay = body.presets; syncClockPresetUI();
     } catch (error) { $('#operationMessage').textContent = error.message || 'Clock presets are unavailable.'; }
   }
@@ -1032,11 +1003,27 @@
   }
   function renderLibrary() { const target = $('#libraryList'); target.replaceChildren(); const items = filteredItems(); $('#libraryEmpty').hidden = items.length > 0; items.forEach((item) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.setAttribute('aria-current', String(state.selection?.kind === item.kind && state.selection?.id === item.id)); button.innerHTML = `<span>${item.name}</span><span class="library-kind">${item.kind === 'starter' ? 'Built-in' : 'Saved'}</span>`; button.addEventListener('click', () => openItem(item)); const row = document.createElement('li'); row.append(button); target.append(row); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.classList.toggle('active', button.dataset.libraryFilter === state.filter)); }
   async function openItem(item) {
+    const intentToken = beginIntent();
     try {
-      if (item.kind === 'look') { const response = await fetch(`${api}/looks/${item.id}/open`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); state.scene = result.look.scene; $('#sceneName').value = result.look.name; }
-      else { const starterResponse = await fetch(`${api}/starters/${item.id}`); const starter = (await starterResponse.json()).starter; applyScene(starter.scene); await submit(starter.scene, {builtin: true}); $('#sceneName').value = starter.name; }
+      // Allocate ordering when the user chooses a Library item, before its
+      // lookup completes. A slow earlier lookup can then never beat a newer
+      // choice or control edit at the server.
+      const selectionMutation = newUuid(); const selectionSequence = ++state.sequence;
+      let publication;
+      if (item.kind === 'look') {
+        const response = await fetch(`${api}/looks/${item.id}`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
+        if (!intentIsCurrent(intentToken)) return;
+        publication = await submit(body.look.scene, {
+          endpoint: `/looks/${item.id}/open`,
+          requestBody: {client_id: clientId, mutation_id: selectionMutation, client_sequence: selectionSequence}, intentToken,
+        });
+        if (!intentIsCurrent(intentToken) || publication.coalesced) return;
+        state.scene = publication.look.scene; renderStatus(publication.status); $('#sceneName').value = publication.look.name;
+      }
+      else { const starterResponse = await fetch(`${api}/starters/${item.id}`); const starter = (await starterResponse.json()).starter; if (!intentIsCurrent(intentToken)) return; applyScene(starter.scene); publication = await submit(starter.scene, {builtin: true, requestBody: {scene: starter.scene, client_id: clientId, mutation_id: selectionMutation, client_sequence: selectionSequence}, intentToken}); if (!intentIsCurrent(intentToken) || publication.coalesced) return; $('#sceneName').value = starter.name; }
+      if (!intentIsCurrent(intentToken)) return;
       state.selection = item; state.history = []; state.redo = []; state.dirty = false; applyScene(state.scene); schedulePreview(); renderLibrary(); renderStatus(state.status);
-    } catch (error) { $('#operationMessage').textContent = error.message || 'Scene could not be opened.'; }
+    } catch (error) { if (intentIsCurrent(intentToken) && error.status !== 409) $('#operationMessage').textContent = error.message || 'Scene could not be opened.'; }
   }
   function focusable(dialog) { return [...dialog.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter((node) => !node.disabled); }
   function openDialog(dialog) { const prior = document.activeElement; dialog.showModal(); focusable(dialog)[0]?.focus(); const trap = (event) => { if (event.key === 'Escape') { event.preventDefault(); dialog.close(); } if (event.key !== 'Tab') return; const nodes = focusable(dialog); const first = nodes[0]; const last = nodes.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }; dialog.addEventListener('keydown', trap); dialog.addEventListener('close', () => { dialog.removeEventListener('keydown', trap); prior?.focus(); }, {once: true}); }
@@ -1050,7 +1037,7 @@
       if (status.controller?.session_id !== controllerSessionId) throw new Error('The wall restarted before it observed this scene.');
       if (status.phase === 'active') {
         if (JSON.stringify(status.requested_identity) !== JSON.stringify(status.observed_identity)) {
-          throw new Error('The wall did not observe the exact checked scene.');
+          throw new Error('The wall did not observe the exact requested scene.');
         }
         return status;
       }
@@ -1059,19 +1046,19 @@
     }
     throw new Error('The wall did not acknowledge this scene in time.');
   }
-  async function guardedWallActivation(scene, power) {
+  async function guardedWallActivation(scene, power, targetFps = boundedTargetFps($('#targetFps').value)) {
     await refreshWallStatus({preserveAuthored: true});
     if (state.wall.bootstrap?.capabilities?.server_actions?.activation_available !== true) {
       state.wall.dirty = false;
       return {local_only: true};
     }
     const browserScene = browserSceneForWall(scene);
-    const globalSettings = globalSettingsForWall(scene, power);
+    const globalSettings = globalSettingsForWall(scene, power, targetFps);
     const checked = await requestJson('/api/v1/scene/checks', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({scene: browserScene, global_settings: globalSettings}),
     });
-    if (!checked.check_token || !checked.basis?.controller) throw new Error('The wall returned an incomplete Check authorization.');
+    if (!checked.check_token || !checked.basis?.controller) throw new Error('The wall cannot accept this scene yet.');
     const accepted = await requestJson('/api/v1/scene', {
       method: 'PUT', headers: {'Content-Type': 'application/json', 'Idempotency-Key': newUuid()},
       body: JSON.stringify({
@@ -1084,21 +1071,37 @@
     await waitForExactActivation(accepted, checked.basis.controller.session_id);
     // A slider may have produced a newer queued scene while this exact one was
     // being acknowledged. Never snap the controls back to the older scene.
-    state.wall.dirty = Boolean(state.publication.queued);
+    state.wall.dirty = Boolean(state.publication.queued || state.publication.afterStop);
     await refreshWallStatus({preserveAuthored: true});
   }
-  async function stopOutput() {
-    if (state.wall.activating || !state.status?.running || !state.scene) return;
+  async function stopOutputNow(scene) {
     state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = 'Stopping…';
     $('#operationMessage').textContent = 'Stopping output. The next valid edit resumes automatically.';
     try {
-      await guardedWallActivation(sceneFromControls(), false);
+      await guardedWallActivation(scene, false);
       const result = await requestJson(`${api}/stop`, {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId}),
       });
       renderStatus(result.status || result);
     } catch (error) { renderStatus(wallStatus(error.message)); blockers({error: error.message, blockers: error.blockers}); }
     finally { state.wall.activating = false; renderStatus(state.status || wallStatus()); }
+  }
+  function stopOutput() {
+    beginIntent();
+    if (!state.scene) return Promise.resolve();
+    const superseded = state.publication.afterStop;
+    state.publication.afterStop = null;
+    superseded?.resolve({coalesced: true});
+    if (state.publication.queued?.kind === 'stop' || state.publication.inFlight?.kind === 'stop') return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const replacement = state.publication.queued;
+      state.publication.queued = {kind: 'stop', scene: structuredClone(state.scene), resolve, reject};
+      replacement?.resolve({coalesced: true});
+      if (!state.publication.inFlight && !state.publication.scheduled) {
+        state.publication.scheduled = true;
+        queueMicrotask(flushPublication);
+      }
+    });
   }
   async function check() { try { const response = await fetch(`${api}/check`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene: sceneFromControls()})}); const result = await response.json(); $('#checkMessage').textContent = response.ok ? 'This is advisory; it does not change output.' : (result.error || 'Check could not complete.'); const details = $('#checkDetails'); details.replaceChildren(); [['Scene identity', identity(result.basis)], ['Connection', result.status?.connected ? 'Connected' : 'Disconnected'], ['Publication', result.status?.connected ? 'Every valid edit applies automatically' : 'Edits will apply when the wall reconnects']].forEach(([term, description]) => { const entry = document.createElement('div'); entry.innerHTML = `<dt>${term}</dt><dd>${description}</dd>`; details.append(entry); }); if (result.status) renderStatus(result); openDialog($('#checkDialog')); } catch (error) { $('#operationMessage').textContent = error.message; } }
   async function save(as) { try { const scene = sceneFromControls(); const name = $('#sceneName').value.trim(); if (as || state.selection?.kind !== 'look') { if (!name) throw new Error('Name this scene before Save As.'); const response = await fetch(`${api}/looks`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); state.selection = {kind: 'look', id: result.look.id, name: result.look.name}; }
@@ -1109,11 +1112,10 @@
   async function loadLibrary() { const response = await fetch(`${api}/library`); state.library = await response.json(); renderLibrary(); }
   function wire() {
     ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
-    $('#sceneSpeed').addEventListener('input', (event) => { queueOperatorSpeed(event.target.value); edit(event); });
-    $('#sceneSpeed').addEventListener('change', (event) => queueOperatorSpeed(event.target.value, {immediate: true}));
-    $('#targetFps').addEventListener('input', (event) => queueTargetFps(event.target.value));
-    $('#targetFps').addEventListener('change', (event) => queueTargetFps(event.target.value, {immediate: true}));
-    $('#resetSceneSpeed').addEventListener('click', () => { queueOperatorSpeed(DEFAULT_SCENE_PACE, {immediate: true}); edit({target: $('#sceneSpeed')}); });
+    $('#sceneSpeed').addEventListener('input', edit);
+    $('#targetFps').addEventListener('input', edit);
+    $('#targetFps').addEventListener('change', edit);
+    $('#resetSceneSpeed').addEventListener('click', () => { syncSceneSpeed(DEFAULT_SCENE_PACE); edit({target: $('#sceneSpeed')}); });
     ['#clockFormat','#clockSeconds','#clockTimeOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
     ['#clockAcross','#clockOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
     ['#tetrisPieces','#tetrisFallRate','#tetrisRisk','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow'].forEach((selector) => $(selector).addEventListener('input', edit));
@@ -1157,10 +1159,15 @@
       state.wall.observation = observation;
       syncFrameRateObservation(observation);
       renderStatus(status);
+      if (status.undo_invalidated) await acknowledgeUndo(status.undo_invalidation_revision);
+      if (status.connected && state.wall.dirty && state.scene && !state.publication.queued && !state.publication.afterStop && !state.publication.inFlight) await submit(state.scene, {intentToken: state.intent});
     } catch (error) { renderStatus({...state.status, last_error: error.message}); }
     finally { state.refreshInFlight = false; }
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
+  // A transport return is not a second workflow. Refreshing status lets the
+  // server-side coordinator converge the newest valid scene safely.
+  window.addEventListener('online', refreshStatus);
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene to replace it immediately.`; }
   async function hydrateCurrentScene() {
     await refreshStatus();

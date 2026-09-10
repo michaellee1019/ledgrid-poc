@@ -141,7 +141,7 @@ from ipc.scene_contract import (
 )
 from animation.core.scene_runtime import CanonicalSceneRuntimeError
 from web.composer_component_editor import editor_catalog
-from web.live_scene_state import LiveSceneBlocked, LiveSceneStale, LiveSceneState
+from web.live_scene_state import LiveSceneStale, LiveSceneState
 from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
 from web.composer_component_presets import ComponentPresetCatalog
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
@@ -774,18 +774,6 @@ class AnimationWebInterface:
                 }), 409
             except (SceneContractError, ValueError, TypeError) as exc:
                 return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
-            except TimeoutError as exc:
-                return jsonify({'error': str(exc) or 'Scene acknowledgement timed out.',
-                                'status': self._composer_status_payload()}), 504
-
-        @self.app.route('/api/composer/go-live', methods=['POST'])
-        def api_composer_go_live():
-            payload = request.get_json(silent=True) or {}
-            try:
-                return jsonify({'status': self.composer_live.go_live(client_id=payload.get('client_id', 'composer'))})
-            except LiveSceneBlocked as exc:
-                return jsonify({'error': str(exc), 'blockers': exc.blockers,
-                                'status': self._composer_status_payload()}), 409
             except TimeoutError as exc:
                 return jsonify({'error': str(exc) or 'Scene acknowledgement timed out.',
                                 'status': self._composer_status_payload()}), 504
