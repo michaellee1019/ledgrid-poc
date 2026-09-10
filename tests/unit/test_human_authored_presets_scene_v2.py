@@ -150,13 +150,9 @@ class HumanAuthoredPresetSceneV2Tests(unittest.TestCase):
         self.assertIn("smooth_drop_max_pieces: 32", script)
         self.assertIn("high_density_render_fps: 150", script)
 
-    def test_precuration_separator_aliases_remain_on_disk_without_duplicate_cards(self) -> None:
+    def test_legacy_aliases_on_disk_never_reenter_the_current_catalog(self) -> None:
         with TemporaryDirectory() as directory:
             self.interface.animation_presets_dir = Path(directory)
-            self.interface._legacy_preset_is_ambiguous = lambda _component_id: False
-            self.interface._curated_animation_preset_dir = lambda component_id: (
-                ROOT / "animation" / "plugins" / component_id / "presets"
-            )
             for component_id, (preset_id, legacy_id, name) in IMPORTED.items():
                 legacy_dir = Path(directory) / component_id
                 legacy_dir.mkdir(parents=True)
@@ -167,7 +163,7 @@ class HumanAuthoredPresetSceneV2Tests(unittest.TestCase):
                     "animation": component_id,
                     "params": {},
                 }), encoding="utf-8")
-                listed = self.interface._list_animation_presets(component_id)
+                listed = self.interface._list_component_presets(component_id)
                 listed_ids = [preset["preset_id"] for preset in listed]
                 self.assertEqual(listed_ids.count(preset_id), 1)
                 if legacy_id != preset_id:
@@ -176,7 +172,7 @@ class HumanAuthoredPresetSceneV2Tests(unittest.TestCase):
                     preset for preset in listed if preset["preset_id"] == preset_id
                 )
                 self.assertEqual(selected["ownership"], "built_in")
-                loaded = self.interface._load_animation_preset(
+                loaded = self.interface._load_component_preset(
                     component_id, preset_id
                 )
                 self.assertIsNotNone(loaded)

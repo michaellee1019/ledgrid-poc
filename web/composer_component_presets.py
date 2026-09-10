@@ -100,6 +100,38 @@ class ComponentPresetCatalog:
             raise ValueError("Component has no authored preset catalog")
         return [self._choice(component_id, preset_id) for preset_id in self._membership[component_id]["preset_ids"]]
 
+    def choice(self, component_id: str, preset_id: str) -> dict[str, Any]:
+        """Read one checked authored preset by its component-local identity."""
+        return self._choice(component_id, preset_id)
+
+    def contains(self, component_id: str, preset_id: str) -> bool:
+        """Check membership without touching the authored preset file."""
+        membership = self._membership.get(component_id)
+        return bool(
+            membership is not None
+            and component_id in self._normalizers
+            and preset_id in membership["preset_ids"]
+        )
+
+    def provider(self, component_id: str) -> str:
+        """Return the reviewed provider for a component-owned preset family."""
+        membership = self._membership.get(component_id)
+        if membership is None or component_id not in self._normalizers:
+            raise ValueError("Component has no authored preset catalog")
+        return membership["provider"]
+
+    def normalize_parameters(
+        self, component_id: str, parameters: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Validate one current component-local parameter payload."""
+        normalizer = self._normalizers.get(component_id)
+        if normalizer is None or component_id not in self._membership:
+            raise ValueError("Component has no authored preset catalog")
+        try:
+            return normalizer(parameters)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Preset has non-local parameters") from exc
+
     def apply(self, scene: Mapping[str, Any], preset_id: str) -> dict[str, Any]:
         """Return a complete candidate with only its selected component changed."""
         if not isinstance(scene, Mapping) or not isinstance(scene.get("animation"), Mapping):

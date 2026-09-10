@@ -173,6 +173,90 @@ class BrowserComposerCatalogAcceptanceTests(unittest.TestCase):
                 for preset in component["presets"]:
                     self.assertTrue(retired.isdisjoint(preset["params"]))
 
+    def test_current_catalog_is_the_only_builtin_source_for_routes_and_bootstrap(self) -> None:
+        manager = _CatalogManager(AnimationPipelineFeatureFlags())
+        interface = AnimationWebInterface(_Channel(), manager, local_mode=True)
+        with tempfile.TemporaryDirectory() as directory:
+            interface.animation_presets_dir = Path(directory) / "runtime-presets"
+            client = interface.app.test_client()
+            bootstrap = client.get(
+                "/api/v1/composer/bootstrap?catalog_only=1"
+            )
+            self.assertEqual(bootstrap.status_code, 200)
+            components = bootstrap.get_json()["components"]
+
+            expected = {
+                component_id: set(entry["preset_ids"])
+                for component_id, entry in interface.composer_presets._membership.items()
+            }
+            self.assertEqual(len(expected), 40)
+            self.assertEqual(sum(map(len, expected.values())), 217)
+
+            builtin_cards = 0
+            for component in components:
+                component_id = component["plugin_id"]
+                provider = component["provider"]
+                cards = component["presets"]
+                builtin_ids = {
+                    card["preset_id"] for card in cards
+                    if card["ownership"] == "built_in"
+                }
+                if provider == "python" and component_id in expected:
+                    self.assertEqual(builtin_ids, expected[component_id])
+                    route = client.get(
+                        f"/api/v1/components/{component_id}/presets?provider=python"
+                    )
+                    self.assertEqual(route.status_code, 200)
+                    self.assertEqual(
+                        {item["preset_id"] for item in route.get_json()["presets"]},
+                        expected[component_id],
+                    )
+                    builtin_cards += len(builtin_ids)
+                else:
+                    self.assertEqual(builtin_ids, set())
+
+            self.assertEqual(builtin_cards, 217)
+            clock = next(
+                item for item in components
+                if item["key"] == "python:clock_overlay"
+            )
+            self.assertEqual(
+                {card["preset_id"] for card in clock["presets"]},
+                expected["clock_overlay"],
+            )
+
+            retained = client.post("/api/v1/composer/presets", json={
+                "schema": "ledgrid.browser-composer-save",
+                "schema_version": 1,
+                "component_key": "python:gradient",
+                "name": "Slow tide",
+                "params": {"motion": 0.4},
+                "overwrite": False,
+            })
+            self.assertEqual(retained.status_code, 201, retained.get_json())
+            runtime_path = (
+                interface.animation_presets_dir / "python" / "gradient"
+                / "slow_tide.json"
+            )
+            rejected_path = runtime_path.with_name("old-global.json")
+            rejected_path.write_text(json.dumps({
+                "version": 2,
+                "preset_id": "old-global",
+                "name": "Old global",
+                "animation": "gradient",
+                "provider": "python",
+                "params": {"brightness": 0.5},
+            }), encoding="utf-8")
+            current_ids = {
+                item["preset_id"]
+                for item in client.get(
+                    "/api/v1/components/gradient/presets?provider=python"
+                ).get_json()["presets"]
+            }
+            self.assertIn("slow_tide", current_ids)
+            self.assertNotIn("old-global", current_ids)
+            self.assertTrue(rejected_path.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

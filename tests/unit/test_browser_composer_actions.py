@@ -296,7 +296,7 @@ class BrowserComposerActionTests(unittest.TestCase):
             }
             gradient["defaults"][name] = f"config/{name}.json"
 
-        preset_dir = self.interface.animation_presets_dir / "gradient"
+        preset_dir = self.interface.animation_presets_dir / "python" / "gradient"
         preset_dir.mkdir(parents=True)
         (preset_dir / "legacy.json").write_text(json.dumps({
             "version": 2,
@@ -422,7 +422,7 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertEqual(json.loads(path.read_text())["params"], {"speed": 1.4})
         self.assert_no_live_effect()
 
-    def test_provider_collision_saves_two_exact_component_presets_and_withholds_legacy(self) -> None:
+    def test_noncurrent_provider_records_are_rejected_without_reading_legacy_files(self) -> None:
         interface = AnimationWebInterface(
             _Channel(),
             _Manager([
@@ -452,8 +452,8 @@ class BrowserComposerActionTests(unittest.TestCase):
                     "params": {"speed": speed},
                     "overwrite": False,
                 })
-                self.assertEqual(response.status_code, 201, response.get_json())
-                self.assertEqual(response.get_json()["preset"]["provider"], provider)
+                self.assertEqual(response.status_code, 400, response.get_json())
+                self.assertIn("current", response.get_json()["error"])
 
         bootstrap = client.get("/api/v1/composer/bootstrap?catalog_only=1").get_json()
         collision_components = [
@@ -465,11 +465,7 @@ class BrowserComposerActionTests(unittest.TestCase):
             item["browser_capabilities"]["saveable"]
             for item in collision_components
         ))
-        self.assertEqual(bootstrap["diagnostics"][0]["code"], "provider_collision")
-        self.assertEqual(
-            bootstrap["diagnostics"][0]["recovery"]["reimport_url"],
-            "/api/v1/composer/presets",
-        )
+        self.assertEqual(bootstrap["diagnostics"], [])
 
         python_presets = client.get(
             "/api/v1/components/compiled_rainbow/presets?provider=python"
@@ -477,27 +473,9 @@ class BrowserComposerActionTests(unittest.TestCase):
         native_presets = client.get(
             "/api/v1/components/compiled_rainbow/presets?provider=receiver_native"
         ).get_json()["presets"]
-        self.assertEqual(
-            [(item["provider"], item["preset_id"]) for item in python_presets],
-            [("python", "shared_look")],
-        )
-        self.assertEqual(
-            [(item["provider"], item["preset_id"]) for item in native_presets],
-            [("receiver_native", "shared_look")],
-        )
-        self.assertEqual(
-            interface._load_animation_preset(
-                "compiled_rainbow", "shared_look", "python"
-            )["params"],
-            {"speed": 0.7},
-        )
-        self.assertEqual(
-            interface._load_animation_preset(
-                "compiled_rainbow", "shared_look", "receiver_native"
-            )["params"],
-            {"speed": 1.3},
-        )
-        self.assertIsNone(interface._load_animation_preset(
+        self.assertEqual(python_presets, [])
+        self.assertEqual(native_presets, [])
+        self.assertIsNone(interface._load_component_preset(
             "compiled_rainbow", "old", "python"
         ))
         self.assertEqual(
@@ -506,7 +484,7 @@ class BrowserComposerActionTests(unittest.TestCase):
             404,
         )
 
-    def test_provider_qualified_component_record_routes_are_user_only(self) -> None:
+    def test_noncurrent_component_record_route_rejects_saved_files(self) -> None:
         channel = _Channel()
         interface = AnimationWebInterface(
             channel,
@@ -518,16 +496,15 @@ class BrowserComposerActionTests(unittest.TestCase):
         )
         interface.animation_presets_dir = self.root / "record-animations"
         client = interface.app.test_client()
-        for provider, speed in (("python", 0.7), ("receiver_native", 1.3)):
-            response = client.post("/api/v1/composer/presets", json={
-                "schema": "ledgrid.browser-composer-save",
-                "schema_version": 1,
-                "component_key": f"{provider}:compiled_rainbow",
-                "name": "Shared Look",
-                "params": {"speed": speed},
-                "overwrite": False,
-            })
-            self.assertEqual(response.status_code, 201, response.get_json())
+        rejected = client.post("/api/v1/composer/presets", json={
+            "schema": "ledgrid.browser-composer-save",
+            "schema_version": 1,
+            "component_key": "python:compiled_rainbow",
+            "name": "Shared Look",
+            "params": {"speed": 0.7},
+            "overwrite": False,
+        })
+        self.assertEqual(rejected.status_code, 400, rejected.get_json())
 
         ambiguous = client.get(
             "/api/v1/components/compiled_rainbow/presets/shared_look"
@@ -538,72 +515,13 @@ class BrowserComposerActionTests(unittest.TestCase):
         )
         self.assertEqual(malformed.status_code, 400)
 
-        fetched = client.get(
-            "/api/v1/components/compiled_rainbow/presets/shared_look?provider=python"
-        )
-        self.assertEqual(fetched.status_code, 200)
-        self.assertEqual(fetched.headers["Cache-Control"], "no-store")
-        self.assertEqual(fetched.get_json()["preset"]["params"], {"speed": 0.7})
-        self.assertEqual(fetched.get_json()["preset"]["ownership"], "user")
-
-        deleted_native = client.delete(
-            "/api/v1/components/compiled_rainbow/presets/shared_look?provider=receiver_native"
-        )
-        self.assertEqual(deleted_native.status_code, 200)
         self.assertEqual(
             client.get(
                 "/api/v1/components/compiled_rainbow/presets/shared_look?provider=python"
-            ).get_json()["preset"]["params"],
-            {"speed": 0.7},
+            ).status_code,
+            404,
         )
-        deleted_python = client.delete(
-            "/api/v1/components/compiled_rainbow/presets/shared_look?provider=python"
-        )
-        self.assertEqual(deleted_python.status_code, 200)
 
-        curated = self.root / "curated"
-        curated.mkdir()
-        (curated / "built_in.json").write_text(json.dumps({
-            "version": 2,
-            "preset_id": "built_in",
-            "name": "Built in",
-            "animation": "compiled_rainbow",
-            "provider": "python",
-            "params": {"speed": 0.9},
-        }), encoding="utf-8")
-        interface._curated_animation_preset_dir = lambda _name: curated
-        override = client.post("/api/v1/composer/presets", json={
-            "schema": "ledgrid.browser-composer-save",
-            "schema_version": 1,
-            "component_key": "python:compiled_rainbow",
-            "name": "Built in",
-            "params": {"speed": 1.1},
-            "overwrite": True,
-        })
-        self.assertEqual(override.status_code, 200, override.get_json())
-        self.assertEqual(
-            client.get(
-                "/api/v1/components/compiled_rainbow/presets/built_in?provider=python"
-            ).get_json()["preset"]["ownership"],
-            "user",
-        )
-        restored = client.delete(
-            "/api/v1/components/compiled_rainbow/presets/built_in?provider=python"
-        )
-        self.assertEqual(restored.status_code, 200)
-        self.assertEqual(
-            client.get(
-                "/api/v1/components/compiled_rainbow/presets/built_in?provider=python"
-            ).get_json()["preset"]["ownership"],
-            "built_in",
-        )
-        immutable = client.delete(
-            "/api/v1/components/compiled_rainbow/presets/built_in?provider=python"
-        )
-        self.assertEqual(immutable.status_code, 409)
-        self.assertEqual(immutable.get_json()["code"], "preset_immutable")
-        self.assertFalse((curated / "built_in.json").is_symlink())
-        self.assertTrue((curated / "built_in.json").is_file())
         self.assertEqual(channel.commands, [])
         self.assertEqual(channel.read_count, 0)
 
@@ -688,7 +606,7 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertEqual(self.channel.commands, [])
 
     def test_composer_catalog_hides_deployment_recovery_snapshots(self) -> None:
-        preset_dir = self.interface.animation_presets_dir / "gradient"
+        preset_dir = self.interface.animation_presets_dir / "python" / "gradient"
         preset_dir.mkdir(parents=True)
         for preset_id in ("before-deploy", "quiet"):
             (preset_dir / f"{preset_id}.json").write_text(json.dumps({
@@ -697,12 +615,22 @@ class BrowserComposerActionTests(unittest.TestCase):
                 "name": preset_id,
                 "animation": "gradient",
                 "provider": "python",
-                "params": {"speed": 1.0},
+                "params": {"motion": 0.4},
             }))
 
-        presets = self.interface._list_animation_presets("gradient")
+        presets = self.interface._list_component_presets("gradient")
 
-        self.assertEqual([preset["preset_id"] for preset in presets], ["quiet"])
+        self.assertNotIn("before-deploy", [preset["preset_id"] for preset in presets])
+        self.assertEqual(
+            {preset["preset_id"] for preset in presets},
+            {
+                *(
+                    preset["preset_id"]
+                    for preset in self.interface.composer_presets.choices("gradient")
+                ),
+                "quiet",
+            },
+        )
 
     def test_mobile_layers_surface_keeps_local_actions_and_immediate_apply_status_reachable(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")

@@ -97,7 +97,11 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
             item for item in payload["components"]
             if item["key"] == "python:clock_overlay"
         )
-        self.assertEqual(len(clock["presets"]), 24)
+        self.assertEqual(len(clock["presets"]), 3)
+        self.assertEqual(
+            {preset["preset_id"] for preset in clock["presets"]},
+            {"local-12-hour", "precision-seconds", "remote-team-plus-six"},
+        )
         self.assertTrue(all(
             preset["ownership"] == "built_in" for preset in clock["presets"]
         ))
