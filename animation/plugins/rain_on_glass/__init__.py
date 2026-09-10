@@ -13,6 +13,7 @@ class RainOnGlassAnimation(ProceduralAtmosphereBase):
     DEFAULT_SEED = 4101
     PLANT_MODIFIER_SUPPORT = frozenset({"shadow", "refract", "emitter"})
     COMPONENT_ID = "rain_on_glass"
+    SCENE_SEMANTIC_PALETTE = True
     COMPONENT_DEFAULTS = {
         "motion": .42, "density": .46, "mood": "moonlit", "background": "soft",
         "background_level": .18, "source_fps": 30.0, "seed": 4101,

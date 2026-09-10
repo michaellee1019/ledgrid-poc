@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from animation.core.manager import PreviewLEDController
+from animation.core.presentation_contracts import resolve_scene
 from animation.plugins.circadian_window import CircadianWindowAnimation
 from animation.plugins.cloud_canyon import CloudCanyonAnimation
 from animation.plugins.desert_wind import DesertWindAnimation
@@ -18,7 +19,7 @@ from animation.plugins.moonlit_fog_banks import MoonlitFogBanksAnimation
 from animation.plugins.rain_on_glass import RainOnGlassAnimation
 from animation.plugins.tidal_bioluminescence import TidalBioluminescenceAnimation
 from animation.plugins.waterfall_veil import WaterfallVeilAnimation
-from ipc.scene_contract import canonical_json_bytes
+from ipc.scene_contract import canonical_json_bytes, normalize_composer_scene
 from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
 from web.app import AnimationWebInterface
 from web.composer_component_presets import ComponentPresetCatalog
@@ -97,6 +98,56 @@ class AtmosphereShowcaseSceneV2Tests(unittest.TestCase):
             )
             self.assertEqual(preview.pixels.shape, (33 * 138, 3))
         self.assertEqual(len(fingerprints), len(RENDERERS))
+
+    def test_selected_atmospheres_use_scene_palette_without_advancing_a_source_tick(self) -> None:
+        """Palette changes are presentation-only for the accepted adapters."""
+        catalog = current_component_catalog()
+        selected = {
+            "cloud_canyon": CloudCanyonAnimation,
+            "rain_on_glass": RainOnGlassAnimation,
+            "waterfall_veil": WaterfallVeilAnimation,
+        }
+        mood_pairs = {
+            "cloud_canyon": ("moonlit", "violet"),
+            "rain_on_glass": ("ember", "pastel"),
+            "waterfall_veil": ("moonlit", "violet"),
+        }
+        palette_fingerprints: dict[str, set[bytes]] = {component_id: set() for component_id in selected}
+        final_preview = ComposerFinalPreview(catalog, ROOT)
+        for component_id, renderer in selected.items():
+            source = self._scene(component_id)
+            source["animation"]["parameters"] = dict(renderer.COMPONENT_DEFAULTS)
+            animation = renderer(self.controller, renderer.COMPONENT_DEFAULTS)
+            first_snapshot = None
+            for palette_id in ("neutral", "mist", "spectrum", "ember"):
+                candidate = copy.deepcopy(source)
+                candidate["look"]["palette_id"] = palette_id
+                resolved = resolve_scene(candidate, catalog, monotonic_elapsed=2.0)
+                rendered = animation.render_resolved_scene(resolved)
+                self.assertTrue(rendered.changed)
+                palette_fingerprints[component_id].add(rendered.pixels.tobytes())
+                if first_snapshot is None:
+                    first_snapshot = animation.semantic_snapshot()
+                else:
+                    self.assertEqual(animation.semantic_snapshot(), first_snapshot)
+                self.assertFalse(animation.render_resolved_scene(resolved).changed)
+                canonical = normalize_composer_scene({"origin": "composer", "scene": candidate}, catalog)
+                frame = final_preview.render(canonical, 2.0, datetime(2026, 9, 1).astimezone())
+                self.assertEqual(frame.pixels.shape, (33 * 138, 3))
+
+            for palette_id in ("neutral", "mist", "spectrum", "ember"):
+                mood_frames = []
+                for mood in mood_pairs[component_id]:
+                    candidate = copy.deepcopy(source)
+                    candidate["look"]["palette_id"] = palette_id
+                    candidate["animation"]["parameters"]["mood"] = mood
+                    context = resolve_scene(candidate, catalog, monotonic_elapsed=2.0)
+                    mood_frames.append(renderer(self.controller, candidate["animation"]["parameters"]).render_resolved_scene(context).pixels)
+                delta = np.abs(mood_frames[0].astype(np.int16) - mood_frames[1].astype(np.int16))
+                self.assertGreater(float(delta.mean()), 4.0, f"{component_id}/{palette_id} mood separation")
+                self.assertGreater(int(delta.max()), 12, f"{component_id}/{palette_id} mood separation")
+
+        self.assertTrue(all(len(fingerprints) == 4 for fingerprints in palette_fingerprints.values()))
 
     def test_preset_api_live_recovery_and_invalid_candidate_are_atomic(self) -> None:
         interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)

@@ -27,6 +27,37 @@ MOOD_PALETTES: Mapping[str, Mapping[str, tuple[float, float, float]]] = {
     "aurora": {"low": (3, 18, 29), "mid": (27, 154, 134), "high": (168, 255, 221)},
 }
 
+# Scene v2 owns the palette family for the migrated atmosphere instruments.
+# Their local ``mood`` control remains useful as a tonal/contrast choice, but
+# it deliberately cannot replace the Scene's semantic hue roles.
+SEMANTIC_PALETTES: Mapping[str, Mapping[str, tuple[float, float, float]]] = {
+    "neutral": {"low": (2, 10, 18), "mid": (24, 148, 132), "high": (150, 255, 218)},
+    "mist": {"low": (3, 9, 20), "mid": (40, 102, 142), "high": (170, 228, 245)},
+    "spectrum": {"low": (15, 3, 34), "mid": (84, 38, 194), "high": (54, 238, 230)},
+    "ember": {"low": (18, 3, 2), "mid": (156, 42, 14), "high": (255, 202, 92)},
+}
+
+# Per-band gains and analytic tone curves preserve each instrument's authored
+# local-mood range without introducing a second palette authority.  The curves
+# reshape luminance/contrast only; every RGB value still interpolates Scene
+# semantic roles.
+MOOD_TONAL_GAINS: Mapping[str, tuple[float, float, float]] = {
+    "moonlit": (.72, .88, 1.00), "boreal": (.70, 1.00, .92),
+    "violet": (.78, .84, 1.08), "ember": (.82, .98, 1.10),
+    "garden": (.72, .93, .88), "daylight": (1.12, 1.08, 1.04),
+    "pastel": (1.03, .92, 1.12), "synthwave": (.76, 1.06, 1.16),
+    "candlelight": (.92, .95, 1.08), "aurora": (.68, 1.08, 1.02),
+}
+
+# field_bias, field_gain, background_gain, accent_gain
+MOOD_TONAL_CURVES: Mapping[str, tuple[float, float, float, float]] = {
+    "moonlit": (-.020, .70, .70, .80), "boreal": (.025, .92, .90, 1.00),
+    "violet": (.160, 1.25, 1.15, 1.30), "ember": (.055, 1.20, .95, 1.20),
+    "garden": (.015, .84, .88, .95), "daylight": (.145, 1.05, 1.30, 1.05),
+    "pastel": (.190, .90, 1.35, .92), "synthwave": (.110, 1.22, 1.08, 1.35),
+    "candlelight": (.090, 1.02, 1.18, 1.10), "aurora": (.070, 1.12, 1.05, 1.20),
+}
+
 BACKGROUND_LEVELS = {"none": 0.0, "soft": 0.35, "luminous": 0.7, "radiant": 1.0}
 
 
@@ -39,6 +70,9 @@ class ProceduralAtmosphereBase(AnimationBase):
     PLANT_MODIFIER_SUPPORT = frozenset()
     COMPONENT_ID = ""
     COMPONENT_DEFAULTS: Mapping[str, Any] = MappingProxyType({})
+    # Only the three accepted adapters opt in.  Other legacy atmospheres keep
+    # their exact component-local palette behavior until separately reviewed.
+    SCENE_SEMANTIC_PALETTE = False
 
     def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
         super().__init__(controller, config)
@@ -60,6 +94,7 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._field = np.empty((self.width, self.height), dtype=np.float32)
         self._cached_frame = None
         self._last_source_tick = None
+        self._last_presentation_key = None
         self._last_elapsed = None
         self._simulation_time = 0.0
         self._reset_seeded_state()
@@ -179,20 +214,25 @@ class ProceduralAtmosphereBase(AnimationBase):
         if "seed" in new_params and int(new_params["seed"]) != old_seed:
             self._reset_seeded_state()
         self._last_source_tick = None
+        self._last_presentation_key = None
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
         fps = float(np.clip(self.params.get("source_fps", 30.0), 20.0, 40.0))
         tick = int(max(0.0, float(time_elapsed)) * fps + 1.0e-7)
-        if self._last_source_tick == tick and self._cached_frame is not None:
+        presentation_key = self._presentation_key(tick)
+        same_source_tick = self._last_source_tick == tick and self._cached_frame is not None
+        if same_source_tick and self._last_presentation_key == presentation_key:
             return self.rendered_frame(self._cached_frame, changed=False)
 
-        elapsed = max(0.0, float(time_elapsed))
-        if self._last_elapsed is not None:
-            # A stalled manager cannot create an unbounded simulation leap.
-            dt = min(0.1, max(0.0, elapsed - self._last_elapsed))
-            self._simulation_time += dt * float(np.clip(self.params.get("motion", .42), 0.0, 2.0))
-        self._last_elapsed = elapsed
+        if not same_source_tick:
+            elapsed = max(0.0, float(time_elapsed))
+            if self._last_elapsed is not None:
+                # A stalled manager cannot create an unbounded simulation leap.
+                dt = min(0.1, max(0.0, elapsed - self._last_elapsed))
+                self._simulation_time += dt * float(np.clip(self.params.get("motion", .42), 0.0, 2.0))
+            self._last_elapsed = elapsed
         self._last_source_tick = tick
+        self._last_presentation_key = presentation_key
         self._render_scene(self._simulation_time)
         self._apply_background()
         self._apply_plant_modifiers()
@@ -203,24 +243,68 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._cached_frame = frame
         return self.rendered_frame(frame, changed=True)
 
+    def _presentation_key(self, tick: int) -> tuple[Any, ...]:
+        """Name every presentation input that can refresh a cached source tick."""
+        return tick, self._semantic_palette_id(), str(self.params.get("mood", self.DEFAULT_MOOD))
+
+    def _semantic_palette_id(self) -> str | None:
+        if not self.SCENE_SEMANTIC_PALETTE or self._presentation_context is None:
+            return None
+        palette = self._presentation_context.palette
+        if palette is None or not isinstance(palette.get("palette_id"), str):
+            raise ValueError(f"{self.COMPONENT_ID} requires a semantic Scene v2 palette")
+        return str(palette["palette_id"])
+
     def _palette(self):
+        palette_id = self._semantic_palette_id()
+        if palette_id is not None:
+            palette = SEMANTIC_PALETTES.get(palette_id, SEMANTIC_PALETTES["neutral"])
+            gains = MOOD_TONAL_GAINS.get(
+                str(self.params.get("mood", self.DEFAULT_MOOD)), MOOD_TONAL_GAINS[self.DEFAULT_MOOD]
+            )
+            return tuple(
+                np.asarray(palette[key], dtype=np.float32) * gain
+                for key, gain in zip(("low", "mid", "high"), gains)
+            )
         palette = MOOD_PALETTES.get(str(self.params.get("mood", self.DEFAULT_MOOD)),
                                     MOOD_PALETTES[self.DEFAULT_MOOD])
         return tuple(np.asarray(palette[key], dtype=np.float32) for key in ("low", "mid", "high"))
 
+    def _semantic_mood_curve(self) -> tuple[float, float, float, float]:
+        return MOOD_TONAL_CURVES.get(
+            str(self.params.get("mood", self.DEFAULT_MOOD)),
+            MOOD_TONAL_CURVES[self.DEFAULT_MOOD],
+        )
+
+    def semantic_snapshot(self) -> Mapping[str, Any]:
+        """Stable state proof for presentation-only Scene palette switches."""
+        return MappingProxyType({
+            "phase": tuple(float(value) for value in self._phase),
+            "offset": tuple(float(value) for value in self._offset),
+            "frequency": tuple(float(value) for value in self._frequency),
+            "simulation_time": self._simulation_time,
+            "source_tick": self._last_source_tick,
+        })
+
     def _paint(self, field: np.ndarray, accent: Optional[np.ndarray] = None) -> None:
         low, mid, high = self._palette()
         f = np.clip(field, 0.0, 1.0)
+        accent_gain = 1.0
+        if self._semantic_palette_id() is not None:
+            field_bias, field_gain, _background_gain, accent_gain = self._semantic_mood_curve()
+            f = np.clip(f * field_gain + field_bias, 0.0, 1.0)
         lower = np.minimum(f * 2.0, 1.0)[..., None]
         upper = np.maximum(f * 2.0 - 1.0, 0.0)[..., None]
         self._rgb[:] = low + (mid - low) * lower + (high - mid) * upper
         if accent is not None:
-            self._rgb += np.maximum(accent, 0.0)[..., None] * high * 0.55
+            self._rgb += np.maximum(accent, 0.0)[..., None] * high * (.55 * accent_gain)
 
     def _apply_background(self) -> None:
         style = str(self.params.get("background", "soft"))
         level = float(np.clip(self.params.get("background_level", .18), 0.0, 1.0))
         strength = BACKGROUND_LEVELS.get(style, BACKGROUND_LEVELS["soft"]) * level
+        if self._semantic_palette_id() is not None:
+            strength *= self._semantic_mood_curve()[2]
         if strength <= 0.0:
             return
         low, mid, high = self._palette()

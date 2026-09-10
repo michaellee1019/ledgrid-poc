@@ -13,6 +13,7 @@ class CloudCanyonAnimation(ProceduralAtmosphereBase):
     DEFAULT_SEED = 4301
     PLANT_MODIFIER_SUPPORT = frozenset({"shadow", "refract", "emitter"})
     COMPONENT_ID = "cloud_canyon"
+    SCENE_SEMANTIC_PALETTE = True
     COMPONENT_DEFAULTS = {
         "motion": .42, "density": .46, "mood": "moonlit", "background": "soft",
         "background_level": .18, "source_fps": 30.0, "seed": 4301,
