@@ -13,20 +13,8 @@
   "created_at": "2026-07-22T00:00:00Z",
   "updated_at": "2026-07-22T00:00:00Z",
   "params": {
-    "plant_aware": true,
-    "plant_modifiers": {
-      "version": 1,
-      "active": [
-        "shadow"
-      ],
-      "strengths": {
-        "shadow": 0.7
-      }
-    },
-    "brightness": 0.12,
     "motion": 0.12,
     "density": 0.2,
-    "mood": "night",
     "symmetry": 5,
     "spatial_scale": 1.2,
     "warp": 0.08,

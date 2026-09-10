@@ -34,6 +34,33 @@ RENDERERS = {
 }
 COUNTS = {"cellular_tapestry": 3, "flow_field_silk": 3, "frostwork": 4,
           "living_stained_glass": 8, "quasicrystal_bloom": 4}
+SCENE_OWNED_RAW_KEYS = frozenset({
+    "brightness", "mood", "plant_aware", "plant_modifiers", "calibration",
+    "geometry", "mask",
+})
+REWRITTEN_DESCRIPTIONS = {
+    ("cellular_tapestry", "night"), ("cellular_tapestry", "showcase"),
+    ("flow_field_silk", "night"), ("flow_field_silk", "showcase"),
+    ("living_stained_glass", "night"), ("living_stained_glass", "showcase"),
+    ("quasicrystal_bloom", "showcase"),
+}
+UNCHANGED_DESCRIPTIONS = {
+    ("cellular_tapestry", "quiet"): "Slow triangular lace accumulates one row at a time.",
+    ("flow_field_silk", "quiet"): "A few coherent blue fibers drift through deep water.",
+    ("frostwork", "night"): "Sparse cold branches kept dim for late hours.",
+    ("frostwork", "pastel-daybreak"): "Soft rose and blue crystals grow slowly against a radiant winter morning.",
+    ("frostwork", "quiet"): "Slow blue-white border crystals for calm room light.",
+    ("frostwork", "showcase"): "Dense magenta-cyan branching frost with visible regrowth.",
+    ("living_stained_glass", "aurora-transept"): "Green-blue panes migrate at a measured pace across a luminous northern window.",
+    ("living_stained_glass", "candlelight-mosaic"): "Amber and cream panes breathe slowly like a wall lit by many candles.",
+    ("living_stained_glass", "daylight-rose"): "A radiant white-and-sky rose window evolves with broad, readable panes.",
+    ("living_stained_glass", "pastel-chapel"): "Blush, lavender, and powder-blue panes drift with a gentle luminous glow.",
+    ("living_stained_glass", "quiet"): "Stable ocean-colored panes breathe with soft daylight.",
+    ("living_stained_glass", "synthwave-basilica"): "Fast magenta and cyan panes pulse over radiant midnight-violet glass.",
+    ("quasicrystal_bloom", "daylight-prism"): "Eightfold crystalline geometry turns slowly over a radiant daylight field.",
+    ("quasicrystal_bloom", "night"): "Low-contrast fivefold bands preserve deep negative space.",
+    ("quasicrystal_bloom", "quiet"): "Broad tenfold sea-glass rosettes evolve without scrolling.",
+}
 
 
 class SculptureShowcaseSceneV2Tests(unittest.TestCase):
@@ -57,6 +84,50 @@ class SculptureShowcaseSceneV2Tests(unittest.TestCase):
                 self.assertEqual(path.stem, choice["preset_id"])
                 self.assertSetEqual(set(choice["parameters"]), set(RENDERERS[component_id].COMPONENT_DEFAULTS))
                 self.assertNotIn("brightness", choice["parameters"]); self.assertNotIn("speed", choice["parameters"])
+                self.assertFalse(SCENE_OWNED_RAW_KEYS & set(raw["params"]))
+                self.assertFalse(any(key.startswith("background") for key in raw["params"]))
+
+    def test_exactly_seven_visible_descriptions_are_rewritten_without_touching_frost_copy(self):
+        rewritten = {
+            (component_id, path.stem)
+            for component_id in COUNTS
+            for path in (ROOT / "animation/plugins" / component_id / "presets").glob("*.json")
+            if (component_id, path.stem) in REWRITTEN_DESCRIPTIONS
+        }
+        self.assertSetEqual(rewritten, REWRITTEN_DESCRIPTIONS)
+        for component_id, preset_id in REWRITTEN_DESCRIPTIONS:
+            payload = json.loads((ROOT / "animation/plugins" / component_id / "presets" / f"{preset_id}.json").read_text(encoding="utf-8"))
+            self.assertNotRegex(payload["description"], r"(?i)plant|foliage|mask|globe|calibrat")
+        self.assertEqual(len(REWRITTEN_DESCRIPTIONS) + len(UNCHANGED_DESCRIPTIONS), 22)
+        for (component_id, preset_id), expected in UNCHANGED_DESCRIPTIONS.items():
+            payload = json.loads((ROOT / "animation/plugins" / component_id / "presets" / f"{preset_id}.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["description"], expected)
+
+    def test_all_sculpture_presets_apply_and_round_trip_without_global_mutation(self):
+        interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
+        catalog = current_component_catalog()
+        for component_id, count in COUNTS.items():
+            choices = interface.composer_presets.choices(component_id)
+            self.assertEqual(len(choices), count)
+            for choice in choices:
+                source = self.scene(component_id)
+                source["look"]["palette_id"] = "ember"
+                source["look"]["pace"] = 1.25
+                source["look"]["presentation_brightness"] = 0.61
+                source["background"]["parameters"]["gain"] = 0.37
+                source["plants"]["effects"] = {"version": 1, "active": ["shadow"], "strengths": {"shadow": 0.4}}
+                before = copy.deepcopy(source)
+                applied = interface.composer_presets.apply(source, choice["preset_id"])
+                self.assertEqual(source, before)
+                self.assertEqual(applied["background"], before["background"])
+                self.assertEqual(applied["look"], before["look"])
+                self.assertEqual(applied["plants"], before["plants"])
+                self.assertEqual(applied["animation"]["parameters"], choice["parameters"])
+                canonical = normalize_composer_scene({"origin": "composer", "scene": applied}, catalog).scene
+                self.assertEqual(canonical["background"], before["background"])
+                self.assertEqual(canonical["look"], before["look"])
+                self.assertEqual(canonical["plants"], before["plants"])
+                self.assertEqual(canonical["animation"]["parameters"], choice["parameters"])
 
     def test_catalog_preview_distinct_bounded_and_semantic(self):
         catalog = current_component_catalog(); fingerprints = set()
