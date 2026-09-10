@@ -1,4 +1,7 @@
 """Border-seeded DLA-inspired frost that grows, ages, and sublimates."""
+import math
+from threading import Lock
+
 import numpy as np
 
 from animation.libraries.procedural_sculptures import CadencedSculpture
@@ -12,11 +15,17 @@ class FrostworkAnimation(CadencedSculpture):
     PLANT_MODIFIER_SUPPORT = frozenset(("emitter", "obstacle", "illuminate"))
     SOURCE_FPS = 20.0
     COMPONENT_ID = "frostwork"
+    INTERACTION_TYPES = frozenset(("primary",))
     COMPONENT_DEFAULTS = {"motion": .46, "density": .48, "background_level": .14, "seed": 1401,
                           "temperature": .35, "melt_cycle": .55}
 
     def __init__(self, controller, config=None):
         super().__init__(controller, config)
+        self._interaction_lock = Lock()
+        self._pending_primary_nucleus = None
+        self._primary_interactions_received = 0
+        self._primary_interactions_applied = 0
+        self._primary_interactions_rejected = 0
         self.occupied = np.zeros(self._shape, bool)
         self.age = np.zeros(self._shape, np.float32)
         self.occupied[:, -1] = True
@@ -35,6 +44,7 @@ class FrostworkAnimation(CadencedSculpture):
             if not 0 <= float(values[name]) <= 1: raise ValueError(f"{name} is out of range")
 
     def _step(self, tick):
+        self._consume_primary_nucleus()
         self.age[self.occupied] += 1
         neighbors = np.zeros_like(self.occupied)
         neighbors[1:] |= self.occupied[:-1]; neighbors[:-1] |= self.occupied[1:]
@@ -58,6 +68,7 @@ class FrostworkAnimation(CadencedSculpture):
 
     def reset_simulation(self):
         super().reset_simulation(); self.occupied.fill(False); self.age.fill(0); self.occupied[:, -1] = True
+        with self._interaction_lock: self._pending_primary_nucleus = None
 
     def palette(self, mood: str | None = None):
         return super().palette(mood)
@@ -66,6 +77,43 @@ class FrostworkAnimation(CadencedSculpture):
         """Repaint at the same source tick without advancing frost growth."""
         self._render_key = None
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        """Queue one logical nucleus for the next 20 Hz frost semantic tick."""
+        values = (x, y, strength)
+        if (
+            kind != "primary"
+            or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                   or not math.isfinite(float(value)) for value in values)
+        ):
+            self._primary_interactions_rejected += 1
+            return False
+        x_value, y_value, strength_value = map(float, values)
+        if not (0.0 <= x_value < self._shape[0] and 0.0 <= y_value < self._shape[1]
+                and 0.0 < strength_value <= 1.0):
+            self._primary_interactions_rejected += 1
+            return False
+        nucleus = (
+            min(self._shape[0] - 1, max(0, int(x_value))),
+            min(self._shape[1] - 1, max(0, int(y_value))),
+        )
+        with self._interaction_lock:
+            if self._pending_primary_nucleus is not None:
+                self._primary_interactions_rejected += 1
+                return False
+            self._pending_primary_nucleus = nucleus
+            self._primary_interactions_received += 1
+        return True
+
+    def _consume_primary_nucleus(self):
+        with self._interaction_lock:
+            nucleus = self._pending_primary_nucleus
+            self._pending_primary_nucleus = None
+        if nucleus is not None:
+            x, y = nucleus
+            self.occupied[x, y] = True
+            self.age[x, y] = 0
+            self._primary_interactions_applied += 1
+
     def generate_frame(self, time_elapsed, frame_count):
         tick, cached = self.begin_frame(time_elapsed)
         if cached: return cached
@@ -73,3 +121,13 @@ class FrostworkAnimation(CadencedSculpture):
         tips = self.occupied & (self.age < 8)
         value = self.occupied.astype(np.float32) * (0.38 + 0.5 * np.exp(-self.age / 45.0))
         return self.finish_frame(tick, self.colorize(value, tips.astype(np.float32)))
+
+    def get_runtime_stats(self):
+        with self._interaction_lock:
+            pending = self._pending_primary_nucleus is not None
+        return {
+            "primary_interactions_received": self._primary_interactions_received,
+            "primary_interactions_applied": self._primary_interactions_applied,
+            "primary_interactions_rejected": self._primary_interactions_rejected,
+            "primary_interaction_pending": pending,
+        }
