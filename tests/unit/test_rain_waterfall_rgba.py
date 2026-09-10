@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+from itertools import combinations
 from pathlib import Path
 import unittest
 
@@ -16,7 +17,7 @@ from animation.plugins.cloud_canyon import CloudCanyonAnimation
 from animation.plugins.rain_on_glass import RainOnGlassAnimation
 from animation.plugins.waterfall_veil import WaterfallVeilAnimation
 from ipc.scene_contract import normalize_composer_scene
-from animation.libraries.procedural_atmospheres import MOOD_PALETTES
+from animation.libraries.procedural_atmospheres import MOOD_PALETTES, SEMANTIC_PALETTES
 from tests.unit.test_composer_slice import _current_scene
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
@@ -99,22 +100,36 @@ class RainWaterfallRgbaTests(unittest.TestCase):
                 )
                 self.assertFalse(np.array_equal(dark.pixels, bright.pixels))
 
-    def test_every_exposed_local_mood_remains_visible_after_composition(self) -> None:
+    def test_every_exposed_local_mood_pair_remains_distinct_after_final_composition(self) -> None:
+        minimum_mean = {
+            "rain_on_glass": .50,
+            "waterfall_veil": .85,
+        }
         for renderer in RENDERERS:
             with self.subTest(component=renderer.COMPONENT_ID):
-                frames = []
-                for mood in MOOD_PALETTES:
-                    candidate = self.scene(renderer, gain=.62)
-                    candidate["animation"]["parameters"]["mood"] = mood
-                    frames.append(ComposerFinalPreview(self.catalog, Path(__file__).resolve().parents[2]).render(
-                        normalize_composer_scene({"origin": "composer", "scene": candidate}, self.catalog),
-                        2.0, datetime(2026, 9, 1, tzinfo=timezone.utc),
-                    ).pixels.copy())
-                baseline = frames[0]
-                for mood, frame in zip(tuple(MOOD_PALETTES)[1:], frames[1:]):
-                    delta = np.abs(frame.astype(np.int16) - baseline.astype(np.int16))
-                    self.assertGreater(float(delta.mean()), .04, mood)
-                    self.assertGreater(int(delta.max()), 2, mood)
+                for palette_id, gain in (
+                    (palette, native_gain)
+                    for palette in SEMANTIC_PALETTES
+                    for native_gain in (.16, .94)
+                ):
+                    frames = {}
+                    for mood in MOOD_PALETTES:
+                        candidate = self.scene(renderer, gain=gain)
+                        candidate["look"]["palette_id"] = palette_id
+                        candidate["animation"]["parameters"]["mood"] = mood
+                        frames[mood] = ComposerFinalPreview(
+                            self.catalog, Path(__file__).resolve().parents[2],
+                        ).render(
+                            normalize_composer_scene({"origin": "composer", "scene": candidate}, self.catalog),
+                            2.0, datetime(2026, 9, 1, tzinfo=timezone.utc),
+                        ).pixels.copy()
+                    for left, right in combinations(MOOD_PALETTES, 2):
+                        delta = np.abs(frames[left].astype(np.int16) - frames[right].astype(np.int16))
+                        self.assertGreaterEqual(
+                            float(delta.mean()), minimum_mean[renderer.COMPONENT_ID],
+                            f"{palette_id}/{gain}/{left}/{right}",
+                        )
+                        self.assertGreaterEqual(int(delta.max()), 16, f"{palette_id}/{gain}/{left}/{right}")
 
     def test_cloud_and_aurora_keep_their_opaque_resolved_scene_fingerprints(self) -> None:
         for renderer in (CloudCanyonAnimation, AuroraCurtainsAnimation):

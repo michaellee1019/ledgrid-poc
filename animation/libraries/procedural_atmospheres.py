@@ -58,6 +58,26 @@ MOOD_TONAL_CURVES: Mapping[str, tuple[float, float, float, float]] = {
     "candlelight": (.090, 1.02, 1.18, 1.10), "aurora": (.070, 1.12, 1.05, 1.20),
 }
 
+# RGBA atmospheres use a second, luminance-only local treatment.  The Scene
+# still supplies every hue role; this only changes how much wet material is
+# present and how hard it catches light.  That keeps each exposed Composer
+# mood readable after source-over composition rather than making moods differ
+# only by sub-pixel RGB rounding on a sparse plane.
+# alpha_gain, alpha_exponent, highlight_gain, condensation_gain
+MOOD_OVERLAY_TONES: Mapping[str, tuple[float, float, float, float]] = {
+    "moonlit": (.62, 1.20, .75, .010), "boreal": (.78, 1.00, .95, .100),
+    "violet": (.92, .83, 1.20, .180), "ember": (1.10, .72, 1.50, .260),
+    "garden": (1.35, 1.10, .85, .340), "daylight": (.98, .65, 1.05, .140),
+    "pastel": (.70, .75, 1.38, .220), "synthwave": (1.25, .88, 1.65, .300),
+    "candlelight": (.86, 1.35, 1.75, .060), "aurora": (1.14, .60, .68, .380),
+}
+
+MOOD_OVERLAY_PHASE: Mapping[str, float] = {
+    "moonlit": 0.00, "boreal": .63, "violet": 1.26, "ember": 1.88,
+    "garden": 2.51, "daylight": 3.14, "pastel": 3.77, "synthwave": 4.40,
+    "candlelight": 5.03, "aurora": 5.65,
+}
+
 BACKGROUND_LEVELS = {"none": 0.0, "soft": 0.35, "luminous": 0.7, "radiant": 1.0}
 
 
@@ -307,6 +327,23 @@ class ProceduralAtmosphereBase(AnimationBase):
             MOOD_TONAL_CURVES[self.DEFAULT_MOOD],
         )
 
+    def _overlay_tone(self) -> tuple[float, float, float, float]:
+        """Return local wetness and highlight shaping without changing Scene hue."""
+        if self._semantic_palette_id() is None:
+            return 1.0, 1.0, 1.0, 0.0
+        return MOOD_OVERLAY_TONES.get(
+            str(self.params.get("mood", self.DEFAULT_MOOD)),
+            MOOD_OVERLAY_TONES[self.DEFAULT_MOOD],
+        )
+
+    def _overlay_phase(self) -> float:
+        if self._semantic_palette_id() is None:
+            return 0.0
+        return MOOD_OVERLAY_PHASE.get(
+            str(self.params.get("mood", self.DEFAULT_MOOD)),
+            MOOD_OVERLAY_PHASE[self.DEFAULT_MOOD],
+        )
+
     def semantic_snapshot(self) -> Mapping[str, Any]:
         """Stable state proof for presentation-only Scene palette switches."""
         return MappingProxyType({
@@ -375,13 +412,23 @@ class ProceduralAtmosphereBase(AnimationBase):
             # retain enough coverage to describe wet glass without veiling the
             # native background behind the foreground plane.
             glints = np.maximum(city - .125, 0.0) * 1.8
-            self._coverage[:] = np.clip(np.sqrt(trails) * (.42 + .38 * density) + glints, 0.0, .84)
+            alpha_gain, alpha_exponent, _highlight_gain, condensation_gain = self._overlay_tone()
+            condensation = np.maximum(
+                np.sin(self._x * 17.0 + self._y * 8.0 + self._phase[13] + self._overlay_phase()), 0.0,
+            )
+            self._coverage[:] = np.clip(
+                np.maximum(
+                    np.power(np.sqrt(trails) * (.42 + .38 * density) + glints, alpha_exponent) * alpha_gain,
+                    condensation * condensation_gain,
+                ),
+                0.0, .84,
+            )
         self._paint(np.clip(field + trails * (.14 + .16 * density), 0, 1), trails * .12)
         if self.PREMULTIPLIED_RGBA:
             # The glass highlights need enough chroma after premultiplication
             # to remain legible over both native background luminance ranges.
-            accent_gain = self._semantic_mood_curve()[3] if self._semantic_palette_id() is not None else 1.0
-            self._rgb += trails[..., None] * self._palette()[2] * (.76 * accent_gain)
+            _alpha_gain, _alpha_exponent, highlight_gain, _condensation_gain = self._overlay_tone()
+            self._rgb += (trails[..., None] * .76 + condensation[..., None] * .26) * self._palette()[2] * highlight_gain
 
     def _aurora(self, t: float, density: float) -> None:
         field = np.full_like(self._field, .025)
@@ -420,11 +467,22 @@ class ProceduralAtmosphereBase(AnimationBase):
         if self.PREMULTIPLIED_RGBA:
             # Streams carry the strongest coverage, with ledges and mist
             # contributing a deliberately bounded, translucent breakup.
-            self._coverage[:] = np.clip(streams * (.25 + .34 * density) + ledges * .16 + mist * .26, 0.0, .86)
+            alpha_gain, alpha_exponent, _highlight_gain, condensation_gain = self._overlay_tone()
+            condensation = np.maximum(
+                np.sin(self._x * 22.0 - self._y * 11.0 + self._phase[14] + self._overlay_phase()), 0.0,
+            )
+            self._coverage[:] = np.clip(
+                np.maximum(
+                    np.power(streams * (.25 + .34 * density) + ledges * .16 + mist * .26, alpha_exponent) * alpha_gain,
+                    condensation * condensation_gain,
+                ),
+                0.0, .86,
+            )
         self._paint(np.clip(field + streams * .23 + ledges * .05 + mist * .1, 0, 1), mist * .22)
         if self.PREMULTIPLIED_RGBA:
+            _alpha_gain, _alpha_exponent, highlight_gain, _condensation_gain = self._overlay_tone()
             high = self._palette()[2]
-            self._rgb += (streams[..., None] * .42 + mist[..., None] * .30) * high
+            self._rgb += (streams[..., None] * .42 + mist[..., None] * .30 + condensation[..., None] * .20) * high * highlight_gain
 
     def _tidal(self, t: float, density: float) -> None:
         surface = .47 + .035 * np.sin(self._x * 8.0 - t * .42) + .018 * np.sin(self._x * 19.0 + t * .25)
