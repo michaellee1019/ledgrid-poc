@@ -17,7 +17,7 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
                       "Background", "Animation", "Widgets", "Plants", "Look"):
             self.assertIn(token, self.html)
         self.assertIn(
-            "grid-template-columns: minmax(176px, 220px) minmax(0, 1fr) minmax(252px, 306px)",
+            "grid-template-columns: clamp(176px, var(--library-width), 360px) .75rem minmax(0, 1fr) .75rem clamp(252px, var(--inspector-width), 480px)",
             self.css,
         )
         self.assertIn(".preview-pane { display: flex; flex-direction: column", self.css)
@@ -42,12 +42,42 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.assertIn(".operations-pane { position: sticky; top: 0; z-index: 1; order: -1", self.css)
         self.assertIn(".operations-pane { order: 1; }", self.css)
 
-    def test_palette_bootstrap_only_retires_the_old_local_preference(self) -> None:
+    def test_layout_bootstrap_keeps_preferences_out_of_scene_state(self) -> None:
         self.assertIn("desktop-palette-layout.v3", self.layout)
         self.assertIn("localStorage.removeItem", self.layout)
         self.assertIn("data-layout', 'docked-studio", self.layout)
+        self.assertIn("ledgrid.composer.constrained-docks.v1", self.layout)
+        self.assertIn("version === 1", self.layout)
+        self.assertIn("JSON.parse", self.layout)
+        self.assertIn("catch (_) { return defaults; }", self.layout)
+        self.assertNotIn("/api/", self.layout)
+        self.assertNotIn("fetch(", self.layout)
         for retired in ("dragstart", "moveToOwnColumn", "palette-resize-handle", "palette-header-controls"):
             self.assertNotIn(retired, self.layout)
+
+    def test_layout_has_bounded_pointer_and_keyboard_resizers(self) -> None:
+        self.assertEqual(self.html.count('data-dock-resizer='), 2)
+        self.assertEqual(self.html.count('role="separator"'), 2)
+        for token in (
+            "bounds = Object.freeze({library: [176, 360], inspector: [252, 480]})",
+            "pointerdown",
+            "ArrowLeft",
+            "ArrowRight",
+            "aria-valuemin",
+            "aria-valuemax",
+            "aria-valuenow",
+            "resetComposerLayout",
+        ):
+            self.assertIn(token, self.layout if token != "resetComposerLayout" else self.html)
+
+    def test_named_inspectors_collapse_accessibly(self) -> None:
+        for name in ("Background", "Animation", "Widgets", "Plants", "Look"):
+            self.assertIn(name, self.layout)
+        self.assertIn("aria-expanded", self.layout)
+        self.assertIn("aria-controls", self.layout)
+        self.assertIn("collapsible-inspector.is-collapsed > .inspector-content { display: none", self.css)
+        self.assertIn("inspector-content", self.layout)
+        self.assertIn("inspector-toggle", self.layout)
 
     def test_dense_controls_preserve_the_existing_controller_contract(self) -> None:
         self.assertEqual(self.html.count('id="sceneSpeed"'), 1)
@@ -62,7 +92,7 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.assertNotIn("function queueOperatorSpeed", self.script)
 
     def test_workspace_dom_keeps_preview_between_library_and_controls(self) -> None:
-        workspace = re.search(r'<div class="desktop-workspace">(?P<body>.*?)</div>\s*</main>', self.html, re.DOTALL)
+        workspace = re.search(r'<div class="desktop-workspace"[^>]*>(?P<body>.*?)</div>\s*</main>', self.html, re.DOTALL)
         self.assertIsNotNone(workspace)
         body = workspace.group("body")
         self.assertLess(body.index('class="library-pane"'), body.index('class="preview-pane"'))

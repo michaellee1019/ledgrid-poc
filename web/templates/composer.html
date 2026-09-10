@@ -11,9 +11,9 @@
 </head>
 <body>
 <main class="composer" data-api-root="/api/composer">
-  <div class="desktop-workspace">
-    <aside class="library-pane" aria-labelledby="library-title">
-      <div class="pane-heading"><p class="eyebrow">Library</p><h1 id="library-title">Scenes</h1></div>
+  <div class="desktop-workspace" data-layout="docked-studio">
+    <aside id="library-pane" class="library-pane" aria-labelledby="library-title">
+      <div class="pane-heading"><div><p class="eyebrow">Library</p><h1 id="library-title">Scenes</h1></div><button id="resetComposerLayout" class="button text reset-layout" type="button">Reset layout</button></div>
       <label>Search scenes <input id="librarySearch" type="search" placeholder="Search scenes"></label>
       <div class="library-filters" role="group" aria-label="Scene collection"><button class="button text active" data-library-filter="all" type="button">All</button><button class="button text" data-library-filter="starter" type="button">Built-ins</button><button class="button text" data-library-filter="look" type="button">Saved</button><button class="button text" data-library-filter="favorites" type="button">Favorites</button></div>
       <ol id="libraryList" class="library-list" aria-live="polite"></ol><p id="libraryEmpty" class="empty">No scenes found.</p>
@@ -27,12 +27,14 @@
         <section id="galleryDetail" class="gallery-detail" aria-live="polite" hidden></section>
       </section>
     </aside>
+    <button class="dock-resizer" type="button" role="separator" aria-orientation="vertical" aria-controls="library-pane" aria-label="Resize Library dock" data-dock-resizer="library"></button>
     <section class="preview-pane" aria-labelledby="preview-title">
       <div class="pane-heading"><div><p class="eyebrow">Installed final</p><h2 id="preview-title">Preview</h2></div><strong id="previewIdentity">Rendering…</strong></div>
       <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" tabindex="0" aria-label="Installed final Scene preview"></canvas></div>
       <p id="previewStatus" class="status-line" role="status" aria-live="polite">Rendering the current scene.</p>
     </section>
-    <aside class="inspector-dock" aria-label="Scene controls and live operations">
+    <button class="dock-resizer" type="button" role="separator" aria-orientation="vertical" aria-controls="inspector-dock" aria-label="Resize scene controls dock" data-dock-resizer="inspector"></button>
+    <aside id="inspector-dock" class="inspector-dock" aria-label="Scene controls and live operations">
     <section class="control-workspace" aria-label="Scene control workspace" tabindex="-1">
     <section class="global-scene-controls inspector" aria-labelledby="global-scene-controls-title">
       <div class="pane-heading"><div><p class="eyebrow">Global scene</p><h2 id="global-scene-controls-title">Motion</h2></div><button id="resetSceneSpeed" class="button text" type="button">Reset</button></div>

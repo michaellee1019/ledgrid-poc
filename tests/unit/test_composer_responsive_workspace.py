@@ -29,6 +29,7 @@ class ComposerResponsiveWorkspaceTests(unittest.TestCase):
         self.assertIn('@media (max-width: 760px)', self.css)
         for token in (
             '.desktop-workspace { display: flex; flex-direction: column; align-items: stretch; height: auto; }',
+            '.dock-resizer { display: none; }',
             '.operations-pane { order: 1; }',
             '.library-pane { order: 2; }',
             '.inspector-dock { display: contents; }',
@@ -36,6 +37,7 @@ class ComposerResponsiveWorkspaceTests(unittest.TestCase):
             '.look-inspector { order: -1; }',
             '.preview-pane { order: 4; }',
             '.button, input:not([type="checkbox"]) { min-height: 44px; }',
+            '.inspector-toggle { min-height: 44px; padding: .5rem 0; }',
             'select { height: 44px; min-height: 44px; padding-right: 2.25rem; -webkit-appearance: none; appearance: none;',
             '.library-filters .button { min-width: 44px; }',
             '.switch, .secondary-operations > summary, .diagnostics > summary { min-height: 44px; padding: .7rem 0; }',
