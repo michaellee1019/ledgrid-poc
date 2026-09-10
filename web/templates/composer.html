@@ -23,6 +23,7 @@
       <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" tabindex="0" aria-label="Installed final Scene preview"></canvas></div>
       <p id="previewStatus" class="status-line" role="status" aria-live="polite">Rendering the current scene.</p>
     </section>
+    <aside class="inspector-dock" aria-label="Scene controls and live operations">
     <section class="control-workspace" aria-label="Scene control workspace" tabindex="-1">
     <section class="global-scene-controls inspector" aria-labelledby="global-scene-controls-title">
       <div class="pane-heading"><div><p class="eyebrow">Global scene</p><h2 id="global-scene-controls-title">Motion</h2></div><button id="resetSceneSpeed" class="button text" type="button">Reset</button></div>
@@ -54,6 +55,7 @@
         <button id="checkScene" class="button secondary wide" type="button">Check</button>
         <details class="diagnostics"><summary>Diagnostics</summary><dl><div><dt>Desired</dt><dd id="desiredIdentity">Unavailable</dd></div><div><dt>Observed</dt><dd id="diagnosticObserved">Unavailable</dd></div><div><dt>Revision</dt><dd id="sceneRevision">Unavailable</dd></div><div><dt>Message</dt><dd id="operationMessage">Checking current scene…</dd></div></dl></details>
       </details>
+    </aside>
     </aside>
   </div>
 </main>

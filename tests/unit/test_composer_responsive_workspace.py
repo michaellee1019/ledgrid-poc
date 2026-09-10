@@ -28,10 +28,11 @@ class ComposerResponsiveWorkspaceTests(unittest.TestCase):
     def test_phone_layout_orders_operator_actions_and_look_ahead_of_deep_inspectors(self) -> None:
         self.assertIn('@media (max-width: 760px)', self.css)
         for token in (
-            '.desktop-workspace { display: flex; flex-direction: column; align-items: stretch; }',
+            '.desktop-workspace { display: flex; flex-direction: column; align-items: stretch; height: auto; }',
             '.operations-pane { order: 1; }',
             '.library-pane { order: 2; }',
-            '.inspectors { order: 3; display: flex; flex-direction: column;',
+            '.inspector-dock { display: contents; }',
+            '.inspectors { display: flex; flex-direction: column;',
             '.look-inspector { order: -1; }',
             '.preview-pane { order: 4; }',
             '.button, input:not([type="checkbox"]) { min-height: 44px; }',
