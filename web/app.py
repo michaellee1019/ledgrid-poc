@@ -150,7 +150,31 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v9"
+COMPOSER_SHELL_VERSION = "composer-shell-v10"
+
+# The Gallery stays projected from the Scene v2 packet, while this small map
+# supplies human-facing catalog metadata without reopening legacy discovery.
+_COMPOSER_GALLERY_CLASSES = (
+    AuroraCurtainsAnimation, CanopyCupAnimation, AsciiDropAnimation,
+    EmojiAnimation, ChristmasTreeAnimation, NightTrainWindowsAnimation,
+    ConwayLifeAnimation, TetrisAnimation, FireflySynchronyAnimation,
+    FireworksAnimation, FlameBurstAnimation, FluidTankAnimation,
+    CyclicReefAnimation, LavaLampAnimation, SnakeAnimation, MazeChaseAnimation,
+    PinballAnimation, PixelQuestAnimation, GradientAnimation, RainbowAnimation,
+    SolidColorAnimation, SparkleAnimation, WaveAnimation, CircadianWindowAnimation,
+    CloudCanyonAnimation, DesertWindAnimation, MoonlitFogBanksAnimation,
+    RainOnGlassAnimation, TidalBioluminescenceAnimation, WaterfallVeilAnimation,
+    CellularTapestryAnimation, FlowFieldSilkAnimation, FrostworkAnimation,
+    LivingStainedGlassAnimation, QuasicrystalBloomAnimation, LivingEcosystemAnimation,
+    PhysarumNetworkAnimation, ReactionDiffusionGardenAnimation, WindInTheReedsAnimation,
+)
+_COMPOSER_GALLERY_METADATA = {
+    item.COMPONENT_ID: {
+        'name': str(getattr(item, 'ANIMATION_NAME', item.COMPONENT_ID.replace('_', ' ').title())),
+        'description': str(getattr(item, 'ANIMATION_DESCRIPTION', 'A live Scene animation.')),
+    }
+    for item in _COMPOSER_GALLERY_CLASSES
+}
 
 PAINTER_MASK_TYPES = (
     {
@@ -462,6 +486,11 @@ class AnimationWebInterface:
         def api_composer_components():
             """Return the closed local chooser from qualified descriptors."""
             return jsonify(editor_catalog(self.composer_catalog))
+
+        @self.app.route('/api/composer/gallery')
+        def api_composer_gallery():
+            """Read the inert, finite Scene v2 animation Gallery projection."""
+            return jsonify(self._composer_gallery_payload())
 
         @self.app.route('/api/composer/components/<component_id>/presets')
         def api_composer_component_presets(component_id: str):
@@ -2476,6 +2505,47 @@ class AnimationWebInterface:
             'role': item.get('role', 'background'),
         } for item in self.preview_manager.list_animations()), provider_policy=policy)
         return self._scene_v1_component_roles(catalog)
+
+    def _composer_gallery_payload(self) -> Dict[str, Any]:
+        """Project every eligible Composer Animation exactly once.
+
+        Gallery membership intentionally comes from the current Scene v2
+        packet, not plugin discovery.  Test and calibration renderers are not
+        in that packet, so they cannot leak into an operator-facing chooser.
+        This reader never touches the working draft, library, live adapter, or
+        wall channel; thumbnail rendering remains a separate explicit inert
+        preview request from the browser.
+        """
+        entries: List[Dict[str, Any]] = []
+        for descriptor in self.composer_catalog.descriptors:
+            if descriptor.role.value != 'animation':
+                continue
+            component_id = descriptor.component_id
+            metadata = _COMPOSER_GALLERY_METADATA.get(component_id, {})
+            try:
+                preset_count = len(self.composer_presets.choices(component_id))
+            except ValueError:
+                preset_count = 0
+            entries.append({
+                'key': f'{descriptor.provider.value}:{component_id}:v{descriptor.version}',
+                'component_id': component_id,
+                'provider': descriptor.provider.value,
+                'version': descriptor.version,
+                'role': descriptor.role.value,
+                'name': metadata.get('name', component_id.replace('_', ' ').title()),
+                'description': metadata.get('description', 'A live Scene animation.'),
+                'parameters': descriptor.default_parameters(),
+                'available': True,
+                'preset_count': preset_count,
+            })
+        entries.sort(key=lambda item: (str(item['name']).casefold(), str(item['key'])))
+        digest = hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+        return {
+            'schema': 'ledgrid.composer-gallery',
+            'schema_version': 1,
+            'catalog_digest': digest,
+            'entries': entries,
+        }
 
     @staticmethod
     def _scene_v1_component_roles(

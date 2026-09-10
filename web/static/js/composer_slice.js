@@ -22,6 +22,7 @@
   const clientId = newUuid();
   const state = { status: {connected: true, running: true, armed: true, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
     scene: null, history: [], redo: [], sequence: 0, intent: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
+    gallery: {entries: [], digest: null, query: '', filter: 'all', rendered: 0, favorites: new Set(), thumbnails: new Map(), detail: null},
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
@@ -434,6 +435,115 @@
       widgets: [], plants: {effects: {version: 1, active: [], strengths: {}}},
       look: {palette_id: $('#previewPalette').value, pace: number('#sceneSpeed'), presentation_brightness: number('#sceneLuminance')} };
   }
+  const GALLERY_FIXED_PREVIEW = Object.freeze({monotonic_elapsed: 17, wall_time: '2026-01-01T12:00:00+00:00'});
+  const GALLERY_PAGE_SIZE = 12;
+  const GALLERY_FAVORITES_KEY = 'ledgrid-composer-gallery-favorites-v1';
+  function readGalleryFavorites() {
+    try { return new Set(JSON.parse(window.localStorage.getItem(GALLERY_FAVORITES_KEY) || '[]').filter((key) => typeof key === 'string')); }
+    catch (_) { return new Set(); }
+  }
+  function writeGalleryFavorites() {
+    try { window.localStorage.setItem(GALLERY_FAVORITES_KEY, JSON.stringify([...state.gallery.favorites].sort())); } catch (_) { /* Private browsing can withhold storage. */ }
+  }
+  function galleryEntries() {
+    const query = state.gallery.query.trim().toLocaleLowerCase();
+    return state.gallery.entries.filter((entry) => {
+      if (state.gallery.filter === 'favorites' && !state.gallery.favorites.has(entry.key)) return false;
+      return !query || `${entry.name} ${entry.description} ${entry.component_id}`.toLocaleLowerCase().includes(query);
+    });
+  }
+  function galleryScene(entry, parameters = entry.parameters) {
+    const next = structuredClone(state.scene || defaultScene());
+    next.animation = {component_id: entry.component_id, version: entry.version, provider: entry.provider, role: 'animation', parameters: structuredClone(parameters)};
+    return next;
+  }
+  function galleryThumbnailKey(entry) { return `${state.gallery.digest}:${entry.key}:default`; }
+  async function drawGalleryThumbnail(canvas, entry) {
+    const key = galleryThumbnailKey(entry);
+    let result = state.gallery.thumbnails.get(key);
+    if (!result) {
+      result = preview(galleryScene(entry), GALLERY_FIXED_PREVIEW).then((body) => body.frame);
+      state.gallery.thumbnails.set(key, result);
+    }
+    try {
+      const frame = await result;
+      if (state.gallery.thumbnails.get(key) !== result) return;
+      state.gallery.thumbnails.set(key, frame);
+      drawFrameIntoCanvas(canvas, frame);
+      canvas.setAttribute('aria-label', `${entry.name} representative 33 by 138 preview`);
+    } catch (_) {
+      state.gallery.thumbnails.delete(key);
+      const unavailable = document.createElement('span'); unavailable.className = 'gallery-thumb-unavailable'; unavailable.textContent = 'Preview unavailable'; unavailable.setAttribute('aria-label', `${entry.name} preview unavailable`); canvas.replaceWith(unavailable);
+    }
+  }
+  function showGalleryDetail(entry) {
+    const detail = $('#galleryDetail'); detail.replaceChildren(); detail.hidden = false;
+    const heading = document.createElement('h3'); heading.textContent = entry.name;
+    const description = document.createElement('p'); description.textContent = entry.description;
+    const status = document.createElement('p'); status.className = 'gallery-card-meta'; status.textContent = entry.available ? `${entry.preset_count} preset${entry.preset_count === 1 ? '' : 's'} · live selection` : 'Unavailable on this Composer';
+    const presets = document.createElement('div'); presets.className = 'gallery-preset-list'; presets.setAttribute('aria-label', `${entry.name} presets`);
+    detail.append(heading, description, status, presets);
+    state.gallery.detail = entry.key;
+    if (!entry.available) return;
+    const loading = document.createElement('span'); loading.className = 'muted'; loading.textContent = 'Loading presets…'; presets.append(loading);
+    fetch(`${api}/components/${encodeURIComponent(entry.component_id)}/presets`).then((response) => response.json().then((body) => ({response, body}))).then(({response, body}) => {
+      if (!response.ok) throw new Error(body.error || 'Presets are unavailable.');
+      if (state.gallery.detail !== entry.key) return;
+      presets.replaceChildren();
+      (body.presets || []).forEach((preset) => {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name;
+        button.addEventListener('click', () => selectGalleryEntry(entry, preset)); presets.append(button);
+      });
+      if (!presets.childElementCount) presets.textContent = 'No authored presets.';
+    }).catch((error) => { if (state.gallery.detail === entry.key) presets.textContent = error.message; });
+  }
+  async function selectGalleryEntry(entry, preset = null) {
+    if (!entry.available) return;
+    const intentToken = beginIntent();
+    const previous = structuredClone(state.scene || defaultScene());
+    const next = galleryScene(entry, preset ? preset.parameters : entry.parameters);
+    state.dirty = true; applyScene(next);
+    try {
+      const published = await submit(next, {intentToken, rememberEdit: true, previous});
+      if (!intentIsCurrent(intentToken) || published.coalesced) return;
+      refreshGallerySelection();
+      $('#operationMessage').textContent = preset ? `${entry.name} · ${preset.name} is live.` : `${entry.name} is live.`;
+    } catch (error) {
+      if (!intentIsCurrent(intentToken)) return;
+      if (!state.publication.queued && !state.publication.inFlight) { state.scene = previous; applyScene(previous); refreshGallerySelection(); }
+      $('#operationMessage').textContent = error.message || 'That animation is unavailable; the previous output is still live.';
+    }
+  }
+  function refreshGallerySelection() { renderGallery(); }
+  function renderGallery() {
+    const grid = $('#galleryGrid'); const entries = galleryEntries();
+    if (state.gallery.rendered > entries.length) state.gallery.rendered = entries.length;
+    const limit = Math.min(entries.length, Math.max(GALLERY_PAGE_SIZE, state.gallery.rendered || GALLERY_PAGE_SIZE));
+    grid.replaceChildren();
+    entries.slice(0, limit).forEach((entry) => {
+      const card = document.createElement('div'); card.className = 'gallery-card'; card.setAttribute('role', 'listitem');
+      const select = document.createElement('button'); select.type = 'button'; select.className = 'gallery-select'; select.setAttribute('aria-current', String(state.scene?.animation?.component_id === entry.component_id)); select.disabled = !entry.available;
+      const canvas = document.createElement('canvas'); canvas.className = 'gallery-thumb'; canvas.width = 33; canvas.height = 138; canvas.setAttribute('aria-label', `${entry.name} preview loading`);
+      const copy = document.createElement('span'); copy.className = 'gallery-card-copy';
+      const title = document.createElement('span'); title.className = 'gallery-card-title'; title.textContent = entry.name;
+      const description = document.createElement('span'); description.className = 'gallery-card-description'; description.textContent = entry.description;
+      const meta = document.createElement('span'); meta.className = 'gallery-card-meta'; meta.textContent = entry.available ? `${entry.preset_count} presets · available` : 'Unavailable';
+      copy.append(title, description, meta); select.append(canvas, copy);
+      select.addEventListener('click', () => { showGalleryDetail(entry); selectGalleryEntry(entry); });
+      const favorite = document.createElement('button'); favorite.type = 'button'; favorite.className = 'gallery-favorite'; favorite.setAttribute('aria-label', `Favorite ${entry.name}`); favorite.setAttribute('aria-pressed', String(state.gallery.favorites.has(entry.key))); favorite.textContent = state.gallery.favorites.has(entry.key) ? '★' : '☆';
+      favorite.addEventListener('click', (event) => { event.stopPropagation(); if (state.gallery.favorites.has(entry.key)) state.gallery.favorites.delete(entry.key); else state.gallery.favorites.add(entry.key); writeGalleryFavorites(); renderGallery(); });
+      card.append(select, favorite); grid.append(card); drawGalleryThumbnail(canvas, entry);
+    });
+    $('#galleryCount').textContent = `${entries.length} animation${entries.length === 1 ? '' : 's'}`;
+    $('#galleryEmpty').hidden = entries.length > 0;
+    const more = $('#galleryMore'); more.hidden = limit >= entries.length; more.textContent = `Show ${Math.min(GALLERY_PAGE_SIZE, entries.length - limit)} more animations`;
+  }
+  async function loadGallery() {
+    try {
+      const response = await fetch(`${api}/gallery`, {cache: 'no-store'}); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Gallery is unavailable.');
+      state.gallery.entries = Array.isArray(body.entries) ? body.entries : []; state.gallery.digest = body.catalog_digest; state.gallery.favorites = readGalleryFavorites(); state.gallery.rendered = GALLERY_PAGE_SIZE; renderGallery();
+    } catch (error) { $('#galleryCount').textContent = 'Unavailable'; $('#galleryEmpty').hidden = false; $('#galleryEmpty').textContent = error.message || 'Gallery is unavailable.'; }
+  }
   function syncPlantOpticControl(optic) {
     const enabled = $(optic.enabled).checked;
     const strength = $(optic.strength);
@@ -654,14 +764,15 @@
     });
     updatePlacementWarning(warning, messages.join(' '));
   }
-  function drawFrame(frame) {
+  function drawFrameIntoCanvas(canvas, frame) {
     if (!frame || frame.encoding !== 'rgb_u8_base64') throw new Error('Preview returned an unsupported frame.');
     const bytes = Uint8Array.from(atob(frame.pixels), (character) => character.charCodeAt(0));
-    const canvas = $('#scenePreview'); const context = canvas.getContext('2d'); const image = context.createImageData(frame.width, frame.height);
+    const context = canvas.getContext('2d'); const image = context.createImageData(frame.width, frame.height);
     for (let strip = 0; strip < frame.width; strip += 1) for (let led = 0; led < frame.height; led += 1) { const source = (strip * frame.height + led) * 3; const target = ((frame.height - 1 - led) * frame.width + strip) * 4; image.data[target] = bytes[source]; image.data[target + 1] = bytes[source + 1]; image.data[target + 2] = bytes[source + 2]; image.data[target + 3] = 255; }
     context.putImageData(image, 0, 0);
   }
-  async function preview(scene) { let response; try { response = await fetch(`${api}/preview`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene})}); } catch (_) { const error = new Error('Local Composer server unavailable.'); error.previewUnavailable = true; throw error; } const body = await response.json(); if (!response.ok) { const error = new Error(body.error || 'Preview could not render.'); error.previewUnavailable = response.status >= 500; throw error; } return body; }
+  function drawFrame(frame) { drawFrameIntoCanvas($('#scenePreview'), frame); }
+  async function preview(scene, previewTime = null) { let response; try { response = await fetch(`${api}/preview`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene, ...(previewTime ? {preview: previewTime} : {})})}); } catch (_) { const error = new Error('Local Composer server unavailable.'); error.previewUnavailable = true; throw error; } const body = await response.json(); if (!response.ok) { const error = new Error(body.error || 'Preview could not render.'); error.previewUnavailable = response.status >= 500; throw error; } return body; }
   const previewScheduler = new window.ComposerPreviewScheduler({
     request: preview,
     isVisible: () => !document.hidden,
@@ -1129,6 +1240,9 @@
     $('#removeEmoji').addEventListener('click', async () => { const next = structuredClone(state.scene || defaultScene()); next.widgets = next.widgets.filter((widget) => widget.component?.component_id !== 'emoji_arranger'); state.lastControl = 'removeEmoji'; try { await submit(next, {rememberEdit: true}); applyScene(next); } catch (error) { $('#operationMessage').textContent = error.message; } });
     $('#scenePreview').addEventListener('pointerdown', triggerInstrumentAtPointer);
     $('#librarySearch').addEventListener('input', (event) => { state.query = event.target.value; renderLibrary(); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.addEventListener('click', () => { state.filter = button.dataset.libraryFilter; renderLibrary(); }));
+    $('#gallerySearch').addEventListener('input', (event) => { state.gallery.query = event.target.value; state.gallery.rendered = GALLERY_PAGE_SIZE; renderGallery(); });
+    document.querySelectorAll('[data-gallery-filter]').forEach((button) => button.addEventListener('click', () => { state.gallery.filter = button.dataset.galleryFilter; state.gallery.rendered = GALLERY_PAGE_SIZE; document.querySelectorAll('[data-gallery-filter]').forEach((candidate) => candidate.classList.toggle('active', candidate.dataset.galleryFilter === state.gallery.filter)); renderGallery(); }));
+    $('#galleryMore').addEventListener('click', () => { state.gallery.rendered += GALLERY_PAGE_SIZE; renderGallery(); });
     $('#openScene').addEventListener('click', () => $('#librarySearch').focus()); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', stopOutput); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
     document.addEventListener('keydown', (event) => { if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return; event.preventDefault(); rewind(event.shiftKey ? 'redo' : 'undo'); });
   }
@@ -1184,5 +1298,5 @@
     // scene does not restart it; the next real edit does that automatically.
     if (!body.status?.current) await submit(state.scene);
   }
-  hydrateCurrentScene().then(loadLibrary).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
+  hydrateCurrentScene().then(() => Promise.all([loadLibrary(), loadGallery()])).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();

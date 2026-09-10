@@ -69,6 +69,11 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.assertLess(body.index('class="preview-pane"'), body.index('class="inspector-dock"'))
         self.assertEqual(body.count('class="operations-pane"'), 1)
 
+    def test_gallery_thumbnails_keep_the_physical_wall_aspect_at_each_breakpoint(self) -> None:
+        self.assertIn(".gallery-thumb { inline-size: 1.2rem; block-size: auto; aspect-ratio: 33 / 138", self.css)
+        self.assertIn(".gallery-thumb { inline-size: 1.5rem; block-size: auto; aspect-ratio: 33 / 138", self.css)
+        self.assertIn(".gallery-select { grid-template-columns: 1.5rem minmax(0, 1fr); min-height: 6.9rem", self.css)
+
 
 if __name__ == "__main__":
     unittest.main()

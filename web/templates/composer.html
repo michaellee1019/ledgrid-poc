@@ -17,6 +17,15 @@
       <label>Search scenes <input id="librarySearch" type="search" placeholder="Search scenes"></label>
       <div class="library-filters" role="group" aria-label="Scene collection"><button class="button text active" data-library-filter="all" type="button">All</button><button class="button text" data-library-filter="starter" type="button">Built-ins</button><button class="button text" data-library-filter="look" type="button">Saved</button><button class="button text" data-library-filter="favorites" type="button">Favorites</button></div>
       <ol id="libraryList" class="library-list" aria-live="polite"></ol><p id="libraryEmpty" class="empty">No scenes found.</p>
+      <section class="gallery" aria-labelledby="gallery-title">
+        <div class="pane-heading"><div><p class="eyebrow">Animation catalog</p><h2 id="gallery-title">Gallery</h2></div><output id="galleryCount" class="gallery-count" aria-live="polite">Loading…</output></div>
+        <label class="gallery-search">Search animations <input id="gallerySearch" type="search" placeholder="Search the Gallery"></label>
+        <div class="gallery-filters" role="group" aria-label="Gallery collection"><button class="button text active" data-gallery-filter="all" type="button">All</button><button class="button text" data-gallery-filter="favorites" type="button">Favorites</button></div>
+        <div id="galleryGrid" class="gallery-grid" role="list" aria-label="Available animations"></div>
+        <button id="galleryMore" class="button secondary wide" type="button" hidden>Show more animations</button>
+        <p id="galleryEmpty" class="empty" hidden>No animations match this search.</p>
+        <section id="galleryDetail" class="gallery-detail" aria-live="polite" hidden></section>
+      </section>
     </aside>
     <section class="preview-pane" aria-labelledby="preview-title">
       <div class="pane-heading"><div><p class="eyebrow">Installed final</p><h2 id="preview-title">Preview</h2></div><strong id="previewIdentity">Rendering…</strong></div>

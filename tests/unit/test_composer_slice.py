@@ -134,6 +134,78 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertIn("/static/js/composer_slice.js", html)
         self.assertNotIn("/static/css/composer.css", html)
 
+    def test_gallery_projects_each_current_show_animation_once_without_mutation(self) -> None:
+        before_draft = self.interface.working_draft.get()
+        before_commands = list(self.interface.composer_control.commands)
+        response = self.client.get('/api/composer/gallery')
+        self.assertEqual(response.status_code, 200, response.get_json())
+        payload = response.get_json()
+        entries = payload['entries']
+        expected = [
+            descriptor for descriptor in self.interface.composer_catalog.descriptors
+            if descriptor.role.value == 'animation'
+        ]
+        self.assertEqual(len(entries), len(expected))
+        self.assertEqual(
+            {(entry['provider'], entry['component_id'], entry['version']) for entry in entries},
+            {(descriptor.provider.value, descriptor.component_id, descriptor.version) for descriptor in expected},
+        )
+        self.assertEqual(len({entry['key'] for entry in entries}), len(entries))
+        self.assertNotIn('plant_calibration', {entry['component_id'] for entry in entries})
+        self.assertNotIn('strip_order', {entry['component_id'] for entry in entries})
+        self.assertTrue(all(entry['available'] and isinstance(entry['preset_count'], int) for entry in entries))
+        self.assertRegex(payload['catalog_digest'], r'^[0-9a-f]{64}$')
+        self.assertEqual(self.interface.working_draft.get(), before_draft)
+        self.assertEqual(self.interface.composer_control.commands, before_commands)
+
+    def test_gallery_uses_fixed_inert_preview_cache_and_single_live_publisher(self) -> None:
+        script = Path('web/static/js/composer_slice.js').read_text(encoding='utf-8')
+        css = Path('web/static/css/composer_slice.css').read_text(encoding='utf-8')
+        html = self.client.get('/').get_data(as_text=True)
+        for element_id in ('gallerySearch', 'galleryGrid', 'galleryMore', 'galleryDetail'):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn("const GALLERY_FIXED_PREVIEW", script)
+        self.assertIn("preview(galleryScene(entry), GALLERY_FIXED_PREVIEW)", script)
+        self.assertIn("`${state.gallery.digest}:${entry.key}:default`", script)
+        self.assertIn("state.gallery.rendered += GALLERY_PAGE_SIZE", script)
+        self.assertGreaterEqual(css.count("aspect-ratio: 33 / 138"), 4)
+        self.assertNotIn("height: 3.85rem", css)
+        self.assertNotIn("height: 43px", css)
+        selection = script[script.index('async function selectGalleryEntry'):script.index('function renderGallery', script.index('async function selectGalleryEntry'))]
+        self.assertIn('await submit(next, {intentToken, rememberEdit: true, previous})', selection)
+        self.assertLess(selection.index('if (!intentIsCurrent(intentToken) || published.coalesced) return;'), selection.index('refreshGallerySelection();'))
+        self.assertIn('if (!intentIsCurrent(intentToken)) return;', selection)
+        self.assertIn("select.setAttribute('aria-current', String(state.scene?.animation?.component_id === entry.component_id))", script)
+        self.assertNotIn('/activate', selection)
+        self.assertNotIn('/check', selection)
+
+    def test_each_gallery_default_has_a_fixed_inert_33_by_138_preview(self) -> None:
+        entries = self.client.get('/api/composer/gallery').get_json()['entries']
+        before_draft = self.interface.working_draft.get()
+        before_commands = list(self.interface.composer_control.commands)
+        for entry in entries:
+            with self.subTest(component=entry['component_id']):
+                scene = _current_scene()
+                scene['animation'] = {
+                    'component_id': entry['component_id'],
+                    'version': entry['version'],
+                    'provider': entry['provider'],
+                    'role': entry['role'],
+                    'parameters': entry['parameters'],
+                }
+                response = self.client.post('/api/composer/preview', json={
+                    'origin': 'composer', 'scene': scene,
+                    'preview': {
+                        'monotonic_elapsed': 17,
+                        'wall_time': '2026-01-01T12:00:00+00:00',
+                    },
+                })
+                self.assertEqual(response.status_code, 200, response.get_json())
+                frame = response.get_json()['frame']
+                self.assertEqual((frame['width'], frame['height'], frame['encoding']), (33, 138, 'rgb_u8_base64'))
+        self.assertEqual(self.interface.working_draft.get(), before_draft)
+        self.assertEqual(self.interface.composer_control.commands, before_commands)
+
     def test_http_browser_uuid_fallback_is_rfc4122_shaped(self) -> None:
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
         helper = script[
@@ -353,7 +425,7 @@ assert.equal(context.editCurrentAfterStop, false);
 """
         completed = subprocess.run(["node", "-e", javascript, helper], check=False, capture_output=True, text=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(script.count("if (!intentIsCurrent(intentToken)) return;"), 3)
+        self.assertEqual(script.count("if (!intentIsCurrent(intentToken)) return;"), 4)
         self.assertEqual(script.count("if (!intentIsCurrent(intentToken) || publication.coalesced) return;"), 2)
         self.assertIn("if (!intentIsCurrent(intentToken)) return;\n      state.selection = item;", script)
         self.assertIn("if (intentIsCurrent(intentToken) && error.status !== 409)", script)
