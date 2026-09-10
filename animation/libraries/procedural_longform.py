@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime
 from functools import lru_cache
 from types import MappingProxyType
@@ -29,6 +30,35 @@ PALETTES = {
     "aurora": ((3, 18, 29), (27, 154, 134), (168, 255, 221)),
 }
 
+# Scene v2 owns the hue family for the reviewed time-and-weather scenes.  A
+# local mood still has a job: it changes field contrast and relative light
+# levels, but cannot replace the Scene's resolved low/mid/high roles.
+SEMANTIC_PALETTES = {
+    "neutral": ((2, 10, 18), (24, 148, 132), (150, 255, 218)),
+    "mist": ((3, 9, 20), (40, 102, 142), (170, 228, 245)),
+    "spectrum": ((15, 3, 34), (84, 38, 194), (54, 238, 230)),
+    "ember": ((18, 3, 2), (156, 42, 14), (255, 202, 92)),
+}
+
+# low/mid/high gains and field/background shaping.  These only affect
+# luminance and material contrast; palette identity remains Scene-owned.
+MOOD_TONAL_GAINS = {
+    "moonlit": (.72, .88, 1.00), "predawn": (.78, .90, 1.08),
+    "ochre": (.82, .98, 1.10), "mars": (.88, .92, 1.06),
+    "natural": (.82, 1.00, 1.04), "ember": (.92, .95, 1.12),
+    "sleeper": (.56, .70, .78), "daylight": (1.12, 1.08, 1.04),
+    "pastel": (1.03, .92, 1.12), "synthwave": (.76, 1.06, 1.16),
+    "candlelight": (.92, .95, 1.08), "aurora": (.68, 1.08, 1.02),
+}
+MOOD_TONAL_CURVES = {
+    "moonlit": (-.020, .70, .70, .80), "predawn": (.075, .92, .90, 1.00),
+    "ochre": (.055, 1.20, .95, 1.20), "mars": (.130, 1.08, 1.10, 1.12),
+    "natural": (.040, 1.00, 1.00, 1.00), "ember": (.070, 1.16, .92, 1.20),
+    "sleeper": (-.035, .58, .62, .60), "daylight": (.145, 1.05, 1.30, 1.05),
+    "pastel": (.190, .90, 1.35, .92), "synthwave": (.110, 1.22, 1.08, 1.35),
+    "candlelight": (.090, 1.02, 1.18, 1.10), "aurora": (.070, 1.12, 1.05, 1.20),
+}
+
 BACKGROUND_LEVELS = {"none": 0.0, "soft": 0.35, "luminous": 0.7, "radiant": 1.0}
 
 
@@ -41,6 +71,10 @@ class LongformSceneBase(AnimationBase):
     PLANT_MODIFIER_SUPPORT = frozenset({"illuminate", "shadow", "refract"})
     COMPONENT_ID = ""
     COMPONENT_DEFAULTS: Mapping[str, Any] = MappingProxyType({})
+    # Reviewed renderers opt in individually.  The unrelated longform family
+    # retains its authored direct-palette output until it receives its own
+    # accepted Scene v2 review.
+    SCENE_SEMANTIC_PALETTE = False
 
     def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
         super().__init__(controller, config)
@@ -69,6 +103,9 @@ class LongformSceneBase(AnimationBase):
         self._cached = None
         self._last_tick = None
         self._last_key = None
+        # Circadian samples host time once per source tick.  A same-tick Scene
+        # palette refresh is presentation-only and must reuse this value.
+        self._circadian_hour: float | None = None
         self._presentation_context: ResolvedScene | None = None
 
     @classmethod
@@ -170,11 +207,14 @@ class LongformSceneBase(AnimationBase):
         return {}
 
     def update_parameters(self, new_params: Dict[str, Any]):
+        old_scene_key = self.scene_key()
         old_seed = int(self.params.get("seed", 1729))
         super().update_parameters(new_params)
         if int(self.params.get("seed", 1729)) != old_seed:
             self._rng = np.random.default_rng(int(self.params["seed"]))
             self._phases = self._rng.uniform(0, 2 * np.pi, 16).astype(np.float32)
+        if self.scene_key() != old_scene_key:
+            self._circadian_hour = None
         self._last_key = None
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
@@ -187,6 +227,8 @@ class LongformSceneBase(AnimationBase):
         t = tick / fps * max(0.0, float(self.params.get("speed", 1.0)))
         motion = min(1.0, max(0.0, float(self.params.get("motion", 0.35))))
         density = min(1.0, max(0.0, float(self.params.get("density", 0.5))))
+        if self.SCENE == "circadian" and (self._last_tick != tick or self._circadian_hour is None):
+            self._circadian_hour = self._current_hour(t)
         self.render_scene(t, motion, density)
         self._apply_background()
         self._apply_plant_presentation(t)
@@ -198,7 +240,7 @@ class LongformSceneBase(AnimationBase):
         self._cached = frame
         self._last_tick = tick
         self._last_key = key
-        return self.rendered_frame(frame)
+        return self.rendered_frame(frame, changed=True)
 
     def _visual_key(self):
         state = self.plant_modifier_state()
@@ -210,30 +252,57 @@ class LongformSceneBase(AnimationBase):
             str(self.params.get("background", "soft")),
             float(self.params.get("background_level", .18)),
             int(self.params.get("render_fps", 24)),
+            self._semantic_palette_id(),
             state,
         ) + self.scene_key()
 
     def scene_key(self) -> tuple:
         return ()
 
+    def _semantic_palette_id(self) -> str | None:
+        if not self.SCENE_SEMANTIC_PALETTE or self._presentation_context is None:
+            return None
+        palette = self._presentation_context.palette
+        if palette is None or not isinstance(palette.get("palette_id"), str):
+            raise ValueError(f"{self.COMPONENT_ID} requires a semantic Scene v2 palette")
+        return str(palette["palette_id"])
+
+    def _semantic_mood_curve(self) -> tuple[float, float, float, float]:
+        return MOOD_TONAL_CURVES.get(
+            str(self.params.get("mood", self.DEFAULT_MOOD)), MOOD_TONAL_CURVES[self.DEFAULT_MOOD],
+        )
+
     def palette(self):
+        palette_id = self._semantic_palette_id()
+        if palette_id is not None:
+            roles = SEMANTIC_PALETTES.get(palette_id, SEMANTIC_PALETTES["neutral"])
+            gains = MOOD_TONAL_GAINS.get(
+                str(self.params.get("mood", self.DEFAULT_MOOD)), MOOD_TONAL_GAINS[self.DEFAULT_MOOD],
+            )
+            return tuple(np.asarray(color, dtype=np.float32) * gain for color, gain in zip(roles, gains))
         mood = str(self.params.get("mood", self.DEFAULT_MOOD))
         return tuple(np.asarray(c, dtype=np.float32) for c in PALETTES.get(mood, PALETTES[self.DEFAULT_MOOD]))
 
     def colorize(self, value: np.ndarray, accent: Optional[np.ndarray] = None):
         low, mid, high = self.palette()
         v = np.clip(value, 0.0, 1.0)
+        accent_gain = 1.0
+        if self._semantic_palette_id() is not None:
+            field_bias, field_gain, _background_gain, accent_gain = self._semantic_mood_curve()
+            v = np.clip(v * field_gain + field_bias, 0.0, 1.0)
         first = np.minimum(v * 2.0, 1.0)[..., None]
         second = np.maximum(v * 2.0 - 1.0, 0.0)[..., None]
         self._rgb[:] = low + (mid - low) * first
         self._rgb += (high - mid) * second
         if accent is not None:
-            self._rgb += np.clip(accent, 0.0, 1.0)[..., None] * high * 0.35
+            self._rgb += np.clip(accent, 0.0, 1.0)[..., None] * high * (.35 * accent_gain)
 
     def _apply_background(self):
         style = str(self.params.get("background", "soft"))
         level = float(np.clip(self.params.get("background_level", .18), 0.0, 1.0))
         strength = BACKGROUND_LEVELS.get(style, BACKGROUND_LEVELS["soft"]) * level
+        if self._semantic_palette_id() is not None:
+            strength *= self._semantic_mood_curve()[2]
         if strength <= 0.0:
             return
         low, mid, high = self.palette()
@@ -288,6 +357,8 @@ class LongformSceneBase(AnimationBase):
 
     def _circadian_palette(self):
         """Return the authored night, daylight, and twilight colors."""
+        if self._semantic_palette_id() is not None:
+            return self.palette()
         return (
             np.asarray((2, 5, 18), dtype=np.float32),
             np.asarray((90, 151, 207), dtype=np.float32),
@@ -295,7 +366,7 @@ class LongformSceneBase(AnimationBase):
         )
 
     def _render_circadian(self, t: float, motion: float, density: float):
-        hour = self._current_hour(t)
+        hour = self._circadian_hour if self._circadian_hour is not None else self._current_hour(t)
         sun = max(0.0, np.sin((hour - 6.0) / 12.0 * np.pi))
         twilight = max(0.0, np.sin((hour - 4.5) / 15.0 * np.pi))
         horizon = np.exp(-((self._y - 0.73) / 0.25) ** 2)
@@ -306,9 +377,26 @@ class LongformSceneBase(AnimationBase):
         sky *= 1.0 - np.clip(cloud - (1.1 - density * 0.7), 0, 1) * 0.28
         stars = (np.sin(self._x * 173 + self._y * 271 + self._phases[4]) > 0.992 - density * 0.01)
         sky += stars * (1.0 - sun) * 0.32
+        if self._semantic_palette_id() is not None:
+            field_bias, field_gain, _background_gain, accent_gain = self._semantic_mood_curve()
+            sky = np.clip(sky * field_gain + field_bias, 0.0, 1.0)
+        else:
+            accent_gain = 1.0
         low, day, warm = self._circadian_palette()
         self._rgb[:] = low + day * sky[..., None]
-        self._rgb += warm * (horizon * twilight * (1.0 - sun * 0.6))[..., None] * 0.32
+        self._rgb += warm * (horizon * twilight * (1.0 - sun * 0.6))[..., None] * (.32 * accent_gain)
+
+    def semantic_snapshot(self) -> Mapping[str, Any]:
+        """State/RNG proof surface for presentation-only palette switches."""
+        return MappingProxyType({
+            "phases": self._phases.tobytes(),
+            "rng_state": copy.deepcopy(self._rng.bit_generator.state),
+            "source_tick": self._last_tick,
+            "circadian_hour": self._circadian_hour,
+        })
+
+    def cadence_snapshot(self) -> Mapping[str, Any]:
+        return MappingProxyType({"render_fps": int(self.params.get("render_fps", 24)), "source_tick": self._last_tick})
 
     def _render_train(self, t: float, motion: float, density: float):
         travel = t * (0.012 + 0.07 * motion)

@@ -354,6 +354,13 @@ class ProceduralAtmosphereBase(AnimationBase):
             "source_tick": self._last_source_tick,
         })
 
+    def cadence_snapshot(self) -> Mapping[str, Any]:
+        """Source cadence proof separate from palette-only presentation state."""
+        return MappingProxyType({
+            "source_fps": float(self.params.get("source_fps", 30.0)),
+            "source_tick": self._last_source_tick,
+        })
+
     def _paint(self, field: np.ndarray, accent: Optional[np.ndarray] = None) -> None:
         low, mid, high = self._palette()
         f = np.clip(field, 0.0, 1.0)

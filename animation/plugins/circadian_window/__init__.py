@@ -10,6 +10,7 @@ class CircadianWindowAnimation(LongformSceneBase):
     DEFAULT_MOOD = "natural"
     MOODS = ("natural", "ember", "sleeper")
     COMPONENT_ID = "circadian_window"
+    SCENE_SEMANTIC_PALETTE = True
     COMPONENT_DEFAULTS = {
         "motion": .35, "density": .5, "mood": "natural", "background": "soft",
         "background_level": .18, "render_fps": 24, "seed": 29001,
