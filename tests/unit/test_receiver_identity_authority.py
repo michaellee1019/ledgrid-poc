@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
-from io import StringIO
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
-from unittest import mock
 
 from drivers.led_layout import WALL_DEVICE_MAP
 from tools.deployment.receiver_firmware_inventory import (
@@ -23,7 +23,6 @@ from tools.deployment.receiver_identity_authority import (
     RECEIVER_IDENTITY_EVIDENCE_SCHEMA,
     ReceiverIdentityAuthorityError,
     load_receiver_identity_authority,
-    main as receiver_identity_authority_main,
     preflight_receiver_identity_refresh,
     provision_receiver_identity_authority,
     provision_receiver_identity_mapping,
@@ -84,6 +83,22 @@ def _mapping(*, serials: tuple[str, ...] | None = None) -> dict[str, object]:
             for logical_id in range(5)
         ],
     }
+
+
+def _planned_firmware(
+    *,
+    installation_digest: str = _digest("f"),
+    environment: str = "synthetic-test-environment",
+    firmware_sha256: str = _digest("a"),
+) -> dict[str, str]:
+    return {
+        "expected_firmware_environment": environment,
+        "expected_installation_digest": installation_digest,
+        "expected_firmware_sha256": firmware_sha256,
+    }
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReceiverIdentityAuthorityTests(unittest.TestCase):
@@ -258,7 +273,7 @@ class ReceiverIdentityAuthorityTests(unittest.TestCase):
                     expected_receiver_hybrid_digest=(
                         write_receiver_hybrid_config(root, enabled=True).selection_digest
                     ),
-                    expected_firmware_sha256=expected_firmware,
+                    **_planned_firmware(firmware_sha256=expected_firmware),
                 )
             self.assertEqual(
                 json.loads(receiver_identity_authority_path(root).read_text())["authority_digest"],
@@ -274,14 +289,14 @@ class ReceiverIdentityAuthorityTests(unittest.TestCase):
             preflight = preflight_receiver_identity_refresh(
                 root,
                 expected_receiver_hybrid_digest=config_digest,
-                expected_firmware_sha256=expected_firmware,
+                **_planned_firmware(firmware_sha256=expected_firmware),
             )
             self.assertTrue(preflight["rotation_required"])
             refreshed = refresh_receiver_identity_authority(
                 root,
                 expected_authority_digest=old.authority_digest,
                 expected_receiver_hybrid_digest=config_digest,
-                expected_firmware_sha256=expected_firmware,
+                **_planned_firmware(firmware_sha256=expected_firmware),
             )
 
             self.assertTrue(refreshed["rotated"])
@@ -325,6 +340,70 @@ class ReceiverIdentityAuthorityTests(unittest.TestCase):
                 old.authority_digest,
             )
 
+    def test_same_app_change_requires_mapping_for_full_installation_identity(self) -> None:
+        changes = (
+            ("installation digest", _digest("e"), "synthetic-test-environment"),
+            ("firmware environment", _digest("f"), "changed-test-environment"),
+        )
+        for name, planned_installation, planned_environment in changes:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary_dir:
+                root = Path(temporary_dir)
+                config = write_receiver_hybrid_config(root, enabled=True)
+                write_firmware_inventory(
+                    root,
+                    _devices(),
+                    installation_digest=_digest("f"),
+                    firmware_environment="synthetic-test-environment",
+                    firmware_sha256=_digest("a"),
+                )
+                evidence = _evidence()
+                for identity in evidence["identities"]:  # type: ignore[union-attr]
+                    identity["firmware_sha256"] = _digest("a")
+                old = provision_receiver_identity_authority(
+                    root, operator_evidence=evidence
+                )
+                planned = _planned_firmware(
+                    installation_digest=planned_installation,
+                    environment=planned_environment,
+                )
+
+                with self.assertRaisesRegex(
+                    ReceiverIdentityAuthorityError, "identity mapping is missing"
+                ):
+                    preflight_receiver_identity_refresh(
+                        root,
+                        expected_receiver_hybrid_digest=config.selection_digest,
+                        **planned,
+                    )
+                self.assertEqual(
+                    load_receiver_identity_authority(root).authority_digest,
+                    old.authority_digest,
+                )
+
+                provision_receiver_identity_mapping(root, operator_mapping=_mapping())
+                preflight = preflight_receiver_identity_refresh(
+                    root,
+                    expected_receiver_hybrid_digest=config.selection_digest,
+                    **planned,
+                )
+                self.assertTrue(preflight["rotation_required"])
+                inventory_payload = json.loads(inventory_path(root).read_text())
+                for record in inventory_payload["devices"]:
+                    record["installation_digest"] = planned_installation
+                    record["firmware_environment"] = planned_environment
+                inventory_path(root).write_text(json.dumps(inventory_payload))
+                refreshed = refresh_receiver_identity_authority(
+                    root,
+                    expected_authority_digest=old.authority_digest,
+                    expected_receiver_hybrid_digest=config.selection_digest,
+                    **planned,
+                )
+                self.assertTrue(refreshed["rotated"])
+                self.assertNotEqual(
+                    load_receiver_identity_authority(root).authority_digest,
+                    old.authority_digest,
+                )
+
     def test_invalid_mapping_and_failed_cas_leave_authority_unmodified(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -352,7 +431,7 @@ class ReceiverIdentityAuthorityTests(unittest.TestCase):
                     root,
                     expected_authority_digest=old.authority_digest,
                     expected_receiver_hybrid_digest=config_digest,
-                    expected_firmware_sha256=_digest("f"),
+                    **_planned_firmware(firmware_sha256=_digest("f")),
                 )
             self.assertEqual(
                 json.loads(receiver_identity_authority_path(root).read_text())["authority_digest"],
@@ -400,7 +479,7 @@ class ReceiverIdentityAuthorityTests(unittest.TestCase):
             preflight = preflight_receiver_identity_refresh(
                 root,
                 expected_receiver_hybrid_digest=config.selection_digest,
-                expected_firmware_sha256=_digest("a"),
+                **_planned_firmware(),
             )
             self.assertFalse(preflight["rotation_required"])
             self.assertFalse(receiver_identity_mapping_path(root).exists())
@@ -408,7 +487,7 @@ class ReceiverIdentityAuthorityTests(unittest.TestCase):
                 root,
                 expected_authority_digest=authority.authority_digest,
                 expected_receiver_hybrid_digest=config.selection_digest,
-                expected_firmware_sha256=_digest("a"),
+                **_planned_firmware(),
             )
             self.assertEqual(refreshed["outcome"], "skipped")
             self.assertEqual(load_receiver_identity_authority(root), authority)
@@ -419,28 +498,70 @@ class ReceiverIdentityAuthorityTests(unittest.TestCase):
             self.prepare_target(root)
             evidence_path = root / "operator-mapping.json"
             evidence_path.write_text(json.dumps(_mapping()), encoding="utf-8")
-            output = StringIO()
-
-            with mock.patch(
-                "sys.argv",
+            unrelated = root / "unrelated-login-directory"
+            unrelated.mkdir()
+            environment = os.environ.copy()
+            environment.pop("PYTHONPATH", None)
+            completed = subprocess.run(
                 [
-                    "receiver_identity_authority",
+                    sys.executable,
+                    "-I",
+                    str(ROOT / "tools/deployment/receiver_identity_authority.py"),
                     "--root",
                     str(root),
                     "provision-mapping",
                     "--evidence",
                     str(evidence_path),
                 ],
-            ), redirect_stdout(output):
-                self.assertEqual(receiver_identity_authority_main(), 0)
-
-            payload = json.loads(output.getvalue())
+                cwd=unrelated,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            payload = json.loads(completed.stdout)
             self.assertEqual(payload["schema"], RECEIVER_IDENTITY_MAPPING_SCHEMA)
             self.assertEqual(len(payload["identities"]), 5)
             self.assertEqual(
                 json.loads(receiver_identity_mapping_path(root).read_text()),
                 payload,
             )
+
+    def test_deploy_target_preflight_runs_from_candidate_without_pythonpath(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            authority = provision_receiver_identity_authority(
+                root, operator_evidence=self.prepare_target(root)
+            )
+            config = write_receiver_hybrid_config(root, enabled=True)
+            unrelated = root / "unrelated-login-directory"
+            unrelated.mkdir()
+            environment = os.environ.copy()
+            environment.pop("PYTHONPATH", None)
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    str(ROOT / "tools/deployment/deploy_target.py"),
+                    "--root",
+                    str(root),
+                    "preflight-receiver-identity",
+                    "--expected-config-digest",
+                    config.selection_digest,
+                ],
+                cwd=unrelated,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            payload = json.loads(completed.stdout)
+            self.assertFalse(payload["rotation_required"])
+            self.assertEqual(payload["current_authority_digest"], authority.authority_digest)
 
 
 if __name__ == "__main__":

@@ -4583,6 +4583,17 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
             commands.index("refresh-receiver-identity"),
             commands.index("validate-app"),
         )
+        preflight_args = next(
+            args
+            for command, args in target.calls
+            if command == "preflight-receiver-identity"
+        )
+        self.assertIn("--expected-firmware-environment", preflight_args)
+        self.assertIn(PRODUCTION_FIRMWARE_ENVIRONMENT, preflight_args)
+        self.assertIn("--expected-installation-digest", preflight_args)
+        self.assertIn(FIRMWARE_INSTALLATION_DIGEST, preflight_args)
+        self.assertIn("--expected-firmware-sha256", preflight_args)
+        self.assertIn(FIRMWARE_SHA256, preflight_args)
         refresh_args = next(
             args for command, args in target.calls
             if command == "refresh-receiver-identity"
@@ -4591,6 +4602,10 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         self.assertIn("a" * 64, refresh_args)
         self.assertIn("--expected-firmware-sha256", refresh_args)
         self.assertIn(FIRMWARE_SHA256, refresh_args)
+        self.assertIn("--expected-installation-digest", refresh_args)
+        self.assertIn(FIRMWARE_INSTALLATION_DIGEST, refresh_args)
+        self.assertIn("--expected-firmware-environment", refresh_args)
+        self.assertIn(PRODUCTION_FIRMWARE_ENVIRONMENT, refresh_args)
 
     def test_firmware_flash_passes_only_strict_build_selection(self) -> None:
         deployment, context, _runner, target = self._deployment()

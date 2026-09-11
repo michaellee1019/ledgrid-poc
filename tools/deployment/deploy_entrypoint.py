@@ -859,12 +859,27 @@ class CoordinatorDeployment:
         if not isinstance(selection, dict):
             raise RuntimeError("receiver identity preflight has no firmware selection")
         config_digest = selection.get("receiver_hybrid_config_digest")
+        environment = selection.get("firmware_environment")
         firmware_sha256 = selection.get("firmware_sha256")
+        installation_digest = selection.get("firmware_installation_digest")
         if not isinstance(config_digest, str):
             raise RuntimeError("receiver identity preflight config selection is malformed")
         args = ["--expected-config-digest", config_digest]
         if isinstance(firmware_sha256, str):
-            args.extend(("--expected-firmware-sha256", firmware_sha256))
+            if not isinstance(environment, str) or not isinstance(installation_digest, str):
+                raise RuntimeError(
+                    "receiver identity preflight installation selection is malformed"
+                )
+            args.extend(
+                (
+                    "--expected-firmware-environment",
+                    environment,
+                    "--expected-installation-digest",
+                    installation_digest,
+                    "--expected-firmware-sha256",
+                    firmware_sha256,
+                )
+            )
         result = self.target.run("preflight-receiver-identity", *args)
         rotation_required = result.get("rotation_required")
         current_digest = result.get("current_authority_digest")
@@ -1030,7 +1045,9 @@ class CoordinatorDeployment:
         if not isinstance(selection, dict) or not isinstance(preflight, dict):
             raise RuntimeError("receiver identity refresh has no preflight basis")
         config_digest = selection.get("receiver_hybrid_config_digest")
+        environment = selection.get("firmware_environment")
         firmware_sha256 = selection.get("firmware_sha256")
+        installation_digest = selection.get("firmware_installation_digest")
         expected_authority = preflight.get("current_authority_digest")
         if not isinstance(config_digest, str):
             raise RuntimeError("receiver identity refresh config selection is malformed")
@@ -1042,7 +1059,20 @@ class CoordinatorDeployment:
         else:
             raise RuntimeError("receiver identity refresh preflight digest is malformed")
         if isinstance(firmware_sha256, str):
-            args.extend(("--expected-firmware-sha256", firmware_sha256))
+            if not isinstance(environment, str) or not isinstance(installation_digest, str):
+                raise RuntimeError(
+                    "receiver identity refresh installation selection is malformed"
+                )
+            args.extend(
+                (
+                    "--expected-firmware-environment",
+                    environment,
+                    "--expected-installation-digest",
+                    installation_digest,
+                    "--expected-firmware-sha256",
+                    firmware_sha256,
+                )
+            )
         result = self.target.run("refresh-receiver-identity", *args)
         authority_digest = result.get("authority_digest")
         if (

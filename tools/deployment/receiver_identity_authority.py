@@ -22,7 +22,13 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+import sys
 from typing import Any, Mapping, Sequence
+
+# This operator helper is also executed by absolute path from outside the
+# checkout.  Resolve all project imports from the helper's own release.
+_CANDIDATE_RELEASE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_CANDIDATE_RELEASE_ROOT))
 
 try:
     from drivers.led_layout import WALL_DEVICE_MAP
@@ -192,6 +198,15 @@ class ReceiverIdentityMapping:
 
 
 @dataclass(frozen=True)
+class FirmwareInstallationIdentity:
+    """Inventory identity for one installed receiver image."""
+
+    installation_digest: str
+    firmware_environment: str
+    firmware_sha256: str
+
+
+@dataclass(frozen=True)
 class ReceiverIdentityAuthority:
     """Frozen authority accepted for the current process lifetime."""
 
@@ -353,7 +368,9 @@ def _current_topology(root: Path) -> tuple[str, tuple[tuple[int, int], ...]]:
     return config.selection_digest, routes
 
 
-def _current_inventory(root: Path) -> tuple[str, Mapping[str, str]]:
+def _current_inventory(
+    root: Path,
+) -> tuple[str, Mapping[str, FirmwareInstallationIdentity]]:
     path = root / "run_state" / "receiver_firmware_inventory.json"
     payload = _read_regular_json(
         path, maximum_bytes=RECEIVER_IDENTITY_AUTHORITY_MAX_BYTES,
@@ -362,7 +379,7 @@ def _current_inventory(root: Path) -> tuple[str, Mapping[str, str]]:
     _require_exact_keys(payload, _INVENTORY_KEYS, "receiver firmware inventory")
     if payload["schema_version"] != 1 or not isinstance(payload["devices"], list):
         raise ReceiverIdentityAuthorityError("receiver firmware inventory schema is invalid")
-    records: dict[str, str] = {}
+    records: dict[str, FirmwareInstallationIdentity] = {}
     devices = payload["devices"]
     if len(devices) != FINALIZED_RECEIVER_COUNT:
         raise ReceiverIdentityAuthorityError("receiver firmware inventory must contain the exact receiver roster")
@@ -371,13 +388,19 @@ def _current_inventory(root: Path) -> tuple[str, Mapping[str, str]]:
             raise ReceiverIdentityAuthorityError("receiver firmware inventory contains a non-object")
         _require_exact_keys(raw, _INVENTORY_RECORD_KEYS, f"receiver firmware inventory device {index}")
         serial = _require_serial(raw["hardware_serial"])
-        _require_digest(raw["installation_digest"], "installation_digest")
-        _require_digest(raw["firmware_sha256"], "firmware_sha256")
+        installation_digest = _require_digest(
+            raw["installation_digest"], "installation_digest"
+        )
+        firmware_sha256 = _require_digest(raw["firmware_sha256"], "firmware_sha256")
         if not isinstance(raw["firmware_environment"], str) or not raw["firmware_environment"]:
             raise ReceiverIdentityAuthorityError("firmware_environment is malformed")
         if serial in records:
             raise ReceiverIdentityAuthorityError("receiver firmware inventory contains duplicate hardware serials")
-        records[serial] = raw["firmware_sha256"]
+        records[serial] = FirmwareInstallationIdentity(
+            installation_digest=installation_digest,
+            firmware_environment=raw["firmware_environment"],
+            firmware_sha256=firmware_sha256,
+        )
     return _canonical_digest(payload), records
 
 
@@ -406,7 +429,7 @@ def _validate_authority_sources(
     *,
     topology_digest: str,
     inventory_digest: str,
-    inventory: Mapping[str, str],
+    inventory: Mapping[str, FirmwareInstallationIdentity],
 ) -> None:
     if authority.receiver_hybrid_digest != topology_digest:
         raise ReceiverIdentityAuthorityError("receiver-hybrid topology digest is stale")
@@ -418,7 +441,10 @@ def _validate_authority_sources(
             "receiver firmware inventory does not match identity roster"
         )
     for identity in authority.identities:
-        if inventory[identity.hardware_serial] != identity.firmware_sha256:
+        if (
+            inventory[identity.hardware_serial].firmware_sha256
+            != identity.firmware_sha256
+        ):
             raise ReceiverIdentityAuthorityError(
                 f"receiver {identity.logical_device} firmware identity does not match inventory"
             )
@@ -578,7 +604,7 @@ def _candidate_authority(
     *,
     topology_digest: str,
     inventory_digest: str,
-    inventory: Mapping[str, str],
+    inventory: Mapping[str, FirmwareInstallationIdentity],
 ) -> ReceiverIdentityAuthority:
     if {identity.hardware_serial for identity in mappings} != set(inventory):
         raise ReceiverIdentityAuthorityError(
@@ -589,7 +615,7 @@ def _candidate_authority(
             logical_device=mapping.logical_device,
             spi_route=mapping.spi_route,
             hardware_serial=mapping.hardware_serial,
-            firmware_sha256=inventory[mapping.hardware_serial],
+            firmware_sha256=inventory[mapping.hardware_serial].firmware_sha256,
         )
         for mapping in mappings
     )
@@ -625,6 +651,8 @@ def preflight_receiver_identity_refresh(
     root: Path,
     *,
     expected_receiver_hybrid_digest: str,
+    expected_firmware_environment: str | None = None,
+    expected_installation_digest: str | None = None,
     expected_firmware_sha256: str | None,
 ) -> Mapping[str, Any]:
     """Prove rotation inputs before any deployment mutation begins."""
@@ -632,6 +660,26 @@ def preflight_receiver_identity_refresh(
     expected_receiver_hybrid_digest = _require_digest(
         expected_receiver_hybrid_digest, "expected_receiver_hybrid_digest"
     )
+    planned_values = (
+        expected_firmware_environment,
+        expected_installation_digest,
+        expected_firmware_sha256,
+    )
+    if any(value is not None for value in planned_values) and not all(
+        value is not None for value in planned_values
+    ):
+        raise ReceiverIdentityAuthorityError(
+            "planned firmware installation identity must be complete"
+        )
+    if expected_firmware_environment is not None and (
+        not isinstance(expected_firmware_environment, str)
+        or not expected_firmware_environment
+    ):
+        raise ReceiverIdentityAuthorityError("expected_firmware_environment is malformed")
+    if expected_installation_digest is not None:
+        expected_installation_digest = _require_digest(
+            expected_installation_digest, "expected_installation_digest"
+        )
     if expected_firmware_sha256 is not None:
         expected_firmware_sha256 = _require_digest(
             expected_firmware_sha256, "expected_firmware_sha256"
@@ -650,8 +698,10 @@ def preflight_receiver_identity_refresh(
         except ReceiverIdentityAuthorityError:
             rotation_required = True
         if expected_firmware_sha256 is not None and any(
-            identity.firmware_sha256 != expected_firmware_sha256
-            for identity in existing.identities
+            record.installation_digest != expected_installation_digest
+            or record.firmware_environment != expected_firmware_environment
+            or record.firmware_sha256 != expected_firmware_sha256
+            for record in inventory.values()
         ):
             rotation_required = True
     mapping_validated = False
@@ -674,6 +724,8 @@ def preflight_receiver_identity_refresh(
         ),
         "mapping_validated": mapping_validated,
         "receiver_hybrid_digest": topology_digest,
+        "expected_firmware_environment": expected_firmware_environment,
+        "expected_installation_digest": expected_installation_digest,
         "expected_firmware_sha256": expected_firmware_sha256,
     }
 
@@ -683,6 +735,8 @@ def refresh_receiver_identity_authority(
     *,
     expected_authority_digest: str | None,
     expected_receiver_hybrid_digest: str,
+    expected_firmware_environment: str | None = None,
+    expected_installation_digest: str | None = None,
     expected_firmware_sha256: str | None,
 ) -> Mapping[str, Any]:
     """CAS-rotate stale authority from mapping plus verified current inventory."""
@@ -694,6 +748,26 @@ def refresh_receiver_identity_authority(
     expected_receiver_hybrid_digest = _require_digest(
         expected_receiver_hybrid_digest, "expected_receiver_hybrid_digest"
     )
+    planned_values = (
+        expected_firmware_environment,
+        expected_installation_digest,
+        expected_firmware_sha256,
+    )
+    if any(value is not None for value in planned_values) and not all(
+        value is not None for value in planned_values
+    ):
+        raise ReceiverIdentityAuthorityError(
+            "planned firmware installation identity must be complete"
+        )
+    if expected_firmware_environment is not None and (
+        not isinstance(expected_firmware_environment, str)
+        or not expected_firmware_environment
+    ):
+        raise ReceiverIdentityAuthorityError("expected_firmware_environment is malformed")
+    if expected_installation_digest is not None:
+        expected_installation_digest = _require_digest(
+            expected_installation_digest, "expected_installation_digest"
+        )
     if expected_firmware_sha256 is not None:
         expected_firmware_sha256 = _require_digest(
             expected_firmware_sha256, "expected_firmware_sha256"
@@ -713,8 +787,10 @@ def refresh_receiver_identity_authority(
             )
         inventory_digest, inventory = _current_inventory(root)
         if expected_firmware_sha256 is not None and any(
-            firmware_sha256 != expected_firmware_sha256
-            for firmware_sha256 in inventory.values()
+            record.installation_digest != expected_installation_digest
+            or record.firmware_environment != expected_firmware_environment
+            or record.firmware_sha256 != expected_firmware_sha256
+            for record in inventory.values()
         ):
             raise ReceiverIdentityAuthorityError(
                 "receiver firmware inventory does not match planned firmware"
@@ -732,8 +808,10 @@ def refresh_receiver_identity_authority(
                 pass
             else:
                 if expected_firmware_sha256 is None or all(
-                    identity.firmware_sha256 == expected_firmware_sha256
-                    for identity in existing.identities
+                    record.installation_digest == expected_installation_digest
+                    and record.firmware_environment == expected_firmware_environment
+                    and record.firmware_sha256 == expected_firmware_sha256
+                    for record in inventory.values()
                 ):
                     return {
                         "outcome": "skipped",
@@ -823,7 +901,10 @@ def provision_receiver_identity_authority(
     if set(inventory) != {identity.hardware_serial for identity in identities}:
         raise ReceiverIdentityAuthorityError("operator evidence serials do not match firmware inventory")
     for identity in identities:
-        if inventory[identity.hardware_serial] != identity.firmware_sha256:
+        if (
+            inventory[identity.hardware_serial].firmware_sha256
+            != identity.firmware_sha256
+        ):
             raise ReceiverIdentityAuthorityError(
                 f"operator evidence firmware identity does not match inventory for receiver {identity.logical_device}"
             )

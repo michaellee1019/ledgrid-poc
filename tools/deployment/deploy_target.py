@@ -27,10 +27,17 @@ import stat
 import subprocess
 import tempfile
 import time
+import sys
 from typing import Any, Iterable, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlsplit, urlunsplit
+
+# RemoteTarget executes this file by absolute path from an arbitrary SSH login
+# directory.  Put this uploaded release ahead of any installed checkout before
+# importing project modules so every helper comes from the candidate release.
+_CANDIDATE_RELEASE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_CANDIDATE_RELEASE_ROOT))
 
 try:
     from tools.deployment.app_releases import AppReleaseManager
@@ -1426,6 +1433,8 @@ def preflight_receiver_identity(
     root: Path,
     *,
     expected_config_digest: str,
+    expected_firmware_environment: str | None,
+    expected_installation_digest: str | None,
     expected_firmware_sha256: str | None,
 ) -> Mapping[str, Any]:
     """Require independent mapping evidence before a stale-producing deploy."""
@@ -1434,6 +1443,8 @@ def preflight_receiver_identity(
     return authority.preflight_receiver_identity_refresh(
         root,
         expected_receiver_hybrid_digest=expected_config_digest,
+        expected_firmware_environment=expected_firmware_environment,
+        expected_installation_digest=expected_installation_digest,
         expected_firmware_sha256=expected_firmware_sha256,
     )
 
@@ -1443,6 +1454,8 @@ def refresh_receiver_identity(
     *,
     expected_authority_digest: str | None,
     expected_config_digest: str,
+    expected_firmware_environment: str | None,
+    expected_installation_digest: str | None,
     expected_firmware_sha256: str | None,
 ) -> Mapping[str, Any]:
     """Rotate and validate receiver identity before application activation."""
@@ -1452,6 +1465,8 @@ def refresh_receiver_identity(
         root,
         expected_authority_digest=expected_authority_digest,
         expected_receiver_hybrid_digest=expected_config_digest,
+        expected_firmware_environment=expected_firmware_environment,
+        expected_installation_digest=expected_installation_digest,
         expected_firmware_sha256=expected_firmware_sha256,
     )
 
@@ -3924,11 +3939,15 @@ def _parser() -> argparse.ArgumentParser:
     flash.add_argument("--force", action="store_true")
     identity_preflight = subparsers.add_parser("preflight-receiver-identity")
     identity_preflight.add_argument("--expected-config-digest", required=True)
+    identity_preflight.add_argument("--expected-firmware-environment")
+    identity_preflight.add_argument("--expected-installation-digest")
     identity_preflight.add_argument("--expected-firmware-sha256")
     identity_refresh = subparsers.add_parser("refresh-receiver-identity")
     identity_refresh.add_argument("--expected-authority-digest")
     identity_refresh.add_argument("--expect-authority-absent", action="store_true")
     identity_refresh.add_argument("--expected-config-digest", required=True)
+    identity_refresh.add_argument("--expected-firmware-environment")
+    identity_refresh.add_argument("--expected-installation-digest")
     identity_refresh.add_argument("--expected-firmware-sha256")
     subparsers.add_parser("capture-state")
     activate_parser = subparsers.add_parser("activate")
@@ -4009,6 +4028,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = preflight_receiver_identity(
             root,
             expected_config_digest=args.expected_config_digest,
+            expected_firmware_environment=args.expected_firmware_environment,
+            expected_installation_digest=args.expected_installation_digest,
             expected_firmware_sha256=args.expected_firmware_sha256,
         )
     elif args.command == "refresh-receiver-identity":
@@ -4022,6 +4043,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 None if args.expect_authority_absent else args.expected_authority_digest
             ),
             expected_config_digest=args.expected_config_digest,
+            expected_firmware_environment=args.expected_firmware_environment,
+            expected_installation_digest=args.expected_installation_digest,
             expected_firmware_sha256=args.expected_firmware_sha256,
         )
     elif args.command == "capture-state":
