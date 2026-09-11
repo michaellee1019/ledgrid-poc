@@ -177,9 +177,30 @@ Deliberately incur reversible technical debt when it buys catalog breadth or fas
 
 Keep feedback fast. A user-visible leaf should normally get focused contract tests and one short browser smoke covering selection, intuitive control response, Preview, and the relevant live acknowledgement. Favor rapid visual confirmation over expanding a verification program. Batch physical-wall checks at useful demo checkpoints and only when the user has separately authorized wall or deployment operations; the `start` contract alone still does not authorize them.
 
-### Sol portfolio steward
+### Model selection
 
-Start a short-lived portfolio steward before dispatch when the current wave is missing or stale, after each batch of up to 15 selected Beads, or earlier when no product leaf is ready, an item stalls or reopens twice, priorities/dependencies disagree, or Beads/worktree/branch reality drifts. Use at most one steward at a time with `gpt-5.6-sol` and reasoning effort `high`.
+Choose the model for the Bead's uncertainty, consequence of error, and ownership area. These are project defaults, informed by the [OpenAI model comparison](https://developers.openai.com/api/docs/models/compare) and the models exposed by the current Codex runtime; they are not measured project benchmarks.
+
+| Work | Default model | Reasoning effort |
+| --- | --- | --- |
+| Coordinator: cross-cutting decisions, dispatch, integration, and escalation | `gpt-6-astra` | `high` |
+| Portfolio steward: bounded queue, dependency, and wave maintenance | `gpt-5.6-sol` | `high` |
+| Bounded implementation or source-evidence collection with a clear existing pattern | `gpt-5.6-terra` | `high` |
+| Complex implementation or investigation across components, simulation behavior, or live state | `gpt-5.6-sol` | `high` |
+| Hardest implementation/debugging, architectural ambiguity, or repeatedly failed reasoning | `gpt-6-astra` | `high`; `xhigh` for unresolved deep reasoning |
+| Independent review of ordinary user-visible behavior and bounded modernization evidence | `gpt-5.6-sol` | `high` |
+| Independent review of shared Scene/schema, compositor/protocol, safety/data integrity, or risky live-state changes | `gpt-6-astra` | `high` |
+| Mechanical edits, narrow lookups, or straightforward check execution with objective results | `gpt-5.6-luna` | `low` or `medium` |
+
+Use the least expensive model likely to complete the accepted task correctly. Start complex work at the appropriate tier; do not require a cheaper model to fail first. Escalate Terra to Sol, or Sol to Astra, when a focused attempt exposes unresolved reasoning or cross-cutting uncertainty. Escalate the steward to Astra when dependency/product constraints cannot be reconciled from accepted decisions. Repair missing context, tooling, and environment problems directly; changing models does not fix them. Preserve evidence and the same Bead when handing off, and end the previous worker's ownership before replacement.
+
+Reserve `xhigh` for a concrete reasoning need; `max`/`ultra` are not routine defaults. Luna does not own product decisions, shared-contract design, or independent acceptance. Review independence means a separate agent and isolated worktree, even when author and reviewer use the same model. Do not add agents solely to occupy slots; handle small scoped requests directly.
+
+For delegated work, pass the selected model and supported effort explicitly. When using `spawn_agent` with a model override, use `fork_turns="none"` or a bounded positive turn count and include the Bead, accepted contract, base/worktree, ownership, and validation requirements. Full-history forks inherit the parent model and cannot take overrides. Respect explicit user model choices and the current tool's available models/efforts; if a required review tier is unavailable, report that limit rather than silently weakening the gate. This policy does not change the running coordinator's model or authorize a new task.
+
+### Portfolio steward
+
+Start a short-lived portfolio steward before dispatch when the current wave is missing or stale, after each batch of up to 15 selected Beads, or earlier when no product leaf is ready, an item stalls or reopens twice, priorities/dependencies disagree, or Beads/worktree/branch reality drifts. Use at most one steward at a time, selected by the model policy above.
 
 The steward reads the binding Scene v2 decision, epic, recent handoffs, ready/blocked queues, and branch progress. It may prepare or repair at most 15 bounded executable Beads, partition them into dependency-ordered non-conflicting waves, clarify acceptance from accepted decisions, and retire stale coordination work. It normally changes Beads only, leaves a short epic note, and exits before implementation dispatch. It must not inflate the backlog, rewrite product intent, implement code, authorize pushes/hardware, or claim later waves.
 
@@ -187,9 +208,9 @@ The steward should shape breadth-first waves across distinct visual families and
 
 Only the current runnable wave receives `worktree-ready` and may be claimed. Later selected Beads remain open and unclaimed until their dependencies integrate. Represent an unresolved product or authority choice as a separate Bead carrying the exact `human` label, block dependents on it, and leave it discoverable through `bd human list`.
 
-### Terra implementation workers
+### Implementation workers
 
-Use up to two concurrent implementation workers so the coordinator retains one slot and a steward can use the fourth. Spawn each worker with model `gpt-5.6-terra` and reasoning effort `high`.
+Use up to two concurrent implementation workers so the coordinator retains one slot and a steward or reviewer can use the fourth. Select each worker's model and reasoning effort using the model policy above; worker count is independent of model tier.
 
 Each worker gets one claimed Bead, one local `codex/` branch, one isolated worktree, the current integration base, and an explicit ownership area. Never run two workers in the same conflict domain or let two workers regenerate the same shared artifact. During source completion the coordinator owns `update-animation-pipeline`; reconstruction uses its recorded integration branch and never merges the donor wholesale.
 
@@ -199,13 +220,13 @@ Baseline validation is changed-language syntax or lint, focused tests, and `git 
 
 ### Risk-tiered acceptance
 
-Shared schemas, compositor or protocol work, risky live-state changes, and user-visible acceptance require an independent reviewer using `gpt-5.6-sol` with reasoning effort `high`. The reviewer works from an isolated worktree, checks the accepted Bead rather than redesigning it, records actionable findings or approval, and does not merge. The coordinator may review routine bounded leaves. A review is a gate on integration, not a separate long-running implementation lane.
+Shared schemas, compositor or protocol work, risky live-state changes, and user-visible acceptance require an independent reviewer selected by the model policy above: Astra for shared contracts and high-consequence changes, Sol for ordinary user-visible acceptance. The reviewer works from an isolated worktree, checks the accepted Bead rather than redesigning it, records actionable findings or approval, and does not merge. The coordinator may review routine bounded leaves that do not meet those independent-review triggers. A review is a gate on integration, not a separate long-running implementation lane.
 
 Reviewers must distinguish demo blockers from follow-up debt. Block integration only for a concrete failure of the accepted user-visible path, safety or data-integrity risk, a broken shared contract, or a regression likely to derail the next breadth wave. Record lower-impact correctness, perfect-state-management, maintainability, and rare edge-case findings as follow-up Beads, then approve the bounded demo increment when its primary path is convincing.
 
 ### Animation modernization review discipline
 
-Use a review-before-implementation pass for catalog-wide animation modernization, including `ledgrid-poc-ib7.82`. A Terra worker records source-read-only evidence for one non-overlapping family, and a Sol reviewer independently reproduces the important claims. Create implementation children only from accepted `implement` dispositions or accepted product blockers; keep `retain-current`, `defer`, and `not-applicable` findings documented without turning them into speculative work.
+Use a review-before-implementation pass for catalog-wide animation modernization, including `ledgrid-poc-ib7.82`. An evidence worker records source-read-only evidence for one non-overlapping family, and an independent reviewer reproduces the important claims. Select both models by the policy above; routine evidence starts with Terra and Sol acceptance, while complex simulation/timing analysis and shared-contract risks use the higher tiers. Create implementation children only from accepted `implement` dispositions or accepted product blockers; keep `retain-current`, `defer`, and `not-applicable` findings documented without turning them into speculative work.
 
 For every component, record exactly one disposition for semantic palette, premultiplied RGBA/background composition, installation geometry, and direct interaction. Evidence must use a real resolved Scene at every sample through the production render path, including Scene palette and pace. Direct `generate_frame` calls, constructor defaults, or a context installed once at the wrong elapsed time do not prove Scene timing or palette behavior. Preserve fixed 33x138 fingerprints, semantic state and RNG digests, cache/source-tick behavior, focused tests, and desktop mean/p95/p99/max plus changed-frame ratio; never present desktop timing as Raspberry Pi evidence.
 
@@ -219,6 +240,6 @@ When acceptance requests changes, append corrected evidence instead of overwriti
 
 ### Continuous integration loop
 
-Wait for the first worker to finish, review the handoff, obtain required independent acceptance, and acquire the Beads merge slot only for integration. Rebase onto the current selective-reconstruction tip, rerun the focused checks on the prospective tip, fast-forward merge, record the integrated SHA, close the Bead, release the slot, and remove only the clean merged worktree. Unlock and claim the next dependency wave only after its prerequisites integrate, then refill available Terra capacity.
+Wait for the first worker to finish, review the handoff, obtain required independent acceptance, and acquire the Beads merge slot only for integration. Rebase onto the current selective-reconstruction tip, rerun the focused checks on the prospective tip, fast-forward merge, record the integrated SHA, close the Bead, release the slot, and remove only the clean merged worktree. Unlock and claim the next dependency wave only after its prerequisites integrate, then refill available implementation capacity.
 
 Continue until the user says `stop`, no meaningful local work can proceed, or a real permission/product decision is required. On stop, interrupt workers, wait for the live tree to empty, release the merge slot, reconcile every `in_progress` Bead, and preserve dirty or unmerged worktrees. Never stage `.beads/**`, traces, screenshots, or local run state—except `.beads/interactions.jsonl`: validate its append-only JSONL records and commit that audit log when it changes. Never treat that commit as a substitute for `bd dolt push`/pull or a Dolt backup.

@@ -41,19 +41,26 @@ Do not require a perfect execution card. A dispatchable leaf needs clear enough 
 
 ## Model Roles
 
+Use [AGENTS.md — Model selection](../../../AGENTS.md#model-selection) as the authoritative routing policy. The coordinator defaults to Astra/high; route bounded implementation to Terra/high, complex work to Sol/high, and the hardest reasoning to Astra/high. Luna/low or medium is only for mechanical work with objective results. Follow that policy's escalation, supported-effort, and context-handoff rules rather than hard-coding all workers to one model. Small scoped requests do not need delegation.
+
 Implementation workers:
 
 - Use at most two concurrently.
-- Spawn `gpt-5.6-terra` with reasoning effort `high`.
+- Select the model for the Bead's complexity and consequence of error using the policy above.
 - Give each worker one claimed Bead, one isolated worktree and `codex/` branch, a current base SHA, and non-overlapping ownership.
 - Require the smallest complete product increment, baseline checks, one logical commit, and a concise Beads handoff. The worker marks `merge-ready`; the coordinator integrates and closes.
 
 Portfolio steward:
 
-- Use at most one, with `gpt-5.6-sol` and reasoning effort `xhigh`.
-- Invoke after three integrated product Beads, when no P0/P1 product leaf is ready, after a repeated stall, when queue/worktree/claim state disagrees, when a conflict domain is starved, or when the next step is ambiguous.
-- Keep the review bounded and normally Beads-only. Repair priorities and dependencies, retire stale coordination/test work, clarify from existing decisions, and prepare only the next one to three leaves.
-- Leave a short epic comment covering big-picture progress, next critical path, and stalled, starved, or orphaned work. Ask the user only if resolution changes product intent or authority.
+- Use at most one; default to Sol/high and escalate to Astra/high for unresolved cross-cutting constraints.
+- Follow AGENTS.md's steward cadence: before dispatch when the wave is missing/stale, after a batch of up to 15 selected Beads, or earlier on its stall, dependency, or state-drift triggers.
+- Keep the review bounded and normally Beads-only. Prepare or repair at most 15 leaves in dependency-ordered waves, clarify from accepted decisions, and leave a short epic comment. Only the current runnable wave receives `worktree-ready`; later waves remain unclaimed.
+
+Independent acceptance:
+
+- Use a separate reviewer in an isolated worktree before integration when AGENTS.md requires it. Default to Sol/high for ordinary user-visible acceptance and bounded modernization evidence; use Astra/high for shared Scene/schema, compositor/protocol, safety/data integrity, and risky live-state changes.
+- A stronger implementation model does not waive independent review. Apply the existing demo-blocker threshold and record lesser findings as follow-up Beads.
+- Keep one coordinator, at most two implementation workers, and at most one steward or reviewer within the four-agent limit.
 
 ## Delivery Loop
 
@@ -61,7 +68,7 @@ Claim immediately before launch. Never overlap exact conflict domains or shared 
 
 For ordinary leaves, validation is changed-language syntax or lint, focused tests, and `git diff --check`. Add one adjacent regression only for a shared contract and one browser smoke only at a user-visible browser boundary. Reserve broad suites for release or hardware boundaries.
 
-When a worker finishes: inspect its handoff, acquire the merge slot, rebase onto the current integration tip, rerun focused checks, fast-forward merge, record the integrated SHA, close the Bead, release the slot, clean the merged worktree, and refill the free Terra slot. Continue until stopped, genuinely blocked, or new authority is required.
+When a worker finishes: inspect its handoff, obtain required independent acceptance, acquire the merge slot, rebase onto the current integration tip, rerun focused checks, fast-forward merge, record the integrated SHA, close the Bead, release the slot, clean the merged worktree, and refill the free implementation slot. Continue until stopped, genuinely blocked, or new authority is required.
 
 On `stop`, interrupt workers, wait for the live tree to empty, release the merge slot, reconcile every `in_progress` Bead, and preserve dirty or unmerged worktrees.
 
