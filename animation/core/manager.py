@@ -2863,7 +2863,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         with self._scene_state_guard():
             canonical = getattr(self, "_canonical_receiver_scene", None)
             if canonical is not None and self._scene_mode:
-                return canonical.scene
+                return copy.deepcopy(canonical.scene)
             return (
                 self._active_scene_state.to_dict()
                 if self._scene_mode and self._active_scene_state is not None

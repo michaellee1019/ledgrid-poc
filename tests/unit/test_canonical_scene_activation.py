@@ -189,6 +189,22 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertEqual(receipt['phase'], 'active', receipt)
         self.assertEqual(self.manager._receiver_hybrid_status_snapshot()['preview_kind'], 'host_foreground_only')
 
+    def test_scene_state_snapshot_cannot_mutate_active_scene_identity(self):
+        _, _, receipt = self.activate(self.scene)
+        self.assertEqual(receipt['phase'], 'active', receipt)
+        expected = deepcopy(self.scene)
+        expected_digest = canonical_json_sha256(expected)
+        snapshot = self.manager.get_scene_state()
+        snapshot['look']['pace'] = .13
+        snapshot['animation']['parameters'].clear()
+        self.assertEqual(self.manager.get_scene_state(), expected)
+        self.assertEqual(
+            self.manager._canonical_receiver_scene.identity.digest, expected_digest
+        )
+        self.assertEqual(
+            canonical_json_sha256(self.manager.get_scene_state()), expected_digest
+        )
+
     def test_all_39_fresh_catalog_animations_reach_real_controller_activation(self):
         animations = [item for item in self.catalog if item['role']=='animation' and item['provider']=='python']
         self.assertEqual(len(animations),39)
