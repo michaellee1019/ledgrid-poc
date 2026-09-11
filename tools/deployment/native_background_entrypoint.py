@@ -561,6 +561,30 @@ def _run_publish_receipt(
                 "native publication has no validated managed bundle"
             )
         token = _context.attempt_id
+        # SSH starts in the target home, while library-prepare returns an
+        # absolute path. Resolve the selected relative root on that same target
+        # before comparing the upload path; never weaken the exact-path check.
+        resolved = _context.ssh((
+            runtime_python, "-c",
+            "import json,pathlib,sys; print(json.dumps(str(pathlib.Path(sys.argv[1]).absolute())))",
+            library_root,
+        ))
+        try:
+            remote_root = json.loads(resolved.stdout)
+            if not isinstance(remote_root, str):
+                raise ValueError("root is not a string")
+            remote_root_path = PurePosixPath(remote_root)
+            if (
+                not remote_root_path.is_absolute()
+                or ".." in remote_root_path.parts
+                or remote_root_path.as_posix() != remote_root
+                or not remote_root.endswith("/" + library_root)
+            ):
+                raise ValueError("root is not the selected target directory")
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            raise NativeBackgroundWorkflowError(
+                "target native library root resolution is invalid"
+            ) from exc
         prepared = _context.ssh(
             (
                 runtime_python,
@@ -579,7 +603,7 @@ def _run_publish_receipt(
             raise NativeBackgroundWorkflowError(
                 "target native library returned malformed upload preparation"
             ) from exc
-        expected_remote_path = f"{library_root}/.incoming/{token}.zip"
+        expected_remote_path = f"{remote_root}/.incoming/{token}.zip"
         if remote_path != expected_remote_path:
             raise NativeBackgroundWorkflowError(
                 "target native library returned an unexpected managed upload path"

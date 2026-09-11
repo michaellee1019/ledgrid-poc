@@ -284,11 +284,19 @@ class NativeSourcePlanTests(unittest.TestCase):
         self.assertEqual(path, real_bundle)
 
     def test_prebuilt_publish_runs_only_managed_library_commands(self) -> None:
+        self._exercise_prebuilt_publish()
+
+    def test_publish_rejects_wrong_upload_path_before_transfer(self) -> None:
+        for path in ("/tmp/elsewhere.zip", "ledgrid-pod/receiver_library/native_backgrounds/.incoming/wrong.zip"):
+            with self.subTest(path=path):
+                self._exercise_prebuilt_publish(incoming_override=path)
+
+    def _exercise_prebuilt_publish(self, *, incoming_override=None) -> None:
         bundle_path = (
             self.root
             / "run_state/native_background_builds/aurora_curtains_native/bundle.zip"
         )
-        bundle_path.parent.mkdir(parents=True)
+        bundle_path.parent.mkdir(parents=True, exist_ok=True)
         bundle_path.write_bytes(b"validated bundle")
         bundle_digest = "b" * 64
         payload_digest = "c" * 64
@@ -299,14 +307,15 @@ class NativeSourcePlanTests(unittest.TestCase):
         )
         attempt_id = "d" * 32
         deploy_dir = "ledgrid-pod"
-        incoming = (
-            f"{deploy_dir}/receiver_library/native_backgrounds/"
-            f".incoming/{attempt_id}.zip"
-        )
+        remote_root = str(self.root / deploy_dir / "receiver_library/native_backgrounds")
+        # Exercise the real target helper response, which is absolute even
+        # though the transport caller selected a home-relative deploy directory.
+        incoming = native_entrypoint.library_prepare(Path(remote_root), attempt_id)["incoming_path"]
         local = _RecordingRunner()
         remote = _RecordingRunner(
             [
-                json.dumps({"incoming_path": incoming}),
+                json.dumps(remote_root),
+                json.dumps({"incoming_path": incoming_override or incoming}),
                 json.dumps(
                     {
                         "package_id": "aurora_curtains_native",
@@ -336,13 +345,21 @@ class NativeSourcePlanTests(unittest.TestCase):
                 native_entrypoint, "_inspect_bundle", return_value=verified
             ),
         ):
-            result = native_entrypoint.run_publish(
-                self.root,
-                os.fspath(bundle_path),
-                target=context.target,
-                deploy_dir=deploy_dir,
-                ssh_options=("-o", "BatchMode=yes"),
-            )
+            def publish():
+                return native_entrypoint.run_publish(
+                    self.root,
+                    os.fspath(bundle_path),
+                    target=context.target,
+                    deploy_dir=deploy_dir,
+                    ssh_options=("-o", "BatchMode=yes"),
+                )
+            if incoming_override:
+                with self.assertRaisesRegex(native_entrypoint.NativeBackgroundWorkflowError, "unexpected managed upload path"):
+                    publish()
+                self.assertEqual(local.calls, [])
+                self.assertEqual(len(remote.calls), 2)
+                return
+            result = publish()
 
         self.assertEqual(result["outcome"], "success")
         self.assertEqual(len(local.calls), 1)
@@ -350,7 +367,7 @@ class NativeSourcePlanTests(unittest.TestCase):
         self.assertEqual(rsync[:4], ("rsync", "-az", "-e", "ssh -o BatchMode=yes"))
         self.assertEqual(rsync[-2:], (os.fspath(bundle_path), f"{context.target}:{incoming}"))
         self.assertEqual(
-            [call[0][2] for call in remote.calls],
+            [call[0][2] for call in remote.calls[1:]],
             ["library-prepare", "library-publish"],
         )
         self.assertEqual(
