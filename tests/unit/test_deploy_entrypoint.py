@@ -4340,6 +4340,22 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
         self.assertFalse((self.repo.root / "receipts").exists())
 
 
+class CoordinatorDeploymentGateTests(unittest.TestCase):
+    def test_application_and_full_releases_use_current_product_gate(self):
+        for mode in ("python", "full"):
+            with self.subTest(mode=mode):
+                deployment = object.__new__(deploy_entrypoint.CoordinatorDeployment)
+                deployment.config = SimpleNamespace(run_tests=True, mode=mode, root=ROOT)
+                context = MagicMock()
+                context.command.return_value = SimpleNamespace(
+                    args=("just", "deploy-precheck"), duration_seconds=1.0,
+                )
+                deployment._tests(context)
+                context.command.assert_called_once_with(
+                    ("just", "deploy-precheck"), cwd=ROOT,
+                )
+
+
 class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_dir = tempfile.TemporaryDirectory()

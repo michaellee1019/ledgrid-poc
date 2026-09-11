@@ -649,11 +649,9 @@ class CoordinatorDeployment:
     def _tests(self, context: DeployContext) -> OperationResult:
         if not self.config.run_tests:
             return OperationResult(outcome="skipped", details={"reason": "explicit TEST=false"})
-        command = (
-            ("just", "deploy-precheck")
-            if self.config.mode == "full"
-            else ("just", "test-unit", "test-rendering", "test-deployment")
-        )
+        # Application-only releases need the same current product gate as full
+        # releases; the retired aggregate is not a separate deployment policy.
+        command = ("just", "deploy-precheck")
         result = context.command(command, cwd=self.config.root)
         return OperationResult(
             details={"command": list(result.args), "duration_seconds": result.duration_seconds}
