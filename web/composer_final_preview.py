@@ -50,6 +50,8 @@ from animation.plugins.pinball import PinballAnimation
 from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.pixel_chase import PixelChaseAnimation
 from animation.plugins.plant_glow import PlantGlowAnimation
+from animation.plugins.gif_animation import GifAnimation
+from animation.plugins.world_flags import WorldFlagsAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from animation.plugins.gradient import GradientAnimation
@@ -135,6 +137,8 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         PixelQuestAnimation.component_descriptor(),
         PixelChaseAnimation.component_descriptor(),
         PlantGlowAnimation.component_descriptor(),
+        GifAnimation.component_descriptor(),
+        WorldFlagsAnimation.component_descriptor(),
         GradientAnimation.component_descriptor(),
         RainbowAnimation.component_descriptor(),
         SolidColorAnimation.component_descriptor(),
@@ -368,6 +372,10 @@ class InstalledFinalSceneRuntime:
             return PinballAnimation(controller, parameters)
         if descriptor.component_id == PixelQuestAnimation.COMPONENT_ID:
             return PixelQuestAnimation(controller, parameters)
+        if descriptor.component_id == GifAnimation.COMPONENT_ID:
+            return GifAnimation(controller, parameters)
+        if descriptor.component_id == WorldFlagsAnimation.COMPONENT_ID:
+            return WorldFlagsAnimation(controller, parameters)
         if descriptor.component_id == PlantGlowAnimation.COMPONENT_ID:
             return PlantGlowAnimation(controller, parameters)
         if descriptor.component_id == PixelChaseAnimation.COMPONENT_ID:

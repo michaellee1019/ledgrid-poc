@@ -476,6 +476,58 @@
         "globe-constellation",
         "soft-moss"
       ]
+    },
+    "gif_animation": {
+      "component_version": 1,
+      "preset_ids": [
+        "axolotl-bubble-column",
+        "balloon-blobs",
+        "bumblebee-garden",
+        "cactus-bloom-dance",
+        "campfire-ghost-stories",
+        "coral-fish-friends",
+        "cotton-candy-clouds",
+        "cozy-shelf-naps",
+        "cozy-window-cats",
+        "cupcake-sprinkle-party",
+        "curtain-cat-watch",
+        "firefly-bottle",
+        "frog-pond-ripple",
+        "grape-bounce",
+        "happy-star-fall",
+        "hydrangea-rain",
+        "jellyfish-lanterns",
+        "jolly-slime-stack",
+        "koi-ribbon",
+        "lantern-tree",
+        "moon-bunny-meadow",
+        "moonlit-ducks",
+        "mushroom-village",
+        "peach-orchard",
+        "penguin-ice-fishing",
+        "planet-parade",
+        "pocket-rocket",
+        "shy-ghost-parade",
+        "sleepy-bat-cave",
+        "snails-after-rain",
+        "sunflower-hamsters",
+        "tiny-robot-patrol"
+      ],
+      "provider": "python"
+    },
+    "world_flags": {
+      "component_version": 1,
+      "preset_ids": [
+        "brazil-festival",
+        "grand-banners",
+        "japan-rising-sun",
+        "mini-banner-rush",
+        "reverse-parade",
+        "stars-and-stripes",
+        "ukraine-solidarity",
+        "world-parade"
+      ],
+      "provider": "python"
     }
   }
 }

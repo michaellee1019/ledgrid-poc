@@ -85,6 +85,8 @@ from animation.plugins.pinball import PinballAnimation
 from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.pixel_chase import PixelChaseAnimation
 from animation.plugins.plant_glow import PlantGlowAnimation
+from animation.plugins.gif_animation import GifAnimation
+from animation.plugins.world_flags import WorldFlagsAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from animation.plugins.gradient import GradientAnimation
@@ -351,6 +353,8 @@ class AnimationWebInterface:
                 PixelQuestAnimation.COMPONENT_ID: PixelQuestAnimation._normalized_parameters,
                 PixelChaseAnimation.COMPONENT_ID: PixelChaseAnimation._normalized_parameters,
                 PlantGlowAnimation.COMPONENT_ID: PlantGlowAnimation._normalized_parameters,
+                GifAnimation.COMPONENT_ID: GifAnimation._normalized_parameters,
+                WorldFlagsAnimation.COMPONENT_ID: WorldFlagsAnimation._normalized_parameters,
                 GradientAnimation.COMPONENT_ID: GradientAnimation._normalized_parameters,
                 RainbowAnimation.COMPONENT_ID: RainbowAnimation._normalized_parameters,
                 SolidColorAnimation.COMPONENT_ID: SolidColorAnimation._normalized_parameters,

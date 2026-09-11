@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "cefc10a81a00dd43ec4d0a10b248646d7846423d49921043fccd73edf93f8157",
+    "catalog_digest": "b209c1724de6113fc7e6555fad080c60c241748a363aac920cec4f7f88b70328",
     "kind": "bundled",
     "version": 1
   },
@@ -81,7 +81,7 @@
           "component_id": "ambient_scene",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -89,7 +89,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -213,7 +213,7 @@
           "component_id": "pinball",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -221,7 +221,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -471,7 +471,7 @@
           "component_id": "ascii_drop",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -479,7 +479,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -745,7 +745,7 @@
           "component_id": "aurora_curtains",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -753,7 +753,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -1287,7 +1287,7 @@
           "component_id": "canopy_cup",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -1295,7 +1295,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -1805,7 +1805,7 @@
           "component_id": "cellular_tapestry",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -1813,7 +1813,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2055,7 +2055,7 @@
           "component_id": "christmas_tree",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -2063,7 +2063,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2304,7 +2304,7 @@
           "component_id": "circadian_window",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -2312,7 +2312,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2621,7 +2621,7 @@
           "component_id": "clock",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": "Full-scene compatibility component cannot be composed.",
@@ -2629,7 +2629,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2847,7 +2847,7 @@
           "component_id": "clock_overlay",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -2855,7 +2855,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -3037,7 +3037,7 @@
           "component_id": "cloud_canyon",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -3045,7 +3045,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -3456,7 +3456,7 @@
           "component_id": "conway_life",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -3464,7 +3464,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -4520,7 +4520,7 @@
           "component_id": "cyclic_reef",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -4528,7 +4528,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -4803,7 +4803,7 @@
           "component_id": "desert_wind",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -4811,7 +4811,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5084,7 +5084,7 @@
           "component_id": "emoji",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -5092,7 +5092,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5335,7 +5335,7 @@
           "component_id": "emoji_arranger",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -5343,7 +5343,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5486,7 +5486,7 @@
           "component_id": "firefly_synchrony",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -5494,7 +5494,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5755,7 +5755,7 @@
           "component_id": "fireworks",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -5763,7 +5763,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -6083,7 +6083,7 @@
           "component_id": "flame_burst",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -6091,7 +6091,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -6354,7 +6354,7 @@
           "component_id": "flow_field_silk",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -6362,7 +6362,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -6584,7 +6584,7 @@
           "component_id": "fluid_tank",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -6592,7 +6592,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -6881,7 +6881,7 @@
           "component_id": "frostwork",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -6889,7 +6889,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -7134,11 +7134,11 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "106e3def992be5c8f1ceff30fd4182e7ab5b4694177dcf342b6a77668a8f9143",
+          "component_digest": "b61c9390e7c24c121a8f54b06c0d6a2a633e5c31e2ba6322ddc949727c0f690b",
           "component_id": "gif_animation",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -7146,7 +7146,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -7162,28 +7162,14 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "106e3def992be5c8f1ceff30fd4182e7ab5b4694177dcf342b6a77668a8f9143",
+      "component_digest": "b61c9390e7c24c121a8f54b06c0d6a2a633e5c31e2ba6322ddc949727c0f690b",
       "defaults": {
-        "brightness": 1.0,
-        "brightness_floor": 0.0,
-        "brightness_mode": "rgb",
-        "color_saturation": 1.0,
-        "color_value": 1.0,
-        "contain_background": 0,
         "fit_mode": "stretch",
         "flip_y": true,
-        "gamma": 1.0,
-        "gif_directory": "animation/plugins/gif_animation/assets",
-        "gif_index": 0,
         "gif_name": "penguin_top_center.gif",
-        "plant_accent_strength": 0.16,
-        "plant_foliage_dim": 0.32,
-        "plant_gif_offset_radius": 4,
-        "plant_globe_dim": 0.18,
-        "playback_speed": 1.0,
-        "speed": 1.0
+        "playback_speed": 1.0
       },
-      "description": "Plays a GIF from a filesystem directory with frame timing",
+      "description": "Plays packaged GIF artwork with its authored frame timing",
       "icon": "\ud83c\udfac",
       "interaction_capabilities": {
         "component_id": "gif_animation",
@@ -7206,49 +7192,14 @@
       "key": "python:gif_animation",
       "name": "GIF Animation",
       "parameter_schema": {
-        "brightness": {
-          "default": 1.0,
-          "description": "Overall brightness (0.0 - 1.0)",
-          "max": 1.0,
-          "min": 0.0,
-          "type": "float"
-        },
-        "brightness_floor": {
-          "default": 0.0,
-          "description": "Minimum per-pixel brightness in luma mode.",
-          "max": 1.0,
-          "min": 0.0,
-          "type": "float"
-        },
-        "brightness_mode": {
-          "default": "rgb",
-          "description": "rgb = direct RGB scaling, luma = separate hue/chroma and brightness.",
-          "type": "str"
-        },
-        "color_saturation": {
-          "default": 1.0,
-          "description": "Color saturation (0.0 - 1.0)",
-          "max": 1.0,
-          "min": 0.0,
-          "type": "float"
-        },
-        "color_value": {
-          "default": 1.0,
-          "description": "Color value/brightness (0.0 - 1.0)",
-          "max": 1.0,
-          "min": 0.0,
-          "type": "float"
-        },
-        "contain_background": {
-          "default": 0,
-          "description": "Background level used by contain fit mode.",
-          "max": 255,
-          "min": 0,
-          "type": "int"
-        },
         "fit_mode": {
           "default": "stretch",
           "description": "stretch, contain, or cover frame fit.",
+          "options": [
+            "stretch",
+            "contain",
+            "cover"
+          ],
           "type": "str"
         },
         "flip_y": {
@@ -7256,57 +7207,45 @@
           "description": "Flip vertical axis so GIF top maps to wall top.",
           "type": "bool"
         },
-        "gamma": {
-          "default": 1.0,
-          "description": "Gamma correction exponent.",
-          "max": 3.0,
-          "min": 0.2,
-          "type": "float"
-        },
-        "gif_directory": {
-          "default": "animation/plugins/gif_animation/assets",
-          "description": "Directory containing GIF files",
-          "type": "str"
-        },
-        "gif_index": {
-          "default": 0,
-          "description": "Index into sorted GIF list when gif_name is empty.",
-          "max": 999,
-          "min": 0,
-          "type": "int"
-        },
         "gif_name": {
           "default": "penguin_top_center.gif",
-          "description": "GIF filename (or stem). Empty selects by index.",
+          "description": "Packaged GIF artwork",
+          "options": [
+            "axolotl-bubble-column.gif",
+            "balloon-blobs.gif",
+            "bumblebee-garden.gif",
+            "cactus-bloom-dance.gif",
+            "campfire-ghost-stories.gif",
+            "coral-fish-friends.gif",
+            "cotton-candy-clouds.gif",
+            "cozy-shelf-naps.gif",
+            "cozy-window-cats.gif",
+            "cupcake-sprinkle-party.gif",
+            "curtain-cat-watch.gif",
+            "firefly-bottle.gif",
+            "frog-pond-ripple.gif",
+            "grape-bounce.gif",
+            "happy-star-fall.gif",
+            "hydrangea-rain.gif",
+            "jellyfish-lanterns.gif",
+            "jolly-slime-stack.gif",
+            "koi-ribbon.gif",
+            "lantern-tree.gif",
+            "moon-bunny-meadow.gif",
+            "moonlit-ducks.gif",
+            "mushroom-village.gif",
+            "peach-orchard.gif",
+            "penguin-ice-fishing.gif",
+            "penguin_top_center.gif",
+            "planet-parade.gif",
+            "pocket-rocket.gif",
+            "shy-ghost-parade.gif",
+            "sleepy-bat-cave.gif",
+            "snails-after-rain.gif",
+            "sunflower-hamsters.gif",
+            "tiny-robot-patrol.gif"
+          ],
           "type": "str"
-        },
-        "plant_accent_strength": {
-          "default": 0.16,
-          "description": "Green/magenta landmark tint mixed into foliage/globe pixels.",
-          "max": 1.0,
-          "min": 0.0,
-          "type": "float"
-        },
-        "plant_foliage_dim": {
-          "default": 0.32,
-          "description": "Occlusion dimming applied where GIF content still crosses foliage.",
-          "max": 1.0,
-          "min": 0.0,
-          "type": "float"
-        },
-        "plant_gif_offset_radius": {
-          "default": 4,
-          "description": "Maximum translation used to keep salient GIF content off plants.",
-          "max": 8,
-          "min": 0,
-          "type": "int"
-        },
-        "plant_globe_dim": {
-          "default": 0.18,
-          "description": "Occlusion dimming applied where GIF content still crosses globes.",
-          "max": 1.0,
-          "min": 0.0,
-          "type": "float"
         },
         "playback_speed": {
           "default": 1.0,
@@ -7314,31 +7253,827 @@
           "max": 4.0,
           "min": 0.1,
           "type": "float"
-        },
-        "speed": {
-          "default": 1.0,
-          "description": "Animation speed multiplier",
-          "max": 5.0,
-          "min": 0.1,
-          "type": "float"
         }
       },
       "parameter_schema_version": 1,
       "plugin_id": "gif_animation",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "tempo"
+        ],
         "vibe_color_policy": "preserve"
       },
-      "presets": [],
+      "presets": [
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Pink axolotls paddle through a rising bubble column.",
+          "key": "python:gif_animation:axolotl-bubble-column",
+          "name": "Axolotl Bubble Column",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "axolotl-bubble-column.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "ad0c77e3af15e1e11fdaa2c83e10073a128725bf7ed34b3819d0c062eb5daac3",
+          "preset_id": "axolotl-bubble-column",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Happy blobs float under bobbing balloons.",
+          "key": "python:gif_animation:balloon-blobs",
+          "name": "Balloon Blobs",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "balloon-blobs.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "7b3e8ff40e456f92f319cbf66793b4123f74fad02ef4e9f68e39afc294d4b64d",
+          "preset_id": "balloon-blobs",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Round bees buzz between pixel daisies.",
+          "key": "python:gif_animation:bumblebee-garden",
+          "name": "Bumblebee Garden",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "bumblebee-garden.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "6038bee7ea1564ae2bf66d871c3f58b86cd3279ecaef5053f600a09522553581",
+          "preset_id": "bumblebee-garden",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Flower-crowned cacti wiggle beneath desert stars.",
+          "key": "python:gif_animation:cactus-bloom-dance",
+          "name": "Cactus Bloom Dance",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "cactus-bloom-dance.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "0a469788a8825b0ccc188e42aba8781669fe522f383cd6d99be07b99aee1cd96",
+          "preset_id": "cactus-bloom-dance",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Little ghosts warm up beside flickering campfires.",
+          "key": "python:gif_animation:campfire-ghost-stories",
+          "name": "Campfire Ghost Stories",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "campfire-ghost-stories.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "94cb2fede68b6ae25456218292429a97f1208fef77290fe62f813f9f131c61eb",
+          "preset_id": "campfire-ghost-stories",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Striped fish dart through a miniature reef.",
+          "key": "python:gif_animation:coral-fish-friends",
+          "name": "Coral Fish Friends",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "coral-fish-friends.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "3f9e192cdd0a5a74de52e9556ff942a48f3a327845c568cae5f260f74e1d528d",
+          "preset_id": "coral-fish-friends",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Pink clouds drift between warm little stars.",
+          "key": "python:gif_animation:cotton-candy-clouds",
+          "name": "Cotton Candy Clouds",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "cotton-candy-clouds.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "7dc371a3f65eb75b0bc7bb3d4bcc0fecee66313d5af7767ed2a097761526a4b0",
+          "preset_id": "cotton-candy-clouds",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Sleepy blobs nap on warm wooden shelves.",
+          "key": "python:gif_animation:cozy-shelf-naps",
+          "name": "Cozy Shelf Naps",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "cozy-shelf-naps.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "17be60f69048f9da840cc19cba5aca516ecd50de8d864214f92660fce281736d",
+          "preset_id": "cozy-shelf-naps",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Sleepy cats blink beside warm midnight windows.",
+          "key": "python:gif_animation:cozy-window-cats",
+          "name": "Cozy Window Cats",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "cozy-window-cats.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "6afcc993f551f8f5dec4def594ac16651ed45803bbb319d9c2a7058aae25e853",
+          "preset_id": "cozy-window-cats",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Frosted cupcakes bounce through bright sprinkles.",
+          "key": "python:gif_animation:cupcake-sprinkle-party",
+          "name": "Cupcake Sprinkle Party",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "cupcake-sprinkle-party.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "a952fcf445cb6b1b6aa7540dfba49202a721a7b37feba28c5d14390656a2d810",
+          "preset_id": "cupcake-sprinkle-party",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Black cats watch lanterns through purple curtains.",
+          "key": "python:gif_animation:curtain-cat-watch",
+          "name": "Curtain Cat Watch",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "curtain-cat-watch.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "693a22876facb5a9d8ccbdbd085e47619f1296348f8bcb3af336959bcde9bfd6",
+          "preset_id": "curtain-cat-watch",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Fireflies wink inside tiny glass jars.",
+          "key": "python:gif_animation:firefly-bottle",
+          "name": "Firefly Bottle",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "firefly-bottle.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "2b19f6d31b5e23e6f08a68ea6cf19681fe10476bc075bf6d6b7b59ac8ecf5106",
+          "preset_id": "firefly-bottle",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Tiny frogs bob between rippling lily pads.",
+          "key": "python:gif_animation:frog-pond-ripple",
+          "name": "Frog Pond Ripple",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "frog-pond-ripple.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "691be11c8cee2bdd6dc94933c79e05bf30496d50f7ea479b6ea22c4bcd427546",
+          "preset_id": "frog-pond-ripple",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Glossy grape bunches bounce from leafy vines.",
+          "key": "python:gif_animation:grape-bounce",
+          "name": "Grape Bounce",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "grape-bounce.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "aede7ec871e93af118a255fb104a5c8251f1920271aafa9d1483cec6b7439988",
+          "preset_id": "grape-bounce",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Cheerful stars tumble slowly down the wall.",
+          "key": "python:gif_animation:happy-star-fall",
+          "name": "Happy Star Fall",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "happy-star-fall.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "b2ec4f1a835be8a09fbc51c9086505c9ea7ba8bd03a47d45bae4ba20fce37a6b",
+          "preset_id": "happy-star-fall",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Blue hydrangeas shimmer in a gentle shower.",
+          "key": "python:gif_animation:hydrangea-rain",
+          "name": "Hydrangea Rain",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "hydrangea-rain.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "84693403e28053c11bdafddb9834a09f14e2a7a35c6109d76d856fc38b3344e5",
+          "preset_id": "hydrangea-rain",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Glowing jellyfish pulse and trail tiny bubbles.",
+          "key": "python:gif_animation:jellyfish-lanterns",
+          "name": "Jellyfish Lanterns",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "jellyfish-lanterns.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "10b97183cb1b8f1132913f7d2b9d1328ab6d10839a3ee06b77576d6e42333a18",
+          "preset_id": "jellyfish-lanterns",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Colorful slimes bounce in precarious stacks.",
+          "key": "python:gif_animation:jolly-slime-stack",
+          "name": "Jolly Slime Stack",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "jolly-slime-stack.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "2394f0e7471c547a40b3d822352387e5d993b3c2d1ea445e819d7ba9fc95c286",
+          "preset_id": "jolly-slime-stack",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Koi weave up a dark vertical stream.",
+          "key": "python:gif_animation:koi-ribbon",
+          "name": "Koi Ribbon",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "koi-ribbon.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "860b668e11038e51ce2115207c62f87a2ede93ff2cc6f68b88f1733846c49bc0",
+          "preset_id": "koi-ribbon",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Purple trees shelter softly swinging lanterns.",
+          "key": "python:gif_animation:lantern-tree",
+          "name": "Lantern Tree",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "lantern-tree.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "ae64d44d4d668f462be6e005cff1c1268588a01a568d1b158122d0e81f2f76be",
+          "preset_id": "lantern-tree",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "White bunnies bounce beneath violet moons.",
+          "key": "python:gif_animation:moon-bunny-meadow",
+          "name": "Moon Bunny Meadow",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "moon-bunny-meadow.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "9f40e740c37744a98373a146a409770110f26dce2a141bfd9ed63cab6ee924ae",
+          "preset_id": "moon-bunny-meadow",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Tiny ducks paddle across moonlit reflections.",
+          "key": "python:gif_animation:moonlit-ducks",
+          "name": "Moonlit Ducks",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "moonlit-ducks.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "ac37d3de35b11ec68b3a26c8c405a1c11ebff0ba74aa302dc2922e4b05ad0d5d",
+          "preset_id": "moonlit-ducks",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Little mushroom homes glow beneath forest stars.",
+          "key": "python:gif_animation:mushroom-village",
+          "name": "Mushroom Village",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "mushroom-village.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "fff5aaf903c53976756c7f1bc730f60ef061d8307ea7ed80984485a371c990d0",
+          "preset_id": "mushroom-village",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Blushing peaches sway on leafy branches.",
+          "key": "python:gif_animation:peach-orchard",
+          "name": "Peach Orchard",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "peach-orchard.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "a177dbb09a59ec6428b56924e3a8cfd59917ad813206dcf1575c2e13a9d85667",
+          "preset_id": "peach-orchard",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Tiny penguins fish from floating ice shelves.",
+          "key": "python:gif_animation:penguin-ice-fishing",
+          "name": "Penguin Ice Fishing",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "penguin-ice-fishing.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "442522459738b3f7d3874c105474acf870a894e54eaaaa028ab65694adaab930",
+          "preset_id": "penguin-ice-fishing",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Ringed planets and blue moons orbit in a column.",
+          "key": "python:gif_animation:planet-parade",
+          "name": "Planet Parade",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "planet-parade.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "77793a85abd41ed82b0bb1959d7b5a00035c1a94e03c2043654762a7507b5cc9",
+          "preset_id": "planet-parade",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Small rockets climb through lavender exhaust.",
+          "key": "python:gif_animation:pocket-rocket",
+          "name": "Pocket Rocket",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "pocket-rocket.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "9ffc31ff96d78fd6547be6c12d828917e2c7a4ff48b36dc610181e523f016e18",
+          "preset_id": "pocket-rocket",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Friendly ghosts wave through a violet night.",
+          "key": "python:gif_animation:shy-ghost-parade",
+          "name": "Shy Ghost Parade",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "shy-ghost-parade.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "a30286ee1f828fc5aeb5858e66b80b417521a32816cf50af81a76e272342815f",
+          "preset_id": "shy-ghost-parade",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Small bats flap, yawn, and settle under stars.",
+          "key": "python:gif_animation:sleepy-bat-cave",
+          "name": "Sleepy Bat Cave",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "sleepy-bat-cave.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "823f7a1f19e67b3e640caebfd1419036921d487df4cb8453be18e7760e9bd81b",
+          "preset_id": "sleepy-bat-cave",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Purple-shelled snails inch along rainy leaves.",
+          "key": "python:gif_animation:snails-after-rain",
+          "name": "Snails After Rain",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "snails-after-rain.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "200fc0a144cc97259544e76e184c894d6ed0f09c90e95f4a108939aaeb92ec41",
+          "preset_id": "snails-after-rain",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Round hamsters peek from towering sunflowers.",
+          "key": "python:gif_animation:sunflower-hamsters",
+          "name": "Sunflower Hamsters",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "sunflower-hamsters.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "cf51180e21aacdd001fe84cc133d2ed1b1fcc6e13b7b815dee6bf9e0fefa8c8b",
+          "preset_id": "sunflower-hamsters",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "gif_animation",
+          "category": null,
+          "component_key": "python:gif_animation",
+          "created_at": null,
+          "description": "Pocket robots blink and patrol a neon tower.",
+          "key": "python:gif_animation:tiny-robot-patrol",
+          "name": "Tiny Robot Patrol",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "tiny-robot-patrol.gif",
+            "playback_speed": 1.0
+          },
+          "plugin_id": "gif_animation",
+          "preset_fingerprint": "31cdb6db3993fecacbfcb3436afa386741160d24f267e97b33ca669014f98220",
+          "preset_id": "tiny-robot-patrol",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        }
+      ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -7369,7 +8104,7 @@
           "component_id": "gradient",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -7377,7 +8112,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -7630,7 +8365,7 @@
           "component_id": "lava_lamp",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -7638,7 +8373,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -8343,7 +9078,7 @@
           "component_id": "living_ecosystem",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -8351,7 +9086,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -8786,7 +9521,7 @@
           "component_id": "living_stained_glass",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -8794,7 +9529,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -9151,7 +9886,7 @@
           "component_id": "moonlit_fog_banks",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -9159,7 +9894,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -9432,7 +10167,7 @@
           "component_id": "maze_chase",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -9440,7 +10175,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -9701,7 +10436,7 @@
           "component_id": "night_train_windows",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -9709,7 +10444,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -9950,7 +10685,7 @@
           "component_id": "physarum_network",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -9958,7 +10693,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10246,7 +10981,7 @@
           "component_id": "pixel_chase",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -10254,7 +10989,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10468,7 +11203,7 @@
           "component_id": "pixel_quest",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -10476,7 +11211,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10711,7 +11446,7 @@
           "component_id": "plant_calibration",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -10719,7 +11454,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10896,7 +11631,7 @@
           "component_id": "plant_glow",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -10904,7 +11639,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -11177,7 +11912,7 @@
           "component_id": "plant_mask_highlight",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -11185,7 +11920,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -11474,7 +12209,7 @@
           "component_id": "quasicrystal_bloom",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -11482,7 +12217,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -11747,7 +12482,7 @@
           "component_id": "rain_on_glass",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -11755,7 +12490,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -12030,7 +12765,7 @@
           "component_id": "rainbow",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -12038,7 +12773,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -12263,7 +12998,7 @@
           "component_id": "reaction_diffusion_garden",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -12271,7 +13006,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -12574,7 +13309,7 @@
           "component_id": "simple_test",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -12582,7 +13317,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -12721,7 +13456,7 @@
           "component_id": "snake",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -12729,7 +13464,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -13303,7 +14038,7 @@
           "component_id": "solid",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -13311,7 +14046,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -13548,7 +14283,7 @@
           "component_id": "sparkle",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -13556,7 +14291,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -13845,7 +14580,7 @@
           "component_id": "spiral_single",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -13853,7 +14588,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -14000,7 +14735,7 @@
           "component_id": "strip_order",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -14008,7 +14743,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -14242,7 +14977,7 @@
           "component_id": "tetris",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -14250,7 +14985,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -14570,7 +15305,7 @@
           "component_id": "tidal_bioluminescence",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -14578,7 +15313,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -14825,7 +15560,7 @@
           "component_id": "waterfall_veil",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -14833,7 +15568,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -15080,7 +15815,7 @@
           "component_id": "wave",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -15088,7 +15823,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -15394,7 +16129,7 @@
           "component_id": "wind_in_the_reeds",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -15402,7 +16137,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -15667,11 +16402,11 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "71f11c7ab7b802b134113d7230e9173c3b05d68a4a0846d138ec0703f0b1dde3",
+          "component_digest": "f2c7d11a05a6e91414025d96da3ec734c37ce42d7ec94c6cb4620996ae5381e3",
           "component_id": "world_flags",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c"
+          "runtime_digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5"
         },
         "previewable": true,
         "reason": null,
@@ -15679,7 +16414,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "dc292e453e54ec98b79dbc4abaff0f61f7a6037c9dab32024fa7f316d6424b4c",
+        "digest": "f83c3ee7c7798a62b9939d800b25d326f9835f662bdaeb774ce387c8ace5e1b5",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -15695,21 +16430,15 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "71f11c7ab7b802b134113d7230e9173c3b05d68a4a0846d138ec0703f0b1dde3",
+      "component_digest": "f2c7d11a05a6e91414025d96da3ec734c37ce42d7ec94c6cb4620996ae5381e3",
       "defaults": {
-        "brightness": 1.0,
-        "color_saturation": 1.0,
-        "color_value": 1.0,
         "country": "USA",
         "display_mode": "parade",
         "flag_height": 21,
         "flip_horizontal": false,
         "flip_vertical": true,
         "gap": 3,
-        "map_mode": "compensate",
-        "map_path": "config/webcam_pixel_map.json",
-        "speed": 7.0,
-        "visibility_boost": 0.35
+        "scroll_pixels_per_second": 7.0
       },
       "description": "A scrolling parade of world flags adapted to the photographed LED wall",
       "icon": "\ud83c\udf0d",
@@ -15734,35 +16463,58 @@
       "key": "python:world_flags",
       "name": "World Flags",
       "parameter_schema": {
-        "brightness": {
-          "default": 1.0,
-          "description": "Overall brightness",
-          "max": 1.0,
-          "min": 0.05,
-          "type": "float"
-        },
-        "color_saturation": {
-          "default": 1.0,
-          "description": "Color saturation (0.0 - 1.0)",
-          "max": 1.0,
-          "min": 0.0,
-          "type": "float"
-        },
-        "color_value": {
-          "default": 1.0,
-          "description": "Color value/brightness (0.0 - 1.0)",
-          "max": 1.0,
-          "min": 0.0,
-          "type": "float"
-        },
         "country": {
           "default": "USA",
           "description": "ISO code used in single mode",
+          "options": [
+            "USA",
+            "CAN",
+            "MEX",
+            "BRA",
+            "ARG",
+            "COL",
+            "GBR",
+            "FRA",
+            "DEU",
+            "ITA",
+            "ESP",
+            "IRL",
+            "NLD",
+            "BEL",
+            "POL",
+            "UKR",
+            "SWE",
+            "NOR",
+            "DNK",
+            "FIN",
+            "GRC",
+            "CHE",
+            "JPN",
+            "CHN",
+            "IND",
+            "BGD",
+            "IDN",
+            "PHL",
+            "THA",
+            "VNM",
+            "AUS",
+            "NZL",
+            "NGA",
+            "ZAF",
+            "KEN",
+            "EGY",
+            "TUR",
+            "ISR"
+          ],
           "type": "str"
         },
         "display_mode": {
           "default": "parade",
-          "description": "parade or single",
+          "description": "Show one flag or a scrolling parade",
+          "options": [
+            "parade",
+            "single"
+          ],
           "type": "str"
         },
         "flag_height": {
@@ -15784,52 +16536,262 @@
         },
         "gap": {
           "default": 3,
-          "description": "Black rows between parade flags",
+          "description": "Transparent rows between parade flags",
           "max": 12,
           "min": 0,
           "type": "int"
         },
-        "map_mode": {
-          "default": "compensate",
-          "description": "compensate, mask, or off",
-          "type": "str"
-        },
-        "map_path": {
-          "default": "config/webcam_pixel_map.json",
-          "description": "Camera-derived pixel map JSON",
-          "type": "str"
-        },
-        "speed": {
+        "scroll_pixels_per_second": {
           "default": 7.0,
-          "description": "Parade scroll speed in pixels per second",
+          "description": "Parade travel per scaled second",
           "max": 40.0,
           "min": -40.0,
-          "type": "float"
-        },
-        "visibility_boost": {
-          "default": 0.35,
-          "description": "Extra drive for partially obscured cells",
-          "max": 1.0,
-          "min": 0.0,
           "type": "float"
         }
       },
       "parameter_schema_version": 1,
       "plugin_id": "world_flags",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "tempo"
+        ],
         "vibe_color_policy": "preserve"
       },
-      "presets": [],
+      "presets": [
+        {
+          "animation": "world_flags",
+          "category": null,
+          "component_key": "python:world_flags",
+          "created_at": null,
+          "description": "Brazilian green, gold, and blue across the full wall.",
+          "key": "python:world_flags:brazil-festival",
+          "name": "Brazil Festival",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "country": "BRA",
+            "display_mode": "single",
+            "flag_height": 21,
+            "flip_horizontal": false,
+            "flip_vertical": true,
+            "gap": 3,
+            "scroll_pixels_per_second": 0.0
+          },
+          "plugin_id": "world_flags",
+          "preset_fingerprint": "e9e16be14714db17965da549245914ae34b1f2271c9d2439260f4aad225ead1c",
+          "preset_id": "brazil-festival",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "world_flags",
+          "category": null,
+          "component_key": "python:world_flags",
+          "created_at": null,
+          "description": "Large stately flags with generous black spacing.",
+          "key": "python:world_flags:grand-banners",
+          "name": "Grand Banners",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "country": "USA",
+            "display_mode": "parade",
+            "flag_height": 36,
+            "flip_horizontal": false,
+            "flip_vertical": true,
+            "gap": 8,
+            "scroll_pixels_per_second": 3.5
+          },
+          "plugin_id": "world_flags",
+          "preset_fingerprint": "cba2ab8976429ea8f01e50064ef60ca647cb57e69f26fc226a402c4b8fde917b",
+          "preset_id": "grand-banners",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "world_flags",
+          "category": null,
+          "component_key": "python:world_flags",
+          "created_at": null,
+          "description": "A clean full-wall Japanese flag.",
+          "key": "python:world_flags:japan-rising-sun",
+          "name": "Japan Rising Sun",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "country": "JPN",
+            "display_mode": "single",
+            "flag_height": 21,
+            "flip_horizontal": false,
+            "flip_vertical": true,
+            "gap": 3,
+            "scroll_pixels_per_second": 0.0
+          },
+          "plugin_id": "world_flags",
+          "preset_fingerprint": "b95c6f9b2e363c8481a9d50399303063265478977a2466a364e146902ea0c342",
+          "preset_id": "japan-rising-sun",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "world_flags",
+          "category": null,
+          "component_key": "python:world_flags",
+          "created_at": null,
+          "description": "Small tightly packed flags race down the installation.",
+          "key": "python:world_flags:mini-banner-rush",
+          "name": "Mini Banner Rush",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "country": "USA",
+            "display_mode": "parade",
+            "flag_height": 12,
+            "flip_horizontal": false,
+            "flip_vertical": true,
+            "gap": 1,
+            "scroll_pixels_per_second": 18.0
+          },
+          "plugin_id": "world_flags",
+          "preset_fingerprint": "d98ecdef2a7024d444ff67aaa5ddb40442dff92a35e1e90d533c982d523b5661",
+          "preset_id": "mini-banner-rush",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "world_flags",
+          "category": null,
+          "component_key": "python:world_flags",
+          "created_at": null,
+          "description": "The full catalog scrolls in the opposite direction.",
+          "key": "python:world_flags:reverse-parade",
+          "name": "Reverse Parade",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "country": "USA",
+            "display_mode": "parade",
+            "flag_height": 22,
+            "flip_horizontal": false,
+            "flip_vertical": true,
+            "gap": 3,
+            "scroll_pixels_per_second": -8.0
+          },
+          "plugin_id": "world_flags",
+          "preset_fingerprint": "5bac9d3997a13c522ca2005f7bf3b552da8e50826daabaef36038b248c28668e",
+          "preset_id": "reverse-parade",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "world_flags",
+          "category": null,
+          "component_key": "python:world_flags",
+          "created_at": null,
+          "description": "A bright full-wall United States flag.",
+          "key": "python:world_flags:stars-and-stripes",
+          "name": "Stars and Stripes",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "country": "USA",
+            "display_mode": "single",
+            "flag_height": 21,
+            "flip_horizontal": false,
+            "flip_vertical": true,
+            "gap": 3,
+            "scroll_pixels_per_second": 0.0
+          },
+          "plugin_id": "world_flags",
+          "preset_fingerprint": "f6e4ad8e88c017896c69698c59e17dd600b6134e3d6257091cd0e16b4ba10f2c",
+          "preset_id": "stars-and-stripes",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "world_flags",
+          "category": null,
+          "component_key": "python:world_flags",
+          "created_at": null,
+          "description": "A full-wall blue and gold Ukrainian flag.",
+          "key": "python:world_flags:ukraine-solidarity",
+          "name": "Ukraine Solidarity",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "country": "UKR",
+            "display_mode": "single",
+            "flag_height": 21,
+            "flip_horizontal": false,
+            "flip_vertical": true,
+            "gap": 3,
+            "scroll_pixels_per_second": 0.0
+          },
+          "plugin_id": "world_flags",
+          "preset_fingerprint": "b110dc7932f3d3673f32494358ac1fe295aaf1769edc208ad5d531f87efbcb27",
+          "preset_id": "ukraine-solidarity",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        },
+        {
+          "animation": "world_flags",
+          "category": null,
+          "component_key": "python:world_flags",
+          "created_at": null,
+          "description": "A balanced forward parade of the full flag catalog.",
+          "key": "python:world_flags:world-parade",
+          "name": "World Parade",
+          "ownership": "built_in",
+          "palette": null,
+          "params": {
+            "country": "USA",
+            "display_mode": "parade",
+            "flag_height": 21,
+            "flip_horizontal": false,
+            "flip_vertical": true,
+            "gap": 3,
+            "scroll_pixels_per_second": 7.0
+          },
+          "plugin_id": "world_flags",
+          "preset_fingerprint": "edf8a58e86c35ef585a4abfbe0a964ec6d7e7709cd0cb11bf6fe69270cdc75a5",
+          "preset_id": "world-parade",
+          "provider": "python",
+          "swatches": [],
+          "tags": [],
+          "updated_at": null,
+          "version": 2
+        }
+      ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     }
