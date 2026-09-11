@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "22a3c4868d8d7f492aaa58e1fbe86c9a37ad8cd6a110e448d29e49fc93a58380",
+    "catalog_digest": "d747c026d689013c3a280ef452886cb1e252ba065907f2fa86e16df82632ae46",
     "kind": "bundled",
     "version": 1
   },
@@ -965,8 +965,8 @@
     },
     {
       "availability": {
-        "diagnostic": "Managed receiver-native modules are disabled.",
-        "state": "gated"
+        "diagnostic": "native background package is not published: aurora_curtains_native",
+        "state": "unavailable"
       },
       "browser_capabilities": {
         "activation_ready": false,
@@ -998,7 +998,7 @@
           "runtime_digest": "86f7b3f2fedf530a29a96829635ddc78f4819b353e2a4efba53f300982ed105b"
         },
         "previewable": true,
-        "reason": "Managed receiver-native modules are disabled.",
+        "reason": "native background package is not published: aurora_curtains_native",
         "saveable": true
       },
       "browser_runtime": {
@@ -1021,8 +1021,8 @@
       "class_name": null,
       "compatibility": {
         "classification": "receiver_native_source",
-        "composable": true,
-        "diagnostic": "Trusted repository native source metadata is available for build and host preview; receiver activation remains disabled until Phase 4.",
+        "composable": false,
+        "diagnostic": "native background package is not published: aurora_curtains_native",
         "implementation_loaded": false,
         "legacy_manifest": false,
         "parameter_metadata": "manifest"
@@ -1098,6 +1098,148 @@
         "timing_adapter": "scaled_context",
         "vibe_capabilities": [
           "luminance",
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
+      },
+      "presets": [],
+      "provider": "receiver_native",
+      "provider_collision": false,
+      "role": "background",
+      "scene_compatibility": {
+        "diagnostic": "native background package is not published: aurora_curtains_native",
+        "selectable": false,
+        "slots": []
+      }
+    },
+    {
+      "availability": {
+        "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+        "framebuffer_readback": false,
+        "payload_digest": "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37",
+        "preview_kind": "build_time_bundle",
+        "published_at": "1970-01-01T00:00:00Z",
+        "state": "ready"
+      },
+      "browser_capabilities": {
+        "activation_ready": false,
+        "interactions": {
+          "component_id": "native_aurora",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "receiver_native",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
+        "managed_identity": {
+          "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+          "component_digest": "ea97c4cbf081a08e9599ef10691bbf138a13efff58fe51819f8774ee4613b1e5",
+          "component_id": "native_aurora",
+          "expected_payload_digest": "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37",
+          "parameter_schema_version": 1,
+          "provider": "receiver_native",
+          "runtime_digest": null
+        },
+        "previewable": false,
+        "reason": "This component does not expose a verified browser-Wasm entrypoint for local rendering.",
+        "saveable": false
+      },
+      "browser_runtime": {
+        "digest": null,
+        "kind": "native",
+        "reason": "This component does not expose a verified browser-Wasm entrypoint for local rendering.",
+        "supported": false
+      },
+      "build": {
+        "abi_schema": "ledgrid.native-background-abi",
+        "abi_version": 2,
+        "artifact_kind": "receiver_native_module",
+        "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+        "bundle_schema": "ledgrid.native-background-bundle",
+        "bundle_version": 1,
+        "contract_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+        "expected_payload_digest": "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37",
+        "identity_authority": "managed_library",
+        "source": "native/background.cpp",
+        "target": "esp32-s3"
+      },
+      "class_name": null,
+      "compatibility": {
+        "classification": "receiver_native_source",
+        "composable": true,
+        "diagnostic": "Trusted repository native source metadata is available for build and host preview; receiver activation remains disabled until Phase 4.",
+        "implementation_loaded": false,
+        "legacy_manifest": false,
+        "parameter_metadata": "manifest"
+      },
+      "component_digest": "ea97c4cbf081a08e9599ef10691bbf138a13efff58fe51819f8774ee4613b1e5",
+      "defaults": {
+        "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+        "gain": 0.72,
+        "seed": 8012,
+        "source_fps": 30.0
+      },
+      "description": "Receiver-rendered semantic aurora field for the canonical Scene v2 background plane.",
+      "icon": "\ud83c\udf0c",
+      "interaction_capabilities": {
+        "component_id": "native_aurora",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "receiver_native",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
+      "key": "receiver_native:native_aurora",
+      "name": "Aurora Native",
+      "parameter_schema": {
+        "gain": {
+          "default": 0.72,
+          "description": "Component-local intensity before Scene presentation brightness.",
+          "max": 1.0,
+          "min": 0.0,
+          "type": "float"
+        },
+        "seed": {
+          "default": 8012,
+          "description": "Deterministic spatial variation seed.",
+          "max": 2147483647,
+          "min": 0,
+          "type": "int"
+        },
+        "source_fps": {
+          "default": 30.0,
+          "description": "Source cadence used to quantize the scaled Scene clock.",
+          "max": 60.0,
+          "min": 1.0,
+          "type": "float"
+        }
+      },
+      "parameter_schema_version": 1,
+      "plugin_id": "native_aurora",
+      "presentation": {
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
           "palette_roles",
           "tempo"
         ],
