@@ -335,6 +335,100 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
                 self.assertEqual(spi.attempts.count(command), 1)
                 self.assertNotIn(command, spi.dropped)
 
+    def test_storage_baseline_waits_for_prior_config_before_choosing_sequence(self):
+        for delay in (0.2, 2.0):
+            with self.subTest(delay=delay):
+                spi = _DelayedRefillNativeSpi()
+                spi.ready = []
+                spi.pending = [(delay, protocol.CMD_CONFIG), (delay + 0.003, protocol.CMD_CONFIG)]
+                item = controller(spi)
+                item._transport_envelope_enabled = True
+                item._update_receiver_status(spi.status(6))
+                with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                        patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+                    status = item.native_preflight(**descriptor())
+                self.assertEqual(status["receiver_operation_sequence"], 4415)
+                self.assertEqual(status["receiver_last_processed_command"], protocol.CMD_NATIVE_PREFLIGHT)
+                self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), 1)
+                self.assertNotIn(protocol.CMD_NATIVE_PREFLIGHT, spi.dropped)
+                send_time = spi.attempt_times[spi.attempts.index(protocol.CMD_NATIVE_PREFLIGHT)]
+                self.assertGreater(send_time, delay + 0.003)
+
+    def test_storage_baseline_timeout_sends_no_mutation_or_deferred_payload(self):
+        spi = _DelayedRefillNativeSpi()
+        spi.ready = []
+        item = controller(spi)
+        item._transport_envelope_enabled = True
+        cached = spi.status(6)
+        cached[16:20] = (17).to_bytes(4, "big")
+        item._update_receiver_status(cached)
+        serialized = []
+
+        def serialize():
+            serialized.append(True)
+            return item.serialize_native_preflight(**descriptor())
+
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+            with self.assertRaisesRegex(RuntimeError, "causal fresh status.*CRC errors 17"):
+                item._command_status(
+                    serialize, command=protocol.CMD_NATIVE_PREFLIGHT,
+                    required_status_version=6, storage_operation=True,
+                )
+        self.assertFalse(serialized)
+        self.assertEqual(set(spi.attempts), {protocol.CMD_STATUS_QUERY})
+        self.assertGreaterEqual(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS)
+        self.assertLess(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS + 0.01)
+
+    def test_causal_status_does_not_mix_packet_counter_epochs(self):
+        class ResetCounterSpi:
+            def __init__(self):
+                self.packets = iter((100, 101, 0, 1, 2))
+                self.calls = 0
+
+            def xfer2(self, packet):
+                self.calls += 1
+                status = status_v6()
+                status[12:16] = next(self.packets).to_bytes(4, "big")
+                return status[:len(packet)]
+
+        spi = ResetCounterSpi()
+        item = controller(spi)
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+        with patch.object(protocol.time, "sleep"):
+            status = item.query_causal_receiver_status(required_status_version=6)
+        self.assertEqual(status["receiver_packets"], 2)
+        self.assertEqual(spi.calls, 5)
+
+    def test_native_snapshot_waits_for_delayed_prior_config(self):
+        from drivers.multi_device import MultiDeviceLEDController, NATIVE_BACKGROUND_REQUIRED_CAPABILITIES
+
+        class SnapshotSpi(_DelayedRefillNativeSpi):
+            def status(self, version):
+                result = super().status(version)
+                result[312] = 0
+                result[64:68] = (
+                    NATIVE_BACKGROUND_REQUIRED_CAPABILITIES | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
+                ).to_bytes(4, "big")
+                return result
+
+        spi = SnapshotSpi()
+        spi.ready = []
+        spi.pending = [(0.2, protocol.CMD_CONFIG), (0.203, protocol.CMD_CONFIG)]
+        device = controller(spi)
+        device._transport_envelope_enabled = True
+        device._update_receiver_status(spi.status(6))
+        wall = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
+        wall.devices = [device]
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+            status = wall._fresh_native_status(0)
+        self.assertEqual(status["receiver_operation_sequence"], 4414)
+        self.assertEqual(status["receiver_last_processed_command"], protocol.CMD_CONFIG)
+        self.assertGreaterEqual(status["receiver_status_version"], 6)
+        self.assertEqual(set(spi.attempts), {protocol.CMD_STATUS_QUERY})
+        self.assertGreaterEqual(spi.now, 0.203)
+
     def test_native_ack_waits_for_storage_processing_and_fresh_extended_status(self):
         for delay in (0.2, 2.0):
             for command in (protocol.CMD_NATIVE_PREFLIGHT, protocol.CMD_NATIVE_ABORT):
@@ -418,9 +512,10 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
                 item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
                 with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
                         patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
-                    with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+                    with self.assertRaises(RuntimeError):
                         item.native_preflight(**descriptor())
-                self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), 1)
+                expected_sends = 0 if kwargs.get("frozen_counter") else 1
+                self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), expected_sends)
                 self.assertFalse(item._last_transfer_status_sampled)
                 self.assertGreaterEqual(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS)
                 self.assertLess(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS + 0.05)
@@ -434,7 +529,7 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
                 item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
                 with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
                         patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
-                    with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+                    with self.assertRaises(RuntimeError):
                         item.native_preflight(**descriptor())
                 self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), 1)
                 self.assertTrue(item._last_transfer_status_sampled)

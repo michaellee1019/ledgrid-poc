@@ -143,6 +143,9 @@ class _Receiver:
     def query_receiver_status(self):
         return self._status()
 
+    def query_causal_receiver_status(self, *, required_status_version=3):
+        return self._status()
+
     def native_probe(self, *, payload_digest):
         self.probe_found = payload_digest in self.cached_payloads
         self.last_probe_payload = self.probe_echo_override or payload_digest

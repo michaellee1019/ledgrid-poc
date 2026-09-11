@@ -220,6 +220,9 @@ class ProfileDevice:
         status.update(self._fields(self.rollback, "rollback"))
         return status
 
+    def query_causal_receiver_status(self, *, required_status_version=3):
+        return self.query_receiver_status()
+
     def profile_preflight(self, *, profile_id, payload_digest, payload_size):
         self._fail_before("preflight")
         self.calls.append(("preflight", profile_id, payload_digest, payload_size))
@@ -487,6 +490,23 @@ class SpiInstallationProfileAdapterTests(unittest.TestCase):
         self.assertEqual(snapshot.active_binding.profile_id, ACTIVE_GLOBAL)
         self.assertEqual(snapshot.active_binding.payload_digest, ACTIVE_PAYLOAD)
 
+    def test_profile_refresh_waits_for_preexisting_busy_receiver_work(self):
+        for delay in (0.2, 2.0):
+            with self.subTest(delay=delay):
+                spi = DelayedProfileStatusSpi()
+                spi.ready = []
+                spi.pending = [(delay, 3), (delay + 0.003, 3)]
+                device = controller(spi)
+                device._update_receiver_status(spi.status(3))
+                receiver = SpiInstallationProfileReceiver(0, device, enabled=True)
+                with patch("drivers.spi_controller.time.sleep", side_effect=spi.sleep), \
+                        patch("drivers.spi_controller.time.monotonic", side_effect=lambda: spi.now):
+                    status = receiver.refresh()
+                self.assertEqual(status["receiver_status_version"], 5)
+                self.assertEqual(receiver.transaction_snapshot().state_generation, 9)
+                self.assertGreaterEqual(spi.now, delay + 0.003)
+                self.assertGreater(len(spi.queries), 4)
+
     def test_profile_refresh_rejects_cached_v5_after_zero_miso(self):
         class ZeroSpi:
             def xfer2(self, packet):
@@ -498,8 +518,10 @@ class SpiInstallationProfileAdapterTests(unittest.TestCase):
         cached[314] = 1
         device._update_receiver_status(cached)
         receiver = SpiInstallationProfileReceiver(0, device, enabled=True)
-        with patch("drivers.spi_controller.time.sleep"):
-            with self.assertRaisesRegex(Exception, "fresh profile status"):
+        clock = [0.0]
+        with patch("drivers.spi_controller.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                patch("drivers.spi_controller.time.monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaisesRegex(Exception, "causal fresh status"):
                 receiver.refresh()
         self.assertIsNone(receiver._status)
 

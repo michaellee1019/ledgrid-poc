@@ -217,9 +217,10 @@ class ProfileProtocolTests(unittest.TestCase):
     def test_profile_command_requires_exact_next_v5_queued_ack(self):
         item = protocol.LEDController.__new__(protocol.LEDController)
         item._transport_lock = threading.RLock()
+        item.query_causal_receiver_status = mock.Mock(return_value={
+            "receiver_status_version": 5, "receiver_operation_sequence": 7,
+        })
         statuses = [
-            {"receiver_status_version": 5, "receiver_operation_sequence": 7},
-            {"receiver_status_version": 5, "receiver_operation_sequence": 7},
             {"receiver_status_version": 3, "receiver_operation_sequence": 7,
              "receiver_last_processed_command": 0},
             {"receiver_status_version": 3, "receiver_operation_sequence": 8,
@@ -235,7 +236,8 @@ class ProfileProtocolTests(unittest.TestCase):
         with mock.patch("drivers.spi_controller.time.sleep"):
             status = item.profile_abort()
         self.assertEqual(status["receiver_status_version"], 5)
-        self.assertEqual(item.query_receiver_status.call_count, 5)
+        self.assertEqual(item.query_receiver_status.call_count, 3)
+        item.query_causal_receiver_status.assert_called_once_with(required_status_version=5)
         item._xfer.assert_called_once_with(bytes((protocol.CMD_PROFILE_ABORT,)))
 
 

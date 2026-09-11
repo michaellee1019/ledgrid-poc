@@ -2141,6 +2141,50 @@ class LEDController:
         self._drain_fresh_receiver_status()
         return self.get_stats()
 
+    def query_causal_receiver_status(self, *, required_status_version=3):
+        """Drain pending commands before returning a negotiated status baseline."""
+        required = self._bounded_uint("required_status_version", required_status_version, 7)
+        if required < 3:
+            raise ValueError("causal receiver status requires version 3 through 7")
+        transport_lock = getattr(self, "_transport_lock", None)
+        if transport_lock is None:
+            transport_lock = self._transport_lock = threading.RLock()
+        with transport_lock:
+            deadline = time.monotonic() + STORAGE_COMMAND_ACK_TIMEOUT_SECONDS
+            fresh_count = 0
+            last_packets = None
+            status = None
+            while time.monotonic() < deadline:
+                status = self.query_receiver_status()
+                if time.monotonic() >= deadline:
+                    break
+                if getattr(self, "_last_transfer_status_sampled", False):
+                    packets = status.get("receiver_packets")
+                    if type(packets) is int and 0 <= packets <= 0xFFFFFFFF:
+                        if last_packets is not None and packets <= last_packets:
+                            fresh_count = 0
+                        last_packets = packets
+                        fresh_count += 1
+                        # At most two snapshots can predate this locked drain.
+                        # A third distinct observation was queued after one of
+                        # our queries, hence after all earlier commands. Reset
+                        # the count on reboot/wrap rather than mixing epochs.
+                        if (
+                            fresh_count > SPI_RESPONSE_QUEUE_DEPTH
+                            and int(status.get("receiver_status_version", 0) or 0) >= required
+                        ):
+                            return status
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(FRESH_STATUS_DRAIN_INTERVAL_SECONDS, remaining))
+            raise RuntimeError(
+                f"receiver did not provide causal fresh status v{required}; "
+                f"fresh snapshots {fresh_count}, last status "
+                f"v{int((status or {}).get('receiver_status_version', 0) or 0)}, "
+                f"packets {int((status or {}).get('receiver_packets', -1))}, "
+                f"CRC errors {int((status or {}).get('receiver_crc_errors', 0) or 0)}"
+            )
+
     def _command_status(
         self, payload, *, command=None, required_status_version=3, storage_operation=False
     ):
@@ -2157,10 +2201,15 @@ class LEDController:
             else:
                 command = self._bounded_uint("command", command, 0xFF)
             prior = None
-            for query_index in range(SPI_RESPONSE_QUEUE_DEPTH):
-                if query_index:
-                    time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
-                prior = self.query_receiver_status()
+            if storage_operation:
+                prior = self.query_causal_receiver_status(
+                    required_status_version=required_status_version
+                )
+            else:
+                for query_index in range(SPI_RESPONSE_QUEUE_DEPTH):
+                    if query_index:
+                        time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
+                    prior = self.query_receiver_status()
             if int(prior.get("receiver_status_version", 0) or 0) < 3:
                 raise RuntimeError("receiver status v3 is required for command acknowledgement")
             prior_sequence = int(prior.get("receiver_operation_sequence", 0) or 0)

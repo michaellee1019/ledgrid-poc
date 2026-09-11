@@ -866,11 +866,9 @@ class MultiDeviceLEDController:
         device = self.devices[receiver_id]
         status = None
         try:
-            # The first response can only discover status-v6. Two queued older
-            # snapshots plus one negotiated extension require four transfers
-            # for a causally fresh result.
-            for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 2):
-                status = device.query_receiver_status()
+            # Even diagnostic reads require coherent v6; require_capabilities
+            # only relaxes module/readiness gates below, never snapshot format.
+            status = device.query_causal_receiver_status(required_status_version=6)
         except Exception as exc:
             raise NativeBackgroundOperationError(
                 f"receiver {receiver_id} native status refresh failed: {exc}"
