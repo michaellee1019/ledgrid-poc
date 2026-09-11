@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
+from types import MappingProxyType
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
 from animation import AnimationBase
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.compositing import OverlayFrame, coverage_dirty_union
+from animation.core.presentation_contracts import ResolvedScene
 
 
 Color = Tuple[int, int, int]
@@ -19,7 +23,13 @@ class WorldFlagsAnimation(AnimationBase):
     ANIMATION_NAME = "World Flags"
     ANIMATION_DESCRIPTION = "A scrolling parade of world flags adapted to the photographed LED wall"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "2.0"
+    COMPONENT_ID, COMPONENT_VERSION = "world_flags", 1
+    PROVIDER, ROLE = "python", "animation"
+    FRAME_FORMAT = "rgba_uint8_premultiplied_strip_major"
+    TIMING_POLICY, PALETTE_POLICY = "scaled_context", "preserve"
+    CAPABILITIES = frozenset(("flag_identity_colors", "scaled_context"))
+    PLANT_MODIFIER_SUPPORT = frozenset()
 
     CATALOG = (
         ("USA", "United States", "us", ()),
@@ -62,114 +72,174 @@ class WorldFlagsAnimation(AnimationBase):
         ("ISR", "Israel", "israel", ()),
     )
 
-    def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
-        super().__init__(controller, config)
-        self.default_params.update({
-            "display_mode": "parade",
-            "country": "USA",
-            "speed": 7.0,
-            "flag_height": 21,
-            "gap": 3,
-            "flip_horizontal": False,
-            "flip_vertical": True,
-            "map_path": "config/webcam_pixel_map.json",
-            "map_mode": "compensate",
-            "visibility_boost": 0.35,
-        })
-        self.params = {**self.default_params, **self.config}
+    DISPLAY_MODES = ("parade", "single")
+    COUNTRY_CODES = tuple(item[0] for item in CATALOG)
+    DEFAULTS = MappingProxyType({
+        "display_mode": "parade",
+        "country": "USA",
+        "scroll_pixels_per_second": 7.0,
+        "flag_height": 21,
+        "gap": 3,
+        "flip_horizontal": False,
+        "flip_vertical": True,
+    })
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID,
+        version=COMPONENT_VERSION,
+        provider=PROVIDER,
+        role=ROLE,
+        timing_policy=TIMING_POLICY,
+        alpha_behavior="premultiplied_rgba",
+        palette_policy=PALETTE_POLICY,
+        plant_capabilities=("none",),
+        fidelity_exceptions=("flag_identity_colors",),
+        defaults=DEFAULTS,
+        parameter_normalizer=lambda values: WorldFlagsAnimation._normalized_parameters(values),
+    )
+    _LEGACY_KEYS = frozenset({
+        "speed", "brightness", "color_saturation", "color_value", "map_path",
+        "map_mode", "visibility_boost", "plant_aware", "plant_modifiers",
+        "plant_clearance", "plant_mask_path", "plant_globe_mask_path",
+    })
+
+    def __init__(self, controller, config: Optional[Mapping[str, Any]] = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
         self.strip_count, self.leds_per_strip = self.get_strip_info()
         self._flags = self._render_catalog()
-        self._visibility = np.ones(self.get_pixel_count(), dtype=np.float32)
-        self._occluded = np.zeros(self.get_pixel_count(), dtype=bool)
-        self._mapped_scratch = np.empty((self.get_pixel_count(), 3), dtype=np.float32)
-        self._map_error = ""
-        self._plant_banner_overlap = 0
-        self._plant_banner_pixels = 0
-        self._plant_canvas_key = None
-        self._plant_canvas: Optional[np.ndarray] = None
-        self._load_map()
+        self._buffers = tuple(
+            np.zeros((self.get_pixel_count(), 4), dtype=np.uint8) for _ in range(2)
+        )
+        self._last_pixels = self._buffers[0]
+        self._last_key: Optional[Tuple[Any, ...]] = None
+        self._revision = 0
+        self._presentation_context: ResolvedScene | None = None
+
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        supplied = dict(values)
+        unknown = sorted(set(supplied) - set(cls.DEFAULTS) - cls._LEGACY_KEYS)
+        if unknown:
+            raise ValueError(f"World Flags does not accept non-local parameters: {unknown!r}")
+        result = dict(cls.DEFAULTS)
+        result.update({key: supplied[key] for key in cls.DEFAULTS if key in supplied})
+        if "scroll_pixels_per_second" not in supplied and "speed" in supplied:
+            result["scroll_pixels_per_second"] = supplied["speed"]
+        if result["display_mode"] not in cls.DISPLAY_MODES:
+            raise ValueError(f"display_mode must be one of {list(cls.DISPLAY_MODES)!r}")
+        if result["country"] not in cls.COUNTRY_CODES:
+            raise ValueError("country must be a supported ISO code")
+        rate = result["scroll_pixels_per_second"]
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(float(rate)) or not -40.0 <= float(rate) <= 40.0:
+            raise ValueError("scroll_pixels_per_second must be a finite number from -40.0 to 40.0")
+        result["scroll_pixels_per_second"] = float(rate)
+        for name, low, high in (("flag_height", 12, 40), ("gap", 0, 12)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+                raise ValueError(f"{name} must be an integer from {low} to {high}")
+        for name in ("flip_horizontal", "flip_vertical"):
+            if not isinstance(result[name], bool):
+                raise ValueError(f"{name} must be a bool")
+        return result
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        schema.update({
-            "display_mode": {"type": "str", "default": "parade", "description": "parade or single"},
-            "country": {"type": "str", "default": "USA", "description": "ISO code used in single mode"},
-            "speed": {"type": "float", "min": -40.0, "max": 40.0, "default": 7.0, "description": "Parade scroll speed in pixels per second"},
+        return {
+            "display_mode": {"type": "str", "options": list(self.DISPLAY_MODES), "default": "parade", "description": "Show one flag or a scrolling parade"},
+            "country": {"type": "str", "options": list(self.COUNTRY_CODES), "default": "USA", "description": "ISO code used in single mode"},
+            "scroll_pixels_per_second": {"type": "float", "min": -40.0, "max": 40.0, "default": 7.0, "description": "Parade travel per scaled second"},
             "flag_height": {"type": "int", "min": 12, "max": 40, "default": 21, "description": "Height of each parade flag"},
-            "gap": {"type": "int", "min": 0, "max": 12, "default": 3, "description": "Black rows between parade flags"},
-            "brightness": {"type": "float", "min": 0.05, "max": 1.0, "default": 1.0, "description": "Overall brightness"},
+            "gap": {"type": "int", "min": 0, "max": 12, "default": 3, "description": "Transparent rows between parade flags"},
             "flip_horizontal": {"type": "bool", "default": False, "description": "Mirror the wall left-to-right"},
             "flip_vertical": {"type": "bool", "default": True, "description": "Mirror the wall top-to-bottom"},
-            "map_path": {"type": "str", "default": "config/webcam_pixel_map.json", "description": "Camera-derived pixel map JSON"},
-            "map_mode": {"type": "str", "default": "compensate", "description": "compensate, mask, or off"},
-            "visibility_boost": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.35, "description": "Extra drive for partially obscured cells"},
-        })
-        return schema
+        }
 
-    def update_parameters(self, new_params: Dict[str, Any]):
-        previous_path = str(self.params.get("map_path"))
-        previous_height = int(self.params.get("flag_height", 21))
-        super().update_parameters(new_params)
-        if int(self.params.get("flag_height", 21)) != previous_height:
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        previous_height = self.params["flag_height"]
+        self.params = self._normalized_parameters({**self.params, **dict(new_params)})
+        if self.params["flag_height"] != previous_height:
             self._flags = self._render_catalog()
-        if str(self.params.get("map_path")) != previous_path:
-            self._load_map()
+        self._last_key = None
 
     def on_presentation_context_changed(self, old_context, new_context) -> None:
-        """Invalidate mask-aware banner placement, retaining parade time."""
-        if (
-            old_context is None
-            or old_context.installation_profile_identity
-            != new_context.installation_profile_identity
-        ):
-            self._plant_canvas_key = None
-            self._plant_canvas = None
+        del old_context
+        descriptor = new_context.descriptor
+        if (descriptor.component_id, descriptor.version, descriptor.provider.value, descriptor.role.value) != (self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE):
+            raise ValueError("World Flags received a context for another component")
+        if new_context.palette is not None:
+            raise ValueError("World Flags preserves flag identity colors")
+        self._presentation_context = new_context
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene) -> OverlayFrame:
+        if dict(context.parameters) != self.params:
+            self.update_parameters(context.parameters)
+        self.set_presentation_context(context)
+        return self.generate_frame(context.phase_time, self.frame_count)
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
-        single = str(self.params.get("display_mode", "parade")).lower() == "single"
-        if self.plant_aware_enabled():
-            canvas = self._plant_single_canvas() if single else self._plant_parade_canvas(time_elapsed)
+        del frame_count
+        if self._presentation_context is not None:
+            self.params = self._normalized_parameters(self._presentation_context.parameters)
+            elapsed = self._presentation_context.phase_time
         else:
-            canvas = self._single_canvas() if single else self._parade_canvas(time_elapsed)
+            elapsed = max(0.0, float(time_elapsed))
+        single = self.params["display_mode"] == "single"
+        offset = 0
+        if not single:
+            block = self._flags[0].shape[1] + self.params["gap"]
+            offset = int(math.floor(elapsed * self.params["scroll_pixels_per_second"])) % (block * len(self._flags))
+        key = (single, self.params["country"], offset, tuple(self.params.items()))
+        if key == self._last_key:
+            return OverlayFrame(self._last_pixels, revision=self._revision, changed=False, dirty_ranges=())
+        output = self._buffers[1] if self._last_pixels is self._buffers[0] else self._buffers[0]
+        output.fill(0)
+        canvas = output.reshape(self.strip_count, self.leds_per_strip, 4)
+        if single:
+            self._paint_single_plane(canvas)
+        else:
+            self._paint_parade_plane(canvas, offset)
         if bool(self.params.get("flip_horizontal", False)):
-            canvas = canvas[::-1, :, :]
+            canvas[:] = canvas[::-1, :, :]
         if bool(self.params.get("flip_vertical", True)):
-            canvas = canvas[:, ::-1, :]
+            canvas[:] = canvas[:, ::-1, :]
+        dirty = coverage_dirty_union(self._last_pixels, output)
+        self._last_pixels, self._last_key = output, key
+        self._revision += 1
+        return OverlayFrame(output, revision=self._revision, changed=True, dirty_ranges=dirty)
 
-        frame = self.next_frame_buffer(clear=False)
-        frame[:] = canvas.reshape((-1, 3))
-        mode = str(self.params.get("map_mode", "compensate")).lower()
-        if mode == "mask":
-            frame[self._occluded] = 0
-        elif mode == "compensate":
-            boost = max(0.0, min(1.0, float(self.params.get("visibility_boost", 0.35))))
-            factors = 1.0 + (1.0 - self._visibility) * boost
-            np.multiply(frame, factors[:, None], out=self._mapped_scratch)
-            np.clip(self._mapped_scratch, 0.0, 255.0, out=self._mapped_scratch)
-            frame[:] = self._mapped_scratch
-        return self.apply_brightness_array(frame, out=frame)
+    def _paint_single_plane(self, canvas: np.ndarray) -> None:
+        index = self.COUNTRY_CODES.index(self.params["country"])
+        flag = self._flags[index]
+        y0 = max(0, (self.leds_per_strip - flag.shape[1]) // 2)
+        height = min(flag.shape[1], self.leds_per_strip - y0)
+        canvas[:, y0:y0 + height, :3] = flag[:, :height]
+        canvas[:, y0:y0 + height, 3] = 255
+
+    def _paint_parade_plane(self, canvas: np.ndarray, offset: int) -> None:
+        gap = self.params["gap"]
+        block = self._flags[0].shape[1] + gap
+        virtual_height = block * len(self._flags)
+        for led in range(self.leds_per_strip):
+            virtual_y = (led + offset) % virtual_height
+            flag_index, row = divmod(virtual_y, block)
+            if row < self._flags[flag_index].shape[1]:
+                canvas[:, led, :3] = self._flags[flag_index][:, row]
+                canvas[:, led, 3] = 255
 
     def get_runtime_stats(self) -> Dict[str, Any]:
-        stats = {
+        return {
             "flag_count": len(self.CATALOG),
-            "mapped_pixels": int(self._visibility.size),
-            "occluded_pixels": int(np.count_nonzero(self._occluded)),
-            "map_mode": str(self.params.get("map_mode", "compensate")),
-            "plant_aware": self.plant_aware_enabled(),
+            "display_mode": self.params["display_mode"],
+            "country": self.params["country"],
         }
-        if self.plant_aware_enabled():
-            masks = self.get_plant_masks()
-            stats.update({
-                "plant_foliage_pixels": masks.foliage_count,
-                "plant_globe_pixels": masks.globe_count,
-                "plant_banner_overlap": self._plant_banner_overlap,
-                "plant_banner_pixels": self._plant_banner_pixels,
-            })
-            if masks.error:
-                stats["plant_mask_error"] = masks.error
-        if self._map_error:
-            stats["map_error"] = self._map_error
-        return stats
 
     def _single_canvas(self) -> np.ndarray:
         code = str(self.params.get("country", "USA")).upper()

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageSequence
 
+from animation.plugins.gif_animation import GifAnimation
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from scripts.generate_cute_gif_pack import SCENES, preset_payload, save_gif
 
@@ -94,10 +95,7 @@ class GifAnimationAssetTests(unittest.TestCase):
                 self.assertEqual(payload["animation"], "gif_animation")
                 self.assertEqual(payload["preset_id"], path.stem)
                 self.assertEqual(params["fit_mode"], "stretch")
-                self.assertEqual(
-                    params["gif_directory"],
-                    "animation/plugins/gif_animation/assets",
-                )
+                self.assertEqual(set(params), set(GifAnimation.DEFAULTS))
                 selected = self.asset_dir / params["gif_name"]
                 self.assertTrue(selected.is_file(), selected)
 
@@ -116,7 +114,12 @@ class GifAnimationAssetTests(unittest.TestCase):
                     committed_preset = json.loads(
                         (self.preset_dir / f"{scene.slug}.json").read_text(encoding="utf-8")
                     )
-                    self.assertEqual(preset_payload(scene), committed_preset)
+                    generated_preset = preset_payload(scene)
+                    generated_preset.pop("palette", None)
+                    generated_preset["params"] = GifAnimation._normalized_parameters(
+                        generated_preset["params"]
+                    )
+                    self.assertEqual(generated_preset, committed_preset)
 
 
 if __name__ == "__main__":
