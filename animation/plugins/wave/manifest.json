@@ -1,1 +1,1 @@
-{"plugin_id":"wave","class":"WaveAnimation","icon":"🌊","gallery":"show","vibe":{"color_policy":"semantic","timing_adapter":"legacy_speed_param","capabilities":["palette_roles"],"semantic_roles":["background_low","primary","accent"]}}
+{"plugin_id":"wave","class":"WaveAnimation","icon":"🌊","gallery":"show","vibe":{"color_policy":"semantic","timing_adapter":"scaled_context","capabilities":["palette_roles","tempo"],"semantic_roles":["accent","background_low","primary"]}}

@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "solar-radio",
-  "name": "Solar Radio",
+  "name": "Tight Diagonal",
   "animation": "wave",
   "category": "High Energy",
-  "description": "Tight orange waves race diagonally like a solar transmission.",
+  "description": "Tight diagonal waves race forward with Scene-palette color.",
   "tags": [
     "orange",
     "fast"

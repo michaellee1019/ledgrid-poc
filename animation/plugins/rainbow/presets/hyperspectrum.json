@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "hyperspectrum",
-  "name": "Hyperspectrum",
+  "name": "Triple Sweep",
   "animation": "rainbow",
   "category": "High Energy",
-  "description": "Maximum-speed triple rainbows sweep forward.",
+  "description": "Three fast bands sweep forward with color resolved by the Scene palette.",
   "tags": [
     "maximum",
     "fast"

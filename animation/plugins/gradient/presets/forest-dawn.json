@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "forest-dawn",
-  "name": "Forest Dawn",
+  "name": "Quiet Rise",
   "animation": "gradient",
   "category": "Ambient",
-  "description": "Static moss green rising into warm morning gold.",
+  "description": "A nearly still vertical rise with color resolved by the Scene palette.",
   "tags": [
     "green",
     "static"

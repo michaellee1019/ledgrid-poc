@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "ultraviolet-static",
-  "name": "Ultraviolet Static",
+  "name": "Dense Reverse",
   "animation": "wave",
   "category": "Texture",
-  "description": "Maximum-frequency violet bands drift slowly in reverse.",
+  "description": "Maximum-frequency bands drift slowly in reverse with Scene-palette color.",
   "tags": [
     "violet",
     "dense"

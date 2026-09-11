@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "arctic-horizon",
-  "name": "Arctic Horizon",
+  "name": "Still Horizon",
   "animation": "gradient",
   "category": "Ambient",
-  "description": "An icy horizontal fade from white-blue to deep cobalt.",
+  "description": "A restrained horizontal field whose Scene palette supplies the color.",
   "tags": [
     "ice",
     "static"

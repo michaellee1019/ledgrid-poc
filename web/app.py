@@ -3057,6 +3057,14 @@ class AnimationWebInterface:
         }
 
         components: List[Dict[str, Any]] = []
+        # These opaque semantic animations were independently qualified against
+        # the Scene v2 catalog. Their legacy manifests remain useful to the
+        # mature plugin loader, but must not override the product descriptor in
+        # the Composer packet.
+        qualified_scene_v2_animation_ids = frozenset({
+            'gradient', 'rainbow', 'solid', 'sparkle', 'wave',
+            'ascii_drop', 'christmas_tree', 'emoji', 'night_train_windows',
+        })
         runtime_digests: Dict[Path, str] = {}
         canonical_descriptors = {
             (descriptor.provider.value, descriptor.component_id): descriptor
@@ -3074,13 +3082,17 @@ class AnimationWebInterface:
             if not isinstance(plugin_id, str) or not isinstance(provider, str):
                 continue
             descriptor = canonical_descriptors.get((provider, plugin_id))
+            qualified_scene_v2_animation = bool(
+                descriptor is not None
+                and plugin_id in qualified_scene_v2_animation_ids
+                and descriptor.role.value == 'animation'
+            )
             rgba_animation = bool(
                 descriptor is not None
-                and descriptor.role.value == 'animation'
                 and descriptor.alpha_behavior.value == 'premultiplied_rgba'
             )
             canonical_role = (
-                descriptor.role.value if rgba_animation
+                descriptor.role.value if (rgba_animation or qualified_scene_v2_animation)
                 else str(raw.get('role') or 'background')
             )
             # Browser scene v1 carries Widgets through its fixed overlay slot;
@@ -3089,7 +3101,7 @@ class AnimationWebInterface:
             scene_compatibility = json.loads(json.dumps(
                 raw.get('scene_compatibility') or {}
             ))
-            if rgba_animation:
+            if rgba_animation or qualified_scene_v2_animation:
                 # The legacy loader decorates its flattened manifests before
                 # this browser projection.  Replace that stale compatibility
                 # result with the resolved Composer descriptor's exact slot.
@@ -3239,24 +3251,20 @@ class AnimationWebInterface:
                     raw.get('interaction_capabilities') or {}
                 )),
                 'presentation': {
-                    'timing_adapter': str(
-                        (
-                            (raw.get('vibe') or {}).get('timing_adapter')
-                            if isinstance(raw.get('vibe'), dict)
-                            else None
-                        ) or 'legacy_speed_param'
+                    'timing_adapter': (
+                        descriptor.timing_policy.value
+                        if qualified_scene_v2_animation else str(
+                            raw.get('timing_adapter') or 'legacy_speed_param'
+                        )
                     ),
-                    'vibe_color_policy': str(
-                        (
-                            (raw.get('vibe') or {}).get('color_policy')
-                            if isinstance(raw.get('vibe'), dict)
-                            else None
-                        ) or 'preserve'
+                    'vibe_color_policy': (
+                        descriptor.palette_policy.value
+                        if qualified_scene_v2_animation else str(
+                            raw.get('vibe_color_policy') or 'preserve'
+                        )
                     ),
                     'vibe_capabilities': json.loads(json.dumps(
-                        (raw.get('vibe') or {}).get('capabilities') or []
-                        if isinstance(raw.get('vibe'), dict)
-                        else []
+                        raw.get('vibe_capabilities') or []
                     )),
                 },
             }

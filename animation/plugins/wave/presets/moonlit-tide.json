@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "moonlit-tide",
-  "name": "Moonlit Tide",
+  "name": "Slow Vertical",
   "animation": "wave",
   "category": "Ambient",
-  "description": "A slow low-contrast silver-blue vertical tide.",
+  "description": "A slow low-contrast vertical tide with Scene-palette color.",
   "tags": [
     "calm",
     "blue"

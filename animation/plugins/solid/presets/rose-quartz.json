@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "rose-quartz",
-  "name": "Rose Quartz",
+  "name": "Soft Wash",
   "animation": "solid",
   "category": "Color",
-  "description": "A gentle rosy wash with enough blue to stay soft.",
+  "description": "A gentle steady wash whose color follows the Scene palette.",
   "tags": [
     "pink",
     "soft"

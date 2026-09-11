@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "pastel-drift",
-  "name": "Pastel Drift",
+  "name": "Wide Drift",
   "animation": "rainbow",
   "category": "Ambient",
-  "description": "A slow desaturated rainbow with broad color bands.",
+  "description": "A slow wide-band drift whose color follows the Scene palette.",
   "tags": [
     "pastel",
     "slow"

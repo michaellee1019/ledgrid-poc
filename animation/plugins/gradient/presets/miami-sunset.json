@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "miami-sunset",
-  "name": "Miami Sunset",
+  "name": "Diagonal Drift",
   "animation": "gradient",
   "category": "Ambient",
-  "description": "A gently cycling coral-to-ocean diagonal gradient.",
+  "description": "A gently cycling diagonal field whose color follows the Scene palette.",
   "tags": [
     "sunset",
     "animated"

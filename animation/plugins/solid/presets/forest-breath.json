@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "forest-breath",
-  "name": "Forest Breath",
+  "name": "Slow Breath",
   "animation": "solid",
   "category": "Nature",
-  "description": "Deep green slowly breathes between shadow and canopy light.",
+  "description": "A slow breathing wash whose color follows the Scene palette.",
   "tags": [
     "green",
     "slow"

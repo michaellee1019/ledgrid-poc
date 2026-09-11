@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "twilight-sparkle",
-  "name": "Twilight Sparkle",
+  "name": "Layered Sparkle",
   "animation": "sparkle",
   "category": "Personal",
-  "description": "A human-authored field of lingering cool-white sparks over a deep twilight glow.",
+  "description": "A human-authored field of lingering sparks with color from the Scene palette.",
   "tags": [
     "sparkle",
     "personal",

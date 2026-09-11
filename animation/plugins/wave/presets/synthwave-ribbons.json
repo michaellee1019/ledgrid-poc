@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "synthwave-ribbons",
-  "name": "Synthwave Ribbons",
+  "name": "Traveling Ribbons",
   "animation": "wave",
   "category": "Neon",
-  "description": "Magenta diagonal ribbons travel over a deep violet base.",
+  "description": "Diagonal ribbons travel over a dim field with Scene-palette color.",
   "tags": [
     "magenta",
     "diagonal"

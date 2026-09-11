@@ -19,6 +19,11 @@ from web.app import AnimationWebInterface
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON_BUNDLE = ROOT / "web/static/generated/composer/ledgrid_python_runtime.zip"
+SCENE_V2_METADATA_IDS = (
+    "gradient", "rainbow", "solid", "sparkle", "wave",
+    "ascii_drop", "christmas_tree", "emoji", "night_train_windows",
+)
+AMBIENT_PRESET_IDS = {"gradient", "rainbow", "solid", "sparkle", "wave"}
 
 
 class _Controller:
@@ -160,6 +165,29 @@ class BrowserComposerCatalogAcceptanceTests(unittest.TestCase):
                     {"selectable": True, "slots": ["animation"], "diagnostic": None},
                 )
                 self.assertEqual(self.python_roles[plugin_id], "animation")
+
+    def test_qualified_scene_v2_animations_publish_descriptor_metadata(self) -> None:
+        payload = self._bootstrap(AnimationPipelineFeatureFlags())
+        by_key = {component["key"]: component for component in payload["components"]}
+        for plugin_id in SCENE_V2_METADATA_IDS:
+            with self.subTest(component=plugin_id):
+                component = by_key[f"python:{plugin_id}"]
+                self.assertEqual(component["role"], "animation")
+                self.assertEqual(
+                    component["scene_compatibility"],
+                    {"selectable": True, "slots": ["animation"], "diagnostic": None},
+                )
+                self.assertEqual(component["presentation"], {
+                    "timing_adapter": "scaled_context",
+                    "vibe_color_policy": "semantic",
+                    "vibe_capabilities": ["palette_roles", "tempo"],
+                })
+
+                if plugin_id in AMBIENT_PRESET_IDS:
+                    self.assertTrue(component["presets"])
+                    for preset in component["presets"]:
+                        promise = f"{preset['name']} {preset['description']}".lower()
+                        self.assertIn("scene palette", promise.replace("-", " "))
 
     def test_every_python_browser_payload_uses_managed_profile_geometry_only(self) -> None:
         payload = self._bootstrap(AnimationPipelineFeatureFlags())

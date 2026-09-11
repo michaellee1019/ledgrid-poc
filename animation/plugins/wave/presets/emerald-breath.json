@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "emerald-breath",
-  "name": "Emerald Breath",
+  "name": "Broad Reverse",
   "animation": "wave",
   "category": "Ambient",
-  "description": "Broad horizontal green breathing bands.",
+  "description": "Broad horizontal bands drift in reverse with Scene-palette color.",
   "tags": [
     "green",
     "slow"

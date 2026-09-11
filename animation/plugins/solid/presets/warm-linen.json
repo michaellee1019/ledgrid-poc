@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "warm-linen",
-  "name": "Warm Linen",
+  "name": "Resting Glow",
   "animation": "solid",
   "category": "Ambient",
-  "description": "A soft warm-white wash for relaxed everyday light.",
+  "description": "A soft steady glow whose color follows the Scene palette.",
   "tags": [
     "warm",
     "calm"

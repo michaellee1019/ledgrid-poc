@@ -3,6 +3,11 @@
   "preset_id": "chill_raining_fish_tank",
   "name": "chill raining fish tank",
   "animation": "wave",
+  "category": "Ambient",
+  "tags": [
+    "relaxed",
+    "vertical"
+  ],
   "params": {
     "axis": "vertical",
     "frequency": 4.9,
@@ -13,5 +18,5 @@
   },
   "created_at": 1784607069.8440952,
   "updated_at": 1784607069.8440952,
-  "description": "A relaxed vertical wave with a gently drifting aquarium rhythm."
+  "description": "A relaxed vertical wave with a gently drifting rhythm and Scene-palette color."
 }

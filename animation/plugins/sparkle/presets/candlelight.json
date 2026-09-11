@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "candlelight",
-  "name": "Candlelight",
+  "name": "Sparse Trails",
   "animation": "sparkle",
   "category": "Ambient",
-  "description": "Sparse warm sparks shimmer over a dim amber base.",
+  "description": "Sparse long-lived sparks over a dim field, colored by the Scene palette.",
   "tags": [
     "warm",
     "calm"

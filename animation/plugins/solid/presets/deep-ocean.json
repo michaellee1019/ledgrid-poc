@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "deep-ocean",
-  "name": "Deep Ocean",
+  "name": "Low Glow",
   "animation": "solid",
   "category": "Ambient",
-  "description": "A saturated low-light blue that recedes into the room.",
+  "description": "A low steady glow whose color follows the Scene palette.",
   "tags": [
     "ocean",
     "blue"

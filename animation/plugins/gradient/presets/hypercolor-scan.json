@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "hypercolor-scan",
-  "name": "Hypercolor Scan",
+  "name": "Fast Scan",
   "animation": "gradient",
   "category": "High Energy",
-  "description": "Rapid cyan-to-magenta diagonal color cycling.",
+  "description": "A rapid diagonal scan whose color follows the Scene palette.",
   "tags": [
     "fast",
     "neon"

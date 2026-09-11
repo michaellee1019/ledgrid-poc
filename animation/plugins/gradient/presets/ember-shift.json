@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "ember-shift",
-  "name": "Ember Shift",
+  "name": "Slow Shift",
   "animation": "gradient",
   "category": "Warm",
-  "description": "A slow reverse cycle between gold and deep red.",
+  "description": "A slow vertical cycle with color resolved by the Scene palette.",
   "tags": [
     "fire",
     "animated"

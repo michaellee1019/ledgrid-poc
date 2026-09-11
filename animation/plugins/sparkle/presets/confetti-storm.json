@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "confetti-storm",
-  "name": "Confetti Storm",
+  "name": "Burst Field",
   "animation": "sparkle",
   "category": "High Energy",
-  "description": "Maximum-density hot-pink flashes vanish rapidly over purple.",
+  "description": "Maximum-density flashes vanish rapidly over a Scene-palette field.",
   "tags": [
     "maximum",
     "party"

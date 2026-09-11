@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "diamond-dust",
-  "name": "Diamond Dust",
+  "name": "Crisp Trails",
   "animation": "sparkle",
   "category": "Installation",
-  "description": "Bright icy glitter with crisp medium-length trails.",
+  "description": "Bright crisp sparks with medium trails, colored by the Scene palette.",
   "tags": [
     "ice",
     "bright"

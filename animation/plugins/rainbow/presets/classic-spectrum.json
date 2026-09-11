@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "classic-spectrum",
-  "name": "Classic Spectrum",
+  "name": "Balanced Bands",
   "animation": "rainbow",
   "category": "Color",
-  "description": "One saturated rainbow per strip at balanced speed.",
+  "description": "One band per strip at balanced speed, colored by the Scene palette.",
   "tags": [
     "classic",
     "color"

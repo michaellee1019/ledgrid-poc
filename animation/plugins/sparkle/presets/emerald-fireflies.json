@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "emerald-fireflies",
-  "name": "Emerald Fireflies",
+  "name": "Gentle Flicker",
   "animation": "sparkle",
   "category": "Nature",
-  "description": "Yellow-green points flicker above a forest-dark base.",
+  "description": "Gentle points flicker above a dim field, colored by the Scene palette.",
   "tags": [
     "green",
     "fireflies"

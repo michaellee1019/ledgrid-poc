@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "starlight",
-  "name": "Starlight",
+  "name": "Long Trails",
   "animation": "sparkle",
   "category": "Ambient",
-  "description": "Cool white stars linger over midnight blue.",
+  "description": "Sparse points linger over a dark field, colored by the Scene palette.",
   "tags": [
     "stars",
     "blue"

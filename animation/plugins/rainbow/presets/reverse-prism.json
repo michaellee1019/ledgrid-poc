@@ -1,10 +1,10 @@
 {
   "version": 2,
   "preset_id": "reverse-prism",
-  "name": "Reverse Prism",
+  "name": "Reverse Bands",
   "animation": "rainbow",
   "category": "Color",
-  "description": "Dense saturated spectra travel in reverse.",
+  "description": "Dense bands travel in reverse with color resolved by the Scene palette.",
   "tags": [
     "reverse",
     "dense"
