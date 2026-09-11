@@ -63,7 +63,7 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),

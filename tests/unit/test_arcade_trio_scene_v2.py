@@ -24,7 +24,14 @@ class ArcadeTrioSceneV2Tests(unittest.TestCase):
                      descriptor.alpha_behavior.value, descriptor.palette_policy.value),
                     ("python", "animation", "scaled_context", "opaque", "semantic"),
                 )
-                self.assertEqual(tuple(capability.value for capability in descriptor.plant_capabilities), ("effect_intent",))
+                expected_capabilities = (
+                    ("effect_intent", "simulation_inputs")
+                    if animation is PinballAnimation else ("effect_intent",)
+                )
+                self.assertEqual(
+                    tuple(capability.value for capability in descriptor.plant_capabilities),
+                    expected_capabilities,
+                )
                 self.assertIs(catalog.require(provider="python", component_id=animation.COMPONENT_ID, version=1), descriptor)
 
     def test_authored_cards_are_exactly_fourteen_local_choices(self) -> None:
