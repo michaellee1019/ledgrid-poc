@@ -245,6 +245,10 @@ std::vector<std::uint8_t> canonical_dispatch_command(std::uint8_t command) {
   std::vector<std::uint8_t> result(size, 0);
   result[0] = command;
   if (command == static_cast<std::uint8_t>(
+                     ledgrid::ReceiverCommand::PresentationContextSet)) {
+    result[1] = ledgrid::kPresentationContextVersion;
+  }
+  if (command == static_cast<std::uint8_t>(
                      ledgrid::ReceiverCommand::OverlayPatchBatch)) {
     result[1] = ledgrid::kAnimationPipelineProtocolVersion;
     result[27] = 1;  // one span
@@ -1132,6 +1136,39 @@ void test_only_profile_activation_and_restore_may_invalidate_presentation() {
   }
 }
 
+void test_presentation_dispatch_version_and_modifier_size_bounds() {
+  for (const std::uint8_t version : {0, 1, 2, 3, 255}) {
+    for (std::size_t count = 0; count <= 15; ++count) {
+      const std::size_t exact_size =
+          ledgrid::kPresentationContextSetBaseBytes +
+          count * ledgrid::kPresentationContextSetEntryBytes +
+          (version == 2 ? ledgrid::kCanonicalFinalPresentationBytes : 0);
+      for (const int delta : {-1, 0, 1}) {
+        std::vector<std::uint8_t> packet(exact_size + delta, 0);
+        packet[0] = static_cast<std::uint8_t>(
+            ledgrid::ReceiverCommand::PresentationContextSet);
+        packet[1] = version;
+        if (packet.size() > 144) packet[144] = count;
+        const auto decision = ledgrid::classify_receiver_dispatch(
+            packet.data(), packet.size(), 12,
+            ledgrid::BaseMode::HostFullScene, true);
+        const bool valid = (version == 1 || version == 2) &&
+            count <= ledgrid::kPresentationModifierCount && delta == 0;
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<std::uint8_t>(valid
+                ? ledgrid::ReceiverDispatchRoute::Runtime
+                : ledgrid::ReceiverDispatchRoute::Reject),
+            static_cast<std::uint8_t>(decision.route));
+        if (!valid) {
+          TEST_ASSERT_EQUAL_UINT8(
+              static_cast<std::uint8_t>(ledgrid::ReceiverOperationResult::InvalidSize),
+              static_cast<std::uint8_t>(decision.result));
+        }
+      }
+    }
+  }
+}
+
 void test_live_dispatch_policy_is_exhaustive_and_feature_gated() {
   const std::array<ledgrid::BaseMode, 3> modes = {
       ledgrid::BaseMode::StartupFallback,
@@ -1995,6 +2032,7 @@ int main(int, char**) {
   RUN_TEST(test_live_modifier_replacement_invalidates_only_at_commit);
   RUN_TEST(test_profile_change_invalidation_preserves_live_runtime_state_and_cadence);
   RUN_TEST(test_only_profile_activation_and_restore_may_invalidate_presentation);
+  RUN_TEST(test_presentation_dispatch_version_and_modifier_size_bounds);
   RUN_TEST(test_live_dispatch_policy_is_exhaustive_and_feature_gated);
   RUN_TEST(test_crc_gate_rejects_corruption_before_runtime_mutation);
   RUN_TEST(test_receiver_control_and_display_tasks_use_separate_cores);

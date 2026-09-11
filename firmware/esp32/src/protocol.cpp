@@ -712,12 +712,19 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     case ReceiverCommand::LocalBackgroundParameters: expected = 11; break;
     case ReceiverCommand::PresentationContextBegin: expected = 58; break;
     case ReceiverCommand::PresentationContextCommit: expected = 74; break;
-    case ReceiverCommand::PresentationContextSet:
-      if (size < 145 || size > 187) {
+    case ReceiverCommand::PresentationContextSet: {
+      if (size < 145 || (command[1] != 1 && command[1] != 2)) {
         return reject(ReceiverOperationResult::InvalidSize);
       }
-      expected = 145U + static_cast<std::size_t>(command[144]) * 3U;
+      // Scene v2 appends its digest and five binary64 presentation factors.
+      // Keep the legacy modifier bound; the extension is not spare payload.
+      const std::size_t extension = command[1] == 2 ? 72U : 0U;
+      if (size > 187U + extension) {
+        return reject(ReceiverOperationResult::InvalidSize);
+      }
+      expected = 145U + static_cast<std::size_t>(command[144]) * 3U + extension;
       break;
+    }
     case ReceiverCommand::ControllerSessionBegin:
       expected = kControllerSessionBeginHeaderBytes;
       break;

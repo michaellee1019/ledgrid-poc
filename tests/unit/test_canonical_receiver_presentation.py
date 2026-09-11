@@ -18,7 +18,7 @@ import unittest
 
 import numpy as np
 
-from animation.core.plant_awareness import PlantModifierState
+from animation.core.plant_awareness import PLANT_MODIFIER_IDS, PlantModifierState
 from animation.core.presentation_contracts import resolve_vibe
 from animation.core.receiver_presentation import (
     CanonicalFinalPresentation, ReceiverPresentationContext, serialize_presentation_context,
@@ -42,7 +42,13 @@ extern "C" {
 void* make_runtime() { return new ledgrid::ReceiverRuntime(true); }
 void free_runtime(void* p) { delete static_cast<ledgrid::ReceiverRuntime*>(p); }
 int command(void* p, const unsigned char* b, unsigned long n) {
-  return static_cast<int>(static_cast<ledgrid::ReceiverRuntime*>(p)->process_command(b,n,0));
+  auto* runtime = static_cast<ledgrid::ReceiverRuntime*>(p);
+  const auto dispatch = ledgrid::classify_receiver_dispatch(
+      b, n, 12, runtime->base_mode(), true);
+  if (dispatch.route != ledgrid::ReceiverDispatchRoute::Runtime) {
+    return static_cast<int>(dispatch.result);
+  }
+  return static_cast<int>(runtime->process_command(b,n,0));
 }
 int optics(void* p, unsigned char* rgb, unsigned long n,
            const unsigned char* category, const unsigned char* edge) {
@@ -117,6 +123,51 @@ int version(void* p) { return static_cast<ledgrid::ReceiverRuntime*>(p)->active_
             self.activate(replace(self.context, canonical_final=None))
         self.assertNotEqual(self.send(commit), 1)
 
+    def test_dispatch_accepts_exact_modifier_lengths_for_both_wire_versions(self):
+        for version in (1, 2):
+            # The first six IDs have no mutually exclusive field modifiers.
+            for count in range(7):
+                with self.subTest(version=version, count=count):
+                    self.lib.free_runtime(self.runtime)
+                    self.runtime = self.lib.make_runtime()
+                    context = replace(
+                        self.context,
+                        plant_modifiers=PlantModifierState.from_payload({
+                            'active': list(PLANT_MODIFIER_IDS[:count]),
+                        }),
+                        canonical_final=self.context.canonical_final if version == 2 else None,
+                    )
+                    setting = serialize_presentation_context(context)[1]
+                    self.assertEqual(len(setting), 145 + 3 * count + (72 if version == 2 else 0))
+                    if version == 2 and count:
+                        # Canonical final factors replace legacy modifiers;
+                        # runtime semantics must still reject mixing them.
+                        begin, setting, _ = serialize_presentation_context(context)
+                        self.assertEqual(self.send(begin), 1)
+                        self.assertEqual(self.send(setting), 6)  # InvalidContext
+                        self.assertEqual(self.lib.version(self.runtime), 1)
+                    else:
+                        self.activate(context)
+                        self.assertEqual(self.lib.version(self.runtime), version)
+
+    def test_dispatch_rejects_unknown_versions_and_inexact_sizes_without_mutation(self):
+        self.activate(replace(self.context, canonical_final=None))
+        for version in (1, 2):
+            context = replace(
+                self.context,
+                canonical_final=self.context.canonical_final if version == 2 else None,
+            )
+            setting = serialize_presentation_context(context)[1]
+            malformed = [setting[:-1], setting + b'\x00', setting[:144]]
+            malformed.extend(setting[:1] + bytes([unknown]) + setting[2:]
+                             for unknown in (0, 3, 255))
+            # Even an exact length for a declared 15th modifier exceeds the bound.
+            malformed.append(setting[:144] + b'\x0f' + b'\x00' * 45 + setting[145:])
+            for payload in malformed:
+                with self.subTest(version=version, size=len(payload), wire_version=payload[1]):
+                    self.assertEqual(self.send(payload), 3)  # InvalidSize
+                    self.assertEqual(self.lib.version(self.runtime), 1)
+
     def test_final_pass_matches_production_preview_rounding_and_overlap(self):
         # Exact half-integers, saturated lift, foliage/globe boundaries and RGB
         # cross-channel mixing exercise the order that algebraic shortcuts lose.
@@ -134,5 +185,6 @@ int version(void* p) { return static_cast<ledgrid::ReceiverRuntime*>(p)->active_
             expected = InstalledFinalSceneRuntime._plant_optics(owner, pixels, plants)
             work = np.empty(expected.shape, dtype=np.float32)
             np.multiply(expected, float(brightness), out=work)
-            np.rint(work, out=work); np.clip(work,0,255,out=work)
+            np.rint(work, out=work)
+            np.clip(work,0,255,out=work)
             np.testing.assert_array_equal(output, work.astype(np.uint8))
