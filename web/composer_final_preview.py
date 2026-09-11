@@ -26,7 +26,7 @@ from animation.core.plant_awareness import (
     PlantMaskCache,
 )
 from animation.core.scene_runtime import (
-    CanonicalSceneRuntime, RuntimeFrame, ScenePresentationContext,
+    CanonicalSceneRuntime, CanonicalSceneRuntimeError, RuntimeFrame, ScenePresentationContext,
 )
 from animation.native.managed_preview import ManagedNativeHostPreview
 from animation.native.aurora import canonical_palette_roles
@@ -230,11 +230,12 @@ class InstalledFinalSceneRuntime:
             raise ValueError("installed Scene v2 presentation requires a 33x138 controller")
         self.foreground_only = bool(foreground_only)
         self._wall_time = datetime.now().astimezone()
-        self._native = None if self.foreground_only else _NativeAuroraPreview(project_root)
+        self._project_root = project_root
+        self._native: _NativeAuroraPreview | None = None
         background_renderer = (
             self._render_foreground_only_background
             if self.foreground_only
-            else self._native.render
+            else self._render_native_background
         )
         self._geometry = PlantMaskCache(_PlantGeometryOwner(33, 138, project_root))
         self._installation_profile_view: InstallationProfileRuntimeView | None = None
@@ -253,6 +254,18 @@ class InstalledFinalSceneRuntime:
         )
         self._active_digest: str | None = None
         self._lock = RLock()
+
+    def _render_native_background(self, context: Any, frame_count: int) -> BaseFrame:
+        # Browser Preview uses WASM. A controller needs no workstation host
+        # build merely to serve Composer or extract the receiver foreground.
+        from animation.native.errors import NativePreviewError
+
+        try:
+            if self._native is None:
+                self._native = _NativeAuroraPreview(self._project_root)
+            return self._native.render(context, frame_count)
+        except NativePreviewError as exc:
+            raise CanonicalSceneRuntimeError(f"Native host Preview unavailable: {exc}") from exc
 
     def _render_foreground_only_background(
         self, _context: Any, _frame_count: int

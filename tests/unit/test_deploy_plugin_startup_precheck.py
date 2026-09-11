@@ -74,7 +74,7 @@ class DeploymentPluginStartupPrecheckTests(unittest.TestCase):
             if candidate.name in (plugin_id, *omit) or candidate.stem in (plugin_id, *omit):
                 continue
             destination = root / candidate.name
-            if candidate.name == "aurora_curtains_native":
+            if candidate.name in {"aurora_curtains_native", "native_aurora"}:
                 # Its manifest deliberately rejects a symlinked package root.
                 shutil.copytree(candidate, destination)
             else:

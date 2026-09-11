@@ -61,8 +61,8 @@ class ComposerPresetCatalogBoundaryTests(unittest.TestCase):
         catalog = ComponentPresetCatalog(ROOT, {
             "ascii_drop": AsciiDropAnimation._normalized_parameters,
         })
-        self.assertEqual(len(catalog._membership), 40)
-        self.assertEqual(sum(len(entry["preset_ids"]) for entry in catalog._membership.values()), 217)
+        self.assertEqual(len(catalog._membership), 41)
+        self.assertEqual(sum(len(entry["preset_ids"]) for entry in catalog._membership.values()), 220)
         self.assertEqual(catalog._membership["clock_overlay"]["preset_ids"], [
             "local-12-hour", "precision-seconds", "remote-team-plus-six",
         ])

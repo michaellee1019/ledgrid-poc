@@ -91,6 +91,17 @@ class ComposerMaintenanceApiTests(unittest.TestCase):
             json=_body() if body is None else body,
         )
 
+    def test_missing_host_preview_does_not_prevent_control_api_startup(self) -> None:
+        from tests.unit.test_composer_runtime_preview import _request, _scene
+
+        self.assertIsNone(self.interface.composer_preview._native)
+        preview = self.client.post("/api/composer/preview", json=_request(_scene()))
+        self.assertEqual(preview.status_code, 400)
+        self.assertIn("Native host Preview unavailable", preview.get_json()["error"])
+        self.assertIn("build is unavailable", preview.get_json()["error"])
+        self.assertIsNone(self.interface.composer_preview._native)
+        self.assertEqual(self.post().status_code, 202)
+
     def test_named_request_uses_real_channel_and_exposes_queued_lifecycle(self) -> None:
         response = self.post()
         self.assertEqual(response.status_code, 202)
