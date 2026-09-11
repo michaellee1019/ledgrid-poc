@@ -110,7 +110,7 @@ class PixelChaseAnimation(AnimationBase):
         else:
             offsets = np.arange(self.params["tail_length"] + 1, dtype=np.int32)
             alpha = np.full(offsets.size, 255, dtype=np.uint8) if self.params["tail_style"] == "solid" else np.rint(255 * (1. - offsets / (self.params["tail_length"] + 1))).astype(np.uint8)
-        indices = self._path[(heads[:, None] + offsets[None, :]) % path_size]
+        indices = self._path[(heads[:, None] - offsets[None, :]) % path_size]
         colors = np.stack([self._semantic_color(palette_id, cycle_tick, number) for number in range(heads.size)]).astype(np.uint16)
         alpha16 = alpha.astype(np.uint16)
         if np.unique(indices).size == indices.size:

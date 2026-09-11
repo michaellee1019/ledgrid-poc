@@ -43,6 +43,19 @@ class PixelChaseSceneV2Tests(unittest.TestCase):
         self.assertGreater(np.count_nonzero(frame.pixels[:, 3]), 0); self.assertGreater(np.count_nonzero(frame.pixels[:, 3] == 0), 0)
         self.assertEqual(int(chase._last_head_pixels[0]), 136)
 
+    def test_tail_follows_previous_head_positions_including_path_wrap(self):
+        for tail_style, expected_alpha in (("fade", (255, 170, 85)), ("solid", (255, 255, 255))):
+            parameters = {"pixels_per_second": 10., "pixel_count": 1, "tail_style": tail_style, "tail_length": 2, "color_cycle_speed": 0.}
+            chase = PixelChaseAnimation(self.controller)
+            for step in (2, self.controller.total_leds):
+                with self.subTest(tail_style=tail_style, step=step):
+                    previous_heads = []
+                    for past_step in (step - 2, step - 1, step):
+                        frame = chase.render_resolved_scene(resolve_scene(scene(parameters=parameters), self.catalog, monotonic_elapsed=past_step / 10.))
+                        previous_heads.append(chase.semantic_snapshot()["heads"][0])
+                    np.testing.assert_array_equal(frame.pixels[list(reversed(previous_heads)), 3], expected_alpha)
+                    self.assertEqual(np.count_nonzero(frame.pixels[:, 3]), 3)
+
     def test_palette_repaints_without_changing_head_state_and_cache_is_exact(self):
         parameters = {"pixels_per_second": 20., "pixel_count": 4, "tail_style": "solid", "tail_length": 2, "color_cycle_speed": 0.}
         chase = PixelChaseAnimation(self.controller)
