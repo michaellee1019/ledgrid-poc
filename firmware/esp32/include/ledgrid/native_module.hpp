@@ -412,6 +412,9 @@ class NativeModuleManager {
   // release a half-initialized module before a different payload is tried.
   bool backend_module_may_be_loaded_ = false;
   bool backend_state_may_exist_ = false;
+  // Host output must retry failed durable cleanup without rewriting a clean
+  // ledger on every subsequent complete host frame.
+  bool ledger_persistence_dirty_ = false;
   bool presentation_scene_active_ = false;
   std::uint64_t presentation_scene_epoch_ = 0;
   bool last_probe_found_ = false;

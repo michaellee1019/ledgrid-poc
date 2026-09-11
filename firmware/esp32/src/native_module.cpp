@@ -187,6 +187,7 @@ bool NativeModuleManager::begin() {
     return false;
   }
   ledger_ = loaded;
+  ledger_persistence_dirty_ = false;
   initialized_ = true;
   if (attributed_phase != NativeModulePhase::None &&
       !all_zero(attributed_payload, 32)) {
@@ -202,7 +203,7 @@ bool NativeModuleManager::begin() {
     quarantines_ = increment_u16(quarantines_);
     transfer_state_ = NativeModuleTransferState::Quarantined;
     result_ = NativeModuleResult::Quarantined;
-    persistence_->save(ledger_, quarantine_payload_);
+    save_state();
     persistence_->clear_phase();
   } else {
     transfer_state_ = ledger_.staged.present
@@ -317,12 +318,15 @@ bool NativeModuleManager::save_ledger(
     return false;
   }
   ledger_ = candidate;
+  ledger_persistence_dirty_ = false;
   return true;
 }
 
 bool NativeModuleManager::save_state() {
-  return persistence_ != nullptr &&
-         persistence_->save(ledger_, quarantine_payload_);
+  const bool saved = persistence_ != nullptr &&
+                     persistence_->save(ledger_, quarantine_payload_);
+  ledger_persistence_dirty_ = !saved;
+  return saved;
 }
 
 std::uint64_t NativeModuleManager::calculate_preflight_token() const {
@@ -1064,6 +1068,13 @@ bool NativeModuleManager::render(
 }
 
 void NativeModuleManager::host_takeover() {
+  // SET_ALL arrives for every host frame. Once native ownership and cleanup
+  // are settled, preserve the ledger and any independent upload in progress.
+  if (!executing_ && !backend_module_may_be_loaded_ &&
+      !backend_state_may_exist_ && !ledger_.active.present &&
+      !ledger_persistence_dirty_) {
+    return;
+  }
   if (executing_ || backend_module_may_be_loaded_ ||
       backend_state_may_exist_) {
     // Complete host frames must win even when cleanup is unhealthy. Persist
@@ -1092,7 +1103,7 @@ void NativeModuleManager::host_takeover() {
   if (candidate.active.present) candidate.rollback = candidate.active;
   clear_binding(&candidate.active);
   if (candidate.generation != UINT64_MAX) ++candidate.generation;
-  save_ledger(candidate);
+  ledger_persistence_dirty_ = !save_ledger(candidate);
   executing_ = false;
   rendered_once_ = false;
   last_native_deadline_scene_time_us_ = 0;

@@ -239,6 +239,7 @@ class FakePersistence final : public ledgrid::NativeModulePersistence {
   }
   bool save(const ledgrid::NativeModuleLedger& value,
             const std::uint8_t quarantined[32]) override {
+    ++save_calls;
     if (!save_ok) return false;
     ledger = value;
     std::memcpy(quarantine.data(), quarantined, 32);
@@ -267,6 +268,7 @@ class FakePersistence final : public ledgrid::NativeModulePersistence {
   bool save_ok = true;
   bool mark_ok = true;
   bool clear_ok = true;
+  std::uint32_t save_calls = 0;
 };
 
 class FakeBackend final : public ledgrid::NativeModuleBackend {
@@ -719,6 +721,146 @@ void test_host_takeover_stops_module_and_protects_rollback_payload() {
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<std::uint8_t>(ledgrid::NativeModuleResult::Pinned),
       static_cast<std::uint8_t>(rig.manager.process(remove.data(), remove.size())));
+}
+
+void test_repeated_idle_host_frames_preserve_native_upload_state() {
+  Rig rig;
+  const auto generation = rig.manager.ledger().generation;
+  const auto saves = rig.persistence.save_calls;
+  for (int frame = 0; frame < 100; ++frame) rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT64(generation, rig.manager.ledger().generation);
+  TEST_ASSERT_EQUAL_UINT32(saves, rig.persistence.save_calls);
+  TEST_ASSERT_TRUE(rig.backend.calls.empty());
+
+  const std::vector<std::uint8_t> payload(64, 8);
+  const auto descriptor = descriptor_for(payload);
+  auto preflight = preflight_command(descriptor);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      rig.manager.process(preflight.data(), preflight.size())));
+  const auto token = rig.manager.status().preflight_token;
+  for (int frame = 0; frame < 100; ++frame) rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT64(token, rig.manager.status().preflight_token);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      rig.manager.status().transfer_state));
+  std::vector<std::uint8_t> begin(ledgrid::kNativeModuleBeginBytes);
+  begin[0] = 0x52;
+  write_u64(begin.data() + 1, token);
+  encode_descriptor(descriptor, begin.data() + 9);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      rig.manager.process(begin.data(), begin.size())));
+  for (int frame = 0; frame < 100; ++frame) rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT8(2, static_cast<std::uint8_t>(
+      rig.manager.status().transfer_state));
+  TEST_ASSERT_EQUAL_UINT64(generation, rig.manager.ledger().generation);
+  TEST_ASSERT_EQUAL_UINT32(saves, rig.persistence.save_calls);
+}
+
+void test_host_takeover_persists_once_and_preserves_staged_binding() {
+  Rig rig;
+  const std::vector<std::uint8_t> payload(64, 8);
+  const auto descriptor = descriptor_for(payload);
+  stage(rig, descriptor, payload);
+  auto activate = activate_command(descriptor, rig.manager.ledger().generation);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      rig.manager.process(activate.data(), activate.size())));
+  const std::vector<std::uint8_t> replacement(64, 9);
+  const auto next = descriptor_for(replacement);
+  stage(rig, next, replacement);
+  const auto saves = rig.persistence.save_calls;
+  const auto generation = rig.manager.ledger().generation;
+  const auto backend_calls = rig.backend.calls.size();
+  rig.manager.host_takeover();
+  TEST_ASSERT_FALSE(rig.manager.active());
+  TEST_ASSERT_FALSE(rig.manager.ledger().active.present);
+  TEST_ASSERT_TRUE(ledgrid::native_module_descriptor_equal(
+      descriptor, rig.manager.ledger().rollback.descriptor));
+  TEST_ASSERT_TRUE(ledgrid::native_module_descriptor_equal(
+      next, rig.manager.ledger().staged.descriptor));
+  TEST_ASSERT_EQUAL_UINT32(backend_calls + 2, rig.backend.calls.size());
+  for (int frame = 0; frame < 100; ++frame) rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT32(saves + 1, rig.persistence.save_calls);
+  TEST_ASSERT_EQUAL_UINT64(generation + 1, rig.manager.ledger().generation);
+  TEST_ASSERT_EQUAL_UINT32(backend_calls + 2, rig.backend.calls.size());
+  TEST_ASSERT_EQUAL_UINT8(4, static_cast<std::uint8_t>(
+      rig.manager.status().transfer_state));
+}
+
+void test_host_takeover_retries_failed_quarantine_persistence() {
+  Rig rig;
+  const std::vector<std::uint8_t> payload(64, 8);
+  const auto descriptor = descriptor_for(payload);
+  stage(rig, descriptor, payload);
+  auto activate = activate_command(descriptor, rig.manager.ledger().generation);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      rig.manager.process(activate.data(), activate.size())));
+  const auto saves = rig.persistence.save_calls;
+  const auto generation = rig.manager.ledger().generation;
+  rig.backend.failure = ledgrid::NativeModulePhase::Cleanup;
+  rig.persistence.save_ok = false;
+  rig.manager.host_takeover();
+  TEST_ASSERT_FALSE(rig.manager.active());
+  TEST_ASSERT_EQUAL_UINT64(generation, rig.manager.ledger().generation);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ledgrid::NativeModulePhase::Cleanup),
+                        static_cast<std::uint8_t>(rig.manager.status().watchdog_phase));
+  const auto backend_calls = rig.backend.calls.size();
+  rig.persistence.save_ok = true;
+  rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT32(saves + 2, rig.persistence.save_calls);
+  TEST_ASSERT_EQUAL_UINT64(generation + 1, rig.persistence.ledger.generation);
+  TEST_ASSERT_EQUAL_MEMORY(descriptor.payload_digest, rig.persistence.quarantine.data(), 32);
+  TEST_ASSERT_FALSE(rig.manager.ledger().active.present);
+  TEST_ASSERT_TRUE(rig.manager.ledger().rollback.present);
+  for (int frame = 0; frame < 100; ++frame) rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT32(saves + 2, rig.persistence.save_calls);
+  TEST_ASSERT_EQUAL_UINT32(backend_calls, rig.backend.calls.size());
+}
+
+void test_host_takeover_retries_dirty_failed_phase_without_active_backend() {
+  Rig rig;
+  const std::vector<std::uint8_t> payload(64, 8);
+  const auto descriptor = descriptor_for(payload);
+  stage(rig, descriptor, payload);
+  auto activate = activate_command(descriptor, rig.manager.ledger().generation);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      rig.manager.process(activate.data(), activate.size())));
+  rig.backend.failure = ledgrid::NativeModulePhase::Render;
+  rig.persistence.save_ok = false;
+  std::array<std::uint8_t, 138 * 3> pixels{};
+  ledgrid::NativeModuleRenderResult result{};
+  TEST_ASSERT_FALSE(rig.manager.render(1000, 1000, 0, pixels.data(), pixels.size(), &result));
+  TEST_ASSERT_FALSE(rig.manager.active());
+  TEST_ASSERT_FALSE(rig.manager.ledger().active.present);
+  const auto backend_calls = rig.backend.calls.size();
+  const auto saves = rig.persistence.save_calls;
+  rig.persistence.save_ok = true;
+  rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT32(saves + 1, rig.persistence.save_calls);
+  TEST_ASSERT_FALSE(rig.persistence.ledger.active.present);
+  TEST_ASSERT_EQUAL_MEMORY(descriptor.payload_digest, rig.persistence.quarantine.data(), 32);
+  const auto generation = rig.manager.ledger().generation;
+  for (int frame = 0; frame < 100; ++frame) rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT32(saves + 1, rig.persistence.save_calls);
+  TEST_ASSERT_EQUAL_UINT64(generation, rig.manager.ledger().generation);
+  TEST_ASSERT_EQUAL_UINT32(backend_calls, rig.backend.calls.size());
+}
+
+void test_host_takeover_retries_dirty_boot_quarantine() {
+  Rig rig;
+  rig.persistence.attributed.fill(0xA1);
+  rig.persistence.phase = ledgrid::NativeModulePhase::Render;
+  rig.persistence.save_ok = false;
+  TEST_ASSERT_TRUE(rig.manager.begin());
+  TEST_ASSERT_FALSE(rig.manager.ledger().active.present);
+  const auto saves = rig.persistence.save_calls;
+  rig.persistence.save_ok = true;
+  rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT32(saves + 1, rig.persistence.save_calls);
+  std::array<std::uint8_t, 32> expected{};
+  expected.fill(0xA1);
+  TEST_ASSERT_EQUAL_MEMORY(expected.data(), rig.persistence.quarantine.data(), 32);
+  for (int frame = 0; frame < 100; ++frame) rig.manager.host_takeover();
+  TEST_ASSERT_EQUAL_UINT32(saves + 1, rig.persistence.save_calls);
+  TEST_ASSERT_TRUE(rig.backend.calls.empty());
 }
 
 void test_probe_miss_succeeds_and_shared_payload_aliases_stay_pinned() {
@@ -1242,6 +1384,11 @@ int main(int, char**) {
   RUN_TEST(test_failed_initialization_is_recovered_before_next_payload_activates);
   RUN_TEST(test_phase_marker_failure_never_enters_untrusted_backend);
   RUN_TEST(test_host_takeover_stops_module_and_protects_rollback_payload);
+  RUN_TEST(test_repeated_idle_host_frames_preserve_native_upload_state);
+  RUN_TEST(test_host_takeover_persists_once_and_preserves_staged_binding);
+  RUN_TEST(test_host_takeover_retries_failed_quarantine_persistence);
+  RUN_TEST(test_host_takeover_retries_dirty_failed_phase_without_active_backend);
+  RUN_TEST(test_host_takeover_retries_dirty_boot_quarantine);
   RUN_TEST(test_probe_miss_succeeds_and_shared_payload_aliases_stay_pinned);
   RUN_TEST(test_operation_result_latch_survives_render_result_race);
   RUN_TEST(test_status_v6_prefix_offsets_and_feature_gate_are_exact);
