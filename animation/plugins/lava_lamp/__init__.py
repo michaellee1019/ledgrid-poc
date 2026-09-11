@@ -270,6 +270,14 @@ class LavaLampAnimation(AnimationBase):
         if key == self._plant_key:
             return
 
+        # Presentation intent changes are visible immediately.  In particular,
+        # switching an active effect off (or to zero) in the same source tick
+        # must never hand back the previous modified cache as unchanged.  The
+        # derived geometry itself still stages below for the next physics tick.
+        self._plant_strengths = strengths
+        self._last_render_tick = None
+        self._cached_frame = None
+
         foliage = np.zeros_like(self._foliage)
         globes = np.zeros_like(self._globes)
         globe_edge = np.zeros_like(self._globe_edge)
@@ -315,9 +323,6 @@ class LavaLampAnimation(AnimationBase):
         )
         self._plant_activation_step = self._steps + 1
         self._plant_key = key
-        if effective:
-            self._last_render_tick = None
-            self._cached_frame = None
 
     def _activate_plant_geometry(self) -> None:
         if self._pending_plant_geometry is None or self._steps + 1 < self._plant_activation_step:

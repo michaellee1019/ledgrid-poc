@@ -192,6 +192,14 @@ class LavaLampSceneV2Tests(unittest.TestCase):
                 self.assertIn(effect, payload["tags"])
                 self.assertIn("Scene-owned", payload["description"])
                 self.assertFalse({"plant_aware", "plant_modifiers", "calibration", "geometry"} & set(payload["params"]))
+                selected = AnimationWebInterface(
+                    _WallChannel(), _PreviewManager(), local_mode=True,
+                ).composer_presets.apply(self._scene(), preset_id)
+                self.assertEqual(
+                    selected["plants"]["effects"]["active"], [effect],
+                )
+                self.assertGreater(selected["plants"]["effects"]["strengths"][effect], 0.0)
+                self.assertNotIn("installation_effects", selected["animation"]["parameters"])
                 lamp = LavaLampAnimation(self.controller, {"seed": 721})
                 lamp.set_presentation_context(self._resolved(effect))
                 lamp._step(lamp.PHYSICS_DT)
@@ -267,6 +275,28 @@ class LavaLampSceneV2Tests(unittest.TestCase):
             else: self.assertEqual(expected, actual)
         self.assertEqual(before[-1], after[-1])
 
+    def test_same_tick_effect_off_or_zero_rerenders_the_unmodified_cache(self) -> None:
+        clean = LavaLampAnimation(self.controller, {"seed": 728})
+        active = LavaLampAnimation(self.controller, {"seed": 728})
+        clean.set_presentation_context(self._resolved())
+        active.set_presentation_context(self._resolved("refract", .8))
+        clean_frame = clean.generate_frame(0.0, 0)
+        active_frame = active.generate_frame(0.0, 0)
+        self.assertNotEqual(clean_frame.pixels.tobytes(), active_frame.pixels.tobytes())
+        active.set_presentation_context(self._resolved())
+        off_frame = active.generate_frame(0.0, 1)
+        self.assertTrue(off_frame.changed)
+        np.testing.assert_array_equal(off_frame.pixels, clean_frame.pixels)
+
+        active.set_presentation_context(self._resolved("refract", .8))
+        active.generate_frame(.01, 2)
+        active.set_presentation_context(self._resolved("refract", 0.0))
+        zero_frame = active.generate_frame(.01, 3)
+        clean.set_presentation_context(self._resolved())
+        clean_at_tick = clean.generate_frame(.01, 3)
+        self.assertTrue(zero_frame.changed)
+        np.testing.assert_array_equal(zero_frame.pixels, clean_at_tick.pixels)
+
     def test_refraction_is_presentation_only_and_primary_stir_survives_contact(self) -> None:
         plain = LavaLampAnimation(self.controller, {"seed": 723})
         refracted = LavaLampAnimation(self.controller, {"seed": 723})
@@ -295,6 +325,8 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         interaction = script[start:end]
         for token in ("lava_lamp:", "flame_burst:", "fluid_tank:", "componentId", "!trigger", "event.button !== 0", "event.isPrimary === false", "status?.running", "status?.armed", "Math.min(32.999", "Math.min(137.999", "kind: 'primary'", "strength: 1", "body.accepted !== true", "fetch('/api/interaction'"):
             self.assertIn(token, interaction)
+        for token in ("preset.installation_effects", "next.plants = {...next.plants, effects: preset.installation_effects}"):
+            self.assertIn(token, script)
         self.assertNotIn("/api/preview/lava_lamp/interaction", interaction)
 
 

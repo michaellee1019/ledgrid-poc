@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from animation.core.plant_awareness import PlantModifierState
+
 
 _MEMBERSHIP_PATH = Path(__file__).with_name("composer_preset_membership.v1.json")
 _PRESET_SCHEMA_VERSION = 2
@@ -13,10 +15,36 @@ _LEGACY_GLOBAL_FIELDS = frozenset({
     "background", "brightness", "calibration", "geometry", "look", "output",
     "pace", "palette", "plant_aware", "plant_modifiers", "plants", "scene", "widgets",
 })
+_INSTALLATION_EFFECTS_FIELD = "installation_effects"
+_LAVA_INSTALLATION_EFFECTS = frozenset((
+    "refract", "bumper", "emitter", "habitat", "portal",
+))
 
 
 def _exact_int(value: Any, expected: int) -> bool:
     return type(value) is int and value == expected
+
+
+def _installation_effects(
+    component_id: str, raw: Mapping[str, Any], preset_id: str,
+) -> dict[str, Any] | None:
+    """Validate the narrow Scene-owned intent declaration for Lava cards."""
+    payload = raw.get(_INSTALLATION_EFFECTS_FIELD)
+    if payload is None:
+        return None
+    if component_id != "lava_lamp" or not isinstance(payload, Mapping):
+        raise ValueError(f"Preset {preset_id} has invalid installation effects")
+    try:
+        state = PlantModifierState.from_payload(payload)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Preset {preset_id} has invalid installation effects") from exc
+    if (
+        len(state.active) != 1
+        or state.active[0] not in _LAVA_INSTALLATION_EFFECTS
+        or state.strength(state.active[0]) <= 0.0
+    ):
+        raise ValueError(f"Preset {preset_id} has invalid installation effects")
+    return state.to_dict()
 
 
 class ComponentPresetCatalog:
@@ -88,12 +116,16 @@ class ComponentPresetCatalog:
             parameters = normalizer(raw["params"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Preset {preset_id} has non-local parameters") from exc
-        return {
+        choice = {
             "preset_id": preset_id,
             "name": raw["name"],
             "description": raw["description"],
             "parameters": parameters,
         }
+        effects = _installation_effects(component_id, raw, preset_id)
+        if effects is not None:
+            choice["installation_effects"] = effects
+        return choice
 
     def choices(self, component_id: str) -> list[dict[str, Any]]:
         if component_id not in self._normalizers or component_id not in self._membership:
@@ -152,8 +184,17 @@ class ComponentPresetCatalog:
         match = self._choice(component_id, preset_id)
         result = dict(scene)
         animation = dict(animation)
-        # Presets replace the component's creative parameters atomically.  They
-        # never reach background, widgets, plants, look, output, or calibration.
+        # Presets replace the component's creative parameters atomically.  The
+        # five reviewed Lava installation cards are the narrow exception: they
+        # select one bounded, Scene-owned effects intent, never geometry.
         animation["parameters"] = dict(match["parameters"])
         result["animation"] = animation
+        effects = match.get("installation_effects")
+        if effects is not None:
+            plants = result.get("plants")
+            if not isinstance(plants, Mapping):
+                raise ValueError("Lava installation presets require Scene v2 plants")
+            updated_plants = dict(plants)
+            updated_plants["effects"] = dict(effects)
+            result["plants"] = updated_plants
         return result

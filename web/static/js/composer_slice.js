@@ -502,6 +502,7 @@
     const intentToken = beginIntent();
     const previous = structuredClone(state.scene || defaultScene());
     const next = galleryScene(entry, preset ? preset.parameters : entry.parameters);
+    if (preset?.installation_effects) next.plants = {...next.plants, effects: preset.installation_effects};
     state.dirty = true; applyScene(next);
     try {
       const published = await submit(next, {intentToken, rememberEdit: true, previous});
@@ -1060,7 +1061,7 @@
     try {
       const response = await fetch(`${api}/components/lava_lamp/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
       const target = $('#lavaPresetCards'); target.replaceChildren();
-      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'lava_lamp') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = {...preset.parameters, ...lavaInteractionParameters(next.animation.parameters)}; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
+      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'lava_lamp') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = {...preset.parameters, ...lavaInteractionParameters(next.animation.parameters)}; if (preset.installation_effects) next.plants = {...next.plants, effects: preset.installation_effects}; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
       rememberComponentPresets('lava_lamp', body.presets);
     } catch (error) { $('#operationMessage').textContent = error.message || 'Lava Lamp presets are unavailable.'; }
   }
