@@ -36,7 +36,7 @@ bd close <id>         # Complete work
 - Run `bd prime` for detailed command reference and session close protocol
 - Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
 
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. `.beads/interactions.jsonl` is a separate append-only Beads audit log intended for Git versioning after JSONL integrity checks, never a substitute for Dolt sync or backup. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 
 ## Agent Context Profiles
 
@@ -150,4 +150,4 @@ When acceptance requests changes, append corrected evidence instead of overwriti
 
 Wait for the first worker to finish, review the handoff, obtain required independent acceptance, and acquire the Beads merge slot only for integration. Rebase onto the current selective-reconstruction tip, rerun the focused checks on the prospective tip, fast-forward merge, record the integrated SHA, close the Bead, release the slot, and remove only the clean merged worktree. Unlock and claim the next dependency wave only after its prerequisites integrate, then refill available Terra capacity.
 
-Continue until the user says `stop`, no meaningful local work can proceed, or a real permission/product decision is required. On stop, interrupt workers, wait for the live tree to empty, release the merge slot, reconcile every `in_progress` Bead, and preserve dirty or unmerged worktrees. Never stage `.beads/**`, traces, screenshots, or local run state.
+Continue until the user says `stop`, no meaningful local work can proceed, or a real permission/product decision is required. On stop, interrupt workers, wait for the live tree to empty, release the merge slot, reconcile every `in_progress` Bead, and preserve dirty or unmerged worktrees. Never stage `.beads/**`, traces, screenshots, or local run state—except `.beads/interactions.jsonl`: validate its append-only JSONL records and commit that audit log when it changes. Never treat that commit as a substitute for `bd dolt push`/pull or a Dolt backup.

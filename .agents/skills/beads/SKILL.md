@@ -99,5 +99,6 @@ bd close <id> --reason="Completed"
 - Do not use `bd edit`; it opens an interactive editor. Use `bd update` flags instead.
 - Prefer `--json` when parsing `bd` output programmatically.
 - Do not auto-close or mutate tasks unless the work is actually complete.
-- Never stage `.beads/**`, traces, screenshots, or local run state.
+- Treat the Dolt database as issue state; use `bd dolt push`/pull for cross-machine sync. `.beads/issues.jsonl` is only an export.
+- Do not stage `.beads/**`, traces, screenshots, or local run state, except `.beads/interactions.jsonl`. `bd audit` defines that file as an append-only audit log intended for Git versioning: validate each line as JSON and check IDs are unique before committing it. Its Git commit is not a Dolt sync or backup.
 - Local worker commits and coordinator integration are authorized only under the repository's `start` contract; pushes and hardware remain separately authorized.
