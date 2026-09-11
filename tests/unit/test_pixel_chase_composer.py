@@ -8,6 +8,34 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class PixelChaseComposerTests(unittest.TestCase):
+    def test_current_presets_reach_exact_guarded_controller_receipts(self):
+        from copy import deepcopy
+        from animation.core.activation_qualification import canonical_json_sha256
+        from tests.unit.test_canonical_scene_activation import CanonicalSceneActivationTests
+
+        CanonicalSceneActivationTests.setUpClass()
+        fixture = CanonicalSceneActivationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        response = fixture.client.get('/api/composer/components/pixel_chase/presets')
+        self.assertEqual(response.status_code, 200, response.get_json())
+        presets = response.get_json()['presets']
+        self.assertEqual({preset['preset_id'] for preset in presets}, {
+            'steady-lanterns', 'prismatic-relay', 'comet-trails',
+        })
+        for preset in presets:
+            with self.subTest(preset=preset['preset_id']):
+                scene = deepcopy(fixture.scene)
+                scene['animation'] = {
+                    'component_id': 'pixel_chase', 'version': 1, 'provider': 'python',
+                    'role': 'animation', 'parameters': preset['parameters'],
+                }
+                canonical = fixture.interface._composer_canonical({'origin': 'composer', 'scene': scene}).scene
+                _, _, receipt = fixture.activate(canonical)
+                self.assertEqual(receipt['phase'], 'active', receipt)
+                self.assertEqual(fixture.manager.get_scene_state(), canonical)
+                self.assertEqual(receipt['observed_identity']['scene_identity']['digest'], canonical_json_sha256(canonical))
+
     def test_selection_and_remix_preserve_complete_scene(self):
         source = (ROOT / 'web/static/js/composer_slice.js').read_text()
         fields = source[source.index('const pixelChaseFields'):source.index('const componentPresetTargets')]

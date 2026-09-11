@@ -319,6 +319,15 @@
         "tournament-table"
       ]
     },
+    "pixel_chase": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "steady-lanterns",
+        "prismatic-relay",
+        "comet-trails"
+      ]
+    },
     "pixel_quest": {
       "provider": "python",
       "component_version": 1,
