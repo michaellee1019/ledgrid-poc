@@ -8,6 +8,7 @@ import struct
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 
 if "spidev" not in sys.modules:
@@ -107,6 +108,68 @@ class _QueuedNativeSpi:
                 result=self.result,
             )
         )
+        return response
+
+
+class _DelayedRefillNativeSpi:
+    """Two DMA slots; receiver dispatch/refill runs after the SPI clock ends."""
+
+    def __init__(self, *, acknowledge=True):
+        self.now = 0.0
+        self.command = protocol.CMD_SET_ALL
+        self.sequence = 4412
+        self.received = 0
+        self.acknowledge = acknowledge
+        self.attempts = []
+        self.attempt_times = []
+        self.dropped = []
+        self.pending = []
+        self.ready = [self.status(6), self.status(6)]
+
+    def status(self, version):
+        result = status_v6(command=self.command, sequence=self.sequence)
+        result[12:16] = self.received.to_bytes(4, "big")
+        result[314] = 1
+        capabilities = int.from_bytes(result[64:68], "big")
+        result[64:68] = (
+            capabilities | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
+        ).to_bytes(4, "big")
+        if version == 3:
+            result = result[:protocol.RECEIVER_STATUS_BYTES_V3]
+            result[:5] = b"LGS3\x03"
+        return result
+
+    def sleep(self, seconds):
+        self.now += seconds
+        while self.pending and self.pending[0][0] <= self.now:
+            _, command = self.pending.pop(0)
+            self.received += 1
+            status_query = command == protocol.CMD_STATUS_QUERY
+            if not status_query and self.acknowledge:
+                self.command = command
+                self.sequence += 1
+            self.ready.append(self.status(6 if status_query else 3))
+
+    def xfer2(self, packet):
+        wire = bytes(packet)
+        assert wire[:2] == bytes((protocol.CMD_ALIGNED_ENVELOPE, 1))
+        assert binascii.crc_hqx(wire[:-2], 0xFFFF) == int.from_bytes(wire[-2:], "big")
+        semantic_size = int.from_bytes(wire[2:4], "big")
+        semantic = wire[4:4 + semantic_size]
+        self.attempts.append(semantic[0])
+        self.attempt_times.append(self.now)
+        duration = len(wire) * 8 / 20_000_000
+        if not self.ready:
+            self.dropped.append(semantic[0])
+            self.sleep(duration)
+            return bytes(len(wire))
+        response = self.ready.pop(0)[:len(wire)]
+        # A completed transaction waits for the receiver task, including its
+        # status snapshot, before that slot can receive another transaction.
+        last_completion = self.pending[-1][0] if self.pending else self.now
+        completion = max(last_completion, self.now + duration) + 0.003
+        self.pending.append((completion, semantic[0]))
+        self.sleep(duration)
         return response
 
 
@@ -243,6 +306,61 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
         native_packets = [packet for packet in spi.packets if packet[0] == 0x57]
         self.assertEqual(len(native_packets), 1)
         self.assertEqual(native_packets[0][:-2], b"\x57")
+
+    def test_native_commands_wait_for_a_free_dma_slot_before_single_send(self):
+        for command in (protocol.CMD_NATIVE_PREFLIGHT, protocol.CMD_NATIVE_RESTORE):
+            with self.subTest(command=command):
+                spi = _DelayedRefillNativeSpi()
+                item = controller(spi)
+                item._transport_envelope_enabled = True
+                item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+                with patch.object(protocol.time, "sleep", side_effect=spi.sleep):
+                    if command == protocol.CMD_NATIVE_PREFLIGHT:
+                        result = item.native_preflight(**descriptor())
+                    else:
+                        result = item.native_restore(
+                            expected_generation=0, active_binding=None,
+                            staged_binding=None, rollback_binding=None,
+                        )
+                self.assertEqual(result["receiver_last_processed_command"], command)
+                self.assertEqual(result["receiver_operation_sequence"], 4413)
+                self.assertEqual(spi.attempts.count(command), 1)
+                self.assertNotIn(command, spi.dropped)
+
+    def test_deferred_command_time_anchor_is_captured_after_refill_wait(self):
+        spi = _DelayedRefillNativeSpi()
+        item = controller(spi)
+        item._transport_envelope_enabled = True
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+        serialized_at = []
+
+        def serialize():
+            serialized_at.append(spi.now)
+            return item.serialize_native_preflight(**descriptor())
+
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep):
+            item._command_status(
+                serialize, command=protocol.CMD_NATIVE_PREFLIGHT,
+                required_status_version=6,
+            )
+        command_index = spi.attempts.index(protocol.CMD_NATIVE_PREFLIGHT)
+        self.assertEqual(serialized_at, [spi.attempt_times[command_index]])
+        self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), 1)
+
+    def test_delayed_refill_missing_native_ack_is_bounded_and_never_retried(self):
+        spi = _DelayedRefillNativeSpi(acknowledge=False)
+        item = controller(spi)
+        item._transport_envelope_enabled = True
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep):
+            with self.assertRaisesRegex(RuntimeError, "command 0x06, sequence 4412"):
+                item.native_preflight(**descriptor())
+        self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), 1)
+        self.assertEqual(
+            spi.attempts.count(protocol.CMD_STATUS_QUERY),
+            protocol.SPI_RESPONSE_QUEUE_DEPTH + protocol.COMMAND_ACK_MAX_STATUS_QUERIES,
+        )
+        self.assertLess(spi.now, 0.1)
 
     def test_probe_miss_is_ok_and_echoes_the_requested_payload_identity(self):
         item = controller()

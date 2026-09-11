@@ -2162,6 +2162,13 @@ class LEDController:
             prior_sequence = int(prior.get("receiver_operation_sequence", 0) or 0)
             if prior_sequence >= 0xFFFFFFFF:
                 raise RuntimeError("receiver operation sequence is exhausted")
+            # The baseline queries can consume both slave-DMA slots before the
+            # receiver task refills either one. Allow the same refill interval
+            # as a fresh-status drain before clocking the single mutation:
+            # post-command polling cannot recover a command sent to no ready
+            # slot, and retrying an ambiguous mutation would be unsafe. Wait
+            # before deferred serialization so its time anchor stays current.
+            time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
             if payload_factory is not None:
                 payload = payload_factory()
                 if not payload or int(payload[0]) != command:
