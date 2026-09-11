@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -769,6 +770,7 @@ class LivingEcosystemAnimation(CadencedSculpture):
         self._geometry_activation_tick = 0
 
     @classmethod
+    @lru_cache(maxsize=None)
     def component_descriptor(cls):
         return ComponentDescriptor(
             component_id=cls.COMPONENT_ID, version=1, provider="python",
@@ -813,9 +815,8 @@ class LivingEcosystemAnimation(CadencedSculpture):
         self._pending_geometry = (foliage, clearance, cores, escape_x, escape_y, effective)
         self._geometry_identity = key
         self._geometry_activation_tick = max(0, self._last_sim_tick + 1)
-        # A same-tick render remains a visual/state no-op; the staged plan is
-        # installed by _step at the next ordinary source boundary.
-        self._render_key = None
+        # Keep the current source-frame cache intact.  The staged plan is
+        # installed and painted by _step at the next ordinary source boundary.
 
     def _activate_geometry(self, tick):
         if self._pending_geometry is None or tick < self._geometry_activation_tick:

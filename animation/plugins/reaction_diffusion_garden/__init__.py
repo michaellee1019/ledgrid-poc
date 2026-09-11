@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 
 from animation.core.component_catalog import ComponentDescriptor
@@ -153,6 +155,7 @@ class ReactionDiffusionGardenAnimation(CadencedSculpture):
         self._geometry_foliage=np.zeros(self._shape,dtype=bool);self._geometry_cores=np.zeros(self._shape,dtype=bool);self._geometry_edge=np.zeros(self._shape,dtype=bool)
         self._geometry_identity=None;self._geometry_strength=0.;self._pending_geometry=None;self._geometry_activation_tick=0
     @classmethod
+    @lru_cache(maxsize=None)
     def component_descriptor(cls):
         return ComponentDescriptor(component_id=cls.COMPONENT_ID,version=1,provider="python",role="animation",timing_policy="scaled_context",alpha_behavior="opaque",palette_policy="semantic",plant_capabilities=("effect_intent","simulation_inputs"),fidelity_exceptions=(),optional_simulation_inputs=("installation_geometry_contact",),defaults=cls.COMPONENT_DEFAULTS,parameter_normalizer=cls._normalized_parameters)
     def set_presentation_context(self,context):
@@ -162,7 +165,7 @@ class ReactionDiffusionGardenAnimation(CadencedSculpture):
         if key==self._geometry_identity:return
         foliage=np.zeros(self._shape,dtype=bool);cores=np.zeros(self._shape,dtype=bool);edge=np.zeros(self._shape,dtype=bool)
         if effective and contact.foliage.shape==self._shape: foliage[:]=contact.foliage;cores[:]=contact.exact_globe_cores;edge[:]=contact.geometry.globe_edge
-        self._pending_geometry=(foliage,cores,edge,effective);self._geometry_identity=key;self._geometry_activation_tick=max(0,self._last_sim_tick+1);self._render_key=None
+        self._pending_geometry=(foliage,cores,edge,effective);self._geometry_identity=key;self._geometry_activation_tick=max(0,self._last_sim_tick+1)
     def _activate_geometry(self,tick):
         if self._pending_geometry is None or tick<self._geometry_activation_tick:return
         self._geometry_foliage,self._geometry_cores,self._geometry_edge,self._geometry_strength=self._pending_geometry;self._pending_geometry=None

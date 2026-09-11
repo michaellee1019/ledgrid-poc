@@ -82,6 +82,7 @@ class LivingSystemGeometryTests(unittest.TestCase):
         for component in COMPONENTS:
             with self.subTest(component=component.COMPONENT_ID):
                 descriptor = component.component_descriptor()
+                self.assertIs(descriptor, component.component_descriptor())
                 self.assertTrue(descriptor.accepts_installation_geometry_contact)
                 self.assertEqual(component.PLANT_MODIFIER_SUPPORT, frozenset(("habitat",)))
                 self.assertFalse(forbidden & set(component.COMPONENT_DEFAULTS))
@@ -156,9 +157,15 @@ class LivingSystemGeometryTests(unittest.TestCase):
                 state = animation.logical_state()
                 rng = copy.deepcopy(animation.rng.bit_generator.state)
                 tick = animation._last_sim_tick
+                render_key = animation._render_key
+                cached_pixels = animation._cached_pixels
 
                 animation.set_presentation_context(_context(component, second, 1.0))
                 same_tick = animation.generate_frame(0.0, 1)
+                self.assertFalse(same_tick.changed)
+                self.assertIs(same_tick.pixels, cached_pixels)
+                self.assertIs(same_tick.pixels, initial.pixels)
+                self.assertIs(animation._render_key, render_key)
                 np.testing.assert_array_equal(same_tick.pixels, initial.pixels)
                 self.assertEqual(animation.logical_state(), state)
                 self.assertEqual(animation.rng.bit_generator.state, rng)
@@ -170,6 +177,34 @@ class LivingSystemGeometryTests(unittest.TestCase):
                     self.assertTrue(animation._geometry_globe_edge[12, 52])
                 else:
                     self.assertTrue(animation._geometry_cores[12, 52])
+
+    def test_off_and_zero_geometry_revisions_keep_the_same_tick_cache(self):
+        for strength in (None, 0.0):
+            for component in COMPONENTS:
+                with self.subTest(component=component.COMPONENT_ID, strength=strength):
+                    animation = component(_Controller(), {"seed": 912})
+                    animation.set_presentation_context(
+                        _context(component, _contact(("first",)), strength)
+                    )
+                    initial = animation.generate_frame(0.0, 0)
+                    state = animation.logical_state()
+                    rng = copy.deepcopy(animation.rng.bit_generator.state)
+                    tick = animation._last_sim_tick
+                    render_key = animation._render_key
+                    cached_pixels = animation._cached_pixels
+
+                    animation.set_presentation_context(
+                        _context(component, _contact(("second",), core_x=12), strength)
+                    )
+                    same_tick = animation.generate_frame(0.0, 1)
+
+                    self.assertFalse(same_tick.changed)
+                    self.assertIs(same_tick.pixels, cached_pixels)
+                    self.assertIs(same_tick.pixels, initial.pixels)
+                    self.assertIs(animation._render_key, render_key)
+                    self.assertEqual(animation.logical_state(), state)
+                    self.assertEqual(animation.rng.bit_generator.state, rng)
+                    self.assertEqual(animation._last_sim_tick, tick)
 
 
 if __name__ == "__main__":
