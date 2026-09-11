@@ -89,6 +89,10 @@ FULL_FRAME_STATUS_SAMPLE_INTERVAL = 128
 FULL_FRAME_STATUS_SAMPLE_RECEIVERS = 5
 COMMAND_ACK_MAX_STATUS_QUERIES = 16
 COMMAND_ACK_POLL_INTERVAL_SECONDS = 0.001
+# Native and installation-profile commands can spend hundreds of milliseconds
+# in SPIFFS before refilling a status slot. Wait read-only for their exact
+# ACK, never resend.
+STORAGE_COMMAND_ACK_TIMEOUT_SECONDS = 5.0
 # A streamed receiver can be inside a roughly 4.5 ms parallel-LED presentation
 # when its completed SPI transaction becomes available to the receiver task.
 # Pace queue-drain queries beyond that installed display cycle so the third
@@ -2138,7 +2142,7 @@ class LEDController:
         return self.get_stats()
 
     def _command_status(
-        self, payload, *, command=None, required_status_version=3
+        self, payload, *, command=None, required_status_version=3, storage_operation=False
     ):
         """Send a command and prove its exact acknowledgement, never a stale OK."""
         transport_lock = getattr(self, "_transport_lock", None)
@@ -2162,13 +2166,11 @@ class LEDController:
             prior_sequence = int(prior.get("receiver_operation_sequence", 0) or 0)
             if prior_sequence >= 0xFFFFFFFF:
                 raise RuntimeError("receiver operation sequence is exhausted")
-            # The baseline queries can consume both slave-DMA slots before the
-            # receiver task refills either one. Allow the same refill interval
-            # as a fresh-status drain before clocking the single mutation:
-            # post-command polling cannot recover a command sent to no ready
-            # slot, and retrying an ambiguous mutation would be unsafe. Wait
-            # before deferred serialization so its time anchor stays current.
-            time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
+            if storage_operation:
+                # Let baseline queries refill before the single storage command.
+                # Keep this storage-path pause out of per-frame sparse updates,
+                # and before deferred serialization so time anchors stay fresh.
+                time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
             if payload_factory is not None:
                 payload = payload_factory()
                 if not payload or int(payload[0]) != command:
@@ -2184,23 +2186,46 @@ class LEDController:
             # one legacy-safe v3 snapshot in the two-deep queue; clock one
             # additional query to receive the requested v4 extension. Larger
             # commands can take longer than those minimum queue drains on real
-            # hardware, so continue polling within one small fixed bound while
-            # still accepting only the exact next operation sequence.
+            # hardware. Ordinary sparse/context commands retain the short
+            # query bound; storage commands get a wall-clock deadline because
+            # SPIFFS work can outlast that entire fast polling window.
             minimum_post_queries = SPI_RESPONSE_QUEUE_DEPTH + (
                 required_version >= 4
             )
             status = None
             expected_sequence = prior_sequence + 1
-            for query_index in range(COMMAND_ACK_MAX_STATUS_QUERIES):
+            deadline = (
+                time.monotonic() + STORAGE_COMMAND_ACK_TIMEOUT_SECONDS
+                if storage_operation else None
+            )
+            query_index = 0
+            while storage_operation or query_index < COMMAND_ACK_MAX_STATUS_QUERIES:
                 # The receiver validates and dispatches the command before it
                 # can refill the consumed slave-DMA slot. In particular, a
                 # maximum sparse batch performs CRC, digest, span validation,
                 # and RGBA staging work here. Pace the first acknowledgement
                 # query as well as every subsequent one so the two-deep queue
                 # is never consumed by an unbounded initial burst.
-                time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
+                if storage_operation:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(FRESH_STATUS_DRAIN_INTERVAL_SECONDS, remaining))
+                    if time.monotonic() >= deadline:
+                        break
+                else:
+                    time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
                 status = self.query_receiver_status()
-                if query_index + 1 < minimum_post_queries:
+                query_index += 1
+                if storage_operation:
+                    if time.monotonic() >= deadline:
+                        break
+                    # Invalid/zero MISO leaves get_stats() cached. Only a
+                    # newly parsed packet-counter observation can acknowledge
+                    # or contradict this operation.
+                    if not getattr(self, "_last_transfer_status_sampled", False):
+                        continue
+                elif query_index < minimum_post_queries:
                     continue
                 observed_version = int(
                     status.get("receiver_status_version", 0) or 0
@@ -2212,7 +2237,8 @@ class LEDController:
                     status.get("receiver_operation_sequence", -1)
                 )
                 if (
-                    observed_version >= required_version
+                    query_index >= minimum_post_queries
+                    and observed_version >= required_version
                     and observed_command == command
                     and observed_sequence == expected_sequence
                 ):
@@ -2396,42 +2422,50 @@ class LEDController:
 
     def profile_preflight(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_preflight(**kwargs), required_status_version=5
+            self.serialize_profile_preflight(**kwargs), required_status_version=5,
+            storage_operation=True,
         )
 
     def profile_begin(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_begin(**kwargs), required_status_version=5
+            self.serialize_profile_begin(**kwargs), required_status_version=5,
+            storage_operation=True,
         )
 
     def profile_chunk(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_chunk(**kwargs), required_status_version=5
+            self.serialize_profile_chunk(**kwargs), required_status_version=5,
+            storage_operation=True,
         )
 
     def profile_finalize(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_finalize(**kwargs), required_status_version=5
+            self.serialize_profile_finalize(**kwargs), required_status_version=5,
+            storage_operation=True,
         )
 
     def profile_verify(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_verify(**kwargs), required_status_version=5
+            self.serialize_profile_verify(**kwargs), required_status_version=5,
+            storage_operation=True,
         )
 
     def profile_activate(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_activate(**kwargs), required_status_version=5
+            self.serialize_profile_activate(**kwargs), required_status_version=5,
+            storage_operation=True,
         )
 
     def profile_restore(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_restore(**kwargs), required_status_version=5
+            self.serialize_profile_restore(**kwargs), required_status_version=5,
+            storage_operation=True,
         )
 
     def profile_abort(self):
         return self._command_status(
-            bytes((CMD_PROFILE_ABORT,)), required_status_version=5
+            bytes((CMD_PROFILE_ABORT,)), required_status_version=5,
+            storage_operation=True,
         )
 
     @classmethod
@@ -2699,7 +2733,9 @@ class LEDController:
         # Status-v6 is appended without changing the exact queued-operation
         # acknowledgement contract. Keep this method fail-closed until that
         # negotiated extension is available.
-        status = self._command_status(payload, required_status_version=6)
+        status = self._command_status(
+            payload, required_status_version=6, storage_operation=True
+        )
         result = int(status.get("receiver_native_result", 0) or 0)
         if result != 1:
             result_name = NATIVE_RESULT_NAMES.get(result, f"unknown_{result}")

@@ -228,6 +228,8 @@ class ProfileProtocolTests(unittest.TestCase):
              "receiver_last_processed_command": protocol.CMD_PROFILE_ABORT,
              "receiver_profile_result": 1},
         ]
+        # These mocked snapshots each represent a newly parsed receiver packet.
+        item._last_transfer_status_sampled = True
         item.query_receiver_status = mock.Mock(side_effect=statuses)
         item._xfer = mock.Mock()
         with mock.patch("drivers.spi_controller.time.sleep"):

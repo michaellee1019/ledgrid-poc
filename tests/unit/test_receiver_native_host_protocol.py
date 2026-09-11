@@ -101,25 +101,30 @@ class _QueuedNativeSpi:
         if wire[0] != protocol.CMD_STATUS_QUERY:
             self.command = wire[0]
             self.sequence += 1
-        self.queued.append(
-            status_v6(
-                command=self.command,
-                sequence=self.sequence,
-                result=self.result,
-            )
+        snapshot = status_v6(
+            command=self.command, sequence=self.sequence, result=self.result,
         )
+        snapshot[12:16] = len(self.packets).to_bytes(4, "big")
+        self.queued.append(snapshot)
         return response
 
 
 class _DelayedRefillNativeSpi:
     """Two DMA slots; receiver dispatch/refill runs after the SPI clock ends."""
 
-    def __init__(self, *, acknowledge=True):
+    def __init__(
+        self, *, acknowledge=True, command_delay=0.003, ack_command=None,
+        ack_increment=1, frozen_counter=False,
+    ):
         self.now = 0.0
         self.command = protocol.CMD_SET_ALL
         self.sequence = 4412
         self.received = 0
         self.acknowledge = acknowledge
+        self.command_delay = command_delay
+        self.ack_command = ack_command
+        self.ack_increment = ack_increment
+        self.frozen_counter = frozen_counter
         self.attempts = []
         self.attempt_times = []
         self.dropped = []
@@ -128,7 +133,8 @@ class _DelayedRefillNativeSpi:
 
     def status(self, version):
         result = status_v6(command=self.command, sequence=self.sequence)
-        result[12:16] = self.received.to_bytes(4, "big")
+        packets = 0 if self.frozen_counter else self.received
+        result[12:16] = packets.to_bytes(4, "big")
         result[314] = 1
         capabilities = int.from_bytes(result[64:68], "big")
         result[64:68] = (
@@ -146,8 +152,8 @@ class _DelayedRefillNativeSpi:
             self.received += 1
             status_query = command == protocol.CMD_STATUS_QUERY
             if not status_query and self.acknowledge:
-                self.command = command
-                self.sequence += 1
+                self.command = command if self.ack_command is None else self.ack_command
+                self.sequence += self.ack_increment
             self.ready.append(self.status(6 if status_query else 3))
 
     def xfer2(self, packet):
@@ -167,7 +173,8 @@ class _DelayedRefillNativeSpi:
         # A completed transaction waits for the receiver task, including its
         # status snapshot, before that slot can receive another transaction.
         last_completion = self.pending[-1][0] if self.pending else self.now
-        completion = max(last_completion, self.now + duration) + 0.003
+        processing = 0.003 if semantic[0] == protocol.CMD_STATUS_QUERY else self.command_delay
+        completion = max(last_completion, self.now + duration) + processing
         self.pending.append((completion, semantic[0]))
         self.sleep(duration)
         return response
@@ -314,7 +321,8 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
                 item = controller(spi)
                 item._transport_envelope_enabled = True
                 item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
-                with patch.object(protocol.time, "sleep", side_effect=spi.sleep):
+                with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
                     if command == protocol.CMD_NATIVE_PREFLIGHT:
                         result = item.native_preflight(**descriptor())
                     else:
@@ -327,6 +335,45 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
                 self.assertEqual(spi.attempts.count(command), 1)
                 self.assertNotIn(command, spi.dropped)
 
+    def test_native_ack_waits_for_storage_processing_and_fresh_extended_status(self):
+        for delay in (0.2, 2.0):
+            for command in (protocol.CMD_NATIVE_PREFLIGHT, protocol.CMD_NATIVE_ABORT):
+                with self.subTest(delay=delay, command=command):
+                    spi = _DelayedRefillNativeSpi(command_delay=delay)
+                    item = controller(spi)
+                    item._transport_envelope_enabled = True
+                    item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+                    with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                            patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+                        result = (item.native_preflight(**descriptor())
+                                  if command == protocol.CMD_NATIVE_PREFLIGHT
+                                  else item.native_abort())
+                    self.assertEqual(result["receiver_last_processed_command"], command)
+                    self.assertEqual(result["receiver_operation_sequence"], 4413)
+                    self.assertGreaterEqual(result["receiver_status_version"], 6)
+                    self.assertTrue(item._last_transfer_status_sampled)
+                    self.assertGreaterEqual(spi.now, delay)
+                    self.assertEqual(spi.attempts.count(command), 1)
+                    self.assertNotIn(command, spi.dropped)
+                    self.assertIn(protocol.CMD_STATUS_QUERY, spi.dropped)
+
+    def test_profile_preflight_uses_the_same_bounded_storage_ack_wait(self):
+        spi = _DelayedRefillNativeSpi(command_delay=0.2)
+        item = controller(spi)
+        item._transport_envelope_enabled = True
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+            result = item.profile_preflight(
+                profile_id=BUNDLE, payload_digest=PAYLOAD, payload_size=4097,
+            )
+        self.assertEqual(result["receiver_last_processed_command"], protocol.CMD_PROFILE_PREFLIGHT)
+        self.assertEqual(result["receiver_operation_sequence"], 4413)
+        self.assertGreaterEqual(result["receiver_status_version"], 5)
+        self.assertTrue(item._last_transfer_status_sampled)
+        self.assertGreaterEqual(spi.now, 0.2)
+        self.assertEqual(spi.attempts.count(protocol.CMD_PROFILE_PREFLIGHT), 1)
+
     def test_deferred_command_time_anchor_is_captured_after_refill_wait(self):
         spi = _DelayedRefillNativeSpi()
         item = controller(spi)
@@ -338,10 +385,11 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
             serialized_at.append(spi.now)
             return item.serialize_native_preflight(**descriptor())
 
-        with patch.object(protocol.time, "sleep", side_effect=spi.sleep):
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
             item._command_status(
                 serialize, command=protocol.CMD_NATIVE_PREFLIGHT,
-                required_status_version=6,
+                required_status_version=6, storage_operation=True,
             )
         command_index = spi.attempts.index(protocol.CMD_NATIVE_PREFLIGHT)
         self.assertEqual(serialized_at, [spi.attempt_times[command_index]])
@@ -352,15 +400,55 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
         item = controller(spi)
         item._transport_envelope_enabled = True
         item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
-        with patch.object(protocol.time, "sleep", side_effect=spi.sleep):
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
             with self.assertRaisesRegex(RuntimeError, "command 0x06, sequence 4412"):
                 item.native_preflight(**descriptor())
         self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), 1)
-        self.assertEqual(
-            spi.attempts.count(protocol.CMD_STATUS_QUERY),
-            protocol.SPI_RESPONSE_QUEUE_DEPTH + protocol.COMMAND_ACK_MAX_STATUS_QUERIES,
-        )
-        self.assertLess(spi.now, 0.1)
+        self.assertGreater(spi.attempts.count(protocol.CMD_STATUS_QUERY), 16)
+        self.assertGreaterEqual(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS)
+        self.assertLess(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS + 0.05)
+
+    def test_native_ack_rejects_zero_miso_and_repeated_packet_counters(self):
+        for kwargs in ({"command_delay": 10}, {"frozen_counter": True}):
+            with self.subTest(kwargs=kwargs):
+                spi = _DelayedRefillNativeSpi(**kwargs)
+                item = controller(spi)
+                item._transport_envelope_enabled = True
+                item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+                with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                        patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+                    with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+                        item.native_preflight(**descriptor())
+                self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), 1)
+                self.assertFalse(item._last_transfer_status_sampled)
+                self.assertGreaterEqual(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS)
+                self.assertLess(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS + 0.05)
+
+    def test_native_ack_stops_on_a_fresh_contradictory_sequence(self):
+        for kwargs in ({"ack_command": protocol.CMD_NATIVE_ABORT}, {"ack_increment": 2}):
+            with self.subTest(kwargs=kwargs):
+                spi = _DelayedRefillNativeSpi(**kwargs)
+                item = controller(spi)
+                item._transport_envelope_enabled = True
+                item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+                with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                        patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+                    with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+                        item.native_preflight(**descriptor())
+                self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), 1)
+                self.assertTrue(item._last_transfer_status_sampled)
+                self.assertLess(spi.now, 0.05)
+
+    def test_ordinary_ack_retains_fast_polling_without_native_refill_pause(self):
+        item = controller()
+        with patch.object(protocol.time, "sleep") as sleep:
+            item.stop_local_background()
+        self.assertTrue(sleep.call_args_list)
+        self.assertTrue(all(
+            call.args == (protocol.COMMAND_ACK_POLL_INTERVAL_SECONDS,)
+            for call in sleep.call_args_list
+        ))
 
     def test_probe_miss_is_ok_and_echoes_the_requested_payload_identity(self):
         item = controller()
