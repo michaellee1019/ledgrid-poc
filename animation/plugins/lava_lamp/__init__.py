@@ -12,7 +12,11 @@ import numpy as np
 
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
-from animation.core.plant_awareness import GLOBE_REGION_ORDER
+from animation.core.plant_awareness import (
+    GLOBE_REGION_ORDER,
+    InstallationGeometryContact,
+    PlantModifierState,
+)
 from animation.core.presentation_contracts import ResolvedScene
 
 
@@ -35,15 +39,20 @@ class LavaLampAnimation(AnimationBase):
     ANIMATION_VERSION = "2.0"
     COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "lava_lamp", 1, "python", "animation"
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
-    CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
+    CAPABILITIES = frozenset((
+        "semantic_palette_roles", "scaled_context", "effect_intent", "simulation_inputs",
+    ))
     SOURCE_FPS = 100.0
     PHYSICS_DT = 0.01
     MAX_BLOBS = 16
     INTERACTION_TYPES = frozenset(("primary",))
-    # Scene v2 owns installation optics and plant effects at composition.  The
-    # lamp remains an opaque thermal instrument, never a second authority for
-    # masks, output calibration, or brightness.
-    PLANT_MODIFIER_SUPPORT = frozenset()
+    # Scene v2 owns installation geometry and effect intent.  Lava only
+    # consumes the immutable provider view: foliage refracts its presentation;
+    # globe cores provide bounded thermal contacts and named-bowl stories.
+    PLANT_MODIFIER_SUPPORT = frozenset((
+        "refract", "bumper", "emitter", "habitat", "portal",
+    ))
+    INSTALLATION_GEOMETRY_CONTACT = True
     DEFAULTS = MappingProxyType({
         "blob_count": 7, "blob_scale": 1.0, "viscosity": .68,
         "heat": .72, "turbulence": .24, "glow": .58, "seed": 1977,
@@ -52,8 +61,11 @@ class LavaLampAnimation(AnimationBase):
     COMPONENT_DESCRIPTOR = ComponentDescriptor(
         component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER,
         role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="opaque",
-        palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",),
-        fidelity_exceptions=(), defaults=DEFAULTS,
+        palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent", "simulation_inputs"),
+        fidelity_exceptions=(),
+        optional_simulation_inputs=("installation_geometry_contact",),
+        defaults=DEFAULTS,
     )
     SCENE_PALETTES = MappingProxyType({
         "neutral": "classic", "mist": "ocean", "spectrum": "violet", "ember": "solar",
@@ -93,6 +105,9 @@ class LavaLampAnimation(AnimationBase):
         self._region_centers: Dict[str, tuple[float, float]] = {}
         self._plant_key = None
         self._plant_error = ""
+        self._pending_plant_geometry = None
+        self._plant_activation_step = 0
+        self._plant_strengths = {name: 0.0 for name in self.PLANT_MODIFIER_SUPPORT}
 
     def _reset_simulation(self) -> None:
         self.x = np.zeros(self.MAX_BLOBS, dtype=np.float32)
@@ -193,6 +208,7 @@ class LavaLampAnimation(AnimationBase):
         if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
             raise ValueError("Lava Lamp requires a semantic Scene v2 palette")
         self._presentation_context = new
+        self._install_plant_contact(new)
 
     def set_presentation_context(self, context: ResolvedScene) -> None:
         self.on_presentation_context_changed(self._presentation_context, context)
@@ -228,41 +244,100 @@ class LavaLampAnimation(AnimationBase):
         return True
 
     def _active_modifier(self, name: str) -> float:
-        strength = self.plant_modifier_strength(name)
-        return strength if strength > 0.0 else 0.0
+        return float(self._plant_strengths.get(name, 0.0))
 
     def _plant_effects_active(self) -> bool:
         return any(self._active_modifier(name) > 0.0 for name in self.PLANT_MODIFIER_SUPPORT)
 
-    def _refresh_plant_geometry(self) -> None:
-        strengths = tuple(
-            (name, self._active_modifier(name)) for name in sorted(self.PLANT_MODIFIER_SUPPORT)
+    def _install_plant_contact(self, context: ResolvedScene) -> None:
+        """Stage derived provider views without mutating the thermal world."""
+        state = PlantModifierState.from_payload(
+            context.canonical_scene.get("plants", {}).get("effects", {})
         )
-        masks = self.get_plant_masks()
-        key = (id(masks), strengths)
+        contact = context.installation_geometry
+        available = isinstance(contact, InstallationGeometryContact) and contact.available
+        strengths = {
+            name: state.strength(name, self.PLANT_MODIFIER_SUPPORT) if available else 0.0
+            for name in self.PLANT_MODIFIER_SUPPORT
+        }
+        effective = any(value > 0.0 for value in strengths.values())
+        identity = (
+            (contact.identity, contact.available, contact.status)
+            if effective and isinstance(contact, InstallationGeometryContact)
+            else None
+        )
+        key = (identity, tuple((name, strengths[name]) for name in sorted(strengths)))
         if key == self._plant_key:
             return
-        self._foliage[:] = masks.foliage.T[::-1]
-        self._globes[:] = masks.globes.T[::-1]
-        self._globe_edge[:] = masks.globe_edge.T[::-1]
-        self._obstacle_edge[:] = masks.obstacle_edge.T[::-1]
-        self._distance[:] = masks.distance.T[::-1]
-        self._normal_x[:] = masks.normal_x.T[::-1]
-        self._normal_y[:] = -masks.normal_y.T[::-1]
-        self._regions.clear()
-        self._region_centers.clear()
-        for name in GLOBE_REGION_ORDER:
-            source = masks.globe_region_masks.get(name)
-            if source is None:
-                continue
-            region = source.T[::-1].copy()
-            if not np.any(region):
-                continue
-            self._regions[name] = region
-            rows, cols = np.nonzero(region)
-            self._region_centers[name] = (float(cols.mean()), float(rows.mean()))
-        self._plant_error = masks.error
+
+        foliage = np.zeros_like(self._foliage)
+        globes = np.zeros_like(self._globes)
+        globe_edge = np.zeros_like(self._globe_edge)
+        obstacle_edge = np.zeros_like(self._obstacle_edge)
+        distance = np.full_like(self._distance, float(max(self.width, self.height)))
+        normal_x = np.zeros_like(self._normal_x)
+        normal_y = np.zeros_like(self._normal_y)
+        regions: Dict[str, np.ndarray] = {}
+        centers: Dict[str, tuple[float, float]] = {}
+        error = ""
+        if effective and isinstance(contact, InstallationGeometryContact):
+            geometry = contact.geometry
+            if (
+                contact.exact_globe_cores.shape == (self.width, self.height)
+                and geometry.foliage.shape == (self.width, self.height)
+                and geometry.distance.shape == (self.width, self.height)
+            ):
+                foliage[:] = geometry.foliage.T[::-1]
+                globes[:] = contact.exact_globe_cores.T[::-1]
+                globe_edge[:] = geometry.globe_edge.T[::-1]
+                obstacle_edge[:] = geometry.obstacle_edge.T[::-1]
+                distance[:] = geometry.distance.T[::-1]
+                normal_x[:] = geometry.normal_x.T[::-1]
+                normal_y[:] = -geometry.normal_y.T[::-1]
+                for name in GLOBE_REGION_ORDER:
+                    source = contact.named_globe_regions.get(name)
+                    if source is None or source.shape != (self.width, self.height):
+                        continue
+                    region = source.T[::-1].copy()
+                    if not np.any(region):
+                        continue
+                    regions[name] = region
+                    rows, cols = np.nonzero(region)
+                    centers[name] = (float(cols.mean()), float(rows.mean()))
+            else:
+                error = "malformed installation geometry"
+        elif isinstance(contact, InstallationGeometryContact) and not contact.available:
+            error = contact.status
+
+        self._pending_plant_geometry = (
+            foliage, globes, globe_edge, obstacle_edge, distance, normal_x,
+            normal_y, regions, centers, error, strengths,
+        )
+        self._plant_activation_step = self._steps + 1
         self._plant_key = key
+        if effective:
+            self._last_render_tick = None
+            self._cached_frame = None
+
+    def _activate_plant_geometry(self) -> None:
+        if self._pending_plant_geometry is None or self._steps + 1 < self._plant_activation_step:
+            return
+        (
+            foliage, globes, globe_edge, obstacle_edge, distance, normal_x,
+            normal_y, regions, centers, error, strengths,
+        ) = self._pending_plant_geometry
+        self._foliage[:] = foliage
+        self._globes[:] = globes
+        self._globe_edge[:] = globe_edge
+        self._obstacle_edge[:] = obstacle_edge
+        self._distance[:] = distance
+        self._normal_x[:] = normal_x
+        self._normal_y[:] = normal_y
+        self._regions = regions
+        self._region_centers = centers
+        self._plant_error = error
+        self._plant_strengths = strengths
+        self._pending_plant_geometry = None
 
     def _free_slot(self) -> Optional[int]:
         free = np.flatnonzero(~self.active)
@@ -355,24 +430,8 @@ class LavaLampAnimation(AnimationBase):
     def _apply_plant_dynamics(self, index: int, dt: float) -> None:
         row = max(0, min(self.height - 1, int(round(float(self.y[index])))))
         col = max(0, min(self.width - 1, int(round(float(self.x[index])))))
-        distance = float(self._distance[row, col])
-        influence = max(0.0, 1.0 - distance / 7.0)
         nx = float(self._normal_x[row, col])
         ny = float(self._normal_y[row, col])
-        attractor = self._active_modifier("attractor")
-        repulsor = self._active_modifier("repulsor")
-        if attractor:
-            self.vx[index] -= nx * influence * attractor * 4.0 * dt
-            self.vy[index] -= ny * influence * attractor * 4.0 * dt
-        if repulsor:
-            self.vx[index] += nx * influence * repulsor * 6.0 * dt
-            self.vy[index] += ny * influence * repulsor * 6.0 * dt
-        slow = self._active_modifier("slow_zone")
-        if slow and influence:
-            factor = max(0.25, 1.0 - slow * influence * 0.75)
-            self.vx[index] *= factor
-            self.vy[index] *= factor
-
         in_globe = bool(self._globes[row, col])
         if not in_globe:
             return
@@ -389,36 +448,23 @@ class LavaLampAnimation(AnimationBase):
                         self.cooldown[index] = 1.0 + (1.0 - portal)
                         self._portal_transfers += 1
                         return
-        hazard = self._active_modifier("hazard")
-        if hazard:
-            self.y[index] = self.height - self.radius[index] - 1.0
-            self.x[index] = 1.0 + ((self.x[index] + 7.0) % max(2.0, self.width - 2.0))
-            self.temperature[index] = 0.2 + 0.35 * (1.0 - hazard)
-            self.vy[index] = 0.0
-            self.cooldown[index] = 0.8
-            self._hazard_recycles += 1
-            return
         habitat = self._active_modifier("habitat")
         if habitat:
             self.vx[index] *= max(0.1, 1.0 - 0.9 * habitat)
             self.vy[index] *= max(0.1, 1.0 - 0.9 * habitat)
             self.temperature[index] = max(0.0, self.temperature[index] - 0.35 * habitat * dt)
             return
-        obstacle = self._active_modifier("obstacle")
         bumper = self._active_modifier("bumper")
-        if obstacle or bumper:
-            push = max(obstacle, bumper)
-            self.x[index] += nx * (0.8 + push)
-            self.y[index] += ny * (0.8 + push)
+        if bumper:
+            self.x[index] += nx * (0.8 + bumper)
+            self.y[index] += ny * (0.8 + bumper)
             normal_velocity = self.vx[index] * nx + self.vy[index] * ny
             if normal_velocity < 0.0:
-                bounce = 1.2 if bumper else 0.65
-                self.vx[index] -= (1.0 + bounce) * normal_velocity * nx
-                self.vy[index] -= (1.0 + bounce) * normal_velocity * ny
-            if bumper:
-                self.temperature[index] = min(1.0, self.temperature[index] + 0.18 * bumper)
-                if bumper > 0.7 and self.cooldown[index] <= 0.0:
-                    self._split_blob(index)
+                self.vx[index] -= 2.2 * normal_velocity * nx
+                self.vy[index] -= 2.2 * normal_velocity * ny
+            self.temperature[index] = min(1.0, self.temperature[index] + 0.18 * bumper)
+            if bumper > 0.7 and self.cooldown[index] <= 0.0:
+                self._split_blob(index)
 
     def _emit_from_bowl(self) -> None:
         strength = self._active_modifier("emitter")
@@ -466,6 +512,7 @@ class LavaLampAnimation(AnimationBase):
                 self._split_blob(source)
 
     def _step(self, dt: float) -> None:
+        self._activate_plant_geometry()
         self.previous_x[:] = self.x
         self.previous_y[:] = self.y
         self.previous_radius[:] = self.radius
@@ -475,8 +522,6 @@ class LavaLampAnimation(AnimationBase):
         turbulence = float(self.params.get("turbulence", 0.24))
         damping = math.exp(-(0.12 + 0.75 * viscosity) * dt)
         plant_active = self._plant_effects_active()
-        if plant_active:
-            self._refresh_plant_geometry()
         for index in map(int, np.flatnonzero(self.active)):
             old_y = float(self.y[index])
             bottom = self.y[index] > self.height * 0.78
@@ -540,6 +585,31 @@ class LavaLampAnimation(AnimationBase):
             self._canvas_float[:, :, 0] = 3.0 + 13.0 * normalized_y * pulse
             self._canvas_float[:, :, 1] = 1.0 + 3.0 * normalized_y
 
+    def _apply_foliage_refraction(self) -> None:
+        """Refract only Lava's painted presentation through provider foliage."""
+        strength = self._active_modifier("refract")
+        if strength <= 0.0 or not np.any(self._foliage):
+            return
+        # The immutable provider normal/distance fields give a small bounded
+        # sampling offset.  This is visual-only: wax positions and RNG remain
+        # untouched, while final installation optics still belong to Composer.
+        distance = np.clip(self._distance, 0.0, 4.0)
+        step = np.clip(1.0 + (2.0 - distance) * 0.35, 0.5, 1.7) * strength
+        sample_rows = np.clip(
+            np.rint(self._rows + self._normal_y * step).astype(np.intp),
+            0, self.height - 1,
+        )
+        sample_cols = np.clip(
+            np.rint(self._cols + self._normal_x * step).astype(np.intp),
+            0, self.width - 1,
+        )
+        refracted = self._canvas_float[sample_rows, sample_cols]
+        blend = 0.28 + 0.42 * strength
+        self._canvas_float[self._foliage] = (
+            self._canvas_float[self._foliage] * (1.0 - blend)
+            + refracted[self._foliage] * blend
+        )
+
     def _render(self, elapsed: float, alpha: float, palette_id: str) -> np.ndarray:
         self._field.fill(0.0)
         self._temperature_field.fill(0.0)
@@ -573,6 +643,7 @@ class LavaLampAnimation(AnimationBase):
         self._canvas_float += glow_color * halo[..., None] * (1.0 - wax[..., None]) * 0.34
         self._canvas_float *= 1.0 - wax[..., None]
         self._canvas_float += wax_color * wax[..., None]
+        self._apply_foliage_refraction()
 
         np.clip(self._canvas_float, 0.0, 255.0, out=self._canvas_float)
         np.copyto(self._canvas_u8, self._canvas_float, casting="unsafe")
@@ -628,6 +699,13 @@ class LavaLampAnimation(AnimationBase):
             "splits": self._splits,
             "merges": self._merges,
             "interactions_applied": self._interactions_applied,
+            "plant_contacts": self._plant_contacts,
+            "portal_transfers": self._portal_transfers,
+            "emissions": self._emissions,
+            "plant_foliage_pixels": int(np.count_nonzero(self._foliage)),
+            "plant_globe_pixels": int(np.count_nonzero(self._globes)),
+            "plant_regions": len(self._regions),
+            "plant_error": self._plant_error,
         }
 
     def cadence_snapshot(self) -> Mapping[str, Any]:

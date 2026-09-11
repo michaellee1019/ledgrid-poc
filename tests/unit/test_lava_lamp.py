@@ -13,12 +13,14 @@ from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.presentation_contracts import (
     ComponentProvider,
     ComponentRef,
+    ResolvedScene,
     SceneState,
 )
+from animation.core.plant_awareness import INSTALLATION_GEOMETRY_CONTACT_INPUT
 from animation.plugins.lava_lamp import LavaLampAnimation
 from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
 from web.app import AnimationWebInterface
-from web.composer_final_preview import current_component_catalog
+from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 from web.local_control import LocalControlChannel
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,10 +37,29 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         scene["animation"] = {"component_id": "lava_lamp", "version": 1, "provider": "python", "role": "animation", "parameters": {}}
         return scene
 
+    def _resolved(self, effect: str | None = None, strength: float = 1.0) -> ResolvedScene:
+        descriptor = LavaLampAnimation.component_descriptor()
+        contact = ComposerFinalPreview(
+            current_component_catalog(), ROOT,
+        )._plant_inputs({}, descriptor)[INSTALLATION_GEOMETRY_CONTACT_INPUT]
+        effects = {"version": 1, "active": [], "strengths": {}}
+        if effect is not None:
+            effects = {"version": 1, "active": [effect], "strengths": {effect: strength}}
+        return ResolvedScene(
+            canonical_scene={"plants": {"effects": effects}}, canonical_bytes=b"lava",
+            digest="lava", descriptor=descriptor, parameters=dict(LavaLampAnimation.DEFAULTS),
+            palette={"palette_id": "neutral"}, phase_time=0.0, plant_inputs={},
+            installation_geometry=contact,
+        )
+
     def test_descriptor_and_parameters_are_opaque_semantic_and_local(self) -> None:
         descriptor = LavaLampAnimation.component_descriptor()
         self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.alpha_behavior.value, descriptor.palette_policy.value), ("lava_lamp", "animation", "opaque", "semantic"))
-        self.assertSetEqual(set(LavaLampAnimation.PLANT_MODIFIER_SUPPORT), set())
+        self.assertSetEqual(
+            set(LavaLampAnimation.PLANT_MODIFIER_SUPPORT),
+            {"refract", "bumper", "emitter", "habitat", "portal"},
+        )
+        self.assertTrue(descriptor.accepts_installation_geometry_contact)
         self.assertNotIn("brightness", LavaLampAnimation.DEFAULTS)
         with self.assertRaisesRegex(ValueError, "non-local parameters"):
             LavaLampAnimation._normalized_parameters({"brightness": .5})
@@ -112,7 +133,7 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         self.assertEqual(client.post("/api/composer/scene", json={"origin": "composer", "scene": scene, "client_id": "lava", "client_sequence": 1}).get_json()["state"], "live")
         self.assertEqual(client.post("/api/composer/stop", json={"client_id": "lava"}).get_json()["status"]["state"], "stopped")
         edited = copy.deepcopy(scene); edited["animation"]["parameters"]["heat"] = .33
-        self.assertFalse(client.post("/api/composer/scene", json={"origin": "composer", "scene": edited, "client_id": "lava", "client_sequence": 2}).get_json()["published"])
+        self.assertTrue(client.post("/api/composer/scene", json={"origin": "composer", "scene": edited, "client_id": "lava", "client_sequence": 2}).get_json()["published"])
         self.assertEqual(client.get("/api/composer/recovery?client_id=lava").get_json()["recovery"]["scene"]["animation"]["parameters"]["heat"], .33)
         self.assertIs(current_component_catalog().require(provider="python", component_id="lava_lamp", version=1), LavaLampAnimation.component_descriptor())
 
@@ -148,11 +169,9 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         self.assertEqual(recovered["animation"]["parameters"]["interaction_radius"], 16.0)
         self.assertEqual(recovered["animation"]["parameters"]["interaction_strength"], 2.0)
 
-    def test_existing_safe_primary_interaction_seam_stirs_only_its_preview(self) -> None:
+    def test_existing_safe_primary_interaction_seam_stirs_the_live_lamp(self) -> None:
         manager = AnimationManager(self.controller, auto_start=False)
         client = AnimationWebInterface(LocalControlChannel(manager), manager, local_mode=True).app.test_client()
-        self.assertEqual(client.get("/api/preview/lava_lamp").status_code, 200)
-        self.assertEqual(client.post("/api/preview/lava_lamp/interaction", json={"kind": "primary", "x": 8.0, "y": 90.0, "strength": .75}).status_code, 200)
         manager.current_animation = LavaLampAnimation(self.controller); manager.current_animation_name = "lava_lamp"
         self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8.0, "y": 90.0, "strength": 1.0}).status_code, 200)
         self.assertEqual(client.post("/api/interaction", json={"kind": "secondary", "x": 8.0, "y": 90.0, "strength": 1.0}).status_code, 400)
@@ -160,6 +179,110 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 33.0, "y": 20.0, "strength": 1.0}).status_code, 400)
         self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8.0, "y": 138.0, "strength": 1.0}).status_code, 400)
         self.assertEqual(client.post("/api/interaction", json={"kind": "primary", "x": 8.0, "y": 90.0, "strength": 1.01}).status_code, 400)
+
+    def test_provider_contact_drives_each_installation_story_without_local_geometry(self) -> None:
+        stories = {
+            "foliage-refraction": "refract", "bowl-bumpers": "bumper",
+            "bowl-emitter": "emitter", "habitat-pools": "habitat",
+            "seven-bowl-portals": "portal",
+        }
+        for preset_id, effect in stories.items():
+            with self.subTest(effect=effect):
+                payload = json.loads((ROOT / "animation/plugins/lava_lamp/presets" / f"{preset_id}.json").read_text())
+                self.assertIn(effect, payload["tags"])
+                self.assertIn("Scene-owned", payload["description"])
+                self.assertFalse({"plant_aware", "plant_modifiers", "calibration", "geometry"} & set(payload["params"]))
+                lamp = LavaLampAnimation(self.controller, {"seed": 721})
+                lamp.set_presentation_context(self._resolved(effect))
+                lamp._step(lamp.PHYSICS_DT)
+                self.assertGreater(lamp.get_runtime_stats()["plant_regions"], 0)
+                self.assertEqual(lamp._active_modifier(effect), 1.0)
+                self.assertNotIn("plant_modifiers", lamp.params)
+
+    @staticmethod
+    def _place_in_named_bowl(lamp: LavaLampAnimation, index: int, name: str) -> None:
+        x, y = lamp._region_centers[name]
+        lamp.x[index], lamp.y[index] = x, y
+        lamp.previous_x[index], lamp.previous_y[index] = x, y
+
+    def test_bowl_dynamics_are_bounded_and_follow_the_stable_region_order(self) -> None:
+        # One contact can affect only the wax body occupying that exact core.
+        bumper = LavaLampAnimation(self.controller, {"seed": 724})
+        bumper.set_presentation_context(self._resolved("bumper")); bumper._step(.01)
+        first = int(np.flatnonzero(bumper.active)[0]); other = int(np.flatnonzero(bumper.active)[1])
+        self._place_in_named_bowl(bumper, first, "top_left")
+        bumper.vx[first], bumper.vy[first], bumper.temperature[first] = -2.0, 0.0, .45
+        untouched = (float(bumper.temperature[other]), float(bumper.vx[other]), float(bumper.vy[other]))
+        bumper._apply_plant_dynamics(first, .01)
+        self.assertGreater(bumper.temperature[first], .45)
+        self.assertEqual(untouched, (float(bumper.temperature[other]), float(bumper.vx[other]), float(bumper.vy[other])))
+
+        emitter = LavaLampAnimation(self.controller, {"seed": 725})
+        emitter.set_presentation_context(self._resolved("emitter")); emitter._step(.01)
+        emitter._emitter_clock = -10.0
+        emitter._emit_from_bowl()
+        self.assertEqual(emitter.get_runtime_stats()["emissions"], 1)
+        self.assertEqual(emitter._emitter_region, 1)
+
+        habitat = LavaLampAnimation(self.controller, {"seed": 726})
+        habitat.set_presentation_context(self._resolved("habitat")); habitat._step(.01)
+        self._place_in_named_bowl(habitat, first, "top_left")
+        habitat.temperature[first], habitat.vx[first], habitat.vy[first] = .9, 4.0, -3.0
+        habitat._apply_plant_dynamics(first, .1)
+        self.assertLess(habitat.temperature[first], .9)
+        self.assertLess(abs(habitat.vx[first]), 4.0)
+
+        portal = LavaLampAnimation(self.controller, {"seed": 727})
+        portal.set_presentation_context(self._resolved("portal")); portal._step(.01)
+        self._place_in_named_bowl(portal, first, "top_left")
+        portal.cooldown[first] = 0.0
+        portal._apply_plant_dynamics(first, .01)
+        self.assertEqual(portal.get_runtime_stats()["portal_transfers"], 1)
+        expected = portal._region_centers["top_right"]
+        self.assertAlmostEqual(float(portal.x[first]), expected[0])
+        self.assertAlmostEqual(float(portal.y[first]), expected[1])
+
+    def test_off_zero_and_live_geometry_refresh_preserve_thermal_state_and_rng(self) -> None:
+        lamp = LavaLampAnimation(self.controller, {"seed": 722})
+        baseline = LavaLampAnimation(self.controller, {"seed": 722})
+        off = self._resolved()
+        zero = self._resolved("bumper", 0.0)
+        lamp.set_presentation_context(off)
+        baseline.set_presentation_context(off)
+        self.assertTrue(lamp.generate_frame(0.0, 0).changed)
+        self.assertTrue(baseline.generate_frame(0.0, 0).changed)
+        lamp.set_presentation_context(zero)
+        baseline.set_presentation_context(zero)
+        self.assertFalse(lamp.generate_frame(0.0, 1).changed)
+        self.assertFalse(baseline.generate_frame(0.0, 1).changed)
+        lamp._step(lamp.PHYSICS_DT); baseline._step(baseline.PHYSICS_DT)
+        for name in ("x", "y", "vx", "vy", "temperature", "cooldown", "radius"):
+            np.testing.assert_array_equal(getattr(lamp, name), getattr(baseline, name))
+        self.assertEqual(lamp.rng.bit_generator.state, baseline.rng.bit_generator.state)
+        before = (lamp.x.copy(), lamp.y.copy(), lamp.vx.copy(), lamp.vy.copy(), lamp.temperature.copy(), lamp.cooldown.copy(), lamp.simulation_time, lamp._steps, lamp.rng.bit_generator.state)
+        lamp.set_presentation_context(self._resolved("portal"))
+        after = (lamp.x.copy(), lamp.y.copy(), lamp.vx.copy(), lamp.vy.copy(), lamp.temperature.copy(), lamp.cooldown.copy(), lamp.simulation_time, lamp._steps, lamp.rng.bit_generator.state)
+        for expected, actual in zip(before[:-1], after[:-1]):
+            if isinstance(expected, np.ndarray): np.testing.assert_array_equal(expected, actual)
+            else: self.assertEqual(expected, actual)
+        self.assertEqual(before[-1], after[-1])
+
+    def test_refraction_is_presentation_only_and_primary_stir_survives_contact(self) -> None:
+        plain = LavaLampAnimation(self.controller, {"seed": 723})
+        refracted = LavaLampAnimation(self.controller, {"seed": 723})
+        plain.set_presentation_context(self._resolved())
+        refracted.set_presentation_context(self._resolved("refract", .8))
+        plain._step(.01); refracted._step(.01)
+        for name in ("x", "y", "vx", "vy", "temperature", "radius"):
+            np.testing.assert_array_equal(getattr(plain, name), getattr(refracted, name))
+        self.assertNotEqual(
+            plain.generate_frame(.02, 2).pixels.tobytes(),
+            refracted.generate_frame(.02, 2).pixels.tobytes(),
+        )
+        target = int(np.flatnonzero(refracted.active)[0])
+        self.assertTrue(refracted.handle_interaction("primary", float(refracted.x[target]), float(refracted.y[target])))
+        refracted._step(.01)
+        self.assertGreaterEqual(refracted.get_runtime_stats()["interactions_applied"], 1)
 
     def test_composer_canvas_uses_only_bounded_primary_interaction_for_live_instruments(self) -> None:
         script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
