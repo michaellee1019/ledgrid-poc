@@ -1106,6 +1106,8 @@
     pinball: {label: 'Arcade Pinball', accepted: 'Pinball flipper nudged on the installed final scene.', rejected: 'Arcade Pinball did not accept that flipper nudge.'},
     cellular_tapestry: {label: 'Cellular Tapestry', accepted: 'Cellular Tapestry queued a column injection.', rejected: 'Cellular Tapestry did not accept that column injection.'},
     frostwork: {label: 'Frostwork', accepted: 'Frostwork queued a crystal nucleus.', rejected: 'Frostwork did not accept that crystal nucleus.'},
+    reaction_diffusion_garden: {label: 'Reaction-Diffusion Garden', accepted: 'Reaction-Diffusion Garden queued a chemistry seed.', rejected: 'Reaction-Diffusion Garden did not accept that chemistry seed.'},
+    wind_in_the_reeds: {label: 'Wind in the Reeds', accepted: 'Wind in the Reeds queued a local bend.', rejected: 'Wind in the Reeds did not accept that bend.'},
   });
   async function triggerInstrumentAtPointer(event) {
     const componentId = state.scene?.animation?.component_id;

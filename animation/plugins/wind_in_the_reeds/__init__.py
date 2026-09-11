@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from functools import lru_cache
+from threading import Lock
 
 import numpy as np
 
@@ -157,11 +158,16 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 class WindInTheReedsAnimation(CadencedSculpture):
     ANIMATION_NAME="Wind in the Reeds"; ANIMATION_DESCRIPTION="A tactile field of reeds bends beneath travelling gust fronts"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="wind_in_the_reeds"; SOURCE_FPS=24.
+    INTERACTION_TYPES=frozenset(("primary",))
+    COMPOSER_INTERACTIONS={"point":{"kind":"primary","label":"Bend local reeds"}}
     PLANT_MODIFIER_SUPPORT=frozenset(("habitat",))
     INSTALLATION_GEOMETRY_CONTACT=True
     COMPONENT_DEFAULTS={"motion":.5,"density":.58,"background_level":.18,"seed":6101,"wind":.65,"gustiness":.55,"stem_density":1.,"season":"late_summer","motes":.45,"silhouette_strength":.5}
     def __init__(self,controller,config=None):
-        super().__init__(controller,config);self._init_reeds()
+        super().__init__(controller,config)
+        self._interaction_lock=Lock();self._pending_primary_bend=None
+        self._primary_interactions_received=0;self._primary_interactions_applied=0;self._primary_interactions_rejected=0
+        self._init_reeds()
         self._geometry_foliage=np.zeros(self._shape,dtype=bool);self._geometry_clearance=np.zeros(self._shape,dtype=bool);self._geometry_globe_edge=np.zeros(self._shape,dtype=bool)
         self._geometry_identity=None;self._geometry_strength=0.;self._pending_geometry=None;self._geometry_activation_tick=0
     @classmethod
@@ -181,7 +187,36 @@ class WindInTheReedsAnimation(CadencedSculpture):
         self._geometry_foliage,self._geometry_clearance,self._geometry_globe_edge,self._geometry_strength=self._pending_geometry;self._pending_geometry=None
     def _init_reeds(self):
         n=max(8,min(96,int((8+72*self.params["density"])*self.params["stem_density"])));self.base_x=self.rng.uniform(0,self._shape[0],n);self.lengths=self.rng.uniform(self._shape[1]*.12,self._shape[1]*.5,n);self.phases=self.rng.uniform(0,math.tau,n);self.bend=np.zeros(n);self.gust_phase=0.
-    def reset_simulation(self):super().reset_simulation();self._init_reeds()
+    def reset_simulation(self):
+        super().reset_simulation();self._init_reeds()
+        with self._interaction_lock:self._pending_primary_bend=None
+    def handle_interaction(self,kind,x,y,strength=1.0):
+        """Queue one local deterministic bend impulse for the next 24 Hz tick."""
+        values=(x,y,strength)
+        if kind!="primary" or any(isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(float(value)) for value in values):
+            self._primary_interactions_rejected+=1;return False
+        x_value,y_value,strength_value=map(float,values)
+        if not (0.<=x_value<self._shape[0] and 0.<=y_value<self._shape[1] and 0.<strength_value<=1.):
+            self._primary_interactions_rejected+=1;return False
+        impulse=(min(self._shape[0]-1,max(0,x_value)),min(self._shape[1]-1,max(0,y_value)),strength_value)
+        with self._interaction_lock:
+            if self._pending_primary_bend is not None:
+                self._primary_interactions_rejected+=1;return False
+            self._pending_primary_bend=impulse;self._primary_interactions_received+=1
+        return True
+    def _consume_primary_bend(self):
+        with self._interaction_lock:
+            impulse=self._pending_primary_bend;self._pending_primary_bend=None
+        if impulse is None:return
+        x,y,strength=impulse
+        # Measure each existing stem against the closest point on its visible
+        # segment.  This makes the impulse a local 2-D Gaussian while leaving
+        # bases, phases, and RNG untouched.
+        tip_y=self._shape[1]-1-self.lengths;nearest_y=np.clip(y,tip_y,self._shape[1]-1)
+        x_delta=(self.base_x-x)/max(1.,self._shape[0]*.12);y_delta=(nearest_y-y)/max(2.,self._shape[1]*.10)
+        weight=np.exp(-.5*(x_delta*x_delta+y_delta*y_delta))
+        self.bend=np.clip(self.bend+.85*strength*weight,-1.5,1.5)
+        self._primary_interactions_applied+=1
     def get_parameter_schema(self):
         s=super().get_parameter_schema();s.update({"wind":{"type":"float","min":0.,"max":2.,"default":.65,"description":"Steady reed bend"},"gustiness":{"type":"float","min":0.,"max":2.,"default":.55,"description":"Coherent travelling gusts"},"stem_density":{"type":"float","min":.25,"max":1.5,"default":1.,"description":"Reed field density"},"season":{"type":"str","options":["spring","late_summer","winter"],"default":"late_summer","description":"Stem character"},"motes":{"type":"float","min":0.,"max":2.,"default":.45,"description":"Floating seed motes"},"silhouette_strength":{"type":"float","min":0.,"max":1.,"default":.5,"description":"Foreground depth"}});return s
     @classmethod
@@ -199,6 +234,7 @@ class WindInTheReedsAnimation(CadencedSculpture):
             # changes stem bases, phase, or gust cadence.
             target*=1.-self._geometry_clearance[bx,by].astype(np.float64)*(.30*self._geometry_strength)
         self.bend+=(target-self.bend)*.18
+        self._consume_primary_bend()
     def generate_frame(self,time_elapsed,frame_count):
         tick,cached=self.begin_frame(time_elapsed)
         if cached:return cached
@@ -211,3 +247,6 @@ class WindInTheReedsAnimation(CadencedSculpture):
             accent=np.maximum(accent,self._geometry_globe_edge.astype(np.float32)*(.30*self._geometry_strength))
         return self.finish_frame(tick,self.colorize(value*(1-self.params["silhouette_strength"]*.35),accent))
     def logical_state(self):return round(self.gust_phase,6),self.bend.tobytes()
+    def get_runtime_stats(self):
+        with self._interaction_lock:pending=self._pending_primary_bend is not None
+        return {"primary_interactions_received":self._primary_interactions_received,"primary_interactions_applied":self._primary_interactions_applied,"primary_interactions_rejected":self._primary_interactions_rejected,"primary_interaction_pending":pending}

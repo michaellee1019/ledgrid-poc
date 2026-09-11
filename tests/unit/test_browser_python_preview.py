@@ -335,6 +335,26 @@ class BrowserPythonBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not support that direction"):
             runtime.interact("direction", direction="left")
 
+    def test_living_sculpture_points_queue_until_their_browser_semantic_tick(self):
+        geometry = {"width": 33, "height": 138}
+        for plugin, class_name, source_fps in (
+            ("reaction_diffusion_garden", "ReactionDiffusionGardenAnimation", 20.0),
+            ("wind_in_the_reeds", "WindInTheReedsAnimation", 24.0),
+        ):
+            with self.subTest(plugin=plugin):
+                runtime = _browser_runtime()
+                self.assertEqual(SUPPORTED_PLUGINS[plugin], class_name)
+                runtime.initialize(
+                    plugin, class_name, geometry,
+                    installation_profile_digest=PROFILE_DIGEST,
+                )
+                self.assertTrue(runtime.render(0.0, 0)["changed"])
+                self.assertTrue(runtime.interact("point", x=8, y=60, strength=.75)["accepted"])
+                self.assertFalse(runtime.render(0.0, 1)["changed"])
+                self.assertTrue(runtime.animation.get_runtime_stats()["primary_interaction_pending"])
+                self.assertTrue(runtime.render(1.0 / source_fps, 2)["changed"])
+                self.assertEqual(runtime.animation.get_runtime_stats()["primary_interactions_applied"], 1)
+
     def test_runtime_rejects_explicit_legacy_mask_paths_at_both_boundaries(self):
         runtime = _browser_runtime()
         for name in ("plant_mask_path", "plant_globe_mask_path"):

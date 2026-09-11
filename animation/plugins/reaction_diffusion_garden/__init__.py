@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from functools import lru_cache
+from threading import Lock
 
 import numpy as np
 
@@ -146,12 +148,17 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 class ReactionDiffusionGardenAnimation(CadencedSculpture):
     ANIMATION_NAME="Reaction-Diffusion Garden"; ANIMATION_DESCRIPTION="Luminous chemistry grows coral, spots, and fingerprints"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="reaction_diffusion_garden"; SOURCE_FPS=20.; REGIMES={"coral":(.0545,.062),"spots":(.035,.065),"fingerprints":(.037,.060)}
+    INTERACTION_TYPES=frozenset(("primary",))
+    COMPOSER_INTERACTIONS={"point":{"kind":"primary","label":"Seed local chemistry"}}
     PLANT_MODIFIER_SUPPORT=frozenset(("habitat",))
     INSTALLATION_GEOMETRY_CONTACT=True
     COMPONENT_DEFAULTS={"motion":.52,"density":.58,"background_level":.14,"seed":9101,"morphology":"coral","growth_rate":1.,"seeding_mode":"scattered","edge_glow":.65,"color_by_age":.6,"perturbation_interval":24.}
     LEGACY_PRESET_KEYS=frozenset(("render_fps","simulation_hz"))
     def __init__(self,controller,config=None):
-        super().__init__(controller,config);self._init_garden()
+        super().__init__(controller,config)
+        self._interaction_lock=Lock();self._pending_primary_perturbation=None
+        self._primary_interactions_received=0;self._primary_interactions_applied=0;self._primary_interactions_rejected=0
+        self._init_garden()
         self._geometry_foliage=np.zeros(self._shape,dtype=bool);self._geometry_cores=np.zeros(self._shape,dtype=bool);self._geometry_edge=np.zeros(self._shape,dtype=bool)
         self._geometry_identity=None;self._geometry_strength=0.;self._pending_geometry=None;self._geometry_activation_tick=0
     @classmethod
@@ -175,7 +182,33 @@ class ReactionDiffusionGardenAnimation(CadencedSculpture):
         elif self.params["seeding_mode"]=="column":xs=self.rng.integers(self._shape[0]//3,self._shape[0]*2//3,n);ys=self.rng.integers(2,self._shape[1]-2,n)
         else:xs=self.rng.integers(1,self._shape[0]-1,n);ys=self.rng.integers(2,self._shape[1]-2,n)
         self.v[xs,ys]=self.rng.uniform(.7,1.,n);self.u[xs,ys]=.2
-    def reset_simulation(self):super().reset_simulation();self._init_garden()
+    def reset_simulation(self):
+        super().reset_simulation();self._init_garden()
+        with self._interaction_lock:self._pending_primary_perturbation=None
+    def handle_interaction(self,kind,x,y,strength=1.0):
+        """Queue one fixed chemistry seed for the next 20 Hz semantic tick."""
+        values=(x,y,strength)
+        if kind!="primary" or any(isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(float(value)) for value in values):
+            self._primary_interactions_rejected+=1;return False
+        x_value,y_value,strength_value=map(float,values)
+        if not (0.<=x_value<self._shape[0] and 0.<=y_value<self._shape[1] and 0.<strength_value<=1.):
+            self._primary_interactions_rejected+=1;return False
+        # Keep the authored 3x3 reagent disk fully on the field even when the
+        # gesture lands at an edge.  Its chemistry is intentionally fixed; the
+        # input strength is admission-only so it cannot alter scene semantics.
+        center=(min(self._shape[0]-2,max(1,int(x_value))),min(self._shape[1]-2,max(1,int(y_value))))
+        with self._interaction_lock:
+            if self._pending_primary_perturbation is not None:
+                self._primary_interactions_rejected+=1;return False
+            self._pending_primary_perturbation=center;self._primary_interactions_received+=1
+        return True
+    def _consume_primary_perturbation(self):
+        with self._interaction_lock:
+            center=self._pending_primary_perturbation;self._pending_primary_perturbation=None
+        if center is None:return
+        x,y=center
+        self.u[x-1:x+2,y-1:y+2]=.2;self.v[x-1:x+2,y-1:y+2]=.9
+        self._primary_interactions_applied+=1
     def get_parameter_schema(self):
         s=super().get_parameter_schema();s.update({"morphology":{"type":"str","options":list(self.REGIMES),"default":"coral","description":"Reaction-front character"},"growth_rate":{"type":"float","min":.25,"max":2.,"default":1.,"description":"Chemistry growth rate"},"seeding_mode":{"type":"str","options":["scattered","column","center"],"default":"scattered","description":"Initial reaction seed"},"edge_glow":{"type":"float","min":0.,"max":1.5,"default":.65,"description":"Luminous front edge"},"color_by_age":{"type":"float","min":0.,"max":1.,"default":.6,"description":"Pattern-history coloring"},"perturbation_interval":{"type":"float","min":8.,"max":120.,"default":24.,"description":"Bounded reseed interval"}});return s
     @classmethod
@@ -195,6 +228,7 @@ class ReactionDiffusionGardenAnimation(CadencedSculpture):
         self.u,self.v=next_u,next_v;self.age+=self.v>.18
         if tick and tick%max(8,int(self.params["perturbation_interval"]*self.SOURCE_FPS))==0:
             x=self.rng.integers(1,self._shape[0]-1,4);y=self.rng.integers(2,self._shape[1]-2,4);self.v[x,y]=.9
+        self._consume_primary_perturbation()
     def generate_frame(self,time_elapsed,frame_count):
         tick,cached=self.begin_frame(time_elapsed)
         if cached:return cached
@@ -202,3 +236,6 @@ class ReactionDiffusionGardenAnimation(CadencedSculpture):
         if self._geometry_strength: edge=np.maximum(edge,self._geometry_edge.astype(np.float32)*(.22*self._geometry_strength))
         return self.finish_frame(tick,self.colorize(np.maximum(value,age*.45),np.maximum(edge,age*.35)))
     def logical_state(self):return self.u.tobytes(),self.v.tobytes(),self.age.tobytes()
+    def get_runtime_stats(self):
+        with self._interaction_lock:pending=self._pending_primary_perturbation is not None
+        return {"primary_interactions_received":self._primary_interactions_received,"primary_interactions_applied":self._primary_interactions_applied,"primary_interactions_rejected":self._primary_interactions_rejected,"primary_interaction_pending":pending}
