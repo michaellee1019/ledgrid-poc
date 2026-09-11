@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest import mock
@@ -17,6 +18,7 @@ from animation.core.plugin_loader import AnimationPluginLoader
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from tools.deployment.plugin_startup_precheck import (
     PluginStartupPrecheckError,
+    _validate_current_plant_glow_frame,
     run_plugin_startup_precheck,
 )
 
@@ -85,9 +87,10 @@ class DeploymentPluginStartupPrecheckTests(unittest.TestCase):
                 )
         self._write_plugin(root, plugin_id, source, class_name)
 
-    def test_healthy_current_tree_loads_every_plugin_and_renders_saved_plant_glow(self):
+    def test_healthy_current_tree_loads_every_plugin_and_renders_current_plant_glow(self):
         result = run_plugin_startup_precheck()
 
+        self.assertEqual(len(result.plugins), 52)
         self.assertIn("plant_glow", result.plugins)
         self.assertIn("ambient_scene", result.plugins)
         self.assertIn("snake", result.plugins)
@@ -95,6 +98,29 @@ class DeploymentPluginStartupPrecheckTests(unittest.TestCase):
             result.frame_shape,
             (DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP, 3),
         )
+        self.assertEqual(
+            result.foreground_shape,
+            (DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP, 4),
+        )
+
+    def test_current_foreground_validation_rejects_non_premultiplied_alpha(self):
+        import numpy as np
+
+        foreground = np.zeros(
+            (DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP, 4), dtype=np.uint8
+        )
+        foreground[0] = (2, 0, 0, 1)
+        rendered = SimpleNamespace(
+            pixels=np.zeros(
+                (DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP, 3), dtype=np.uint8
+            ),
+            foreground=SimpleNamespace(pixels=foreground),
+        )
+
+        with self.assertRaisesRegex(
+            PluginStartupPrecheckError, "non-premultiplied current foreground"
+        ):
+            _validate_current_plant_glow_frame(rendered)
 
     def test_deploy_precheck_recipe_runs_only_the_local_startup_gate(self):
         justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
