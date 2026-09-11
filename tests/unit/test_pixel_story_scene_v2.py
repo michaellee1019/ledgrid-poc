@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 
 from animation.core.manager import PreviewLEDController
+from ipc.scene_contract import normalize_composer_scene
 from animation.plugins.ascii_drop import AsciiDropAnimation
 from animation.plugins.christmas_tree import ChristmasTreeAnimation
 from animation.plugins.emoji import EmojiAnimation
 from animation.plugins.night_train_windows import NightTrainWindowsAnimation
 from web.composer_component_presets import ComponentPresetCatalog
 from web.composer_final_preview import current_component_catalog
-from tests.unit.test_composer_slice import _PreviewManager, _WallChannel
+from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
 from web.app import AnimationWebInterface
+from web.composer_final_preview import ComposerFinalPreview
 
 
 class PixelStorySceneV2Tests(unittest.TestCase):
@@ -51,6 +54,33 @@ class PixelStorySceneV2Tests(unittest.TestCase):
         hello = AsciiDropAnimation(controller, {**shared, "phrase": "HELLO"}).generate_frame(1.0, 0).pixels.copy()
         goodbye = AsciiDropAnimation(controller, {**shared, "phrase": "GOODBYE"}).generate_frame(1.0, 0).pixels.copy()
         self.assertGreater(np.count_nonzero(hello != goodbye), 0)
+
+    def test_emoji_installed_final_preview_is_history_independent_at_one_scene_tick(self) -> None:
+        """The installed-final output cannot inherit a warmup sample's phase."""
+
+        catalog = current_component_catalog()
+        root = Path(__file__).resolve().parents[2]
+        wall_time = datetime(2026, 9, 11, 12, tzinfo=timezone.utc)
+        for palette_id in ("neutral", "mist", "spectrum", "ember"):
+            with self.subTest(palette=palette_id):
+                scene = _current_scene()
+                scene["animation"] = {
+                    "component_id": "emoji", "version": 1, "provider": "python",
+                    "role": "animation", "parameters": dict(EmojiAnimation.DEFAULTS),
+                }
+                scene["look"].update({"palette_id": palette_id, "pace": .7})
+                canonical = normalize_composer_scene({"origin": "composer", "scene": scene}, catalog)
+
+                fresh = ComposerFinalPreview(catalog, root).render(canonical, 1.0, wall_time)
+                warmed_preview = ComposerFinalPreview(catalog, root)
+                for index in range(240):
+                    warmed_preview.render(canonical, index / 240.0, wall_time)
+                warmed = warmed_preview.render(canonical, 1.0, wall_time)
+
+                self.assertEqual(fresh.pixels.shape, (33 * 138, 3))
+                self.assertEqual(fresh.stage_trace.count("plant_optics"), 1)
+                self.assertEqual(warmed.stage_trace.count("plant_optics"), 1)
+                np.testing.assert_array_equal(warmed.pixels, fresh.pixels)
 
     def test_composer_surface_qualifies_all_four_pixel_story_instruments(self) -> None:
         root = Path(__file__).resolve().parents[2]
