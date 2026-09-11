@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "1dfbbb97a7863eaf54b0244fc3dcbed64d712a96030e45d6ad71b5c3ce03f050",
+    "catalog_digest": "add52c948a751a09093f0b63df1c11a8db01ee9f714697b8129a54284d33eba0",
     "kind": "bundled",
     "version": 1
   },
@@ -81,7 +81,7 @@
           "component_id": "ambient_scene",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -89,7 +89,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -213,7 +213,7 @@
           "component_id": "pinball",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -221,7 +221,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -468,7 +468,7 @@
           "component_id": "ascii_drop",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -476,7 +476,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -742,7 +742,7 @@
           "component_id": "aurora_curtains",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -750,7 +750,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -1136,7 +1136,7 @@
           "component_id": "canopy_cup",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -1144,7 +1144,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -1651,7 +1651,7 @@
           "component_id": "cellular_tapestry",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -1659,7 +1659,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -1900,7 +1900,7 @@
           "component_id": "christmas_tree",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -1908,7 +1908,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2149,7 +2149,7 @@
           "component_id": "circadian_window",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -2157,7 +2157,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2463,7 +2463,7 @@
           "component_id": "clock",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": "Full-scene compatibility component cannot be composed.",
@@ -2471,7 +2471,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2689,7 +2689,7 @@
           "component_id": "clock_overlay",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -2697,7 +2697,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2879,7 +2879,7 @@
           "component_id": "cloud_canyon",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -2887,7 +2887,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -3295,7 +3295,7 @@
           "component_id": "conway_life",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -3303,7 +3303,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -4356,7 +4356,7 @@
           "component_id": "cyclic_reef",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -4364,7 +4364,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -4636,7 +4636,7 @@
           "component_id": "desert_wind",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -4644,7 +4644,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -4914,7 +4914,7 @@
           "component_id": "emoji",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -4922,7 +4922,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5165,7 +5165,7 @@
           "component_id": "emoji_arranger",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -5173,7 +5173,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5316,7 +5316,7 @@
           "component_id": "firefly_synchrony",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -5324,7 +5324,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5582,7 +5582,7 @@
           "component_id": "fireworks",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -5590,7 +5590,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5907,7 +5907,7 @@
           "component_id": "flame_burst",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -5915,7 +5915,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -6177,7 +6177,7 @@
           "component_id": "flow_field_silk",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -6185,7 +6185,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -6406,7 +6406,7 @@
           "component_id": "fluid_tank",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -6414,7 +6414,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -6702,7 +6702,7 @@
           "component_id": "frostwork",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -6710,7 +6710,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -6959,7 +6959,7 @@
           "component_id": "gif_animation",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -6967,7 +6967,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -7190,7 +7190,7 @@
           "component_id": "gradient",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -7198,7 +7198,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -7451,7 +7451,7 @@
           "component_id": "lava_lamp",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -7459,7 +7459,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -8165,7 +8165,7 @@
           "component_id": "living_ecosystem",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -8173,7 +8173,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -8605,7 +8605,7 @@
           "component_id": "living_stained_glass",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -8613,7 +8613,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -8969,7 +8969,7 @@
           "component_id": "moonlit_fog_banks",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -8977,7 +8977,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -9247,7 +9247,7 @@
           "component_id": "maze_chase",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -9255,7 +9255,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -9513,7 +9513,7 @@
           "component_id": "night_train_windows",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -9521,7 +9521,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -9762,7 +9762,7 @@
           "component_id": "physarum_network",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -9770,7 +9770,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10055,7 +10055,7 @@
           "component_id": "pixel_chase",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -10063,7 +10063,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10287,7 +10287,7 @@
           "component_id": "pixel_quest",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -10295,7 +10295,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10527,7 +10527,7 @@
           "component_id": "plant_calibration",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -10535,7 +10535,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10712,7 +10712,7 @@
           "component_id": "plant_glow",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -10720,7 +10720,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -11074,7 +11074,7 @@
           "component_id": "plant_mask_highlight",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -11082,7 +11082,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -11371,7 +11371,7 @@
           "component_id": "quasicrystal_bloom",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -11379,7 +11379,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -11643,7 +11643,7 @@
           "component_id": "rain_on_glass",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -11651,7 +11651,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -11923,7 +11923,7 @@
           "component_id": "rainbow",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -11931,7 +11931,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -12156,7 +12156,7 @@
           "component_id": "reaction_diffusion_garden",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -12164,7 +12164,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -12464,7 +12464,7 @@
           "component_id": "simple_test",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -12472,7 +12472,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -12611,7 +12611,7 @@
           "component_id": "snake",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -12619,7 +12619,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -13190,7 +13190,7 @@
           "component_id": "solid",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -13198,7 +13198,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -13435,7 +13435,7 @@
           "component_id": "sparkle",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -13443,7 +13443,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -13732,7 +13732,7 @@
           "component_id": "spiral_single",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -13740,7 +13740,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -13887,7 +13887,7 @@
           "component_id": "strip_order",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -13895,7 +13895,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -14122,7 +14122,7 @@
           "component_id": "tetris",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -14130,7 +14130,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -14440,7 +14440,7 @@
           "component_id": "tidal_bioluminescence",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -14448,7 +14448,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -14692,7 +14692,7 @@
           "component_id": "waterfall_veil",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -14700,7 +14700,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -14944,7 +14944,7 @@
           "component_id": "wave",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -14952,7 +14952,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -15258,7 +15258,7 @@
           "component_id": "wind_in_the_reeds",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -15266,7 +15266,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -15532,7 +15532,7 @@
           "component_id": "world_flags",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789"
+          "runtime_digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593"
         },
         "previewable": true,
         "reason": null,
@@ -15540,7 +15540,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "d893bf43bde3cc07ea5639c3ab642312fb59a248ba429467ef419a7006715789",
+        "digest": "4f6ed2c45d1d5e5e57647e12ce1fff5c25f866ed44a5ad92ec7135a9f02c6593",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,

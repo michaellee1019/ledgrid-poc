@@ -2,8 +2,8 @@
 
 The browser bundle intentionally carries the repository plugin and rendering
 code, but not the host's scene manager or receiver protocol graph.  This file
-keeps the two contracts imported by ``clock_overlay`` byte-for-byte compatible
-at their boundary: the timing enum and validated premultiplied RGBA frame.
+keeps the value types imported by ``clock_overlay`` portable, alongside the
+timing enum and validated premultiplied RGBA frame.
 """
 
 from __future__ import annotations
@@ -23,6 +23,41 @@ class TimingAdapter(str, Enum):
     LEGACY_SPEED_PARAM = "legacy_speed_param"
     SCALED_CONTEXT = "scaled_context"
     WALL_CLOCK = "wall_clock"
+
+
+@dataclass(frozen=True)
+class AnimationRuntimeContext:
+    """Host context value shape for portable renderer imports.
+
+    Browser Scene rendering supplies ``ResolvedScene``. This declaration keeps
+    the alternate host context importable without importing its scene manager,
+    geometry services, or receiver validation graph.
+    """
+
+    wall_time: float
+    unscaled_elapsed: float
+    scaled_elapsed: float
+    frame_index: int
+    scene_epoch: int
+    global_width: int
+    height: int
+    local_strip_offset: int
+    local_width: int
+    vibe_id: str
+    vibe_profile_version: int
+    palette_roles: Mapping[str, Any]
+    capability_values: Mapping[str, Any]
+    installation_profile_view: Any
+    plant_modifiers: Mapping[str, Any]
+    installation_geometry_contact: Any = None
+    resolved_profile_digest: Optional[str] = None
+    tempo_scale: float = 1.0
+    luminance_scale: float = 1.0
+    operator_tempo_scale: float = 1.0
+    authored_speed: float = 1.0
+    effective_time_scale: float = 1.0
+    schema_version: int = 1
+    schema: str = "ledgrid.animation-runtime-context"
 
 
 @dataclass(frozen=True)
@@ -156,4 +191,7 @@ class OverlayFrame:
         object.__setattr__(self, "dirty_ranges", dirty_ranges)
 
 
-__all__ = ["BaseFrame", "OverlayFrame", "ResolvedScene", "TimingAdapter"]
+__all__ = [
+    "AnimationRuntimeContext", "BaseFrame", "OverlayFrame", "ResolvedScene",
+    "TimingAdapter",
+]
