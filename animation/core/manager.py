@@ -4294,6 +4294,9 @@ class AnimationManager:
                     'parameters': dict(component['config']),
                 },
                 'look': {'palette_id': palette_id, 'pace': 1.0},
+                'plants': {'effects': PlantModifierState.from_payload(
+                    context.plant_modifiers
+                ).to_dict()},
             }
             canonical_bytes = json.dumps(
                 canonical_scene, sort_keys=True, separators=(',', ':')
@@ -4318,6 +4321,10 @@ class AnimationManager:
                     name: NEUTRAL_PLANT_INPUTS.get(name, 0.0)
                     for name in required_inputs
                 },
+                installation_geometry=(
+                    context.installation_geometry_contact
+                    if descriptor.accepts_installation_geometry_contact else None
+                ),
             )
             rendered = resolved_renderer(resolved_context)
         else:

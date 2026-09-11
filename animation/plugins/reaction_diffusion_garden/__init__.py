@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.plant_awareness import InstallationGeometryContact, PlantModifierState
 from animation.libraries.procedural_living import ProceduralLivingBase
 
 
@@ -142,9 +144,28 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 class ReactionDiffusionGardenAnimation(CadencedSculpture):
     ANIMATION_NAME="Reaction-Diffusion Garden"; ANIMATION_DESCRIPTION="Luminous chemistry grows coral, spots, and fingerprints"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="reaction_diffusion_garden"; SOURCE_FPS=20.; REGIMES={"coral":(.0545,.062),"spots":(.035,.065),"fingerprints":(.037,.060)}
+    PLANT_MODIFIER_SUPPORT=frozenset(("habitat",))
+    INSTALLATION_GEOMETRY_CONTACT=True
     COMPONENT_DEFAULTS={"motion":.52,"density":.58,"background_level":.14,"seed":9101,"morphology":"coral","growth_rate":1.,"seeding_mode":"scattered","edge_glow":.65,"color_by_age":.6,"perturbation_interval":24.}
     LEGACY_PRESET_KEYS=frozenset(("render_fps","simulation_hz"))
-    def __init__(self,controller,config=None):super().__init__(controller,config);self._init_garden()
+    def __init__(self,controller,config=None):
+        super().__init__(controller,config);self._init_garden()
+        self._geometry_foliage=np.zeros(self._shape,dtype=bool);self._geometry_cores=np.zeros(self._shape,dtype=bool);self._geometry_edge=np.zeros(self._shape,dtype=bool)
+        self._geometry_identity=None;self._geometry_strength=0.;self._pending_geometry=None;self._geometry_activation_tick=0
+    @classmethod
+    def component_descriptor(cls):
+        return ComponentDescriptor(component_id=cls.COMPONENT_ID,version=1,provider="python",role="animation",timing_policy="scaled_context",alpha_behavior="opaque",palette_policy="semantic",plant_capabilities=("effect_intent","simulation_inputs"),fidelity_exceptions=(),optional_simulation_inputs=("installation_geometry_contact",),defaults=cls.COMPONENT_DEFAULTS,parameter_normalizer=cls._normalized_parameters)
+    def set_presentation_context(self,context):
+        super().set_presentation_context(context)
+        state=PlantModifierState.from_payload(context.canonical_scene.get("plants",{}).get("effects",{}));strength=state.strength("habitat",self.PLANT_MODIFIER_SUPPORT);contact=context.installation_geometry
+        identity=(contact.identity,contact.available,contact.status) if isinstance(contact,InstallationGeometryContact) else None;effective=strength if identity is not None and contact.available else 0.;key=(identity,effective)
+        if key==self._geometry_identity:return
+        foliage=np.zeros(self._shape,dtype=bool);cores=np.zeros(self._shape,dtype=bool);edge=np.zeros(self._shape,dtype=bool)
+        if effective and contact.foliage.shape==self._shape: foliage[:]=contact.foliage;cores[:]=contact.exact_globe_cores;edge[:]=contact.geometry.globe_edge
+        self._pending_geometry=(foliage,cores,edge,effective);self._geometry_identity=key;self._geometry_activation_tick=max(0,self._last_sim_tick+1);self._render_key=None
+    def _activate_geometry(self,tick):
+        if self._pending_geometry is None or tick<self._geometry_activation_tick:return
+        self._geometry_foliage,self._geometry_cores,self._geometry_edge,self._geometry_strength=self._pending_geometry;self._pending_geometry=None
     def _init_garden(self):
         self.u=np.ones(self._shape,np.float32);self.v=np.zeros(self._shape,np.float32);self.age=np.zeros(self._shape,np.float32);n=max(4,int(10+36*self.params["density"]));
         if self.params["seeding_mode"]=="center":xs=np.full(n,self._shape[0]//2);ys=np.linspace(2,self._shape[1]-3,n).astype(int)
@@ -163,12 +184,18 @@ class ReactionDiffusionGardenAnimation(CadencedSculpture):
     @staticmethod
     def _lap(a):return -a+.2*(np.roll(a,1,0)+np.roll(a,-1,0)+np.roll(a,1,1)+np.roll(a,-1,1))+.05*(np.roll(np.roll(a,1,0),1,1)+np.roll(np.roll(a,1,0),-1,1)+np.roll(np.roll(a,-1,0),1,1)+np.roll(np.roll(a,-1,0),-1,1))
     def _step(self,tick):
-        f,k=self.REGIMES[self.params["morphology"]];uvv=self.u*self.v*self.v;rate=.45*self.params["growth_rate"]*(.4+self.params["motion"]);self.u=np.clip(self.u+(self._lap(self.u)-uvv+f*(1-self.u))*rate,0,1);self.v=np.clip(self.v+(.5*self._lap(self.v)+uvv-(f+k)*self.v)*rate,0,1);self.age+=self.v>.18
+        self._activate_geometry(tick)
+        f,k=self.REGIMES[self.params["morphology"]]
+        feed=f+self._geometry_foliage.astype(np.float32)*(.006*self._geometry_strength) if self._geometry_strength else f
+        uvv=self.u*self.v*self.v;rate=.45*self.params["growth_rate"]*(.4+self.params["motion"]);next_u=np.clip(self.u+(self._lap(self.u)-uvv+feed*(1-self.u))*rate,0,1);next_v=np.clip(self.v+(.5*self._lap(self.v)+uvv-(feed+k)*self.v)*rate,0,1)
+        if self._geometry_strength:next_u[self._geometry_cores]=self.u[self._geometry_cores];next_v[self._geometry_cores]=self.v[self._geometry_cores]
+        self.u,self.v=next_u,next_v;self.age+=self.v>.18
         if tick and tick%max(8,int(self.params["perturbation_interval"]*self.SOURCE_FPS))==0:
             x=self.rng.integers(1,self._shape[0]-1,4);y=self.rng.integers(2,self._shape[1]-2,4);self.v[x,y]=.9
     def generate_frame(self,time_elapsed,frame_count):
         tick,cached=self.begin_frame(time_elapsed)
         if cached:return cached
         self.advance_bounded(tick,self._step,10);value=np.clip(self.v*1.8,0,1);edge=np.clip(np.abs(self._lap(self.v))*self.params["edge_glow"]*3,0,1);age=np.clip(self.age/60,0,1)*self.params["color_by_age"]
+        if self._geometry_strength: edge=np.maximum(edge,self._geometry_edge.astype(np.float32)*(.22*self._geometry_strength))
         return self.finish_frame(tick,self.colorize(np.maximum(value,age*.45),np.maximum(edge,age*.35)))
     def logical_state(self):return self.u.tobytes(),self.v.tobytes(),self.age.tobytes()

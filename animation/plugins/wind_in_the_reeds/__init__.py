@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 import numpy as np
 
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.plant_awareness import InstallationGeometryContact, PlantModifierState
 from animation.libraries.atmospheric_palette import (
     resolve_atmospheric_palette,
     semantic_atmospheric_palette_active,
@@ -153,8 +155,27 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 class WindInTheReedsAnimation(CadencedSculpture):
     ANIMATION_NAME="Wind in the Reeds"; ANIMATION_DESCRIPTION="A tactile field of reeds bends beneath travelling gust fronts"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="wind_in_the_reeds"; SOURCE_FPS=24.
+    PLANT_MODIFIER_SUPPORT=frozenset(("habitat",))
+    INSTALLATION_GEOMETRY_CONTACT=True
     COMPONENT_DEFAULTS={"motion":.5,"density":.58,"background_level":.18,"seed":6101,"wind":.65,"gustiness":.55,"stem_density":1.,"season":"late_summer","motes":.45,"silhouette_strength":.5}
-    def __init__(self,controller,config=None):super().__init__(controller,config);self._init_reeds()
+    def __init__(self,controller,config=None):
+        super().__init__(controller,config);self._init_reeds()
+        self._geometry_foliage=np.zeros(self._shape,dtype=bool);self._geometry_clearance=np.zeros(self._shape,dtype=bool);self._geometry_globe_edge=np.zeros(self._shape,dtype=bool)
+        self._geometry_identity=None;self._geometry_strength=0.;self._pending_geometry=None;self._geometry_activation_tick=0
+    @classmethod
+    def component_descriptor(cls):
+        return ComponentDescriptor(component_id=cls.COMPONENT_ID,version=1,provider="python",role="animation",timing_policy="scaled_context",alpha_behavior="opaque",palette_policy="semantic",plant_capabilities=("effect_intent","simulation_inputs"),fidelity_exceptions=(),optional_simulation_inputs=("installation_geometry_contact",),defaults=cls.COMPONENT_DEFAULTS,parameter_normalizer=cls._normalized_parameters)
+    def set_presentation_context(self,context):
+        super().set_presentation_context(context)
+        state=PlantModifierState.from_payload(context.canonical_scene.get("plants",{}).get("effects",{}));strength=state.strength("habitat",self.PLANT_MODIFIER_SUPPORT);contact=context.installation_geometry
+        identity=(contact.identity,contact.available,contact.status) if isinstance(contact,InstallationGeometryContact) else None;effective=strength if identity is not None and contact.available else 0.;key=(identity,effective)
+        if key==self._geometry_identity:return
+        foliage=np.zeros(self._shape,dtype=bool);clearance=np.zeros(self._shape,dtype=bool);globe_edge=np.zeros(self._shape,dtype=bool)
+        if effective and contact.foliage.shape==self._shape:foliage[:]=contact.foliage;clearance[:]=contact.clearance;globe_edge[:]=contact.geometry.globe_edge
+        self._pending_geometry=(foliage,clearance,globe_edge,effective);self._geometry_identity=key;self._geometry_activation_tick=max(0,self._last_sim_tick+1);self._render_key=None
+    def _activate_geometry(self,tick):
+        if self._pending_geometry is None or tick<self._geometry_activation_tick:return
+        self._geometry_foliage,self._geometry_clearance,self._geometry_globe_edge,self._geometry_strength=self._pending_geometry;self._pending_geometry=None
     def _init_reeds(self):
         n=max(8,min(96,int((8+72*self.params["density"])*self.params["stem_density"])));self.base_x=self.rng.uniform(0,self._shape[0],n);self.lengths=self.rng.uniform(self._shape[1]*.12,self._shape[1]*.5,n);self.phases=self.rng.uniform(0,math.tau,n);self.bend=np.zeros(n);self.gust_phase=0.
     def reset_simulation(self):super().reset_simulation();self._init_reeds()
@@ -167,12 +188,23 @@ class WindInTheReedsAnimation(CadencedSculpture):
         for key,lo,hi in (("wind",0.,2.),("gustiness",0.,2.),("stem_density",.25,1.5),("motes",0.,2.),("silhouette_strength",0.,1.)):
             if not lo<=float(v[key])<=hi:raise ValueError(f"{key} is out of range")
     def _step(self,tick):
-        self.gust_phase=(self.gust_phase+.025+.028*self.params["motion"])%math.tau;target=(self.params["wind"]*.28+self.params["gustiness"]*.44*np.sin(self.gust_phase-self.base_x*.22))*np.sin(self.gust_phase*.43+.7);self.bend+=(target-self.bend)*.18
+        self._activate_geometry(tick)
+        self.gust_phase=(self.gust_phase+.025+.028*self.params["motion"])%math.tau;target=(self.params["wind"]*.28+self.params["gustiness"]*.44*np.sin(self.gust_phase-self.base_x*.22))*np.sin(self.gust_phase*.43+.7)
+        if self._geometry_strength:
+            bx=np.rint(self.base_x).astype(int)%self._shape[0];by=np.full(bx.shape,self._shape[1]-1,dtype=int)
+            # Clearance gives a bounded lee-side bend reduction; it never
+            # changes stem bases, phase, or gust cadence.
+            target*=1.-self._geometry_clearance[bx,by].astype(np.float64)*(.30*self._geometry_strength)
+        self.bend+=(target-self.bend)*.18
     def generate_frame(self,time_elapsed,frame_count):
         tick,cached=self.begin_frame(time_elapsed)
         if cached:return cached
         self.advance_bounded(tick,self._step,12);value=np.zeros(self._shape,np.float32);accent=np.zeros_like(value)
         for bx,length,bend,phase in zip(self.base_x,self.lengths,self.bend,self.phases):
             t=np.linspace(0,1,max(4,int(length/4)));x=np.clip(np.rint(bx+bend*t*t*self._shape[0]*.18+np.sin(t*3+phase)*.25),0,self._shape[0]-1).astype(int);y=np.clip(np.rint(self._shape[1]-1-t*length),0,self._shape[1]-1).astype(int);value[x,y]=np.maximum(value[x,y],.45+.5*t);accent[x[-1],y[-1]]=1.
-        motes=np.maximum(0,np.sin(self._x*19+self._y*27+tick*.12))**30*self.params["motes"]*.35;value=np.maximum(value,motes);return self.finish_frame(tick,self.colorize(value*(1-self.params["silhouette_strength"]*.35),accent))
+        motes=np.maximum(0,np.sin(self._x*19+self._y*27+tick*.12))**30*self.params["motes"]*.35;value=np.maximum(value,motes)
+        if self._geometry_strength:
+            value*=1.-self._geometry_foliage.astype(np.float32)*(.24*self._geometry_strength)
+            accent=np.maximum(accent,self._geometry_globe_edge.astype(np.float32)*(.30*self._geometry_strength))
+        return self.finish_frame(tick,self.colorize(value*(1-self.params["silhouette_strength"]*.35),accent))
     def logical_state(self):return round(self.gust_phase,6),self.bend.tobytes()
