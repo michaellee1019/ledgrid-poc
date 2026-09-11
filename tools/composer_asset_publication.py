@@ -12,7 +12,11 @@ CONFIG_NAME = "service_worker_config.v1.js"
 MANIFEST_NAME = "offline_assets.json"
 BOOTSTRAP_NAME = "bootstrap.v1.json"
 PYTHON_RUNTIME_NAME = "ledgrid_python_runtime.zip"
-NATIVE_NAMES = ("aurora_curtains_native.wasm", "compiled_rainbow.wasm")
+NATIVE_NAMES = (
+    "aurora_curtains_native.wasm",
+    "compiled_rainbow.wasm",
+    "native_aurora.wasm",
+)
 PROFILE_PREFIX = "installation_profile_"
 PROFILE_SUFFIX = ".bin"
 CONFIG_URL = "/static/generated/composer/" + CONFIG_NAME
@@ -60,6 +64,7 @@ def generated_local_assets(profile_digest: str) -> dict[str, Path]:
     return {
         "/static/generated/composer/aurora_curtains_native.wasm": GENERATED_DIRECTORY / NATIVE_NAMES[0],
         "/static/generated/composer/compiled_rainbow.wasm": GENERATED_DIRECTORY / NATIVE_NAMES[1],
+        "/static/generated/composer/native_aurora.wasm": GENERATED_DIRECTORY / NATIVE_NAMES[2],
         BOOTSTRAP_URL: GENERATED_DIRECTORY / BOOTSTRAP_NAME,
         profile_url(profile_digest): GENERATED_DIRECTORY / profile_name(profile_digest),
         "/static/generated/composer/ledgrid_python_runtime.zip": GENERATED_DIRECTORY / PYTHON_RUNTIME_NAME,

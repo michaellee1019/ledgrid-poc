@@ -71,6 +71,7 @@ def build_stage(repo_root: Path, stage: Path) -> dict[str, object]:
     build_browser_python_bundle.build_bundle(repo_root, stage / PYTHON_RUNTIME_NAME)
     build_browser_native.build(stage / NATIVE_NAMES[0], repo_root=repo_root)
     build_browser_native.build_compiled_rainbow(stage / NATIVE_NAMES[1], repo_root=repo_root)
+    build_browser_native.build_native_aurora(stage / NATIVE_NAMES[2], repo_root=repo_root)
     profile, profile_digest = build_profile()
     profile_path = stage / profile_name(profile_digest)
     profile_path.write_bytes(profile)

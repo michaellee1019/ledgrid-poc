@@ -1,0 +1,71 @@
+{
+  "manifest_version": 1,
+  "plugin_id": "native_aurora",
+  "name": "Aurora Native",
+  "description": "Receiver-rendered semantic aurora field for the canonical Scene v2 background plane.",
+  "icon": "🌌",
+  "gallery": "show",
+  "provider": "receiver_native",
+  "role": "background",
+  "entrypoint": "ledgrid.native-background-abi:2",
+  "cadence": {
+    "mode": "fixed_fps",
+    "preferred_fps": 30
+  },
+  "parameter_schema": {
+    "gain": {
+      "type": "float",
+      "default": 0.72,
+      "description": "Component-local intensity before Scene presentation brightness.",
+      "min": 0.0,
+      "max": 1.0
+    },
+    "seed": {
+      "type": "int",
+      "default": 8012,
+      "description": "Deterministic spatial variation seed.",
+      "min": 0,
+      "max": 2147483647
+    },
+    "source_fps": {
+      "type": "float",
+      "default": 30.0,
+      "description": "Source cadence used to quantize the scaled Scene clock.",
+      "min": 1.0,
+      "max": 60.0
+    }
+  },
+  "vibe": {
+    "color_policy": "semantic",
+    "timing_adapter": "scaled_context",
+    "capabilities": ["palette_roles", "tempo"],
+    "semantic_roles": ["background_low", "primary", "accent"]
+  },
+  "installation_profile_requirements": [],
+  "geometry": {
+    "global_strips": 33,
+    "leds_per_strip": 138,
+    "receiver_views": [
+      {"logical_receiver_id": 0, "global_strip_offset": 0, "local_strips": 8, "reverse_local_strip_order": false},
+      {"logical_receiver_id": 1, "global_strip_offset": 8, "local_strips": 8, "reverse_local_strip_order": false},
+      {"logical_receiver_id": 2, "global_strip_offset": 16, "local_strips": 8, "reverse_local_strip_order": true},
+      {"logical_receiver_id": 3, "global_strip_offset": 24, "local_strips": 8, "reverse_local_strip_order": true},
+      {"logical_receiver_id": 4, "global_strip_offset": 32, "local_strips": 1, "reverse_local_strip_order": false}
+    ]
+  },
+  "preview": {
+    "kind": "native_host_build",
+    "capture_seconds": [0.0, 0.033334, 0.066668, 0.100002, 0.133336, 0.16667, 0.200004, 0.233338, 0.266672, 0.300006, 0.33334, 0.366674],
+    "simulation_fps": 30,
+    "framebuffer_readback": false
+  },
+  "build": {
+    "artifact_kind": "receiver_native_module",
+    "bundle_schema": "ledgrid.native-background-bundle",
+    "bundle_version": 1,
+    "abi_schema": "ledgrid.native-background-abi",
+    "abi_version": 2,
+    "target": "esp32-s3",
+    "source": "native/background.cpp"
+  }
+}

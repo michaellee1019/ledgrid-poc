@@ -564,13 +564,21 @@ def build_plugin(
             raise NativeBuildError(f"target ELF validation failed: {exc}") from exc
         authored_preview = component["preview"]
         duration_ms = max(1, round(1000 / int(authored_preview["simulation_fps"])))
-        default_run = render_host_frames(host_path, component)
+        preview_palette = None
+        if component["plugin_id"] == "native_aurora":
+            from .aurora import canonical_palette_roles
+
+            preview_palette = tuple(canonical_palette_roles("neutral").values())
+        default_run = render_host_frames(
+            host_path, component, vibe_palette=preview_palette
+        )
         stress_run = render_host_frames(
             host_path,
             component,
             parameters=stress_parameters(component["parameter_schema"]),
             frame_count=60,
             duration_ms=duration_ms,
+            vibe_palette=preview_palette,
         )
         for profile, run in (("default", default_run), ("stress", stress_run)):
             if run.missed_deadlines != 0 or run.timing.p95_ms >= 4.0:

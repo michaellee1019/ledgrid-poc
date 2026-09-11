@@ -142,14 +142,22 @@ def render_host_frames(
     if library.is_symlink() or not library.is_file():
         raise NativePreviewError("host preview library must be a regular non-symlink file")
     root = Path(repo_root).resolve() if repo_root is not None else Path(__file__).resolve().parents[2]
+    source_fps = resolved_parameters.get("source_fps", cadence_fps)
+    if (
+        isinstance(source_fps, bool)
+        or not isinstance(source_fps, (int, float))
+        or not math.isfinite(float(source_fps))
+        or not 1 <= float(source_fps) <= 200
+    ):
+        raise NativePreviewError("host preview source_fps is invalid")
     request = {
         "host_library": os.fspath(library),
         "manifest": manifest,
         "parameters": resolved_parameters,
         "frame_count": frames_requested,
         "scene_times_us": scene_times_us,
-        "cadence_period_us": math.ceil(1_000_000 / float(cadence_fps)),
-        "render_budget_ms": 1000 / float(cadence_fps),
+        "cadence_period_us": math.ceil(1_000_000 / float(source_fps)),
+        "render_budget_ms": 1000 / float(source_fps),
         "vibe": {
             "luminance_q8_8": vibe_luminance_q8_8,
             "palette": palette,

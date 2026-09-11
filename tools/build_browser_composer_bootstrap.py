@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
 from pathlib import Path
 import sys
+import tempfile
 from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,8 +25,14 @@ from animation.core.installation_profile import (  # noqa: E402
     encode_installation_profile,
 )
 from animation.core.manager import AnimationManager, PreviewLEDController  # noqa: E402
+from animation.core.native_background_library import NativeBackgroundLibrary  # noqa: E402
+from animation.native.managed_preview import ManagedNativeHostPreview  # noqa: E402
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT  # noqa: E402
 from web.app import AnimationWebInterface  # noqa: E402
+from web.composer_final_preview import (  # noqa: E402
+    NATIVE_AURORA_BUNDLE_DIGEST,
+    NATIVE_AURORA_COMPONENT_ID,
+)
 
 
 ARTIFACT_VERSION = 1
@@ -70,12 +78,27 @@ def build_bootstrap(
         receiver_sparse_overlay=True,
         receiver_native_modules=True,
     )
-    with contextlib.redirect_stdout(io.StringIO()):
+    with tempfile.TemporaryDirectory(prefix="composer-native-library-") as native_root, contextlib.redirect_stdout(io.StringIO()):
+        library = NativeBackgroundLibrary(
+            Path(native_root), clock=lambda: datetime(1970, 1, 1, tzinfo=timezone.utc),
+        )
+        build = (
+            repo_root / "run_state" / "native_background_builds"
+            / NATIVE_AURORA_COMPONENT_ID / NATIVE_AURORA_BUNDLE_DIGEST
+        )
+        if build.exists() or build.is_symlink():
+            # Verify the source, target payload, and host peer before publishing
+            # this exact identity into the temporary catalog-only library.
+            ManagedNativeHostPreview(
+                repo_root, NATIVE_AURORA_COMPONENT_ID, NATIVE_AURORA_BUNDLE_DIGEST,
+            )
+            library.publish(build / "bundle.zip")
         manager = AnimationManager(
             controller,
             animation_speed_scale=DEFAULT_ANIMATION_SPEED_SCALE,
             plant_aware=DEFAULT_PLANT_AWARE,
             feature_flags=flags,
+            native_background_library=library,
             auto_start=False,
         )
         interface = AnimationWebInterface(

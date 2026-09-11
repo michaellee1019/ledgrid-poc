@@ -336,7 +336,10 @@ def run(request: Mapping[str, Any]) -> tuple[dict[str, Any], bytes]:
     cadence_period_us = int(request["cadence_period_us"])
     render_budget_ms = float(request["render_budget_ms"])
     scene_times_us = [int(value) for value in request["scene_times_us"]]
-    if len(scene_times_us) != frame_count:
+    scaled_scene_times_us = [
+        int(value) for value in request.get("scaled_scene_times_us", scene_times_us)
+    ]
+    if len(scene_times_us) != frame_count or len(scaled_scene_times_us) != frame_count:
         raise RuntimeError("preview scene-time schedule does not match frame count")
     _library, api = _load_api(str(request["host_library"]))
     helpers, helper_keepalive = _helpers()
@@ -423,6 +426,7 @@ def run(request: Mapping[str, Any]) -> tuple[dict[str, Any], bytes]:
             wall_frame = bytearray(GLOBAL_STRIPS * LEDS_PER_STRIP * 3)
             wall_changed = False
             scene_time_us = scene_times_us[frame_index]
+            scaled_scene_time_us = scaled_scene_times_us[frame_index]
             for device, state in enumerate(states):
                 _lane, offset, local_strips, reverse = RECEIVER_VIEWS[device]
                 output = GuardedBuffer(local_strips * LEDS_PER_STRIP * 3)
@@ -430,7 +434,7 @@ def run(request: Mapping[str, Any]) -> tuple[dict[str, Any], bytes]:
                     ABI_VERSION,
                     ctypes.sizeof(RenderRequest),
                     scene_time_us,
-                    scene_time_us,
+                    scaled_scene_time_us,
                     frame_index,
                     output.output_pointer(),
                     output.size,

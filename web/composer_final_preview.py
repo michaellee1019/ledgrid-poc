@@ -1,7 +1,7 @@
 """Inert, continuously-cadenced final preview for Composer Scene v2.
 
 This is deliberately a presentation seam, not a second scene model.  It owns
-only the host-side stand-in for the receiver-native background plus calibrated
+only the verified host peer for the receiver-native background plus calibrated
 final plant optics.  CanonicalSceneRuntime continues to own ordering, alpha
 composition, resolved palette/pace, and the single output-brightness boundary.
 """
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import math
 from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping
@@ -29,6 +28,8 @@ from animation.core.plant_awareness import (
 from animation.core.scene_runtime import (
     CanonicalSceneRuntime, RuntimeFrame, ScenePresentationContext,
 )
+from animation.native.managed_preview import ManagedNativeHostPreview
+from animation.native.aurora import canonical_palette_roles
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.canopy_cup import CanopyCupAnimation
 from animation.plugins.ascii_drop import AsciiDropAnimation
@@ -74,7 +75,9 @@ from ipc.scene_contract import CanonicalScene
 
 
 NATIVE_AURORA_COMPONENT_ID = "native_aurora"
-NATIVE_AURORA_BUNDLE_DIGEST = "d0b8c0f9c7d55a8f58b6156e20c59afe6e4c5a7e2821cb6b3a29d9af81c296bf"
+NATIVE_AURORA_BUNDLE_DIGEST = "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce"
+NATIVE_AURORA_PAYLOAD_DIGEST = "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37"
+NATIVE_AURORA_HOST_ARTIFACT_DIGEST = "a546fc1ff316e0db63316a2ab7512552f986721de1d43a7aa373361cae8f7da0"
 
 
 def native_aurora_descriptor() -> ComponentDescriptor:
@@ -160,54 +163,26 @@ def current_component_catalog() -> ComponentCatalog:
     return ComponentCatalog(current_component_descriptors())
 
 
-_PALETTES: Mapping[str, tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]] = {
-    "neutral": ((2, 10, 18), (24, 148, 132), (150, 255, 218)),
-    "mist": ((3, 9, 20), (40, 102, 142), (170, 228, 245)),
-    "spectrum": ((15, 3, 34), (84, 38, 194), (54, 238, 230)),
-    "ember": ((18, 3, 2), (156, 42, 14), (255, 202, 92)),
-}
-
-
 class _NativeAuroraPreview:
-    """Deterministic preview implementation of the chosen native background.
+    """Scene adapter over the verified host build of the receiver source."""
 
-    It uses the native renderer's declared source cadence rather than browser
-    animation-frame cadence.  This keeps preview frames stable between native
-    redraw ticks while the other Scene v2 planes continue at their own rates.
-    """
+    def __init__(self, project_root: Path) -> None:
+        self._native = ManagedNativeHostPreview(
+            project_root, NATIVE_AURORA_COMPONENT_ID, NATIVE_AURORA_BUNDLE_DIGEST
+        )
 
-    def __init__(self, strips: int, leds: int) -> None:
-        self._strips, self._leds = strips, leds
-        self._x = np.linspace(0.0, 1.0, strips, dtype=np.float32)[:, None]
-        self._y = np.linspace(0.0, 1.0, leds, dtype=np.float32)[None, :]
-        self._field = np.empty((strips, leds), dtype=np.float32)
-        self._rgb = np.empty((strips, leds, 3), dtype=np.float32)
-        self._pixels = np.zeros((strips * leds, 3), dtype=np.uint8)
-        self._key: tuple[Any, ...] | None = None
-
-    def render(self, context: Any, _frame_count: int) -> BaseFrame:
+    def render(self, context: Any, frame_count: int) -> BaseFrame:
         parameters = context.parameters
-        source_fps = float(parameters["source_fps"])
-        tick = int(math.floor(context.phase_time * source_fps + 1e-9))
-        key = (context.palette["palette_id"], tick, float(parameters["gain"]), int(parameters["seed"]))
-        if key == self._key:
-            return BaseFrame(self._pixels, changed=False, dirty_ranges=())
-        low, primary, accent = _PALETTES.get(str(context.palette["palette_id"]), _PALETTES["neutral"])
-        phase = tick / source_fps
-        seed = int(parameters["seed"])
-        np.sin((self._x * (3.7 + (seed % 5) * .11)) + phase * .42 + self._y * 2.1, out=self._field)
-        self._field *= .5
-        self._field += .5
-        self._field *= np.float32(parameters["gain"])
-        np.clip(self._field, 0.0, 1.0, out=self._field)
-        for channel in range(3):
-            self._rgb[:, :, channel] = low[channel] + (primary[channel] - low[channel]) * self._field
-            self._rgb[:, :, channel] += (accent[channel] - primary[channel]) * np.square(self._field) * .34
-        np.clip(self._rgb, 0.0, 255.0, out=self._rgb)
-        np.rint(self._rgb, out=self._rgb)
-        self._pixels[:] = self._rgb.reshape((-1, 3))
-        self._key = key
-        return BaseFrame(self._pixels, changed=True)
+        pace = float(context.canonical_scene["look"]["pace"])
+        unscaled = context.phase_time / pace if pace > 0.0 else 0.0
+        roles = canonical_palette_roles(context.palette["palette_id"])
+        return self._native.render(
+            parameters=parameters,
+            palette=tuple(roles.values()),
+            scaled_scene_time=context.phase_time,
+            unscaled_scene_time=unscaled,
+            frame_index=frame_count,
+        )
 
 
 @dataclass
@@ -240,12 +215,25 @@ class InstalledFinalSceneRuntime:
     calibrated plant inputs, and final optics in one boundary.
     """
 
-    def __init__(self, catalog: Any, project_root: Path, *, controller: Any | None = None) -> None:
+    def __init__(
+        self,
+        catalog: Any,
+        project_root: Path,
+        *,
+        controller: Any | None = None,
+        foreground_only: bool = False,
+    ) -> None:
         self.controller = controller or PreviewLEDController(strips=33, leds_per_strip=138)
         if (getattr(self.controller, "strip_count", None), getattr(self.controller, "leds_per_strip", None)) != (33, 138):
             raise ValueError("installed Scene v2 presentation requires a 33x138 controller")
+        self.foreground_only = bool(foreground_only)
         self._wall_time = datetime.now().astimezone()
-        self._native = _NativeAuroraPreview(33, 138)
+        self._native = None if self.foreground_only else _NativeAuroraPreview(project_root)
+        background_renderer = (
+            self._render_foreground_only_background
+            if self.foreground_only
+            else self._native.render
+        )
         self._geometry = PlantMaskCache(_PlantGeometryOwner(33, 138, project_root))
         self._installation_profile_view: InstallationProfileRuntimeView | None = None
         self._geometry_contact: InstallationGeometryContact | None = None
@@ -253,7 +241,7 @@ class InstalledFinalSceneRuntime:
         self._runtime = CanonicalSceneRuntime(
             self.controller,
             catalog,
-            background_renderer=self._native.render,
+            background_renderer=background_renderer,
             animation_factory=self._animation_factory,
             widget_factory=self._widget_factory,
             plant_input_resolver=self._plant_inputs,
@@ -263,6 +251,21 @@ class InstalledFinalSceneRuntime:
         )
         self._active_digest: str | None = None
         self._lock = RLock()
+
+    def _render_foreground_only_background(
+        self, _context: Any, _frame_count: int
+    ) -> BaseFrame:
+        """Supply an inert base only for receiver foreground extraction.
+
+        The resulting RGB frame is not an installed-final preview. Live receiver
+        activation consumes only ``RuntimeFrame.foreground`` and combines it with
+        the separately verified receiver-native background on the receiver.
+        """
+
+        return BaseFrame(
+            np.zeros((self.controller.total_leds, 3), dtype=np.uint8),
+            changed=True,
+        )
 
     def render(self, presentation: ScenePresentationContext) -> RuntimeFrame:
         """Render one installed-final frame without mutating publication state."""
@@ -470,6 +473,7 @@ class ComposerFinalPreview(InstalledFinalSceneRuntime):
 
 __all__ = [
     "ComposerFinalPreview", "InstalledFinalSceneRuntime", "NATIVE_AURORA_BUNDLE_DIGEST",
-    "NATIVE_AURORA_COMPONENT_ID", "current_component_catalog",
+    "NATIVE_AURORA_COMPONENT_ID", "NATIVE_AURORA_HOST_ARTIFACT_DIGEST",
+    "NATIVE_AURORA_PAYLOAD_DIGEST", "current_component_catalog",
     "current_component_descriptors", "native_aurora_descriptor",
 ]

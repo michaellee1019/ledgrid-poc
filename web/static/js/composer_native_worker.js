@@ -21,6 +21,22 @@ const PLUGINS = Object.freeze({
             common_seed: 0,
         }),
     }),
+    native_aurora: Object.freeze({
+        label: 'Aurora Native',
+        defaults: Object.freeze({
+            gain: 0.72,
+            seed: 8012,
+            source_fps: 30,
+            palette_id: 'neutral',
+        }),
+    }),
+});
+
+const NATIVE_AURORA_PALETTES = Object.freeze({
+    neutral: 0,
+    mist: 1,
+    spectrum: 2,
+    ember: 3,
 });
 
 let wasm = null;
@@ -144,6 +160,25 @@ function resolvedParameters(params = {}) {
         }
         return value;
     }
+    if (activePluginId === 'native_aurora') {
+        value.gain = Number(value.gain);
+        value.seed = Number(value.seed);
+        value.source_fps = Number(value.source_fps);
+        value.palette_id = String(value.palette_id || 'neutral');
+        if (!Number.isFinite(value.gain) || value.gain < 0 || value.gain > 1) {
+            throw new Error('gain must be between 0 and 1');
+        }
+        if (!Number.isInteger(value.seed) || value.seed < 0 || value.seed > 0x7fffffff) {
+            throw new Error('seed must be an integer between 0 and 2147483647');
+        }
+        if (!Number.isFinite(value.source_fps) || value.source_fps < 1 || value.source_fps > 60) {
+            throw new Error('source_fps must be between 1 and 60');
+        }
+        if (!Object.prototype.hasOwnProperty.call(NATIVE_AURORA_PALETTES, value.palette_id)) {
+            throw new Error('palette_id must be neutral, mist, spectrum, or ember');
+        }
+        return value;
+    }
     value.brightness = Number(value.brightness);
     value.curtain_width = Number(value.curtain_width);
     value.layers = Number(value.layers);
@@ -168,18 +203,32 @@ function resolvedParameters(params = {}) {
 
 function applyParameters(params) {
     activeParams = resolvedParameters(params);
-    const status = activePluginId === 'compiled_rainbow'
-        ? exported('lg_browser_set_parameters')(
+    let status;
+    if (activePluginId === 'compiled_rainbow') {
+        status = exported('lg_browser_set_parameters')(
             activeParams.preferred_cadence_hz,
             activeParams.common_seed,
-        )
-        : exported('lg_browser_set_parameters')(
+        );
+    } else if (activePluginId === 'native_aurora') {
+        status = exported('lg_browser_set_parameters')(
+            activeParams.gain,
+            activeParams.seed,
+            activeParams.source_fps,
+        );
+        if (status === 0) {
+            status = exported('lg_browser_set_palette')(
+                NATIVE_AURORA_PALETTES[activeParams.palette_id],
+            );
+        }
+    } else {
+        status = exported('lg_browser_set_parameters')(
             activeParams.brightness,
             activeParams.curtain_width,
             activeParams.layers,
             activeParams.motion,
             activeParams.shimmer ? 1 : 0,
         );
+    }
     if (status !== 0) {
         throw new Error(`Native preview rejected parameters (bridge error ${exported('lg_browser_last_error')()})`);
     }
@@ -250,6 +299,7 @@ function render(message) {
     if (!Number.isFinite(elapsed) || elapsed < 0) {
         throw new Error('elapsed must be a non-negative number of seconds');
     }
+    // Composer sends the Scene-scaled phase elapsed for scaled-context sources.
     const sceneTimeUs = Math.round(elapsed * 1_000_000);
     const [timeLow, timeHigh] = splitUnsigned64(sceneTimeUs, 'scene time');
     const [frameLow, frameHigh] = splitUnsigned64(message.frameIndex ?? 0, 'frame index');
