@@ -96,7 +96,7 @@ The managed Beads block is task-tracking guidance, not permission to override re
 
 This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
 
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
+1. **Record remaining work** - Create open beads only when they meet the installed-wall admission rule; record other findings as not planned with a reopening trigger
 2. **Run quality gates** (if code changed) - Tests, linters, builds
 3. **Update issue status** - Close finished work, update in-progress items
 4. **Handle git/sync by active profile**:
@@ -144,7 +144,19 @@ bd prime                # Refresh Beads context
 
 ## Beads Autopilot
 
-These rules apply to the `ledgrid-poc-ib7` Live-First Composer initiative. They replace the retired worktree-train and source-parity sequencing with a breadth-first demo-delivery loop.
+These rules apply to the `ledgrid-poc-ib7` Live-First Composer initiative. They follow the accepted installed-wall backlog boundary below; prior delivery programs remain historical evidence.
+
+### Installed-wall backlog boundary (2026-09-11)
+
+The accepted backlog reduction supersedes historical reconstruction, breadth-expansion, cleanup, qualification, and automatic-follow-up instructions wherever they conflict. The durable decision and disposition ledger are in `ledgrid-poc-ib7.111`; the only active product epic is `ledgrid-poc-ib7`.
+
+- Preserve the current catalog, Widgets, Looks, controls, desktop/phone Composer, calibration, and working deployment path. Prioritize reliable use on the installed five-receiver 33x138 wall. New catalog expansion, another installation, and HAT redesign require an explicit user request.
+- Target 150 FPS on the installed wall. Any measured below-target limitation requires explicit human acknowledgement identifying the affected case and evidence. Do not substitute desktop timing, silently lower the target, hide receiver errors, or treat an intentional low animation source cadence as an output-throughput exemption. No agent may acknowledge a limitation for the user.
+- Aim for 10-15 actionable leaves plus the product epic and merge-slot record; this is an admission discipline, not permission to hide real failures. Admit work only for a reproducible supported-path failure, concrete integrity risk, unacknowledged performance shortfall, or explicitly requested feature. Each retained leaf needs a current problem, bounded correction, and decisive acceptance check.
+- Squash-to-main, selective reconstruction, blanket compatibility deletion, wholesale deployment replacement, formal production certification, exhaustive documentation, speculative optimization, and the deferred parking lot are retired obligations. Closed history and design artifacts remain available; closure never authorizes deleting implementations, data, or hardware evidence.
+- Record minor polish and speculative findings in the current Bead's handoff with impact and reopening trigger, or as a closed `not-planned` record when a separate record is useful. Do not automatically create open/deferred follow-ups. Reopen only when new evidence meets the admission rule or the user explicitly requests the work.
+- Distinguish `completed` (acceptance evidence), `superseded` (named successor), and `not-planned` (cancelled obligation) in closure reasons. User-approved retirement does not claim implementation success. Remove obsolete blockers and dispatch labels without disturbing active owners, claims, or dirty work.
+- Use the bounded current validation gate and exact-candidate evidence. Port unique integrity assertions when needed; do not repair every historical suite or reopen a family audit merely to eliminate stale tests. Keep independent review for visible changes and stronger integrity/hardware gates.
 
 ### The `start` contract
 
@@ -183,17 +195,17 @@ git worktree list --porcelain
 
 Inspect the live agent tree too. Repair mismatches before claiming anything: integrate a completed handoff, preserve dirty work, or return an orphaned claim to `open` with a short interruption note. Do not create a planning phase merely to restate the backlog.
 
-Use the integration branch recorded by the latest accepted Beads handoff and verify it against Git. The historical selective-reconstruction line is already incorporated into the current `update-animation-pipeline` integration branch; do not recreate its deleted branch or reconcile old prose on every start. Never merge a donor wholesale into another line or infer permission to merge to `main`. A sane, minimal eventual history onto `main` matters, but is secondary to reaching the right product and a convincing end-to-end demo. Do not stop visible product work merely to inventory, rewrite history, prune broadly, or perfect a future squash.
+Use the integration branch recorded by the latest accepted Beads handoff and verify it against Git. The historical selective-reconstruction line is already incorporated into the current `update-animation-pipeline` integration branch; do not recreate its deleted branch or reconcile old prose on every start. Never merge a donor wholesale into another line or infer permission to merge to `main`. There is no standing squash or main-convergence obligation. Do not stop retained product work for inventory, history rewriting, broad pruning, or a future squash.
 
-Use `bd ready --json` and select unassigned descendants of `ledgrid-poc-ib7`. Rank the shortest dependency path to the current Live-First demo first: user-visible behavior, shared contract unblockers, safety and operability, then complexity deletion. Defer broad renderer migration, inventory, verification-only work, documentation programs, and merge-history cleanup until the demo boundary or an actual dependency requires them. A leaf needs actionable acceptance, an identifiable ownership/conflict area, and focused validation; do not block delivery to perfect estimates, prose, or execution cards.
+Use `bd ready --json` and select unassigned retained descendants of `ledgrid-poc-ib7`. Prioritize concrete safety/data-integrity failures, supported catalog/playback failures, the 150 FPS target, then bounded validation and operability defects. Do not reactivate retired programs or select generic complexity deletion. Refresh the current base and ownership when dispatching; stale wave labels are not prerequisites. A leaf needs actionable acceptance, an identifiable ownership/conflict area, and focused validation; do not block delivery to perfect estimates, prose, or execution cards.
 
-### Breadth-first demo posture
+### Installed-wall delivery posture
 
-Optimize first for a compelling, varied catalog that is fun to explore: visibly distinct Animations and Widgets, intuitive component-local controls, useful defaults, and a short select-to-preview loop. Prefer several thin, complete catalog slices over taking one component or state path to production polish. Once a component can be selected, understood, previewed, and exercised through the accepted demo path, move to the next distinct catalog contribution.
+Keep the varied catalog already delivered usable and responsive. Finish concrete retained failures before adding another visual family or expanding the product boundary. Preserve current controls and semantics; do not remove features to meet the backlog count.
 
-Deliberately incur reversible technical debt when it buys catalog breadth or faster feedback. During implementation, review, or debugging, turn polish findings and state-management edge cases into linked follow-up Beads and continue unless they threaten safety, corrupt user work, invalidate the shared Scene v2 contract, or break the current browser/live demo. Perfect cache behavior, exhaustive recovery, speculative abstractions, full compatibility, and exhaustive test matrices are normally backlog work rather than blockers. Do not silently discard a finding: record its reproduction, impact, and suggested boundary in Beads.
+Accept low-impact reversible debt when the supported path works. Record reproduction, impact, and a reopening trigger in the current handoff; apply the admission rule before creating an open follow-up. Perfect cache behavior, exhaustive recovery, speculative abstractions, blanket compatibility removal, and exhaustive test matrices are not standing obligations.
 
-Keep feedback fast. Use focused contract tests and the small-fix validation triggers above. A new browser feature normally needs one short smoke covering its selection, control response and Preview; include live acknowledgement only when that boundary changes. Favor rapid visual confirmation over expanding a verification program. Batch physical-wall checks at useful demo checkpoints and only when the user has separately authorized wall or deployment operations; the `start` contract alone still does not authorize them.
+Keep feedback fast. Use focused contract tests and the small-fix validation triggers above. A changed browser feature normally needs one short smoke covering selection, control response, and Preview; include live acknowledgement when that boundary changes. Batch physical-wall checks where useful and only under applicable user authorization; `start` alone does not authorize them. Below-150-FPS limitations require the user's explicit acknowledgement.
 
 ### Model selection
 
@@ -224,9 +236,9 @@ Use a short-lived portfolio steward when the coordinator cannot resolve a real q
 
 The steward reads the binding Scene v2 decision, epic, recent handoffs, ready/blocked queues, and branch progress. It may prepare or repair at most 15 bounded executable Beads, partition them into dependency-ordered non-conflicting waves, clarify acceptance from accepted decisions, and retire stale coordination work. It normally changes Beads only, leaves a short epic note, and exits before implementation dispatch. It must not inflate the backlog, rewrite product intent, implement code, authorize pushes/hardware, or claim later waves.
 
-The steward should shape breadth-first waves across distinct visual families and control patterns. Do not serialize the portfolio behind polish for the most mature component. Keep follow-up debt discoverable but off the runnable demo wave unless it crosses the blocker threshold above.
+The steward maintains the bounded retained queue under the installed-wall admission rule. Do not manufacture catalog waves or deferred polish work. Preserve closed evidence and link only actual dependencies; never cancel a concrete integrity defect merely to meet the target count.
 
-Only the current runnable wave receives `worktree-ready` and may be claimed. Later selected Beads remain open and unclaimed until their dependencies integrate. Represent an unresolved product or authority choice as a separate Bead carrying the exact `human` label, block dependents on it, and leave it discoverable through `bd human list`.
+Claim a retained leaf only after its actual prerequisites are satisfied and its base and ownership are refreshed. Historical wave labels are not required; add `worktree-ready` only for an immediate dispatch if useful. Represent a genuinely unresolved product or authority choice with the exact `human` label and an actual dependency; reuse existing applicable authorization instead of creating duplicate gates.
 
 ### Implementation workers
 
@@ -242,11 +254,11 @@ Baseline validation follows the small-fix triggers: changed-language syntax or l
 
 Shared schemas, compositor or protocol work, risky live-state changes, and user-visible acceptance require an independent reviewer selected by the model policy above: Astra for shared contracts and high-consequence changes, Sol for ordinary user-visible acceptance. The reviewer works from an isolated worktree, checks the accepted Bead rather than redesigning it, records actionable findings or approval, and does not merge. The coordinator may review routine bounded leaves that do not meet those independent-review triggers. A review is a gate on integration, not a separate long-running implementation lane. For small visible corrections, use the focused review exception above: inspect the exact candidate and reproduce the decisive regression, reusing other trustworthy same-candidate checks. Do not inherit the catalog-modernization evidence checklist solely because a fix belongs to an Animation.
 
-Reviewers must distinguish demo blockers from follow-up debt. Block integration only for a concrete failure of the accepted user-visible path, safety or data-integrity risk, a broken shared contract, or a regression likely to derail the next breadth wave. Record lower-impact correctness, perfect-state-management, maintainability, and rare edge-case findings as follow-up Beads, then approve the bounded demo increment when its primary path is convincing.
+Reviewers must distinguish acceptance failures from optional debt. Block integration for a concrete failure of the accepted user-visible path, safety/data-integrity risk, a broken shared contract, or an unacknowledged performance shortfall relevant to the change. Record lesser findings in the handoff with a reopening trigger; create open follow-ups only under the admission rule. Approve the bounded increment when its accepted path is convincing.
 
 ### Animation modernization review discipline
 
-Use a review-before-implementation pass for catalog-wide animation modernization. The finite `ledgrid-poc-ib7.82` program is closed; its accepted dispositions remain evidence for follow-ups. A localized correction to an already reviewed component uses the small-fix path, not a repeat family audit. An evidence worker records source-read-only evidence for one non-overlapping family, and an independent reviewer reproduces the important claims. Select both models by the policy above; routine evidence starts with Terra and Sol acceptance, while complex simulation/timing analysis and shared-contract risks use the higher tiers. Create implementation children only from accepted `implement` dispositions or accepted product blockers; keep `retain-current`, `defer`, and `not-applicable` findings documented without turning them into speculative work.
+Only when the user explicitly requests a new catalog-wide animation modernization program, use a review-before-implementation pass. The finite `ledgrid-poc-ib7.82` program is closed; its accepted dispositions remain evidence for follow-ups. A localized correction to an already reviewed component uses the small-fix path, not a repeat family audit. An evidence worker records source-read-only evidence for one non-overlapping family, and an independent reviewer reproduces the important claims. Select both models by the policy above; routine evidence starts with Terra and Sol acceptance, while complex simulation/timing analysis and shared-contract risks use the higher tiers. Create implementation children only from accepted `implement` dispositions or accepted product blockers; keep `retain-current`, `defer`, and `not-applicable` findings documented without turning them into speculative work.
 
 For every component, record exactly one disposition for semantic palette, premultiplied RGBA/background composition, installation geometry, and direct interaction. Evidence must use a real resolved Scene at every sample through the production render path, including Scene palette and pace. Direct `generate_frame` calls, constructor defaults, or a context installed once at the wrong elapsed time do not prove Scene timing or palette behavior. Preserve fixed 33x138 fingerprints, semantic state and RNG digests, cache/source-tick behavior, focused tests, and desktop mean/p95/p99/max plus changed-frame ratio; never present desktop timing as Raspberry Pi evidence.
 
