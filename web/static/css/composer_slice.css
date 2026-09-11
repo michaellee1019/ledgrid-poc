@@ -102,6 +102,7 @@ input, select { min-width: 0; min-height: 1.9rem; padding: .34rem .42rem; border
 .warning { margin: .4rem 0; padding: .4rem; border-left: 3px solid #e5ab77; background: #34251e; color: #fff1e6; font-size: .74rem; }
 .state-chip { padding: .22rem .38rem; border-radius: 99px; background: #29464c; font-size: .66rem; font-weight: 700; white-space: nowrap; }
 .connection { margin: .5rem 0; padding: .5rem 0; border-top: 1px solid #29434a; border-bottom: 1px solid #29434a; }
+.wall-activation-failure { margin: .45rem 0 0; padding: .4rem; border-left: 3px solid #d96e62; background: #38201e; color: #fff1e6; font-size: .74rem; font-weight: 700; }
 .wide { width: 100%; margin: .15rem 0; }
 .secondary-operations { margin-top: .45rem; }
 .secondary-operations > summary, .diagnostics > summary { cursor: pointer; color: #b9e9dc; font-size: .76rem; font-weight: 720; }

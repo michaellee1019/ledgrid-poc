@@ -26,7 +26,7 @@
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
-      adoptedLook: null, adoptedVibeId: null,
+      adoptedLook: null, adoptedVibeId: null, activationError: null,
     } };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const beginIntent = () => ++state.intent;
@@ -806,7 +806,7 @@
   function observedWallIdentity(scene = state.wall.scene, observation = state.wall.observation) {
     const active = observation?.active_identity?.scene_identity;
     if (!scene || !active?.digest) return null;
-    return {revision: Number.isSafeInteger(scene.revision) ? scene.revision : active.revision, digest: active.digest};
+    return {revision: Number.isSafeInteger(active.revision) ? active.revision : scene.revision, digest: active.digest};
   }
   function wallStatus(lastError = null) {
     const observation = state.wall.observation;
@@ -858,7 +858,7 @@
     };
   }
   function browserSceneForWall(scene) {
-    const background = wallComponentReference(scene.animation.component_id, scene.animation.parameters);
+    const background = wallComponentReference(scene.animation.component_id, scene.animation.parameters, 'animation');
     const layers = [];
     const clock = (scene.widgets || []).find((widget) => widget.visible && widget.component?.component_id === 'clock_overlay');
     if (clock) layers.push({
@@ -938,7 +938,11 @@
     return scenePayload;
   }
   function renderStatus(payload) {
-    const status = payload.status || payload; state.status = status;
+    // Composer publication can confirm a new desired scene before the wall
+    // accepts it.  While that acknowledgement is failed or pending recovery,
+    // keep the Operations pane anchored to the wall observation rather than
+    // letting a later local Composer poll imply the desired scene is live.
+    const status = state.wall.activationError ? wallStatus() : (payload.status || payload); state.status = status;
     state.revision = Math.max(state.revision || 0, status.revision || 0);
     $('#connectionState').textContent = status.connected ? (status.running ? 'Connected · output running' : 'Connected · output stopped') : 'Disconnected';
     $('#observedIdentity').textContent = identity(status.observed); $('#diagnosticObserved').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
@@ -946,7 +950,10 @@
     const live = Boolean(status.running && status.armed);
     $('#liveAction').textContent = live ? 'Stop output' : 'Stopped';
     $('#liveAction').disabled = !live || state.wall.activating;
-    $('#operationMessage').textContent = state.authoredValidationError || status.last_error || (live
+    const activationFailure = $('#wallActivationFailure');
+    activationFailure.hidden = !state.wall.activationError;
+    activationFailure.textContent = state.wall.activationError || '';
+    $('#operationMessage').textContent = state.authoredValidationError || state.wall.activationError || status.last_error || (live
       ? (status.current ? (state.wall.dirty ? 'Publishing the newest valid edit.' : 'Live · every valid edit applies automatically.') : 'Live · choose or edit a scene to begin output.')
       : 'Output stopped · change any control or choose a scene to resume automatically.');
   }
@@ -982,7 +989,8 @@
       catch (wallError) {
         // The authored scene remains current and recoverable. A later edit
         // retries from a fresh controller revision without rolling the UI back.
-        renderStatus(wallStatus(wallError.message));
+        state.wall.activationError = wallError.message;
+        renderStatus(wallStatus());
       } finally {
         state.wall.activating = false;
         renderStatus(state.status || wallStatus());
@@ -1183,6 +1191,7 @@
       }),
     });
     await waitForExactActivation(accepted, checked.basis.controller.session_id);
+    state.wall.activationError = null;
     // A slider may have produced a newer queued scene while this exact one was
     // being acknowledged. Never snap the controls back to the older scene.
     state.wall.dirty = Boolean(state.publication.queued || state.publication.afterStop);

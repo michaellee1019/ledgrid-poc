@@ -456,7 +456,7 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
         self.assertIn("authoredValidationError: null", script)
         self.assertIn(
-            "state.authoredValidationError || status.last_error ||",
+            "state.authoredValidationError || state.wall.activationError || status.last_error ||",
             script,
         )
         submit = script[
@@ -476,6 +476,76 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
             )
         ]
         self.assertNotIn("authoredValidationError =", refresh)
+
+    def test_wall_activation_failure_stays_visible_until_an_exact_acknowledgement(self) -> None:
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        adapter = script[
+            script.index("function managedWallComponent") : script.index(
+                "  function globalSettingsForWall"
+            )
+        ]
+        identity = script[
+            script.index("const identity") : script.index("  const beginIntent")
+        ]
+        status = script[
+            script.index("function renderStatus") : script.index(
+                "  async function acknowledgeUndo"
+            )
+        ]
+        javascript = """
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const source = process.argv[1];
+const nodes = Object.fromEntries([
+  '#connectionState', '#observedIdentity', '#diagnosticObserved', '#desiredIdentity',
+  '#sceneRevision', '#sceneIdentity', '#saveState', '#liveAction',
+  '#wallActivationFailure', '#operationMessage',
+].map((selector) => [selector, {textContent: '', hidden: true, disabled: false}]));
+const prior = {revision: 7, digest: 'a'.repeat(64)};
+const context = {
+  assert, nodes, prior, JSON, Number, Boolean, Math, Object, Set, structuredClone,
+  state: {
+    status: {}, revision: 0, dirty: false, selection: null, authoredValidationError: null,
+    wall: {
+      bootstrap: {components: [{
+        provider: 'python', plugin_id: 'conway_life', role: 'animation',
+        browser_capabilities: {managed_identity: {
+          provider: 'python', component_id: 'conway_life', component_digest: 'c'.repeat(64),
+          runtime_digest: 'd'.repeat(64), parameter_schema_version: 1,
+        }},
+      }]},
+      observation: {
+        controller_session_id: 'session', controller_state_revision: 7, is_running: true,
+        installation_profile_digest: 'e'.repeat(64), active_identity: {scene_identity: prior},
+      },
+      scene: {revision: 7}, activating: false, dirty: false,
+      activationError: 'Activation rejected by mocked wall.',
+    },
+  },
+  $: (selector) => nodes[selector],
+};
+vm.runInNewContext(source + `
+  ; const scene = browserSceneForWall({animation: {component_id: 'conway_life', parameters: {seed: 23}}, widgets: []});
+  assert.equal(scene.background.component_id, 'conway_life');
+  assert.equal(scene.background.parameters.seed, 23);
+  renderStatus({connected: true, running: true, armed: true, current: {revision: 8, digest: 'b'.repeat(64)}, desired: {revision: 8, digest: 'b'.repeat(64)}, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
+  assert.equal(nodes['#wallActivationFailure'].hidden, false);
+  assert.equal(nodes['#wallActivationFailure'].textContent, 'Activation rejected by mocked wall.');
+  assert.equal(nodes['#observedIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
+  assert.equal(nodes['#desiredIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
+  state.wall.activationError = null;
+  renderStatus({connected: true, running: true, armed: true, current: {revision: 8, digest: 'b'.repeat(64)}, desired: {revision: 8, digest: 'b'.repeat(64)}, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
+  assert.equal(nodes['#wallActivationFailure'].hidden, true);
+  assert.equal(nodes['#observedIdentity'].textContent, 'r8 · ' + 'b'.repeat(64));
+`, context);
+"""
+        completed = subprocess.run(
+            ["node", "-e", javascript, identity + adapter + status],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_readding_after_primary_removal_selects_the_missing_slot_and_checks(self) -> None:
         """The client must restore the missing Conway lower slot without duplicates."""
