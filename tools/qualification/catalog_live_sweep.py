@@ -433,6 +433,8 @@ def run(
     results: list[dict[str, Any]] = []
     failure: str | None = None
     rejection: dict[str, Any] | None = None
+    restore_error = None
+    final_telemetry = None
     try:
         invalid = deepcopy(browser_scenes[0])
         invalid["components"][1]["component_digest"] = "0" * 64
@@ -500,24 +502,23 @@ def run(
             }
             results.append(result)
             print(json.dumps(result, sort_keys=True), flush=True)
-    except Exception as exc:  # restore is mandatory for every catalog failure
-        failure = f"{type(exc).__name__}: {exc}"
-    restore_error = None
-    final_telemetry = None
-    try:
-        restore_settings = _settings_at_current_revision(base_url, settings)
-        restored = _activate(
-            base_url, original_browser_scene, restore_settings, timeout=timeout
-        )
-        if restored.get("requested_identity") != restored.get("observed_identity"):
-            raise SweepError("restored receipt identity mismatch")
-        final_telemetry = _wait_for_component(
-            base_url,
-            original_scene["animation"]["component_id"],
-            timeout=timeout,
-        )
     except Exception as exc:
-        restore_error = f"{type(exc).__name__}: {exc}"
+        failure = f"{type(exc).__name__}: {exc}"
+    finally:
+        try:
+            restore_settings = _settings_at_current_revision(base_url, settings)
+            restored = _activate(
+                base_url, original_browser_scene, restore_settings, timeout=timeout
+            )
+            if restored.get("requested_identity") != restored.get("observed_identity"):
+                raise SweepError("restored receipt identity mismatch")
+            final_telemetry = _wait_for_component(
+                base_url,
+                original_scene["animation"]["component_id"],
+                timeout=timeout,
+            )
+        except Exception as exc:
+            restore_error = f"{type(exc).__name__}: {exc}"
     if final_telemetry is None:
         final_telemetry = _request_json(
             base_url, "/api/v1/composer/operations/telemetry"

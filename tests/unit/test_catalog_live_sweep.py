@@ -209,6 +209,92 @@ class CatalogLiveSweepTests(unittest.TestCase):
             activate.call_args_list[0].args[2],
         )
 
+    def test_interrupt_during_activation_restores_then_propagates(self):
+        original = _scene()
+        observation = {
+            "is_running": True,
+            "installation_profile_digest": PROFILE,
+            "active_identity": {"global_settings_identity": {"revision": 7}},
+            "vibe": {"state": {
+                "vibe_id": "neutral", "profile_version": 1,
+                "resolved_profile_digest": "e" * 64,
+            }},
+            "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+            "brightness": 128, "animation_speed_scale": .3, "target_fps": 30,
+        }
+        animation = {
+            "plugin_id": "gradient", "parameter_schema": {"seed": {}}
+        }
+        candidate_envelope = {
+            "case": "candidate",
+            "components": [{}, {"component_digest": "b" * 64}],
+        }
+        original_envelope = {"case": "exact-original"}
+
+        def request_json(_base_url, path, *, method="GET", payload=None, headers=None):
+            if path == "/api/v1/composer/bootstrap":
+                return {"components": []}
+            if path == "/api/v1/composer/settings/observed":
+                return deepcopy(observation)
+            if path == "/api/v1/scene":
+                return {"scene": deepcopy(original)}
+            if path.endswith("/gradient/presets"):
+                return {"presets": []}
+            if path == "/api/composer/starters":
+                return {"starters": []}
+            if path == "/api/composer/looks":
+                return {"looks": []}
+            if path == "/api/v1/scene/checks":
+                raise SweepError(
+                    "POST /api/v1/scene/checks returned 400: canonical browser "
+                    "scene animation managed identity is stale"
+                )
+            if path == "/api/v1/composer/operations/telemetry":
+                return {
+                    "controller": {"current_animation": "gradient"},
+                    "diagnostics": {"driver_stats": {"devices": []}},
+                }
+            raise AssertionError((method, path, payload, headers))
+
+        restored_receipt = {
+            "requested_identity": {"scene_identity": {"digest": "f" * 64}},
+            "observed_identity": {"scene_identity": {"digest": "f" * 64}},
+        }
+        with (
+            patch(
+                "tools.qualification.catalog_live_sweep._request_json",
+                side_effect=request_json,
+            ),
+            patch(
+                "tools.qualification.catalog_live_sweep.animation_components",
+                return_value=[animation],
+            ),
+            patch(
+                "tools.qualification.catalog_live_sweep.catalog_cases",
+                return_value=[{
+                    "case_id": "default:gradient", "kind": "default",
+                    "component_id": "gradient", "scene": deepcopy(original),
+                }],
+            ),
+            patch(
+                "tools.qualification.catalog_live_sweep.browser_scene_requests",
+                return_value=[candidate_envelope, original_envelope],
+            ),
+            patch(
+                "tools.qualification.catalog_live_sweep._activate",
+                side_effect=[KeyboardInterrupt(), restored_receipt],
+            ) as activate,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                run(
+                    "http://wall.invalid", hold=.25, timeout=5.0,
+                    physical_wall_authorized=True,
+                )
+
+        self.assertEqual(activate.call_count, 2)
+        self.assertEqual(activate.call_args_list[-1].args[1], original_envelope)
+        self.assertEqual(activate.call_args_list[-1].args[2]["revision"], 7)
+
 
 if __name__ == "__main__":
     unittest.main()
