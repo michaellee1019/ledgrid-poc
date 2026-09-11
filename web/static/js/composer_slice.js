@@ -137,13 +137,35 @@
     return [name, name === 'mood' ? control.value : (name === 'seed' ? Math.trunc(Number(control.value)) : Number(control.value))];
   }))});
   const emojiWidget = () => ({id: 'composer-emoji-message', component: {component_id: 'emoji_arranger', version: 1, provider: 'python', role: 'widget', parameters: emojiParameters()}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: 0}});
-  const componentPresetTargets = Object.freeze({aurora_curtains: 'aurora-curtains-preset-cards', conway_life: 'conway-life-preset-cards', tetris: 'tetris-preset-cards', firefly_synchrony: 'firefly-synchrony-preset-cards', fireworks: 'fireworksPresetCards', flame_burst: 'flame-burst-preset-cards', fluid_tank: 'fluid-tank-preset-cards', lava_lamp: 'lavaPresetCards', snake: 'snakePresetCards', cyclic_reef: 'reefPresetCards', canopy_cup: 'canopyPresetCards', maze_chase: 'mazePresetCards', pinball: 'pinballPresetCards', pixel_quest: 'questPresetCards', ascii_drop: 'asciiDropPresetCards', emoji: 'emojiAnimationPresetCards', christmas_tree: 'christmasTreePresetCards', night_train_windows: 'nightTrainPresetCards', gradient: 'gradient-preset-cards', rainbow: 'rainbow-preset-cards', solid: 'solid-preset-cards', sparkle: 'sparkle-preset-cards', wave: 'wave-preset-cards'});
+  const pixelChaseFields = Object.freeze([
+    {id: 'chaseRate', key: 'pixels_per_second', label: 'Movement rate', value: 120, min: .5, max: 1000, step: .5},
+    {id: 'chaseCount', key: 'pixel_count', label: 'Chase heads', value: 3, min: 1, max: 32, step: 1},
+    {id: 'chaseTailStyle', key: 'tail_style', label: 'Tail style', value: 'fade', options: [['none', 'None'], ['solid', 'Solid'], ['fade', 'Fade']]},
+    {id: 'chaseTailLength', key: 'tail_length', label: 'Tail length', value: 4, min: 0, max: 32, step: 1},
+    {id: 'chaseCycle', key: 'color_cycle_speed', label: 'Palette cycle', value: .2, min: 0, max: 4, step: .01},
+  ]);
+  const pixelChaseSelectors = Object.freeze(pixelChaseFields.map((field) => `#${field.id}`));
+  const pixelChaseParameters = () => Object.fromEntries(pixelChaseFields.map((field) => {
+    const control = document.getElementById(field.id);
+    return [field.key, field.options ? control.value : field.step === 1 ? Math.trunc(Number(control.value)) : Number(control.value)];
+  }));
+  const componentPresetTargets = Object.freeze({pixel_chase: 'pixel-chase-preset-cards', aurora_curtains: 'aurora-curtains-preset-cards', conway_life: 'conway-life-preset-cards', tetris: 'tetris-preset-cards', firefly_synchrony: 'firefly-synchrony-preset-cards', fireworks: 'fireworksPresetCards', flame_burst: 'flame-burst-preset-cards', fluid_tank: 'fluid-tank-preset-cards', lava_lamp: 'lavaPresetCards', snake: 'snakePresetCards', cyclic_reef: 'reefPresetCards', canopy_cup: 'canopyPresetCards', maze_chase: 'mazePresetCards', pinball: 'pinballPresetCards', pixel_quest: 'questPresetCards', ascii_drop: 'asciiDropPresetCards', emoji: 'emojiAnimationPresetCards', christmas_tree: 'christmasTreePresetCards', night_train_windows: 'nightTrainPresetCards', gradient: 'gradient-preset-cards', rainbow: 'rainbow-preset-cards', solid: 'solid-preset-cards', sparkle: 'sparkle-preset-cards', wave: 'wave-preset-cards'});
   const atmospherePresetTargets = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
   const sculpturePresetTargets = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
-  const componentControls = Object.freeze({aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], tetris: ['#tetrisPieces', '#tetrisFallRate', '#tetrisRisk', '#tetrisSmoothDrop'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], flame_burst: ['#flameCadence', '#flameSize', '#flameEmbers', '#flameFlicker'], fluid_tank: ['#fluidFlow', '#fluidCurrent', '#fluidBubbles', '#fluidSurface'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed'], snake: ['#snakeCadence', '#snakeCount', '#snakeFood', '#snakeGrowth', '#snakeRules', '#snakeObstacles', '#snakeTrails', '#snakeGlow', '#snakeSeed'], canopy_cup: ['#canopyWorld', '#canopyHeats', '#canopyCourse', '#canopyDensity', '#canopyRivalry', '#canopyPowerups'], cyclic_reef: ['#reefSpecies', '#reefThreshold', '#reefMutation', '#reefGrazers', '#reefGlow', '#reefTopology', '#reefPace', '#reefSeed'], maze_chase: ['#mazeCadence', '#mazeDifficulty', '#mazeRadar'], pinball: ['#pinballTicks', '#pinballChaos'], pixel_quest: ['#questCadence', '#questDifficulty', '#questHud'], ascii_drop: ['#asciiPhrase', '#asciiStory', '#asciiSpeed', '#asciiDensity'], emoji: ['#emojiFace', '#emojiMood', '#emojiAnimationPulse', '#emojiAnimationScale'], christmas_tree: ['#treeSeason', '#treeHeight', '#treeSnowfall'], night_train_windows: ['#trainRoute', '#trainSpeed', '#trainGlow'], gradient: ['#gradientDirection','#gradientDrift','#gradientMotion','#gradientSeed'], rainbow: ['#rainbowBands','#rainbowTravel','#rainbowDirection','#rainbowSeed'], solid: ['#solidGlow','#solidBreath','#solidSeed'], sparkle: ['#sparkleDensity','#sparkleLinger','#sparkleTwinkle','#sparkleNight','#sparkleSeed'], wave: ['#waveAxis','#waveFrequency','#waveTravel','#waveShape','#waveDirection','#waveSeed']});
+  const componentControls = Object.freeze({pixel_chase: pixelChaseSelectors, aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], tetris: ['#tetrisPieces', '#tetrisFallRate', '#tetrisRisk', '#tetrisSmoothDrop'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], flame_burst: ['#flameCadence', '#flameSize', '#flameEmbers', '#flameFlicker'], fluid_tank: ['#fluidFlow', '#fluidCurrent', '#fluidBubbles', '#fluidSurface'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed'], snake: ['#snakeCadence', '#snakeCount', '#snakeFood', '#snakeGrowth', '#snakeRules', '#snakeObstacles', '#snakeTrails', '#snakeGlow', '#snakeSeed'], canopy_cup: ['#canopyWorld', '#canopyHeats', '#canopyCourse', '#canopyDensity', '#canopyRivalry', '#canopyPowerups'], cyclic_reef: ['#reefSpecies', '#reefThreshold', '#reefMutation', '#reefGrazers', '#reefGlow', '#reefTopology', '#reefPace', '#reefSeed'], maze_chase: ['#mazeCadence', '#mazeDifficulty', '#mazeRadar'], pinball: ['#pinballTicks', '#pinballChaos'], pixel_quest: ['#questCadence', '#questDifficulty', '#questHud'], ascii_drop: ['#asciiPhrase', '#asciiStory', '#asciiSpeed', '#asciiDensity'], emoji: ['#emojiFace', '#emojiMood', '#emojiAnimationPulse', '#emojiAnimationScale'], christmas_tree: ['#treeSeason', '#treeHeight', '#treeSnowfall'], night_train_windows: ['#trainRoute', '#trainSpeed', '#trainGlow'], gradient: ['#gradientDirection','#gradientDrift','#gradientMotion','#gradientSeed'], rainbow: ['#rainbowBands','#rainbowTravel','#rainbowDirection','#rainbowSeed'], solid: ['#solidGlow','#solidBreath','#solidSeed'], sparkle: ['#sparkleDensity','#sparkleLinger','#sparkleTwinkle','#sparkleNight','#sparkleSeed'], wave: ['#waveAxis','#waveFrequency','#waveTravel','#waveShape','#waveDirection','#waveSeed']});
   const atmosphereControls = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, atmosphereSpecs[id].fields.map(([name]) => `#${atmosphereControlId(id, name)}`)])));
   const sculptureControls = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, sculptureSpecs[id].fields.map(([name]) => `#${sculptureControlId(id, name)}`)])));
 
+  function installPixelChaseControls() {
+    $('#animationChoice').append(new Option('Pixel Chase', 'pixel_chase'));
+    pixelChaseFields.forEach((field) => {
+      const label = document.createElement('label'); label.textContent = field.label;
+      const control = document.createElement(field.options ? 'select' : 'input'); control.id = field.id;
+      if (field.options) field.options.forEach(([value, name]) => control.append(new Option(name, value)));
+      else { control.type = 'number'; control.min = String(field.min); control.max = String(field.max); control.step = String(field.step); }
+      control.value = field.value; label.append(control); $('#animationControls').append(label);
+    });
+  }
   function installPixelStoryControls() {
     const field = (id, label, value, options = null) => { const wrapper = document.createElement('label'); wrapper.textContent = label; const control = document.createElement(options ? 'select' : 'input'); control.id = id; if (options) options.forEach(([optionValue, title]) => control.append(new Option(title, optionValue))); else { control.type = id === 'asciiPhrase' ? 'text' : 'number'; control.step = '.01'; } control.value = value; wrapper.append(control); $('#animationControls').append(wrapper); };
     field('asciiPhrase', 'ASCII phrase', 'HELLO'); field('asciiStory', 'ASCII story', 'terminal', [['terminal','Terminal'],['matrix','Matrix'],['love','Love letter'],['datastream','Datastream'],['overflow','Overflow']]); field('asciiSpeed', 'Glyph speed', '13'); field('asciiDensity', 'Glyph density', '.45');
@@ -589,7 +611,9 @@
     const next = structuredClone(state.scene || defaultScene());
     next.background.parameters = {...next.background.parameters, gain: number('#backgroundGain')};
     const choice = $('#animationChoice').value;
-    if (choice !== next.animation.component_id) next.animation = sculptureIds.includes(choice)
+    if (choice !== next.animation.component_id) next.animation = choice === 'pixel_chase'
+      ? {component_id: 'pixel_chase', version: 1, provider: 'python', role: 'animation', parameters: pixelChaseParameters()}
+      : sculptureIds.includes(choice)
       ? {component_id: choice, version: 1, provider: 'python', role: 'animation', parameters: sculptureParameters(choice, sculptureSpecs[choice].defaults)}
       : atmosphereIds.includes(choice)
       ? {component_id: choice, version: 1, provider: 'python', role: 'animation', parameters: atmosphereParameters(choice)}
@@ -630,6 +654,7 @@
                       : choice === 'night_train_windows'
                         ? {component_id: 'night_train_windows', version: 1, provider: 'python', role: 'animation', parameters: trainParameters({star_density: .35, seed: 1984})}
         : {component_id: 'aurora_curtains', version: 1, provider: 'python', role: 'animation', parameters: {curtain_density: number('#curtainDensity'), fold_depth: number('#foldDepth'), glow_intensity: number('#glowIntensity'), source_fps: 30, seed: 4201}};
+    else if (choice === 'pixel_chase') next.animation.parameters = pixelChaseParameters();
     else if (sculptureIds.includes(choice)) next.animation.parameters = sculptureParameters(choice, next.animation.parameters);
     else if (atmosphereIds.includes(choice)) next.animation.parameters = atmosphereParameters(choice, next.animation.parameters);
     else if (ambientIds.includes(choice)) next.animation.parameters = ambientParameters(choice, next.animation.parameters);
@@ -665,6 +690,8 @@
     state.scene = structuredClone(scene);
     const animation = scene.animation || {};
     const parameters = animation.parameters || {};
+    const chase = animation.component_id === 'pixel_chase' ? parameters : {};
+    pixelChaseFields.forEach((field) => { document.getElementById(field.id).value = chase[field.key] ?? field.value; });
     if (![...$('#animationChoice').options].some((option) => option.value === animation.component_id)) $('#animationChoice').append(new Option(`${animation.component_id} (preserved)`, animation.component_id));
     $('#animationChoice').value = animation.component_id;
     if (ambientIds.includes(animation.component_id)) {
@@ -1240,6 +1267,7 @@
   async function loadLibrary() { const response = await fetch(`${api}/library`); state.library = await response.json(); renderLibrary(); }
   function wire() {
     ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
+    pixelChaseSelectors.forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
     $('#sceneSpeed').addEventListener('input', edit);
     $('#targetFps').addEventListener('input', edit);
     $('#targetFps').addEventListener('change', edit);
@@ -1266,7 +1294,7 @@
   function syncSecondaryOperations() { $('#secondaryOperations').open = !window.matchMedia('(max-width: 760px)').matches; }
   const phoneLayout = window.matchMedia('(max-width: 760px)');
   phoneLayout.addEventListener('change', syncSecondaryOperations);
-  syncSecondaryOperations(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); applyScene(defaultScene());
+  syncSecondaryOperations(); installPixelChaseControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); applyScene(defaultScene());
   if (![...$('#animationChoice').options].some((option) => option.value === 'snake')) $('#animationChoice').append(new Option('Snake Garden', 'snake'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'canopy_cup')) $('#animationChoice').append(new Option('Canopy Cup', 'canopy_cup'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'maze_chase')) $('#animationChoice').append(new Option('Maze Chase', 'maze_chase'));
@@ -1315,5 +1343,5 @@
     // scene does not restart it; the next real edit does that automatically.
     if (!body.status?.current) await submit(state.scene);
   }
-  hydrateCurrentScene().then(() => Promise.all([loadLibrary(), loadGallery()])).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
+  hydrateCurrentScene().then(() => Promise.all([loadLibrary(), loadGallery()])).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'pixel_chase', 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();

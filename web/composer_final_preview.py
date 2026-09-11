@@ -48,6 +48,7 @@ from animation.plugins.maze_chase import MazeChaseAnimation
 from animation.plugins.night_train_windows import NightTrainWindowsAnimation
 from animation.plugins.pinball import PinballAnimation
 from animation.plugins.pixel_quest import PixelQuestAnimation
+from animation.plugins.pixel_chase import PixelChaseAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from animation.plugins.gradient import GradientAnimation
@@ -131,6 +132,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         MazeChaseAnimation.component_descriptor(),
         PinballAnimation.component_descriptor(),
         PixelQuestAnimation.component_descriptor(),
+        PixelChaseAnimation.component_descriptor(),
         GradientAnimation.component_descriptor(),
         RainbowAnimation.component_descriptor(),
         SolidColorAnimation.component_descriptor(),
@@ -351,6 +353,8 @@ class InstalledFinalSceneRuntime:
             return PinballAnimation(controller, parameters)
         if descriptor.component_id == PixelQuestAnimation.COMPONENT_ID:
             return PixelQuestAnimation(controller, parameters)
+        if descriptor.component_id == PixelChaseAnimation.COMPONENT_ID:
+            return PixelChaseAnimation(controller, parameters)
         if descriptor.component_id == GradientAnimation.COMPONENT_ID:
             return GradientAnimation(controller, parameters)
         if descriptor.component_id == RainbowAnimation.COMPONENT_ID:

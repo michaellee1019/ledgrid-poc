@@ -1,323 +1,134 @@
-"""Sparse multi-pixel chase for validating and decorating the complete wall."""
+"""Scene v2 Pixel Chase: transparent, semantic light moving over the whole wall."""
 
-import colorsys
-from typing import Any, Dict, Iterable, Optional, Tuple
+from __future__ import annotations
+
+import math
+from types import MappingProxyType
+from typing import Any, Mapping
 
 import numpy as np
 
 from animation import AnimationBase
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.compositing import OverlayFrame, coverage_dirty_union
+from animation.core.presentation_contracts import ResolvedScene
 
 
 class PixelChaseAnimation(AnimationBase):
+    """Evenly spaced heads traverse the complete physical LED path."""
+
     ANIMATION_NAME = "Pixel Chase"
-    ANIMATION_DESCRIPTION = "Chases configurable pixels and tails through every physical LED"
+    ANIMATION_DESCRIPTION = "Configurable light heads and tails chase through every physical LED"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "2.0"
+    ANIMATION_VERSION = "3.0"
+    COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "pixel_chase", 1, "python", "animation"
+    FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgba_uint8_premultiplied_strip_major", "scaled_context", "semantic"
+    CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
+    PLANT_MODIFIER_SUPPORT = frozenset()
+    TAIL_STYLES = ("none", "fade", "solid")
+    DEFAULTS = MappingProxyType({"pixels_per_second": 120.0, "pixel_count": 3, "tail_style": "fade", "tail_length": 4, "color_cycle_speed": 0.2})
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="premultiplied_rgba", palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS, parameter_normalizer=lambda values: PixelChaseAnimation._normalized_parameters(values))
+    SEMANTIC_PALETTES = MappingProxyType({
+        "neutral": ((255, 226, 154), (255, 128, 46)),
+        "mist": ((129, 225, 255), (236, 248, 255)),
+        "spectrum": ((255, 67, 235), (46, 239, 227)),
+        "ember": ((255, 83, 22), (255, 210, 82)),
+    })
 
-    _CLEAR = 0
-    _CLEARANCE = 1
-    _FOLIAGE = 2
-    _GLOBE = 3
-
-    def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
-        super().__init__(controller, config)
-        self.default_params.update({
-            "pixels_per_second": 120.0,
-            "pixel_count": 3,
-            "color_mode": "fixed",
-            "color_cycle_speed": 0.2,
-            "tail_style": "fade",
-            "tail_length": 4,
-            "red": 255, "green": 255, "blue": 255,
-            "plant_foliage_red": 24,
-            "plant_foliage_green": 255,
-            "plant_foliage_blue": 72,
-            "plant_globe_red": 80,
-            "plant_globe_green": 180,
-            "plant_globe_blue": 255,
-        })
-        self.params = {**self.default_params, **self.config}
-        for unused in ("speed", "color_saturation", "color_value"):
-            self.params.pop(unused, None)
-        width, height = self.get_strip_info()
-        self._physical_path = np.asarray([
-            strip * height + physical_led
-            for strip in range(width)
-            for physical_led in range(height - 1, -1, -1)
-        ], dtype=np.int32)
-        self._path = self._physical_path
-        self._path_kind = np.full(self._path.size, self._CLEAR, dtype=np.uint8)
-        self._rebuild_path()
-        self._buffer_pixels = [np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32)]
-        self._last_output_pixels = np.empty(0, dtype=np.int32)
+    def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
+        self.width, self.height = self.get_strip_info()
+        # Presentation-only geometry: foliage and final optics belong to the host.
+        self._path = np.asarray([strip * self.height + led for strip in range(self.width) for led in range(self.height - 1, -1, -1)], dtype=np.int32)
+        self._buffers = tuple(np.zeros((self.get_pixel_count(), 4), dtype=np.uint8) for _ in range(2))
+        self._last_pixels, self._last_key = self._buffers[0], None
         self._last_head_pixels = np.empty(0, dtype=np.int32)
-        self._last_output_pixel = None
-        self._last_step = None
-        self._last_frame = None
+        self._revision = 0
+        self._presentation_context: ResolvedScene | None = None
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        for name in ("speed", "color_saturation", "color_value"):
-            schema.pop(name, None)
-        schema.update({
-            "pixels_per_second": {
-                "type": "float", "min": 0.5, "max": 1000.0, "default": 120.0,
-                "description": "Number of physical LEDs visited per second",
-            },
-            "pixel_count": {
-                "type": "int", "min": 1, "max": 32, "default": 3,
-                "description": "Evenly spaced chase heads active at once",
-            },
-            "color_mode": {
-                "type": "str", "options": ["fixed", "rainbow"], "default": "fixed",
-                "description": "Use the configured RGB color or cycle each chase head through hues",
-            },
-            "color_cycle_speed": {
-                "type": "float", "min": 0.0, "max": 4.0, "default": 0.2,
-                "description": "Rainbow color cycles per second",
-            },
-            "tail_style": {
-                "type": "str", "options": ["none", "solid", "fade"], "default": "fade",
-                "description": "Disable tails or render solid/fading trails behind each head",
-            },
-            "tail_length": {
-                "type": "int", "min": 0, "max": 32, "default": 4,
-                "description": "Maximum trail pixels behind each chase head",
-            },
-            "red": {"type": "int", "min": 0, "max": 255, "default": 255, "description": "Pixel red"},
-            "green": {"type": "int", "min": 0, "max": 255, "default": 255, "description": "Pixel green"},
-            "blue": {"type": "int", "min": 0, "max": 255, "default": 255, "description": "Pixel blue"},
-        })
-        for layer, defaults, description in (
-            ("plant_foliage", (24, 255, 72), "Foliage diagnostic"),
-            ("plant_globe", (80, 180, 255), "Globe diagnostic"),
-        ):
-            for channel, default in zip(("red", "green", "blue"), defaults):
-                schema[f"{layer}_{channel}"] = {
-                    "type": "int", "min": 0, "max": 255, "default": default,
-                    "description": f"{description} {channel}",
-                }
-        return schema
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor: return cls.COMPONENT_DESCRIPTOR
 
-    def _rebuild_path(self) -> None:
-        """Keep wiring order within each increasingly occluded diagnostic pass."""
-        if not self.plant_aware_enabled() or self._physical_path.size == 0:
-            self._path = self._physical_path
-            self._path_kind = np.full(self._path.size, self._CLEAR, dtype=np.uint8)
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        supplied = dict(values); unknown = sorted(set(supplied) - set(cls.DEFAULTS))
+        if unknown: raise ValueError(f"Pixel Chase does not accept non-local parameters: {unknown!r}")
+        result = dict(cls.DEFAULTS); result.update(supplied)
+        for name, low, high in (("pixels_per_second", .5, 1000.), ("color_cycle_speed", 0., 4.)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not low <= float(value) <= high: raise ValueError(f"{name} must be a finite number from {low} to {high}")
+            result[name] = float(value)
+        for name, low, high in (("pixel_count", 1, 32), ("tail_length", 0, 32)):
+            value = result[name]
+            if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high: raise ValueError(f"{name} must be an integer from {low} to {high}")
+        if result["tail_style"] not in cls.TAIL_STYLES: raise ValueError(f"tail_style must be one of {list(cls.TAIL_STYLES)!r}")
+        return result
+
+    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+        return {
+            "pixels_per_second": {"type": "float", "min": .5, "max": 1000., "default": 120., "description": "Physical LEDs travelled per scaled second"},
+            "pixel_count": {"type": "int", "min": 1, "max": 32, "default": 3, "description": "Evenly spaced chase heads"},
+            "tail_style": {"type": "str", "options": list(self.TAIL_STYLES), "default": "fade", "description": "Trailing light falloff"},
+            "tail_length": {"type": "int", "min": 0, "max": 32, "default": 4, "description": "LEDs behind each head"},
+            "color_cycle_speed": {"type": "float", "min": 0., "max": 4., "default": .2, "description": "Semantic palette cycling speed"},
+        }
+
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        self.params = self._normalized_parameters({**self.params, **dict(new_params)}); self._last_key = None
+
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        del old
+        descriptor = new.descriptor
+        if (descriptor.component_id, descriptor.version, descriptor.provider.value, descriptor.role.value) != (self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE): raise ValueError("Pixel Chase received a context for another component")
+        if new.palette is None or not isinstance(new.palette.get("palette_id"), str): raise ValueError("Pixel Chase requires a semantic Scene v2 palette")
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None: self.on_presentation_context_changed(self._presentation_context, context)
+    def render_resolved_scene(self, context: ResolvedScene) -> OverlayFrame: self.set_presentation_context(context); return self.generate_frame(context.phase_time, self.frame_count)
+
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> OverlayFrame:
+        del frame_count
+        if self._presentation_context is None: phase_time, palette_id, parameters = max(0., float(time_elapsed)), "neutral", self.params
+        else: phase_time, palette_id, parameters = max(0., float(self._presentation_context.phase_time)), str(self._presentation_context.palette["palette_id"]), self._presentation_context.parameters
+        self.params = self._normalized_parameters(parameters)
+        step = int(math.floor(phase_time * self.params["pixels_per_second"] + 1.e-9)); cycle_tick = int(math.floor(phase_time * self.params["color_cycle_speed"] * 60. + 1.e-9))
+        key = (step, cycle_tick, palette_id, tuple(self.params.items()))
+        if key == self._last_key: return OverlayFrame(self._last_pixels, revision=self._revision, changed=False, dirty_ranges=())
+        output = self._buffers[1] if self._last_pixels is self._buffers[0] else self._buffers[0]
+        self._paint(output, step, cycle_tick, palette_id); dirty = coverage_dirty_union(self._last_pixels, output)
+        self._last_pixels, self._last_key = output, key; self._revision += 1
+        return OverlayFrame(output, revision=self._revision, changed=True, dirty_ranges=dirty)
+
+    def _paint(self, output: np.ndarray, step: int, cycle_tick: int, palette_id: str) -> None:
+        output.fill(0); path_size = self._path.size
+        heads = np.asarray([(step + index * path_size // self.params["pixel_count"]) % path_size for index in range(self.params["pixel_count"])], dtype=np.int32)
+        self._last_head_pixels = self._path[heads]
+        if self.params["tail_style"] == "none": offsets = np.asarray((0,), dtype=np.int32); alpha = np.asarray((255,), dtype=np.uint8)
+        else:
+            offsets = np.arange(self.params["tail_length"] + 1, dtype=np.int32)
+            alpha = np.full(offsets.size, 255, dtype=np.uint8) if self.params["tail_style"] == "solid" else np.rint(255 * (1. - offsets / (self.params["tail_length"] + 1))).astype(np.uint8)
+        indices = self._path[(heads[:, None] + offsets[None, :]) % path_size]
+        colors = np.stack([self._semantic_color(palette_id, cycle_tick, number) for number in range(heads.size)]).astype(np.uint16)
+        alpha16 = alpha.astype(np.uint16)
+        if np.unique(indices).size == indices.size:
+            output[indices, :3] = ((colors[:, None, :] * alpha16[None, :, None] + 127) // 255).astype(np.uint8)
+            output[indices, 3] = alpha[None, :]
             return
-
-        masks = self.get_plant_masks()
-        physical = self._physical_path
-        foliage = masks.foliage_flat[physical]
-        globes = masks.globes_flat[physical]
-        clearance = masks.clearance_flat[physical] & ~foliage & ~globes
-        clear = ~masks.clearance_flat[physical]
-        parts = []
-        kinds = []
-        for selector, kind in (
-            (clear, self._CLEAR),
-            (clearance, self._CLEARANCE),
-            (foliage, self._FOLIAGE),
-            (globes, self._GLOBE),
-        ):
-            selected = physical[selector]
-            if selected.size:
-                parts.append(selected)
-                kinds.append(np.full(selected.size, kind, dtype=np.uint8))
-        self._path = np.concatenate(parts) if parts else physical
-        self._path_kind = np.concatenate(kinds) if kinds else np.empty(0, dtype=np.uint8)
-
-    def update_parameters(self, new_params: Dict[str, Any]):
-        super().update_parameters(new_params)
-        if {
-            "plant_aware", "plant_modifiers", "plant_clearance", "plant_mask_path",
-            "plant_globe_mask_path",
-        } & new_params.keys():
-            self._rebuild_path()
-            self._clear_path_presentation()
-        # Every exposed parameter affects presentation. Invalidate the source-
-        # rate key so a live update is visible without waiting for another step.
-        self._last_step = None
-        self._last_frame = None
-
-    def on_presentation_context_changed(self, old_context, new_context) -> None:
-        """Rebuild the diagnostic traversal without altering elapsed-time phase."""
-        if (
-            old_context is None
-            or old_context.installation_profile_identity
-            != new_context.installation_profile_identity
-        ):
-            self._rebuild_path()
-        # Color-only vibe switches must redraw the current source-rate step.
-        # These buffers are presentation caches; traversal phase is elapsed-time
-        # derived and remains unchanged.
-        self._clear_path_presentation()
-
-    def _clear_path_presentation(self) -> None:
-        for frame in self._frame_buffers:
-            frame.fill(0)
-        self._buffer_pixels = [
-            np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32)
-        ]
-        self._last_output_pixels = np.empty(0, dtype=np.int32)
-        self._last_head_pixels = np.empty(0, dtype=np.int32)
-        self._last_output_pixel = None
-        self._last_step = None
-        self._last_frame = None
-
-    def _pixel_color(self, path_index: int, head_index: int, step: int, rate: float):
-        prefix = ""
-        semantic_role = "primary"
-        if self.plant_aware_enabled():
-            kind = int(self._path_kind[path_index])
-            if kind == self._FOLIAGE:
-                prefix = "plant_foliage_"
-                semantic_role = "secondary"
-            elif kind == self._GLOBE:
-                prefix = "plant_globe_"
-                semantic_role = "accent"
-        brightness = min(1.0, max(0.0, float(self.params.get("brightness", 1.0))))
-        context = self.presentation_context
-        semantic = context is not None and context.vibe_id != "neutral"
-        if str(self.params.get("color_mode", "fixed")) == "rainbow" and not prefix:
-            count = self._resolved_pixel_count()
-            cycle_speed = min(
-                4.0, max(0.0, float(self.params.get("color_cycle_speed", 0.2)))
-            )
-            hue = ((step / rate) * cycle_speed + head_index / count) % 1.0
-            if semantic:
-                anchors = tuple(
-                    np.asarray(context.palette_roles[role], dtype=np.float32)
-                    for role in ("primary", "secondary", "accent", "primary")
-                )
-                position = hue * 3.0
-                segment = min(2, int(position))
-                amount = position - segment
-                rgb = anchors[segment] + (
-                    anchors[segment + 1] - anchors[segment]
-                ) * amount
-                return tuple(int(channel * brightness) for channel in rgb)
-            rgb = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
-            return tuple(int(channel * 255.0 * brightness) for channel in rgb)
-        if semantic:
-            return tuple(
-                int(channel * brightness)
-                for channel in context.palette_roles[semantic_role]
-            )
-        return tuple(
-            int(max(0, min(255, int(self.params.get(f"{prefix}{channel}", 255)))) * brightness)
-            for channel in ("red", "green", "blue")
-        )
-
-    def _resolved_pixel_count(self) -> int:
-        return min(self._path.size, max(1, min(32, int(self.params.get("pixel_count", 3)))))
-
-    def _resolved_tail(self) -> Tuple[str, int]:
-        style = str(self.params.get("tail_style", "fade"))
-        if style not in {"none", "solid", "fade"}:
-            style = "fade"
-        length = min(32, max(0, int(self.params.get("tail_length", 4))))
-        return style, 0 if style == "none" else length
+        for head_number, row in enumerate(indices):
+            for offset, index in enumerate(row): self._paint_pixel(output, int(index), colors[head_number], int(alpha[offset]))
 
     @staticmethod
-    def _dirty_ranges(indices: Iterable[int]) -> Tuple[Tuple[int, int], ...]:
-        """Compress sparse physical indices into controller-friendly ranges."""
-        ordered = np.unique(np.fromiter(indices, dtype=np.int32))
-        if ordered.size == 0:
-            return ()
-        starts = np.r_[ordered[0], ordered[1:][np.diff(ordered) > 1]]
-        ends = np.r_[ordered[:-1][np.diff(ordered) > 1] + 1, ordered[-1] + 1]
-        return tuple((int(start), int(end)) for start, end in zip(starts, ends))
+    def _paint_pixel(output: np.ndarray, index: int, color: np.ndarray, alpha: int) -> None:
+        inverse = 255 - alpha; source = (color.astype(np.uint16) * alpha + 127) // 255
+        output[index, :3] = np.minimum(255, source + (output[index, :3].astype(np.uint16) * inverse + 127) // 255)
+        output[index, 3] = min(255, alpha + (int(output[index, 3]) * inverse + 127) // 255)
 
-    def generate_frame(self, time_elapsed: float, frame_count: int):
-        if self._path.size == 0:
-            return np.empty((0, 3), dtype=np.uint8)
-        rate = max(0.5, float(self.params.get("pixels_per_second", 120.0)))
-        step = int(max(0.0, float(time_elapsed)) * rate)
-        if step == self._last_step and self._last_frame is not None:
-            return self.rendered_frame(self._last_frame, changed=False)
+    def _semantic_color(self, palette_id: str, cycle_tick: int, head_number: int) -> np.ndarray:
+        primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
+        phase = (cycle_tick / 60. + head_number / max(1, self.params["pixel_count"])) % 1.; blend = .5 - .5 * math.cos(math.tau * phase)
+        return np.rint(np.asarray(primary) * (1. - blend) + np.asarray(accent) * blend).astype(np.uint8)
 
-        buffer_index = self._frame_buffer_index
-        frame = self.next_frame_buffer(clear=False)
-        previous = self._buffer_pixels[buffer_index]
-        if previous.size:
-            frame[previous] = 0
-
-        count = self._resolved_pixel_count()
-        style, tail_length = self._resolved_tail()
-        offsets = (np.arange(count, dtype=np.int64) * self._path.size) // count
-        color_by_kind = {}
-        for kind in np.unique(self._path_kind):
-            representative = int(np.flatnonzero(self._path_kind == kind)[0])
-            color_by_kind[int(kind)] = tuple(
-                self._pixel_color(representative, head_index, step, rate)
-                for head_index in range(count)
-            )
-        painted = []
-        heads = []
-        # Paint oldest tail pixels first so every head remains full intensity.
-        for depth in range(tail_length, -1, -1):
-            intensity = (
-                (tail_length - depth + 1) / (tail_length + 1)
-                if style == "fade" and depth > 0
-                else 1.0
-            )
-            for head_index, offset in enumerate(offsets):
-                path_index = int((step + int(offset) - depth) % self._path.size)
-                pixel = int(self._path[path_index])
-                color = color_by_kind[int(self._path_kind[path_index])][head_index]
-                if intensity < 1.0:
-                    color = tuple(int(channel * intensity) for channel in color)
-                frame[pixel] = color
-                painted.append(pixel)
-                if depth == 0:
-                    heads.append(pixel)
-
-        output_pixels = np.unique(np.asarray(painted, dtype=np.int32))
-        self._buffer_pixels[buffer_index] = output_pixels
-        self._last_head_pixels = np.asarray(heads, dtype=np.int32)
-        self._last_output_pixel = int(heads[0]) if heads else None
-        self._last_step, self._last_frame = step, frame
-
-        dirty = self._dirty_ranges(
-            np.concatenate((self._last_output_pixels, output_pixels)).tolist()
-        )
-        self._last_output_pixels = output_pixels
-        return self.rendered_frame(
-            frame,
-            dirty_ranges=dirty,
-        )
-
-    def get_runtime_stats(self) -> Dict[str, Any]:
-        if self._last_output_pixel is None:
-            return {"pixel_index": None, "plant_aware": self.plant_aware_enabled()}
-        _, height = self.get_strip_info()
-        physical_led = self._last_output_pixel % height
-        stats = {
-            "pixel_index": self._last_output_pixel,
-            "pixel_indices": self._last_head_pixels.tolist(),
-            "pixel_count": len(self._last_head_pixels),
-            "lit_pixels": int(self._last_output_pixels.size),
-            "strip": self._last_output_pixel // height,
-            "led": physical_led,
-            "display_row": height - 1 - physical_led,
-            "plant_aware": self.plant_aware_enabled(),
-        }
-        if self.plant_aware_enabled():
-            masks = self.get_plant_masks()
-            if masks.globes_flat[self._last_output_pixel]:
-                layer = "globe"
-            elif masks.foliage_flat[self._last_output_pixel]:
-                layer = "foliage"
-            elif masks.clearance_flat[self._last_output_pixel]:
-                layer = "clearance"
-            else:
-                layer = "clear"
-            stats.update({
-                "plant_layer": layer,
-                "plant_foliage_pixels": masks.foliage_count,
-                "plant_globe_pixels": masks.globe_count,
-                "plant_globe_regions": masks.globe_regions,
-                "plant_mask_error": masks.error,
-            })
-        return stats
+    def semantic_snapshot(self) -> Mapping[str, Any]: return MappingProxyType({"path_length": int(self._path.size), "heads": tuple(map(int, self._last_head_pixels))})

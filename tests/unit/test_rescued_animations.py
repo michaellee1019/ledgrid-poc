@@ -109,8 +109,8 @@ class PixelChaseAnimationTests(unittest.TestCase):
         first = animation.generate_frame(0.0, 0)
         second = animation.generate_frame(1.0 / rate, 1)
 
-        self.assertEqual(np.flatnonzero(np.any(first.pixels != 0, axis=1)).tolist(), [_Controller.leds_per_strip - 1])
-        self.assertEqual(np.flatnonzero(np.any(second.pixels != 0, axis=1)).tolist(), [_Controller.leds_per_strip - 2])
+        self.assertEqual(np.flatnonzero(first.pixels[:, 3]).tolist(), [_Controller.leds_per_strip - 1])
+        self.assertEqual(np.flatnonzero(second.pixels[:, 3]).tolist(), [_Controller.leds_per_strip - 2])
         self.assertEqual(
             second.dirty_ranges,
             ((_Controller.leds_per_strip - 2, _Controller.leds_per_strip),),
@@ -128,35 +128,31 @@ class PixelChaseAnimationTests(unittest.TestCase):
         })
 
         first = animation.generate_frame(0.2, 0)
-        stats = animation.get_runtime_stats()
-        self.assertEqual(stats["pixel_count"], 4)
-        self.assertEqual(stats["lit_pixels"], 12)
-        self.assertEqual(stats["pixel_indices"], [11, 39, 67, 95])
-        self.assertEqual(first.dirty_ranges, ((11, 14), (39, 42), (67, 70), (95, 98)))
+        self.assertEqual(animation.semantic_snapshot()["heads"], (11, 39, 67, 95))
+        self.assertEqual(np.count_nonzero(first.pixels[:, 3]), 12)
+        self.assertEqual(first.dirty_ranges, ((9, 12), (37, 40), (65, 68), (93, 96)))
 
-        # Each head is full white; the two preceding path positions fade.
-        np.testing.assert_array_equal(first.pixels[11], (255, 255, 255))
-        np.testing.assert_array_equal(first.pixels[12], (170, 170, 170))
-        np.testing.assert_array_equal(first.pixels[13], (85, 85, 85))
+        # Heads are opaque and the two following physical path positions fade.
+        self.assertEqual(int(first.pixels[11, 3]), 255)
+        self.assertGreater(int(first.pixels[10, 3]), int(first.pixels[9, 3]))
+        self.assertGreater(int(first.pixels[9, 3]), 0)
+        self.assertTrue(np.all(first.pixels[:, :3] <= first.pixels[:, 3:4]))
 
         unchanged = animation.generate_frame(0.21, 1)
         self.assertFalse(unchanged.changed)
         self.assertIs(unchanged.pixels, first.pixels)
 
-    def test_rainbow_mode_and_live_updates_invalidate_the_cached_step(self):
+    def test_semantic_color_cycle_and_live_updates_invalidate_the_cached_step(self):
         animation = PixelChaseAnimation(_Controller(), {
             "pixels_per_second": 10.0,
             "pixel_count": 3,
-            "tail_style": "none",
-            "red": 255,
-            "green": 0,
-            "blue": 0,
+            "tail_style": "none", "color_cycle_speed": 0.0,
         })
         fixed = animation.generate_frame(0.0, 0).pixels.copy()
 
-        animation.update_parameters({"color_mode": "rainbow", "color_cycle_speed": 1.0})
-        rainbow = animation.generate_frame(0.0, 1)
-        colors = rainbow.pixels[animation._last_head_pixels]
+        animation.update_parameters({"color_cycle_speed": 1.0})
+        rainbow = animation.generate_frame(0.1, 1)
+        colors = rainbow.pixels[animation._last_head_pixels, :3]
 
         self.assertTrue(rainbow.changed)
         self.assertFalse(np.array_equal(fixed, rainbow.pixels))
@@ -173,7 +169,7 @@ class PixelChaseAnimationTests(unittest.TestCase):
         for step in range(8):
             rendered = animation.generate_frame(step / 10.0, step)
             buffer_ids.append(id(rendered.pixels))
-            self.assertEqual(np.count_nonzero(np.any(rendered.pixels, axis=1)), 6)
+            self.assertEqual(np.count_nonzero(rendered.pixels[:, 3]), 6)
         self.assertEqual(len(set(buffer_ids)), 2)
 
 
