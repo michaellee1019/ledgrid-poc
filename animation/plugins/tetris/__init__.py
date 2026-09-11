@@ -143,6 +143,9 @@ class TetrisAnimation(AnimationBase):
     PALETTE_ROLES = tuple(BASE_SHAPES) + ("flash",)
     CAPABILITIES = frozenset({"semantic_palette_roles", "scaled_context", "effect_intent"})
     PLANT_MODIFIER_SUPPORT = frozenset()
+    COMPOSER_INTERACTIONS = {
+        "directions": ("left", "right", "down", "rotate-left", "rotate-right", "drop"),
+    }
 
     # The game owns only its deterministic simulation and local drawing
     # controls. Scene pace, final plant optics, and presentation brightness

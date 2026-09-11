@@ -327,13 +327,58 @@ class BrowserPythonBundleTests(unittest.TestCase):
             "tetris", "TetrisAnimation", geometry, instance_id="tetris",
             installation_profile_digest=PROFILE_DIGEST,
         )
-        direction = runtime.interact(
-            "direction", direction="left", instance_id="tetris"
-        )
-        self.assertTrue(direction["accepted"])
-        self.assertEqual(runtime._instances["tetris"].animation.input_queue, ["left"])
+        directions = ["left", "right", "down", "rotate-left", "rotate-right", "drop"]
+        for action in directions:
+            direction = runtime.interact(
+                "direction", direction=action, instance_id="tetris"
+            )
+            self.assertTrue(direction["accepted"])
+        self.assertEqual(runtime._instances["tetris"].animation.input_queue, directions)
+        with self.assertRaisesRegex(ValueError, "direction is not supported"):
+            runtime.interact("direction", direction="up", instance_id="tetris")
+        self.assertEqual(runtime._instances["tetris"].animation.input_queue, directions)
         with self.assertRaisesRegex(ValueError, "does not support that direction"):
             runtime.interact("direction", direction="left")
+
+    def test_published_tetris_bundle_accepts_only_its_canonical_directions(self):
+        script = r'''
+import pathlib
+import sys
+sys.path.insert(0, sys.argv[1])
+from ledgrid_browser_runtime import BrowserPreviewRuntime
+
+profile = pathlib.Path(sys.argv[2])
+digest = profile.read_bytes()[68:100].hex()
+runtime = BrowserPreviewRuntime()
+runtime.bind_installation_profile_path(str(profile), digest)
+for instance_id in ("controlled", "untouched"):
+    runtime.initialize("tetris", "TetrisAnimation", {"width": 33, "height": 138},
+                       instance_id=instance_id, installation_profile_digest=digest)
+actions = ["left", "right", "down", "rotate-left", "rotate-right", "drop"]
+for action in actions:
+    receipt = runtime.interact("direction", direction=action, instance_id="controlled")
+    assert receipt["accepted"] and receipt["instanceId"] == "controlled", receipt
+assert runtime._instances["controlled"].animation.input_queue == actions
+assert runtime._instances["untouched"].animation.input_queue == []
+try:
+    runtime.interact("direction", direction="up", instance_id="controlled")
+except ValueError:
+    pass
+else:
+    raise AssertionError("undeclared direction accepted")
+runtime.render(0.0, 0, instance_id="controlled")
+runtime.render(0.1, 1, instance_id="controlled")
+assert runtime._instances["controlled"].animation.input_queue == []
+assert len(runtime.frame_bytes_for("controlled")) == 33 * 138 * 3
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            with zipfile.ZipFile(BUNDLE_PATH) as archive:
+                archive.extractall(directory)
+            completed = subprocess.run(
+                [sys.executable, "-c", script, directory, str(PROFILE_PATH)],
+                cwd=directory, capture_output=True, text=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
     def test_living_sculpture_points_queue_until_their_browser_semantic_tick(self):
         geometry = {"width": 33, "height": 138}
