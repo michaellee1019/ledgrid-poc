@@ -466,6 +466,16 @@
         "quiet",
         "showcase"
       ]
+    },
+    "plant_glow": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "canopy-pulse",
+        "fine-veins",
+        "globe-constellation",
+        "soft-moss"
+      ]
     }
   }
 }
