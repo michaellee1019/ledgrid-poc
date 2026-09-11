@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PROFILE_FIXTURE = ROOT / "tests" / "fixtures" / "installation_profile_v1.bin"
 NATIVE_BUILD_ROOT = ROOT / "run_state" / "browser_qualification_native_builds"
 NATIVE_PLUGIN_ID = "aurora_curtains_native"
+SCENE_V2_NATIVE_PLUGIN_ID = "native_aurora"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 OFFLINE_GATE_COOKIE = "ledgrid_rel01_origin_offline"
 
@@ -115,6 +116,17 @@ def create_fixture_server(
         raise RuntimeError("qualification fixture did not build a managed native bundle")
     native_library = NativeBackgroundLibrary(state_dir / "native-background-library")
     native_receipt = native_library.publish(native_build.bundle_path)
+    scene_v2_native_build = build_plugin(
+        ROOT,
+        SCENE_V2_NATIVE_PLUGIN_ID,
+        NATIVE_BUILD_ROOT,
+        execute=True,
+    )
+    if scene_v2_native_build.bundle_path is None:
+        raise RuntimeError(
+            "qualification fixture did not build its Scene v2 native background"
+        )
+    native_library.publish(scene_v2_native_build.bundle_path)
     manager = AnimationManager(
         PreviewLEDController(33, 138),
         feature_flags=AnimationPipelineFeatureFlags(

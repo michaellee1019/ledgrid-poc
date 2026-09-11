@@ -30,6 +30,9 @@ EVIDENCE_SCHEMA = "ledgrid.rel01-browser-qualification-evidence"
 EVIDENCE_SCHEMA_VERSION = 1
 MANIFEST_SCHEMA = "ledgrid.rel01-browser-qualification-manifest"
 REQUIRED_ENGINES = ("chromium", "firefox", "webkit")
+SERVICE_WORKER_CONFIG = (
+    ROOT / "web/static/generated/composer/service_worker_config.v1.js"
+)
 ENGINE_PROCESS_MIN_TIMEOUT_SECONDS = 180
 # REL-01 has eight journeys. Keep one additional per-journey window for
 # browser launch and retained trace/video teardown so the Python watchdog does
@@ -48,6 +51,29 @@ def _canonical_json(value: Any) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
     ).encode("utf-8")
+
+
+def _resolve_service_worker_upgrade(payload: dict[str, Any]) -> None:
+    declaration = payload.get("service_worker_upgrade")
+    if declaration != {
+        "source": "generated_service_worker_config",
+        "cache_prefix": "ledgrid-composer-shell-",
+    }:
+        raise ValueError(
+            "manifest must derive its cache upgrade from the generated service-worker config"
+        )
+    from tools.composer_asset_publication import read_service_worker_config
+
+    config = read_service_worker_config(SERVICE_WORKER_CONFIG)
+    previous = config.get("previousCacheVersion")
+    current = config.get("cacheVersion")
+    if not all(isinstance(value, str) and value for value in (previous, current)):
+        raise ValueError("generated service-worker config has incomplete cache versions")
+    prefix = declaration["cache_prefix"]
+    payload["service_worker_upgrade"] = {
+        "previous_cache": prefix + previous,
+        "current_cache": prefix + current,
+    }
 
 
 def load_manifest(path: Path = DEFAULT_MANIFEST) -> dict[str, Any]:
@@ -159,6 +185,7 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> dict[str, Any]:
     }
     if not required_exclusions.issubset(exclusions):
         raise ValueError("manifest conflates portable browser and external evidence")
+    _resolve_service_worker_upgrade(payload)
     return payload
 
 
@@ -564,6 +591,10 @@ def run_qualification(
     results: dict[str, Mapping[str, Any]] = {}
     with tempfile.TemporaryDirectory(prefix="ledgrid-rel01-") as temporary:
         temporary_path = Path(temporary)
+        resolved_manifest_path = temporary_path / "resolved-manifest.json"
+        resolved_manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+        )
         for engine in manifest["required_engines"]:
             if resolved_module is None:
                 results[engine] = _missing_engine_result(
@@ -574,7 +605,7 @@ def run_qualification(
             results[engine] = execute_playwright_engine(
                 engine=engine,
                 base_url=base_url,
-                manifest_path=manifest_path,
+                manifest_path=resolved_manifest_path,
                 playwright_module=resolved_module,
                 output_path=temporary_path / f"{engine}.json",
                 artifacts_dir=(artifacts_dir / engine if artifacts_dir else None),

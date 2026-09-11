@@ -30,6 +30,7 @@ from tools.browser_qualification.fixture_server import (
 from tools.browser_qualification.source_identity import fixture_release_id
 from tools.browser_qualification.run import create_run_directory, write_index
 from tools.composer_asset_publication import read_service_worker_config
+from tools.qualification.catalog_live_sweep import browser_scene_requests
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -295,6 +296,14 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
         )
 
     def test_manifest_cache_upgrade_tracks_composer_service_worker(self) -> None:
+        raw_manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(
+            raw_manifest["service_worker_upgrade"],
+            {
+                "source": "generated_service_worker_config",
+                "cache_prefix": "ledgrid-composer-shell-",
+            },
+        )
         worker = SERVICE_WORKER_PATH.read_text(encoding="utf-8")
         prefix = re.search(r"const CACHE_PREFIX = '([^']+)';", worker)
         self.assertIsNotNone(prefix)
@@ -717,16 +726,35 @@ class BrowserQualificationFixtureServerTests(unittest.TestCase):
             components = {
                 item["plugin_id"]: item for item in bootstrap["components"]
             }
-            background = self._component_reference(components["gradient"])
-            scene = {
-                "schema": "ledgrid.browser-scene",
-                "schema_version": 1,
-                "revision": 1,
-                "background": background,
-                "layers": [],
-                "installation_profile": {"digest": digest},
-                "fallback": deepcopy(background),
+            native = components["native_aurora"]
+            scene_v2 = {
+                "schema": "ledgrid.scene.v2",
+                "background": {
+                    "component_id": native["plugin_id"], "version": 1,
+                    "provider": "receiver_native", "role": "background",
+                    "bundle_digest": native["browser_capabilities"]
+                    ["managed_identity"]["bundle_digest"],
+                    "parameters": deepcopy(native["defaults"]),
+                },
+                "animation": {
+                    "component_id": "gradient", "version": 1,
+                    "provider": "python", "role": "animation",
+                    "parameters": deepcopy(components["gradient"]["defaults"]),
+                },
+                "widgets": [],
+                "plants": {
+                    "effects": {"version": 1, "active": [], "strengths": {}}
+                },
+                "look": {
+                    "palette_id": "neutral", "pace": 1.0,
+                    "presentation_brightness": 1.0,
+                },
             }
+            scene = browser_scene_requests(
+                bootstrap,
+                {"installation_profile_digest": digest},
+                [scene_v2],
+            )[0]
 
             checked = client.post(
                 "/api/v1/scene/checks",

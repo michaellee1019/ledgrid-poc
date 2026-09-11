@@ -174,8 +174,8 @@
     }
   },
   "service_worker_upgrade": {
-    "previous_cache": "ledgrid-composer-shell-g-4efb5afdb8feb0234b78",
-    "current_cache": "ledgrid-composer-shell-g-eb7460bea47227877517"
+    "source": "generated_service_worker_config",
+    "cache_prefix": "ledgrid-composer-shell-"
   },
   "forbidden_live_mutation_requests": [
     "PUT|POST|DELETE /api/v1/scene",

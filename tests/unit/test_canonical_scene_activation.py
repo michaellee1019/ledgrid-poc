@@ -26,9 +26,14 @@ from ipc.runtime_control import restore_display_state
 from tests.unit.test_receiver_native_product_manager import _Controller
 from tests.unit.test_scene_activation_api import _global_settings, RELEASE_ID
 from web.app import AnimationWebInterface
+from web.composer_final_preview import current_component_descriptors
 from web.local_control import LocalControlChannel
-from web.starter_looks import get_starter
+from web.scene_look_store import SceneLookStore
+from web.starter_looks import get_starter, list_starters
 from tools.deployment.preserve_deploy_settings import save_status, load_saved_state
+from tools.qualification.catalog_live_sweep import (
+    animation_components, browser_scene_requests, catalog_cases,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -100,6 +105,7 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.channel = _Channel(self.manager)
         self.channel.activation_coordinator.observation_timeout = .02
         self.interface = AnimationWebInterface(self.channel, self.manager, local_mode=True, project_root=ROOT, release_id=RELEASE_ID, activation_enabled=True, activation_token_store_path=self.directory/'tokens.sqlite3')
+        self.interface.composer_looks = SceneLookStore(self.directory/'looks.json')
         self.client = self.interface.app.test_client()
         asset_root = Path(os.environ['LEDGRID_TEST_RUNTIME_ASSETS']) if os.environ.get('LEDGRID_TEST_RUNTIME_ASSETS') else None
         self.catalog = self.interface._browser_composer_bootstrap(runtime_asset_root=asset_root)['components']
@@ -133,6 +139,18 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         activation_id = response.get_json()['activation_id']
         receipt = self.channel.read_activation_status(activation_id)
         return body,response,receipt
+
+    def activate_browser_scene(self, browser_scene):
+        self.globals['revision'] = self.channel.activation_coordinator.controller_status()['active_identity']['global_settings_identity']['revision']
+        request = {'scene':browser_scene,'global_settings':deepcopy(self.globals)}
+        response = self.client.post('/api/v1/scene/checks', json=request)
+        self.assertEqual(response.status_code,201,response.get_json())
+        checked = response.get_json()
+        body = {**request,'check_token':checked['check_token'],'expected_controller_session_id':checked['basis']['controller']['session_id'],'expected_controller_state_revision':checked['basis']['controller']['state_revision']}
+        accepted = self.client.put('/api/v1/scene',json=body,headers={'Idempotency-Key':checked['basis_digest']})
+        self.assertIn(accepted.status_code,(200,202),accepted.get_json())
+        receipt = self.channel.read_activation_status(accepted.get_json()['activation_id'])
+        return body, accepted, receipt
 
     def test_missing_or_stale_managed_profile_is_rejected_without_mutation(self):
         for digest in ('0'*64, 'f'*64):
@@ -205,9 +223,14 @@ class CanonicalSceneActivationTests(unittest.TestCase):
             canonical_json_sha256(self.manager.get_scene_state()), expected_digest
         )
 
-    def test_all_39_fresh_catalog_animations_reach_real_controller_activation(self):
+    def test_every_current_catalog_animation_reaches_real_controller_activation(self):
         animations = [item for item in self.catalog if item['role']=='animation' and item['provider']=='python']
-        self.assertEqual(len(animations),39)
+        expected_ids = {
+            descriptor.component_id for descriptor in current_component_descriptors()
+            if descriptor.provider.value == 'python' and descriptor.role.value == 'animation'
+        }
+        self.assertEqual({item['plugin_id'] for item in animations}, expected_ids)
+        self.assertEqual(len(animations), len(expected_ids))
         for item in animations:
             with self.subTest(animation=item['plugin_id']):
                 candidate = deepcopy(self.scene)
@@ -222,6 +245,106 @@ class CanonicalSceneActivationTests(unittest.TestCase):
                     candidate['animation']['parameters']=item['presets'][0]['params']
                     candidate = self.interface._composer_canonical({'origin':'composer','scene':candidate}).scene
                     self.check(candidate)
+
+    def test_full_current_catalog_matrix_uses_browser_requests_preview_and_exact_receipts(self):
+        bootstrap = {'components': deepcopy(self.catalog)}
+        animations = animation_components(bootstrap)
+        expected_ids = {
+            descriptor.component_id for descriptor in current_component_descriptors()
+            if descriptor.provider.value == 'python' and descriptor.role.value == 'animation'
+        }
+        self.assertEqual({item['plugin_id'] for item in animations}, expected_ids)
+
+        presets = {}
+        for component_id in sorted(expected_ids):
+            response = self.client.get(f'/api/composer/components/{component_id}/presets')
+            self.assertEqual(response.status_code, 200, response.get_json())
+            presets[component_id] = response.get_json()['presets']
+        starters = []
+        for summary in list_starters():
+            response = self.client.get(f"/api/composer/starters/{summary['id']}")
+            self.assertEqual(response.status_code, 200, response.get_json())
+            starters.append(response.get_json()['starter'])
+
+        representative = []
+        for index in (0, len(animations) // 2, len(animations) - 1):
+            component = animations[index]
+            scene = deepcopy(self.scene)
+            scene['animation'] = {
+                'component_id': component['plugin_id'], 'version': 1,
+                'provider': 'python', 'role': 'animation',
+                'parameters': deepcopy(component['defaults']),
+            }
+            canonical = self.interface._composer_canonical(
+                {'origin': 'composer', 'scene': scene}
+            )
+            record = self.interface.composer_looks.save_as(
+                f"Qualification {index}", canonical
+            )
+            reopened = self.client.get(f"/api/composer/looks/{record['id']}")
+            self.assertEqual(reopened.status_code, 200, reopened.get_json())
+            representative.append(reopened.get_json()['look'])
+
+        cases = catalog_cases(
+            bootstrap, base_scene=self.scene, presets=presets,
+            starters=starters, looks=representative,
+        )
+        counts = {
+            kind: sum(case['kind'] == kind for case in cases)
+            for kind in ('default', 'preset', 'starter', 'look')
+        }
+        self.assertEqual(counts, {
+            'default': len(expected_ids),
+            'preset': sum(len(value) for value in presets.values()),
+            'starter': len(list_starters()),
+            'look': 3,
+        })
+        membership = json.loads(
+            (ROOT/'web/composer_preset_membership.v1.json').read_text()
+        )['components']
+        self.assertEqual(
+            counts['preset'],
+            sum(len(membership[component_id]['preset_ids']) for component_id in expected_ids),
+        )
+
+        observation = self.client.get(
+            '/api/v1/composer/settings/observed'
+        ).get_json()
+        envelopes = browser_scene_requests(
+            bootstrap, observation, [case['scene'] for case in cases]
+        )
+        for case, envelope in zip(cases, envelopes, strict=True):
+            with self.subTest(case=case['case_id']):
+                self.assertEqual(envelope['schema'], 'ledgrid.browser-scene-v2')
+                self.assertEqual(envelope['scene'], case['scene'])
+                self.assertEqual(envelope['components'][1]['slot_id'], 'animation')
+                preview = self.client.post('/api/composer/preview', json={
+                    'origin': 'composer', 'scene': case['scene'],
+                    'preview': {'monotonic_elapsed': 1.0,
+                                'wall_time': '2026-08-31T13:47:10+00:00'},
+                })
+                self.assertEqual(preview.status_code, 200, preview.get_json())
+                self.assertEqual(preview.get_json()['wall_mutations'], 0)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    _, _, receipt = self.activate_browser_scene(envelope)
+                self.assertEqual(receipt['phase'], 'active', receipt)
+                self.assertEqual(
+                    receipt['requested_identity'], receipt['observed_identity']
+                )
+                self.assertEqual(self.manager.get_scene_state(), case['scene'])
+
+        before = len(self.controller.operations)
+        invalid = deepcopy(envelopes[0])
+        invalid['components'][1]['component_digest'] = '0' * 64
+        rejected = self.client.post('/api/v1/scene/checks', json={
+            'scene': invalid, 'global_settings': self.globals,
+        })
+        self.assertEqual(rejected.status_code, 400, rejected.get_json())
+        self.assertEqual(
+            rejected.get_json()['error'],
+            'canonical browser scene animation managed identity is stale',
+        )
+        self.assertEqual(len(self.controller.operations), before)
 
     def test_full_composition_receipt_retry_stale_request_and_rollback_are_exact(self):
         scene = deepcopy(self.scene)
