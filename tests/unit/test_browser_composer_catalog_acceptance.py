@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -14,7 +15,9 @@ from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.plugin_loader import AnimationPluginLoader
 from animation.core.receiver_static_component import receiver_static_component_catalog
 from ipc.scene_contract import SceneProviderPolicy
+from tools.build_browser_composer_bootstrap import build_bootstrap
 from web.app import AnimationWebInterface
+from web.composer_final_preview import current_component_catalog
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,6 +27,17 @@ SCENE_V2_METADATA_IDS = (
     "ascii_drop", "christmas_tree", "emoji", "night_train_windows",
 )
 AMBIENT_PRESET_IDS = {"gradient", "rainbow", "solid", "sparkle", "wave"}
+CANONICAL_DESCRIPTORS = current_component_catalog().descriptors
+CANONICAL_ANIMATIONS = tuple(
+    descriptor
+    for descriptor in CANONICAL_DESCRIPTORS
+    if descriptor.role.value == "animation"
+)
+CANONICAL_WIDGETS = tuple(
+    descriptor
+    for descriptor in CANONICAL_DESCRIPTORS
+    if descriptor.role.value == "widget"
+)
 
 
 class _Controller:
@@ -188,6 +202,136 @@ class BrowserComposerCatalogAcceptanceTests(unittest.TestCase):
                     for preset in component["presets"]:
                         promise = f"{preset['name']} {preset['description']}".lower()
                         self.assertIn("scene palette", promise.replace("-", " "))
+
+    def _assert_canonical_animation_contracts(self, payload: dict) -> None:
+        by_key = {component["key"]: component for component in payload["components"]}
+        for descriptor in CANONICAL_ANIMATIONS:
+            with self.subTest(component=descriptor.component_id):
+                component = by_key[
+                    f"{descriptor.provider.value}:{descriptor.component_id}"
+                ]
+                defaults = descriptor.default_parameters()
+                self.assertEqual(component["role"], "animation")
+                self.assertEqual(component["defaults"], defaults)
+                self.assertEqual(set(component["parameter_schema"]), set(defaults))
+                self.assertEqual(
+                    {
+                        name: definition.get("default")
+                        for name, definition in component["parameter_schema"].items()
+                    },
+                    defaults,
+                )
+                self.assertEqual(component["scene_compatibility"], {
+                    "selectable": True,
+                    "slots": ["animation"],
+                    "diagnostic": None,
+                })
+                self.assertEqual(component["presentation"], {
+                    "timing_adapter": descriptor.timing_policy.value,
+                    "vibe_color_policy": descriptor.palette_policy.value,
+                    "vibe_capabilities": ["palette_roles", "tempo"],
+                })
+                capabilities = component["browser_capabilities"]
+                self.assertTrue(capabilities["previewable"])
+                self.assertTrue(capabilities["saveable"])
+                self.assertTrue(capabilities["activation_ready"])
+                self.assertIsNone(capabilities["reason"])
+                self.assertEqual(capabilities["managed_identity"], {
+                    "provider": descriptor.provider.value,
+                    "component_id": descriptor.component_id,
+                    "component_digest": component["component_digest"],
+                    "runtime_digest": component["browser_runtime"]["digest"],
+                    "parameter_schema_version": component["parameter_schema_version"],
+                })
+
+    def test_server_and_generated_bootstraps_publish_every_canonical_animation(self) -> None:
+        self.assertEqual(len(CANONICAL_ANIMATIONS), 39)
+        animation_ids = {
+            descriptor.component_id for descriptor in CANONICAL_ANIMATIONS
+        }
+        self.assertTrue({
+            "canopy_cup", "aurora_curtains", "tetris", "fireworks",
+        }.issubset(animation_ids))
+        opaque_ids = {
+            descriptor.component_id
+            for descriptor in CANONICAL_ANIMATIONS
+            if descriptor.alpha_behavior.value == "opaque"
+        }
+        self.assertTrue(opaque_ids)
+
+        payloads = {
+            "server": self._bootstrap(AnimationPipelineFeatureFlags()),
+            "generated": build_bootstrap(ROOT),
+        }
+        for source, payload in payloads.items():
+            with self.subTest(source=source):
+                self._assert_canonical_animation_contracts(payload)
+
+    def test_browser_native_backgrounds_and_canonical_widgets_keep_browser_roles(self) -> None:
+        payload = self._bootstrap(AnimationPipelineFeatureFlags(
+            receiver_local_background=True,
+            receiver_sparse_overlay=True,
+            receiver_native_modules=True,
+        ))
+        by_key = {component["key"]: component for component in payload["components"]}
+        native_backgrounds = [
+            component for component in payload["components"]
+            if component["provider"] == "receiver_native"
+        ]
+        self.assertTrue(native_backgrounds)
+        self.assertTrue(all(
+            component["role"] == "background"
+            for component in native_backgrounds
+        ))
+        for descriptor in CANONICAL_WIDGETS:
+            with self.subTest(component=descriptor.component_id):
+                component = by_key[f"python:{descriptor.component_id}"]
+                self.assertEqual(component["role"], "overlay")
+                self.assertEqual(component["defaults"], descriptor.default_parameters())
+                self.assertEqual(
+                    set(component["parameter_schema"]),
+                    set(descriptor.default_parameters()),
+                )
+                self.assertTrue(component["browser_capabilities"]["activation_ready"])
+
+    def test_actual_browser_lookup_resolves_all_canonical_animations(self) -> None:
+        payload = self._bootstrap(AnimationPipelineFeatureFlags())
+        script = (ROOT / "web/static/js/composer_slice.js").read_text(
+            encoding="utf-8"
+        )
+        lookup = script[
+            script.index("function managedWallComponent"):
+            script.index("  function wallComponentReference")
+        ]
+        javascript = """
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const bootstrap = JSON.parse(fs.readFileSync(0, 'utf8'));
+const animationIds = JSON.parse(process.argv[2]);
+const context = {assert, animationIds, state: {wall: {bootstrap}}};
+vm.runInNewContext(process.argv[1] + `
+  for (const componentId of animationIds) {
+    const component = managedWallComponent(componentId, 'animation');
+    assert.ok(component, componentId + ' must resolve through managedWallComponent');
+    assert.equal(component.browser_capabilities.activation_ready, true);
+  }
+`, context);
+"""
+        completed = subprocess.run(
+            [
+                "node", "-e", javascript, lookup,
+                json.dumps([
+                    descriptor.component_id
+                    for descriptor in CANONICAL_ANIMATIONS
+                ]),
+            ],
+            input=json.dumps(payload),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_every_python_browser_payload_uses_managed_profile_geometry_only(self) -> None:
         payload = self._bootstrap(AnimationPipelineFeatureFlags())

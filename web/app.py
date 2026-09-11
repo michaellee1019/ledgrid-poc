@@ -3057,14 +3057,6 @@ class AnimationWebInterface:
         }
 
         components: List[Dict[str, Any]] = []
-        # These opaque semantic animations were independently qualified against
-        # the Scene v2 catalog. Their legacy manifests remain useful to the
-        # mature plugin loader, but must not override the product descriptor in
-        # the Composer packet.
-        qualified_scene_v2_animation_ids = frozenset({
-            'gradient', 'rainbow', 'solid', 'sparkle', 'wave',
-            'ascii_drop', 'christmas_tree', 'emoji', 'night_train_windows',
-        })
         runtime_digests: Dict[Path, str] = {}
         canonical_descriptors = {
             (descriptor.provider.value, descriptor.component_id): descriptor
@@ -3082,17 +3074,12 @@ class AnimationWebInterface:
             if not isinstance(plugin_id, str) or not isinstance(provider, str):
                 continue
             descriptor = canonical_descriptors.get((provider, plugin_id))
-            qualified_scene_v2_animation = bool(
+            canonical_animation = bool(
                 descriptor is not None
-                and plugin_id in qualified_scene_v2_animation_ids
                 and descriptor.role.value == 'animation'
             )
-            rgba_animation = bool(
-                descriptor is not None
-                and descriptor.alpha_behavior.value == 'premultiplied_rgba'
-            )
             canonical_role = (
-                descriptor.role.value if (rgba_animation or qualified_scene_v2_animation)
+                descriptor.role.value if descriptor is not None
                 else str(raw.get('role') or 'background')
             )
             # Browser scene v1 carries Widgets through its fixed overlay slot;
@@ -3101,7 +3088,7 @@ class AnimationWebInterface:
             scene_compatibility = json.loads(json.dumps(
                 raw.get('scene_compatibility') or {}
             ))
-            if rgba_animation or qualified_scene_v2_animation:
+            if descriptor is not None:
                 # The legacy loader decorates its flattened manifests before
                 # this browser projection.  Replace that stale compatibility
                 # result with the resolved Composer descriptor's exact slot.
@@ -3115,16 +3102,42 @@ class AnimationWebInterface:
 
             schema = raw.get('parameter_schema')
             schema = json.loads(json.dumps(schema)) if isinstance(schema, dict) else {}
-            declared_defaults = raw.get('defaults')
-            defaults = (
-                json.loads(json.dumps(declared_defaults))
-                if isinstance(declared_defaults, dict)
-                else {
-                    name: definition.get('default')
+            if descriptor is not None:
+                # Parameter membership and defaults are part of the same
+                # canonical descriptor contract as provider and role.  Keep
+                # the mature loader's UI annotations, but exclude retired
+                # legacy globals and replace any stale schema defaults.
+                defaults = descriptor.default_parameters()
+                schema = {
+                    name: definition
                     for name, definition in schema.items()
-                    if isinstance(definition, dict) and 'default' in definition
+                    if name in defaults
                 }
-            )
+                for name, value in defaults.items():
+                    definition = schema.get(name)
+                    if isinstance(definition, dict):
+                        definition['default'] = json.loads(json.dumps(value))
+            else:
+                declared_defaults = raw.get('defaults')
+                defaults = (
+                    json.loads(json.dumps(declared_defaults))
+                    if isinstance(declared_defaults, dict)
+                    else {
+                        name: definition.get('default')
+                        for name, definition in schema.items()
+                        if isinstance(definition, dict) and 'default' in definition
+                    }
+                )
+            if canonical_animation:
+                vibe_capabilities = []
+                if descriptor.palette_policy.value == 'semantic':
+                    vibe_capabilities.append('palette_roles')
+                if descriptor.timing_policy.value == 'scaled_context':
+                    vibe_capabilities.append('tempo')
+            else:
+                vibe_capabilities = json.loads(json.dumps(
+                    raw.get('vibe_capabilities') or []
+                ))
             if provider == 'python':
                 for name in LEGACY_PLANT_MASK_PATH_PARAMETERS:
                     schema.pop(name, None)
@@ -3253,19 +3266,17 @@ class AnimationWebInterface:
                 'presentation': {
                     'timing_adapter': (
                         descriptor.timing_policy.value
-                        if qualified_scene_v2_animation else str(
+                        if canonical_animation else str(
                             raw.get('timing_adapter') or 'legacy_speed_param'
                         )
                     ),
                     'vibe_color_policy': (
                         descriptor.palette_policy.value
-                        if qualified_scene_v2_animation else str(
+                        if canonical_animation else str(
                             raw.get('vibe_color_policy') or 'preserve'
                         )
                     ),
-                    'vibe_capabilities': json.loads(json.dumps(
-                        raw.get('vibe_capabilities') or []
-                    )),
+                    'vibe_capabilities': vibe_capabilities,
                 },
             }
             components.append(decorate_browser_component(
