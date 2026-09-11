@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
@@ -18,6 +20,7 @@ from animation.core.installation_profile_transaction import (
 from drivers.spi_controller import (
     CAPABILITY_INSTALLATION_PROFILE_V1,
     CAPABILITY_STATUS_V5,
+    FRESH_STATUS_DRAIN_INTERVAL_SECONDS,
     MAX_PROFILE_CHUNK_BYTES,
     SPI_RESPONSE_QUEUE_DEPTH,
 )
@@ -168,12 +171,22 @@ class SpiInstallationProfileReceiver:
         self._require_enabled()
         status = None
         try:
-            # The first query may only discover the v5 capability. Two queued
-            # legacy snapshots plus one negotiated extension require one extra
-            # transfer beyond the ordinary fresh-status drain.
-            for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 2):
-                status = self.device.query_receiver_status()
-            return self._apply_status(status)
+            transport_lock = getattr(self.device, "_transport_lock", None)
+            if transport_lock is None:
+                transport_lock = self.device._transport_lock = threading.RLock()
+            # The first query may only discover v5. Keep all four queries and
+            # refill pauses under the device lock: an interleaved host frame
+            # would insert another legacy v3 snapshot into the two-slot queue.
+            with transport_lock:
+                for query_index in range(SPI_RESPONSE_QUEUE_DEPTH + 2):
+                    if query_index:
+                        time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
+                    status = self.device.query_receiver_status()
+                if not getattr(self.device, "_last_transfer_status_sampled", False):
+                    raise InstallationProfileTransactionError(
+                        f"receiver {self.receiver_id} returned no fresh profile status"
+                    )
+                return self._apply_status(status)
         except Exception as exc:
             raise self._operation_error(
                 f"receiver {self.receiver_id} profile status refresh", exc

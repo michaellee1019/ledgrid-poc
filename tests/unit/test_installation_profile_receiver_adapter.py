@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import binascii
 import sys
 import threading
 import types
 import unittest
+from unittest.mock import patch
 
 if "spidev" not in sys.modules:
     spidev_stub = types.ModuleType("spidev")
@@ -28,6 +30,11 @@ from drivers.installation_profile_receiver import (
     SpiInstallationProfileReceiver,
 )
 from drivers.multi_device import MultiDeviceLEDController
+from drivers import spi_controller as protocol
+from tests.unit.test_firmware_host_phase3a_protocol import controller
+from tests.unit.test_installation_profile_receiver_protocol import (
+    status_v5, ACTIVE_GLOBAL, ACTIVE_PAYLOAD,
+)
 from drivers.spi_controller import (
     CAPABILITY_INSTALLATION_PROFILE_V1,
     CAPABILITY_STATUS_V5,
@@ -57,6 +64,53 @@ def candidate(label="candidate", *, size=9000):
         profile_id(label),
         {receiver_id: payload(receiver_id, size=size) for receiver_id in RECEIVER_IDS},
     )
+
+
+class DelayedProfileStatusSpi:
+    """Real status bytes with a two-slot queue and delayed query dispatch."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.received = 0
+        self.pending = []
+        self.ready = [self.status(3), self.status(3)]
+        self.queries = []
+        self.dropped = 0
+
+    def status(self, version):
+        result = status_v5()
+        result[12:16] = self.received.to_bytes(4, "big")
+        result[312] = 0
+        result[314] = 1
+        if version == 3:
+            result = result[:protocol.RECEIVER_STATUS_BYTES_V3]
+            result[:5] = b"LGS3\x03"
+        return result
+
+    def sleep(self, seconds):
+        self.now += seconds
+        while self.pending and self.pending[0][0] <= self.now:
+            _, version = self.pending.pop(0)
+            self.received += 1
+            self.ready.append(self.status(version))
+
+    def xfer2(self, packet):
+        wire = bytes(packet)
+        assert wire[0] == protocol.CMD_STATUS_QUERY
+        assert binascii.crc_hqx(wire[:-2], 0xFFFF) == int.from_bytes(wire[-2:], "big")
+        size = len(wire) - 2
+        self.queries.append(size)
+        duration = len(wire) * 8 / 20_000_000
+        if not self.ready:
+            self.dropped += 1
+            self.sleep(duration)
+            return bytes(len(wire))
+        response = self.ready.pop(0)[:len(wire)]
+        last_completion = self.pending[-1][0] if self.pending else self.now
+        completion = max(last_completion, self.now + duration) + 0.003
+        self.pending.append((completion, 5 if size >= 768 else 3))
+        self.sleep(duration)
+        return response
 
 
 class ProfileDevice:
@@ -118,6 +172,7 @@ class ProfileDevice:
         }
 
     def query_receiver_status(self):
+        self._last_transfer_status_sampled = True
         status = {
             "receiver_status_version": 5,
             "receiver_capabilities": (
@@ -396,6 +451,57 @@ class SpiInstallationProfileAdapterTests(unittest.TestCase):
         self.assertFalse(second.changed)
         self.assertEqual(tuple(device.writes for device in devices), before)
         self.assertEqual(tuple(len(device.calls) for device in devices), call_counts)
+
+    def test_profile_refresh_paces_negotiation_under_one_transport_lock(self):
+        spi = DelayedProfileStatusSpi()
+        device = controller(spi)
+        receiver = SpiInstallationProfileReceiver(0, device, enabled=True)
+        waits = []
+
+        def sleep(seconds):
+            # Another thread must not acquire the device while a refill pause
+            # separates this causally related query sequence.
+            acquired = []
+
+            def try_lock():
+                held = device._transport_lock.acquire(blocking=False)
+                acquired.append(held)
+                if held:
+                    device._transport_lock.release()
+
+            thread = threading.Thread(target=try_lock)
+            thread.start()
+            thread.join()
+            self.assertEqual(acquired, [False])
+            waits.append(seconds)
+            spi.sleep(seconds)
+
+        with patch("drivers.spi_controller.time.sleep", side_effect=sleep):
+            status = receiver.refresh()
+        self.assertEqual(status["receiver_status_version"], 5)
+        self.assertEqual(spi.queries, [320, 768, 768, 768])
+        self.assertEqual(spi.dropped, 0)
+        self.assertEqual(len(waits), 3)
+        snapshot = receiver.transaction_snapshot()
+        self.assertEqual(snapshot.state_generation, 9)
+        self.assertEqual(snapshot.active_binding.profile_id, ACTIVE_GLOBAL)
+        self.assertEqual(snapshot.active_binding.payload_digest, ACTIVE_PAYLOAD)
+
+    def test_profile_refresh_rejects_cached_v5_after_zero_miso(self):
+        class ZeroSpi:
+            def xfer2(self, packet):
+                return bytes(len(packet))
+
+        device = controller(ZeroSpi())
+        cached = status_v5()
+        cached[312] = 0
+        cached[314] = 1
+        device._update_receiver_status(cached)
+        receiver = SpiInstallationProfileReceiver(0, device, enabled=True)
+        with patch("drivers.spi_controller.time.sleep"):
+            with self.assertRaisesRegex(Exception, "fresh profile status"):
+                receiver.refresh()
+        self.assertIsNone(receiver._status)
 
     def test_controller_lock_integration_preserves_display_authority(self):
         devices = self.devices()
