@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "add52c948a751a09093f0b63df1c11a8db01ee9f714697b8129a54284d33eba0",
+    "catalog_digest": "d40e06217974d7a05fddfce2ecf95b3dd8428ea6fd3087eb57462615ee1b6b8c",
     "kind": "bundled",
     "version": 1
   },
@@ -209,7 +209,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "b0f7c18f1a37637ca693d48a07f753c7172cb814c8222d5e139881459794a26b",
+          "component_digest": "cca615d7e88e5e3b267fb0ec090a09b04206586e480d61cd017bc76538929c57",
           "component_id": "pinball",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -237,7 +237,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "b0f7c18f1a37637ca693d48a07f753c7172cb814c8222d5e139881459794a26b",
+      "component_digest": "cca615d7e88e5e3b267fb0ec090a09b04206586e480d61cd017bc76538929c57",
       "defaults": {
         "chaos": 0.72,
         "render_fps": 100.0,
@@ -299,9 +299,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "pinball",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -432,12 +435,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -738,7 +741,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "bf2d606d2120350b2cd6584def3be71a0710868586e72954fbc8ba78d8b157f3",
+          "component_digest": "f9896e1e9fe17c0293505b5f75c98cb1b38dcc25bd9d34523d2dc3eb6cdfeda2",
           "component_id": "aurora_curtains",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -766,7 +769,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "bf2d606d2120350b2cd6584def3be71a0710868586e72954fbc8ba78d8b157f3",
+      "component_digest": "f9896e1e9fe17c0293505b5f75c98cb1b38dcc25bd9d34523d2dc3eb6cdfeda2",
       "defaults": {
         "curtain_density": 0.56,
         "fold_depth": 0.58,
@@ -836,9 +839,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "aurora_curtains",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -948,12 +954,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -1132,7 +1138,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "cda90704a0c20a77dfbb86ad10fe0e58bff2c4ca4c81c7b995955438367cd7eb",
+          "component_digest": "6ec5cbcfe2d281157bd9b9dcfb9131b40a9a1f04d4404e7c728765c3d29d9d8f",
           "component_id": "canopy_cup",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -1160,7 +1166,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "cda90704a0c20a77dfbb86ad10fe0e58bff2c4ca4c81c7b995955438367cd7eb",
+      "component_digest": "6ec5cbcfe2d281157bd9b9dcfb9131b40a9a1f04d4404e7c728765c3d29d9d8f",
       "defaults": {
         "course_difficulty": 1.0,
         "enemy_density": 0.55,
@@ -1259,9 +1265,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "canopy_cup",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -1615,12 +1624,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -1647,7 +1656,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "6960253145e2b6e861bd1dd43955e875aa634881aa66b696e35b2419345713c6",
+          "component_digest": "e544731c6938c9858b8862931dcd53e645f5a52257993f1410f5676258958cfc",
           "component_id": "cellular_tapestry",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -1675,7 +1684,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "6960253145e2b6e861bd1dd43955e875aa634881aa66b696e35b2419345713c6",
+      "component_digest": "e544731c6938c9858b8862931dcd53e645f5a52257993f1410f5676258958cfc",
       "defaults": {
         "background_level": 0.16,
         "density": 0.54,
@@ -1767,9 +1776,10 @@
       "parameter_schema_version": 1,
       "plugin_id": "cellular_tapestry",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
+        "timing_adapter": "scaled_context",
         "vibe_capabilities": [
-          "palette_roles"
+          "palette_roles",
+          "tempo"
         ],
         "vibe_color_policy": "semantic"
       },
@@ -1864,12 +1874,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -2145,7 +2155,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "c8becb5391d5edcbfae7984fd53b0e3a07ffe636591ad79509b450e4e17d4e24",
+          "component_digest": "6a5a3914b1f46cb298c681f76c561ef7af8c33a9409fb1218ce5d1359cab5c72",
           "component_id": "circadian_window",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -2173,7 +2183,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "c8becb5391d5edcbfae7984fd53b0e3a07ffe636591ad79509b450e4e17d4e24",
+      "component_digest": "6a5a3914b1f46cb298c681f76c561ef7af8c33a9409fb1218ce5d1359cab5c72",
       "defaults": {
         "background": "soft",
         "background_level": 0.18,
@@ -2271,7 +2281,7 @@
           "type": "int"
         },
         "seed": {
-          "default": 1729,
+          "default": 29001,
           "description": "Deterministic scene seed",
           "max": 2147483647,
           "min": 0,
@@ -2295,9 +2305,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "circadian_window",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -2427,12 +2440,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -2875,7 +2888,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "a4fbcfc02ef0edff0ab5a47c7e617fe84dfd5a49494133a400b5d48d2625cecc",
+          "component_digest": "afc540cd9f3a82e4f8c669e8ad96404c0fcb6de4ec59c8a297864bedf5ed1f92",
           "component_id": "cloud_canyon",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -2903,7 +2916,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "a4fbcfc02ef0edff0ab5a47c7e617fe84dfd5a49494133a400b5d48d2625cecc",
+      "component_digest": "afc540cd9f3a82e4f8c669e8ad96404c0fcb6de4ec59c8a297864bedf5ed1f92",
       "defaults": {
         "background": "soft",
         "background_level": 0.18,
@@ -3003,9 +3016,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "cloud_canyon",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -3123,12 +3139,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -3394,9 +3410,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "conway_life",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -4352,7 +4371,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "4e01cb5ef2a8a7a1d782da4bc578ea0d9bf8f242547e9daad6a76d8c42ad5453",
+          "component_digest": "c3148d77a45e8282c1b92ee988b754b2ad0c04228d3ef3976a40c3f73aa7b6cd",
           "component_id": "cyclic_reef",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -4380,7 +4399,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "4e01cb5ef2a8a7a1d782da4bc578ea0d9bf8f242547e9daad6a76d8c42ad5453",
+      "component_digest": "c3148d77a45e8282c1b92ee988b754b2ad0c04228d3ef3976a40c3f73aa7b6cd",
       "defaults": {
         "boundary_glow": 0.55,
         "grazers": 8,
@@ -4476,9 +4495,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "cyclic_reef",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -4600,12 +4622,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -4632,7 +4654,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "8b1c1164787712ee0294ef1bd937b168e58474ccc9ed1cfe1277c0b7ea20d8cd",
+          "component_digest": "ebb69bd9c497bfce72347fd9e72d71a15bf404cb46739eca32f1261cabc308bc",
           "component_id": "desert_wind",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -4660,7 +4682,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "8b1c1164787712ee0294ef1bd937b168e58474ccc9ed1cfe1277c0b7ea20d8cd",
+      "component_digest": "ebb69bd9c497bfce72347fd9e72d71a15bf404cb46739eca32f1261cabc308bc",
       "defaults": {
         "background": "soft",
         "background_level": 0.18,
@@ -4748,7 +4770,7 @@
           "type": "int"
         },
         "seed": {
-          "default": 1729,
+          "default": 8001,
           "description": "Deterministic scene seed",
           "max": 2147483647,
           "min": 0,
@@ -4758,9 +4780,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "desert_wind",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -4878,12 +4903,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -5312,7 +5337,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "7736410cf24f1e1be127437b002623585e0a6a1e90e64dcb68918c73a5e8a8a1",
+          "component_digest": "a596532280f8c8dac486467463a97ab95683816710f7a6352caee009c64ba0cc",
           "component_id": "firefly_synchrony",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -5340,7 +5365,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "7736410cf24f1e1be127437b002623585e0a6a1e90e64dcb68918c73a5e8a8a1",
+      "component_digest": "a596532280f8c8dac486467463a97ab95683816710f7a6352caee009c64ba0cc",
       "defaults": {
         "coupling_radius": 8.0,
         "meadow_glow": 0.12,
@@ -5426,9 +5451,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "firefly_synchrony",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -5546,12 +5574,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -5713,9 +5741,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "fireworks",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -6001,9 +6032,10 @@
       "parameter_schema_version": 1,
       "plugin_id": "flame_burst",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
+        "timing_adapter": "scaled_context",
         "vibe_capabilities": [
-          "palette_roles"
+          "palette_roles",
+          "tempo"
         ],
         "vibe_color_policy": "semantic"
       },
@@ -6173,7 +6205,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "5350c39f3d798e2f63e852d9b657125122e4d1c5cc56736abd02e3891b825e79",
+          "component_digest": "06b9fb57f41451dd1c337b22ee84ec0a86673062a5d9f652173df0024efb1be7",
           "component_id": "flow_field_silk",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -6201,7 +6233,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "5350c39f3d798e2f63e852d9b657125122e4d1c5cc56736abd02e3891b825e79",
+      "component_digest": "06b9fb57f41451dd1c337b22ee84ec0a86673062a5d9f652173df0024efb1be7",
       "defaults": {
         "background_level": 0.14,
         "density": 0.5,
@@ -6279,9 +6311,10 @@
       "parameter_schema_version": 1,
       "plugin_id": "flow_field_silk",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
+        "timing_adapter": "scaled_context",
         "vibe_capabilities": [
-          "palette_roles"
+          "palette_roles",
+          "tempo"
         ],
         "vibe_color_policy": "semantic"
       },
@@ -6370,12 +6403,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -6402,7 +6435,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "6222cdf09034778d0575f5033cb243f934ea74036e459c35e5d704451fd3d40d",
+          "component_digest": "ef6332dd8dd16f86b22ab8c8ae4e7f21406ff58472b5b358d40ed996344705fd",
           "component_id": "fluid_tank",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -6430,7 +6463,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "6222cdf09034778d0575f5033cb243f934ea74036e459c35e5d704451fd3d40d",
+      "component_digest": "ef6332dd8dd16f86b22ab8c8ae4e7f21406ff58472b5b358d40ed996344705fd",
       "defaults": {
         "bubble_lift": 0.42,
         "current": 0.35,
@@ -6500,9 +6533,10 @@
       "parameter_schema_version": 1,
       "plugin_id": "fluid_tank",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
+        "timing_adapter": "scaled_context",
         "vibe_capabilities": [
-          "palette_roles"
+          "palette_roles",
+          "tempo"
         ],
         "vibe_color_policy": "semantic"
       },
@@ -6666,12 +6700,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -6698,7 +6732,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "42aa21fee0710b64e204e48be85c5f5a339b09965d77f1795a2fc367968b1a1e",
+          "component_digest": "cec84dabd30dfbf7c36e282f1d3547080d5127bd9a34c5be9999440bc3da9f80",
           "component_id": "frostwork",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -6726,7 +6760,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "42aa21fee0710b64e204e48be85c5f5a339b09965d77f1795a2fc367968b1a1e",
+      "component_digest": "cec84dabd30dfbf7c36e282f1d3547080d5127bd9a34c5be9999440bc3da9f80",
       "defaults": {
         "background_level": 0.14,
         "density": 0.48,
@@ -6804,10 +6838,10 @@
       "parameter_schema_version": 1,
       "plugin_id": "frostwork",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
+        "timing_adapter": "scaled_context",
         "vibe_capabilities": [
-          "luminance",
-          "palette_roles"
+          "palette_roles",
+          "tempo"
         ],
         "vibe_color_policy": "semantic"
       },
@@ -6923,12 +6957,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -7447,7 +7481,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "56fcf40a8355a749b19d75386b0d22f710284347993ac906e2f3e633b8e5df79",
+          "component_digest": "25a027861eefdfecf00a855883d441d24ab6b240ff9b86253992976729fc9437",
           "component_id": "lava_lamp",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -7475,7 +7509,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "56fcf40a8355a749b19d75386b0d22f710284347993ac906e2f3e633b8e5df79",
+      "component_digest": "25a027861eefdfecf00a855883d441d24ab6b240ff9b86253992976729fc9437",
       "defaults": {
         "blob_count": 7,
         "blob_scale": 1.0,
@@ -7579,7 +7613,6 @@
       "presentation": {
         "timing_adapter": "scaled_context",
         "vibe_capabilities": [
-          "luminance",
           "palette_roles",
           "tempo"
         ],
@@ -8129,12 +8162,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -8161,7 +8194,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "146bd2c1b5099643c05f1aaa2f3396f11f6e2c799c37bc6989d15e84e51625b2",
+          "component_digest": "f228a1dae1e099e4093ef0d3293e317eabfcbb57ced4ae907233cea92d77f5f4",
           "component_id": "living_ecosystem",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -8189,7 +8222,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "146bd2c1b5099643c05f1aaa2f3396f11f6e2c799c37bc6989d15e84e51625b2",
+      "component_digest": "f228a1dae1e099e4093ef0d3293e317eabfcbb57ced4ae907233cea92d77f5f4",
       "defaults": {
         "background_level": 0.22,
         "canopy_density": 0.58,
@@ -8291,9 +8324,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "living_ecosystem",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -8569,12 +8605,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -8601,7 +8637,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "f246e853e82c71b891e39f177d5307ff70da43d8bb1e643fcf97aa2b39e3d637",
+          "component_digest": "9c960be85b19b05e571fac8e7c19b597b3e75edf53820508871932caa32bf29f",
           "component_id": "living_stained_glass",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -8629,7 +8665,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "f246e853e82c71b891e39f177d5307ff70da43d8bb1e643fcf97aa2b39e3d637",
+      "component_digest": "9c960be85b19b05e571fac8e7c19b597b3e75edf53820508871932caa32bf29f",
       "defaults": {
         "background_level": 0.18,
         "density": 0.52,
@@ -8707,9 +8743,10 @@
       "parameter_schema_version": 1,
       "plugin_id": "living_stained_glass",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
+        "timing_adapter": "scaled_context",
         "vibe_capabilities": [
-          "palette_roles"
+          "palette_roles",
+          "tempo"
         ],
         "vibe_color_policy": "semantic"
       },
@@ -8933,12 +8970,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -8965,7 +9002,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "17d4547cb18f0363bd33423580687800fdf75ec72fc90fa86f0662ccab239a56",
+          "component_digest": "7197ae55ac136c3644faf3d2beca7a0aca5ee07acecbc39f43b43718ad416444",
           "component_id": "moonlit_fog_banks",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -8993,7 +9030,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "17d4547cb18f0363bd33423580687800fdf75ec72fc90fa86f0662ccab239a56",
+      "component_digest": "7197ae55ac136c3644faf3d2beca7a0aca5ee07acecbc39f43b43718ad416444",
       "defaults": {
         "background": "soft",
         "background_level": 0.18,
@@ -9081,7 +9118,7 @@
           "type": "int"
         },
         "seed": {
-          "default": 1729,
+          "default": 7101,
           "description": "Deterministic scene seed",
           "max": 2147483647,
           "min": 0,
@@ -9091,9 +9128,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "moonlit_fog_banks",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -9211,12 +9251,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -9243,7 +9283,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "cd9bab35e9fbba5a49d0589877cc7adff187d54b5418843ba2a8fb4bb6b3ef5a",
+          "component_digest": "455b2971ff61ab5e6261944c91102a7d4bb6828463b7951dea7c7a990f0bbf40",
           "component_id": "maze_chase",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -9271,7 +9311,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "cd9bab35e9fbba5a49d0589877cc7adff187d54b5418843ba2a8fb4bb6b3ef5a",
+      "component_digest": "455b2971ff61ab5e6261944c91102a7d4bb6828463b7951dea7c7a990f0bbf40",
       "defaults": {
         "chase_cadence_hz": 9.0,
         "difficulty": 0.82,
@@ -9339,9 +9379,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "maze_chase",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -9477,12 +9520,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -9758,7 +9801,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "d7de4b3a5b56eec6b7ec703a337e1c884f2537052350028e6cf3a956aa9eff95",
+          "component_digest": "d1a357bc94d814f5dfd5646dd5b493b67a755590a08ee570b35f05f951fcfbc2",
           "component_id": "physarum_network",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -9786,7 +9829,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "d7de4b3a5b56eec6b7ec703a337e1c884f2537052350028e6cf3a956aa9eff95",
+      "component_digest": "d1a357bc94d814f5dfd5646dd5b493b67a755590a08ee570b35f05f951fcfbc2",
       "defaults": {
         "agent_count": 700,
         "background_level": 0.16,
@@ -9891,9 +9934,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "physarum_network",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -10019,12 +10065,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -10283,7 +10329,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "8dac08d1d0ede10607871bff85256487617a5724c2f74f279f80786c046df6aa",
+          "component_digest": "e522c67dd9e3e7c7ab07f98f39219349d3edeabdc2f4cbd35b2413176230297d",
           "component_id": "pixel_quest",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -10311,7 +10357,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "8dac08d1d0ede10607871bff85256487617a5724c2f74f279f80786c046df6aa",
+      "component_digest": "e522c67dd9e3e7c7ab07f98f39219349d3edeabdc2f4cbd35b2413176230297d",
       "defaults": {
         "difficulty": 1.0,
         "quest_cadence_hz": 12.0,
@@ -10379,9 +10425,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "pixel_quest",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -10491,12 +10540,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -11367,7 +11416,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "5f9ac31941cc14f48acd91845f162a7474d792e38615dd3f1855495d915419e6",
+          "component_digest": "d260ccf7e5d4131c14a234cdf95e58a18a40ecf387db6a62dcaa0dbfa847fa21",
           "component_id": "quasicrystal_bloom",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -11395,7 +11444,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "5f9ac31941cc14f48acd91845f162a7474d792e38615dd3f1855495d915419e6",
+      "component_digest": "d260ccf7e5d4131c14a234cdf95e58a18a40ecf387db6a62dcaa0dbfa847fa21",
       "defaults": {
         "background_level": 0.16,
         "density": 0.56,
@@ -11485,9 +11534,10 @@
       "parameter_schema_version": 1,
       "plugin_id": "quasicrystal_bloom",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
+        "timing_adapter": "scaled_context",
         "vibe_capabilities": [
-          "palette_roles"
+          "palette_roles",
+          "tempo"
         ],
         "vibe_color_policy": "semantic"
       },
@@ -11607,12 +11657,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -11767,9 +11817,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "rain_on_glass",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -12152,7 +12205,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "1ffd147da73d7a142d25dc4881bbab0c3f8cc8bb913acfa86607cd1307b2e29b",
+          "component_digest": "b2ecdc27eff1e12be971c8be97579c13055b44a5510c4e98ce6d552f1d2a8821",
           "component_id": "reaction_diffusion_garden",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -12180,7 +12233,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "1ffd147da73d7a142d25dc4881bbab0c3f8cc8bb913acfa86607cd1307b2e29b",
+      "component_digest": "b2ecdc27eff1e12be971c8be97579c13055b44a5510c4e98ce6d552f1d2a8821",
       "defaults": {
         "background_level": 0.14,
         "color_by_age": 0.6,
@@ -12296,9 +12349,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "reaction_diffusion_garden",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -12428,12 +12484,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -12607,7 +12663,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "5e09c0526fdb99c8840ed7236b49391c85a115ed0e91c48b175ebbe904388572",
+          "component_digest": "7a1fca1cbf24aa808a2eff8f2386eb6fe5dcf2964548153cdee433849b72cd32",
           "component_id": "snake",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -12635,7 +12691,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "5e09c0526fdb99c8840ed7236b49391c85a115ed0e91c48b175ebbe904388572",
+      "component_digest": "7a1fca1cbf24aa808a2eff8f2386eb6fe5dcf2964548153cdee433849b72cd32",
       "defaults": {
         "background": "void",
         "food_count": 5,
@@ -12796,9 +12852,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "snake",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -13154,12 +13213,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -14118,7 +14177,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "60d62c9bd6472165c32d648713c72d5736de241c6af24cd0cae7a4d16ffebec5",
+          "component_digest": "0720e2de888b7951ddf9fc7eebc0872685aef593e9f94fd880842f4b43dc1f6e",
           "component_id": "tetris",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -14146,7 +14205,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "60d62c9bd6472165c32d648713c72d5736de241c6af24cd0cae7a4d16ffebec5",
+      "component_digest": "0720e2de888b7951ddf9fc7eebc0872685aef593e9f94fd880842f4b43dc1f6e",
       "defaults": {
         "bot_imperfection": 0.18,
         "fall_rate": 3.0,
@@ -14246,9 +14305,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "tetris",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -14404,12 +14466,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -14436,7 +14498,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "a642597e35e25969c5efbf8102503f1c08ea030dd8e3096e543479ec563d1223",
+          "component_digest": "a040a33b4d1b04ddca06811a04550c6a354b9d6165f0ca034ff2b48c7e07faf7",
           "component_id": "tidal_bioluminescence",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -14464,7 +14526,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "a642597e35e25969c5efbf8102503f1c08ea030dd8e3096e543479ec563d1223",
+      "component_digest": "a040a33b4d1b04ddca06811a04550c6a354b9d6165f0ca034ff2b48c7e07faf7",
       "defaults": {
         "background": "soft",
         "background_level": 0.18,
@@ -14564,9 +14626,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "tidal_bioluminescence",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -14656,12 +14721,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
@@ -14816,9 +14881,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "waterfall_veil",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -15254,7 +15322,7 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "component_digest": "32063147d889b2e6478890afc9ad982bfd2e65d35c3e91ba630782dffdb87094",
+          "component_digest": "422fa167614d7b147502bdf0177821e0f7556159f17925a0d6e993f22551105b",
           "component_id": "wind_in_the_reeds",
           "parameter_schema_version": 1,
           "provider": "python",
@@ -15282,7 +15350,7 @@
         "legacy_manifest": true,
         "parameter_metadata": "loaded"
       },
-      "component_digest": "32063147d889b2e6478890afc9ad982bfd2e65d35c3e91ba630782dffdb87094",
+      "component_digest": "422fa167614d7b147502bdf0177821e0f7556159f17925a0d6e993f22551105b",
       "defaults": {
         "background_level": 0.18,
         "density": 0.58,
@@ -15395,9 +15463,12 @@
       "parameter_schema_version": 1,
       "plugin_id": "wind_in_the_reeds",
       "presentation": {
-        "timing_adapter": "legacy_speed_param",
-        "vibe_capabilities": [],
-        "vibe_color_policy": "preserve"
+        "timing_adapter": "scaled_context",
+        "vibe_capabilities": [
+          "palette_roles",
+          "tempo"
+        ],
+        "vibe_color_policy": "semantic"
       },
       "presets": [
         {
@@ -15496,12 +15567,12 @@
       ],
       "provider": "python",
       "provider_collision": false,
-      "role": "background",
+      "role": "animation",
       "scene_compatibility": {
         "diagnostic": null,
         "selectable": true,
         "slots": [
-          "background"
+          "animation"
         ]
       }
     },
