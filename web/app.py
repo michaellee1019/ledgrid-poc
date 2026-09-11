@@ -111,6 +111,7 @@ from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from ipc.control_channel import FileControlChannel
 from ipc.runtime_control import manager_controller_runtime_digests
 from ipc.scene_contract import (
+    SCENE_ACTIVATION_BASIS_VERSION,
     BROWSER_SCENE_MAX_BYTES,
     BROWSER_SCENE_SCHEMA,
     DEFAULT_SCENE_PROVIDER_POLICY,
@@ -131,6 +132,7 @@ from ipc.scene_contract import (
     build_composer_operations_status,
     normalize_global_settings_payload,
     normalize_scene_activation_command,
+    normalize_scene_activation_basis,
     normalize_scene_activation_status,
     normalize_scene_payload,
     scene_activation_basis_digest,
@@ -151,6 +153,7 @@ from web.composer_final_preview import ComposerFinalPreview, current_component_c
 
 
 COMPOSER_SHELL_VERSION = "composer-shell-v10"
+CANONICAL_BROWSER_SCENE_SCHEMA = "ledgrid.browser-scene-v2"
 
 # The Gallery stays projected from the Scene v2 packet, while this small map
 # supplies human-facing catalog metadata without reopening legacy discovery.
@@ -213,6 +216,7 @@ from web.maintenance_api import (
 # universal worker. Receiver-native execution remains explicitly
 # capability-bound to separately built Wasm peers.
 BROWSER_NATIVE_COMPONENT_ASSETS = {
+    'native_aurora': 'native_aurora.wasm',
     'aurora_curtains_native': 'aurora_curtains_native.wasm',
     'compiled_rainbow': 'compiled_rainbow.wasm',
 }
@@ -1367,6 +1371,7 @@ class AnimationWebInterface:
                         ],
                     },
                 }, catalog=self._component_catalog(),
+                    canonical_catalog=self.composer_catalog,
                     provider_policy=self._scene_provider_policy())
                 identity = activation_identity_from_basis(basis)
                 queued = normalize_scene_activation_status({
@@ -2878,9 +2883,14 @@ class AnimationWebInterface:
         })
         if geometry is None:
             raise SceneValidationError('qualification geometry is unavailable')
+        document_revision = (
+            document['scene_identity']['revision']
+            if document.get('schema') == CANONICAL_BROWSER_SCENE_SCHEMA
+            else document['revision']
+        )
         binding = {
             'browser_scene': {
-                'revision': document['revision'],
+                'revision': document_revision,
                 'digest': canonical_json_sha256(document),
             },
             'installation_profile_digest': document[
@@ -2990,24 +3000,65 @@ class AnimationWebInterface:
                 'current_identity_digest': current_identity,
             },
         )
-        scene_components = [document['background'], document['fallback']]
-        scene_components.extend(
-            layer['component'] for layer in document.get('layers', [])
-            if isinstance(layer, dict) and isinstance(layer.get('component'), dict)
-        )
+        if document.get('schema') == CANONICAL_BROWSER_SCENE_SCHEMA:
+            scene_components = list(document['components'])
+        else:
+            scene_components = [document['background'], document['fallback']]
+            scene_components.extend(
+                layer['component'] for layer in document.get('layers', [])
+                if isinstance(layer, dict) and isinstance(layer.get('component'), dict)
+            )
         required_runtime_identities = {
             f"{component.get('provider')}:{component.get('component_id')}"
             for component in scene_components
             if isinstance(component.get('provider'), str)
             and isinstance(component.get('component_id'), str)
         }
-        basis = build_scene_activation_basis(
+        runtime_digests = self._activation_runtime_digests(
+            catalog, required=required_runtime_identities,
+        )
+        if document.get('schema') == CANONICAL_BROWSER_SCENE_SCHEMA:
+            identities = []
+            for component in document['components']:
+                qualified_id = f"{component['provider']}:{component['component_id']}"
+                identity = {
+                    'slot_id': component['slot_id'],
+                    'provider': component['provider'],
+                    'component_id': component['component_id'],
+                    'component_digest': component['component_digest'],
+                    'browser_runtime_digest': component['runtime_digest'],
+                    'controller_runtime_digest': runtime_digests[qualified_id],
+                    'parameter_schema_version': component['parameter_schema_version'],
+                }
+                if component['provider'] == 'receiver_native':
+                    identity.update(
+                        bundle_digest=component['bundle_digest'],
+                        expected_payload_digest=component['expected_payload_digest'],
+                    )
+                identities.append(identity)
+            basis = normalize_scene_activation_basis({
+                'schema': 'ledgrid.scene-activation-basis', 'schema_version': SCENE_ACTIVATION_BASIS_VERSION,
+                'browser_scene': {
+                    'revision': document['scene_identity']['revision'],
+                    'digest': canonical_json_sha256(document),
+                },
+                'host_scene': document['scene_identity'],
+                'components': identities,
+                'installation_profile_digest': document['installation_profile']['digest'],
+                'global_settings': {'revision': settings['revision'], 'digest': canonical_json_sha256(settings)},
+                'controller': {'session_id': session_id, 'state_revision': state_revision, 'current_identity_digest': current_identity},
+                'qualification': {
+                    'version': qualification_record['qualification_version'],
+                    'record_digest': activation_qualification_record_digest(qualification_record),
+                    'expires_at': expires_at_ms,
+                },
+            })
+        else:
+            basis = build_scene_activation_basis(
             browser_scene=document,
             catalog=catalog,
             global_settings=settings,
-            controller_runtime_digests=self._activation_runtime_digests(
-                catalog, required=required_runtime_identities,
-            ),
+            controller_runtime_digests=runtime_digests,
             controller_session_id=session_id,
             controller_state_revision=state_revision,
             current_identity_digest=current_identity,
@@ -3018,7 +3069,7 @@ class AnimationWebInterface:
             expires_at=expires_at_ms,
             host_scene=host_scene,
             provider_policy=self._scene_provider_policy(),
-        )
+            )
         return (
             basis, host_scene, settings, qualification_record,
             qualification_result,
@@ -3279,6 +3330,8 @@ class AnimationWebInterface:
                     'vibe_capabilities': vibe_capabilities,
                 },
             }
+            if descriptor is not None and provider == 'receiver_native':
+                component['compatibility']['implementation_authority'] = 'managed_receiver'
             components.append(decorate_browser_component(
                 component,
                 browser_runtime=runtime,
@@ -3515,6 +3568,82 @@ class AnimationWebInterface:
         scene = browser_scene_to_host_scene(document, catalog=catalog)
         return document, scene
 
+    def _validated_canonical_activation_document(
+        self, payload: Any,
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """Bind one exact canonical Scene v2 to deployed managed runtimes."""
+        validate_bounded_browser_json(payload, label='canonical browser scene')
+        if not isinstance(payload, dict) or set(payload) != {
+            'schema', 'schema_version', 'scene', 'components', 'installation_profile',
+        }:
+            raise SceneValidationError('canonical browser scene fields are malformed')
+        if payload.get('schema') != CANONICAL_BROWSER_SCENE_SCHEMA or payload.get('schema_version') != 1:
+            raise SceneValidationError('unsupported canonical browser scene contract')
+        try:
+            canonical = self._composer_canonical({'origin': 'composer', 'scene': payload.get('scene')})
+        except SceneContractError as exc:
+            raise SceneValidationError(str(exc)) from exc
+        installation = payload.get('installation_profile')
+        if (not isinstance(installation, dict) or set(installation) != {'digest'}
+                or not isinstance(installation.get('digest'), str)
+                or re.fullmatch(r'[0-9a-f]{64}', installation['digest']) is None):
+            raise SceneValidationError('canonical browser scene installation profile is invalid')
+        profile_digest = installation['digest']
+        if profile_digest == EMPTY_INSTALLATION_PROFILE_DIGEST:
+            raise SceneValidationError('canonical browser scene requires a verified managed installation profile')
+        preflight = getattr(self.preview_manager, 'preflight_installation_profile', None)
+        if callable(preflight):
+            try:
+                preflight(profile_digest)
+            except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+                raise SceneValidationError(f'canonical browser scene installation profile is not managed: {exc}') from exc
+        elif profile_digest != EMPTY_INSTALLATION_PROFILE_DIGEST:
+            raise SceneValidationError('canonical browser scene installation profile cannot be resolved')
+
+        scene = canonical.scene
+        expected_slots = [('background', scene['background']), ('animation', scene['animation'])]
+        expected_slots.extend((f"widget:{widget['id']}", widget['component']) for widget in scene['widgets'])
+        raw_scene = payload['scene']
+        authored_components = [raw_scene['background'], raw_scene['animation']]
+        authored_components.extend(widget['component'] for widget in raw_scene['widgets'])
+        raw_components = payload.get('components')
+        if not isinstance(raw_components, list) or len(raw_components) != len(expected_slots):
+            raise SceneValidationError('canonical browser scene component slots are incomplete')
+        catalog = {(item.get('provider'), item.get('plugin_id')): item for item in self._browser_scene_catalog() if isinstance(item, dict)}
+        normalized_components = []
+        binding_fields = ('provider', 'component_id', 'component_digest', 'runtime_digest', 'parameter_schema_version')
+        for index, ((slot_id, scene_component), supplied) in enumerate(zip(expected_slots, raw_components)):
+            if not isinstance(supplied, dict) or set(supplied) != {'slot_id', *binding_fields, 'parameters'}:
+                raise SceneValidationError(f'canonical browser scene components[{index}] is malformed')
+            if supplied['slot_id'] != slot_id:
+                raise SceneValidationError('canonical browser scene component order or slot changed')
+            descriptor = catalog.get((scene_component['provider'], scene_component['component_id']))
+            managed = descriptor.get('browser_capabilities', {}).get('managed_identity') if isinstance(descriptor, dict) else None
+            capabilities = descriptor.get('browser_capabilities', {}) if isinstance(descriptor, dict) else {}
+            if capabilities.get('activation_ready') is not True:
+                raise SceneValidationError(f"canonical browser scene {slot_id} is not activation-ready: {capabilities.get('reason') or 'managed runtime unavailable'}")
+            if not isinstance(managed, dict) or any(type(supplied.get(field)) is not type(managed.get(field)) or supplied.get(field) != managed.get(field) for field in binding_fields):
+                raise SceneValidationError(f'canonical browser scene {slot_id} managed identity is stale')
+            if canonical_json_sha256(supplied.get('parameters')) != canonical_json_sha256(authored_components[index]['parameters']):
+                raise SceneValidationError(f'canonical browser scene {slot_id} parameters changed')
+            normalized = {field: managed[field] for field in binding_fields}
+            normalized.update(slot_id=slot_id, parameters=deepcopy(scene_component['parameters']))
+            if scene_component['provider'] == 'receiver_native':
+                normalized['bundle_digest'] = scene_component['bundle_digest']
+                build = descriptor.get('build') or {}
+                expected_payload = managed.get('expected_payload_digest', build.get('expected_payload_digest'))
+                if not isinstance(expected_payload, str) or re.fullmatch(r'[0-9a-f]{64}', expected_payload) is None:
+                    raise SceneValidationError(f'canonical browser scene {slot_id} native payload identity is unavailable')
+                normalized['expected_payload_digest'] = expected_payload
+            normalized_components.append(normalized)
+        document = {
+            'schema': CANONICAL_BROWSER_SCENE_SCHEMA, 'schema_version': 1,
+            'scene': scene, 'scene_identity': canonical.identity.to_dict(),
+            'components': normalized_components,
+            'installation_profile': {'digest': profile_digest},
+        }
+        return document, scene
+
     def _validated_browser_activation_scene(
         self, payload: Any,
     ) -> tuple[Dict[str, Any], Dict[str, Any]]:
@@ -3526,6 +3655,8 @@ class AnimationWebInterface:
         authority: translate the document, then run the same provider,
         parameter, preset, and implementation checks as the live host API.
         """
+        if isinstance(payload, dict) and payload.get('schema') == CANONICAL_BROWSER_SCENE_SCHEMA:
+            return self._validated_canonical_activation_document(payload)
         migrated = deepcopy(payload)
         if isinstance(migrated, dict):
             for layer in migrated.get('layers', []):
@@ -3878,6 +4009,8 @@ class AnimationWebInterface:
             raw_scene = status.get('scene')
         if isinstance(raw_scene, dict) and raw_scene.get('schema'):
             try:
+                if raw_scene.get("schema") == "ledgrid.scene.v2":
+                    return self._composer_canonical({"origin": "composer", "scene": raw_scene}).scene
                 return normalize_scene_payload(
                     raw_scene,
                     catalog=self._component_catalog(),

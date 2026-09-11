@@ -891,6 +891,13 @@ def decorate_browser_component(
             isinstance(digest, str) and _SHA256.fullmatch(digest) is not None
             for digest in (bundle_digest, payload_digest)
         )
+        # Native execution is supplied by the verified receiver bundle. The
+        # legacy loader correctly reports no Python host implementation.
+        if implementation.get("implementation_authority") == "managed_receiver":
+            implementation_ready = (
+                build.get("identity_authority") == "managed_library"
+                and native_identity_ready
+            )
     activation_ready = (
         saveable
         and composable
@@ -1837,7 +1844,9 @@ def normalize_activation_component_identity(value: Any) -> dict[str, Any]:
         "activation component identity",
     )
     slot_id = payload.get("slot_id")
-    if slot_id not in _ACTIVATION_COMPONENT_SLOTS:
+    if slot_id not in (*_ACTIVATION_COMPONENT_SLOTS, "animation") and not (
+        isinstance(slot_id, str) and re.fullmatch(r"widget:[a-z][a-z0-9_]*(?:[.-][a-z0-9_]*)*", slot_id)
+    ):
         raise SceneValidationError(
             "activation component identity.slot_id must be background, "
             f"{FIXED_OVERLAY_SLOT}, or known_python_fallback"
@@ -1913,6 +1922,12 @@ def _normalize_component_identities(value: Any) -> list[dict[str, Any]]:
     slots = [item["slot_id"] for item in components]
     if len(slots) != len(set(slots)):
         raise SceneValidationError("activation components contain duplicate slots")
+    if "animation" in slots:
+        if slots[:2] != ["background", "animation"] or any(
+            not slot.startswith("widget:") for slot in slots[2:]
+        ):
+            raise SceneValidationError("canonical activation components must preserve background, animation, and ordered Widgets")
+        return components
     required = {"background", "known_python_fallback"}
     if not required.issubset(slots):
         raise SceneValidationError(
@@ -2262,6 +2277,7 @@ def normalize_scene_activation_command(
     value: Any,
     *,
     catalog: Optional[Iterable[Mapping[str, Any]]] = None,
+    canonical_catalog: Any = None,
     provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
     now: Optional[int] = None,
 ) -> dict[str, Any]:
@@ -2314,11 +2330,15 @@ def normalize_scene_activation_command(
         "scene activation command.desired",
     )
     catalog_items = list(catalog) if catalog is not None else None
-    scene = normalize_scene_payload(
-        desired.get("scene"),
-        catalog=catalog_items,
-        provider_policy=provider_policy,
-    )
+    raw_scene = desired.get("scene")
+    canonical_scene = bool(isinstance(raw_scene, Mapping) and raw_scene.get("schema") == "ledgrid.scene.v2")
+    if canonical_scene:
+        if canonical_catalog is None:
+            raise SceneValidationError("canonical Scene v2 activation requires the controller catalog")
+        from ipc.scene_contract import normalize_composer_scene
+        scene = normalize_composer_scene({"origin": "composer", "scene": raw_scene}, canonical_catalog).scene
+    else:
+        scene = normalize_scene_payload(raw_scene, catalog=catalog_items, provider_policy=provider_policy)
     settings = normalize_global_settings_payload(desired.get("global_settings"))
     profile_digest = _sha256_digest(
         desired.get("installation_profile_digest"),
@@ -2328,7 +2348,7 @@ def normalize_scene_activation_command(
         raise SceneValidationError(
             "scene activation command desired scene does not match checked basis"
         )
-    if scene["revision"] != basis["host_scene"]["revision"]:
+    if (2 if canonical_scene else scene["revision"]) != basis["host_scene"]["revision"]:
         raise SceneValidationError(
             "scene activation command desired scene revision does not match checked basis"
         )
@@ -2347,7 +2367,11 @@ def normalize_scene_activation_command(
             "match checked basis"
         )
 
-    scene_components = _host_scene_component_map(scene)
+    if canonical_scene:
+        scene_components = {"background": scene["background"], "animation": scene["animation"]}
+        scene_components.update({f"widget:{widget['id']}": widget["component"] for widget in scene["widgets"]})
+    else:
+        scene_components = _host_scene_component_map(scene)
     if set(scene_components) != {
         component["slot_id"] for component in basis["components"]
     }:
@@ -2358,7 +2382,7 @@ def normalize_scene_activation_command(
         component = scene_components[identity["slot_id"]]
         if (
             component["provider"] != identity["provider"]
-            or component["plugin_id"] != identity["component_id"]
+            or component.get("plugin_id", component.get("component_id")) != identity["component_id"]
         ):
             raise SceneValidationError(
                 f"scene activation command desired {identity['slot_id']} identity "
@@ -2366,8 +2390,7 @@ def normalize_scene_activation_command(
             )
         if identity["provider"] == "receiver_native" and (
             component.get("bundle_digest") != identity["bundle_digest"]
-            or component.get("expected_payload_digest")
-            != identity["expected_payload_digest"]
+            or (not canonical_scene and component.get("expected_payload_digest") != identity["expected_payload_digest"])
         ):
             raise SceneValidationError(
                 f"scene activation command desired {identity['slot_id']} native "

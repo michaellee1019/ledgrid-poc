@@ -1,3 +1,5 @@
+#include "ledgrid/receiver_runtime.hpp"
+#include <cmath>
 #include "ledgrid/receiver_optics.hpp"
 
 #include <cstddef>
@@ -95,6 +97,39 @@ std::uint8_t quantize_q14(std::int64_t sum) {
 }
 
 }  // namespace
+
+bool apply_canonical_final_presentation(std::uint8_t* rgb, std::size_t rgb_bytes,
+    const InstallationProfileViewV1* profile, const PresentationContext& context) {
+  if (context.wire_version != 2 || rgb == nullptr || rgb_bytes % 3 != 0) return false;
+  const std::size_t pixels = rgb_bytes / 3;
+  if (profile != nullptr && (profile->pixel_count != pixels ||
+      profile->category == nullptr || profile->obstacle_edge == nullptr)) return false;
+  for (std::size_t pixel = 0; pixel < pixels; ++pixel) {
+    auto* channels = rgb + pixel * 3;
+    const auto category = profile == nullptr ? 0 : profile->category[pixel];
+    if (category > 2) return false;
+    const double attenuation = category == 1 ? .70 - .25 * context.canonical_shadow :
+        category == 2 ? .58 - .18 * context.canonical_shadow : 1.0;
+    for (int channel = 0; channel < 3; ++channel) {
+      channels[channel] = static_cast<std::uint8_t>(channels[channel] * attenuation);
+      if (profile != nullptr && profile->obstacle_edge[pixel] && context.canonical_illuminate > 0) {
+        const float lifted = static_cast<float>(channels[channel]) + static_cast<float>(96.0 * context.canonical_illuminate);
+        channels[channel] = static_cast<std::uint8_t>(std::min(255.0f, lifted));
+      }
+    }
+    if (category == 1 && context.canonical_hue_shift > 0) {
+      const double amount = context.canonical_hue_shift;
+      const auto red = channels[0], green = channels[1], blue = channels[2];
+      channels[0] = static_cast<std::uint8_t>(std::nearbyint(red * (1.0 - amount) + blue * amount));
+      channels[2] = static_cast<std::uint8_t>(std::nearbyint(blue * (1.0 - amount) + green * amount));
+    }
+    for (int channel = 0; channel < 3; ++channel) {
+      const float graded = static_cast<float>(channels[channel] * context.canonical_brightness);
+      channels[channel] = static_cast<std::uint8_t>(std::min(255.0f, std::nearbyint(graded)));
+    }
+  }
+  return true;
+}
 
 bool apply_hue_shift_q8_8(std::uint8_t* rgb, std::size_t rgb_bytes,
                          const InstallationProfileViewV1& profile,

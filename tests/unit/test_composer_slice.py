@@ -507,13 +507,18 @@ const context = {
   state: {
     status: {}, revision: 0, dirty: false, selection: null, authoredValidationError: null,
     wall: {
-      bootstrap: {components: [{
-        provider: 'python', plugin_id: 'conway_life', role: 'animation',
-        browser_capabilities: {managed_identity: {
-          provider: 'python', component_id: 'conway_life', component_digest: 'c'.repeat(64),
+      bootstrap: {components: [
+        ['receiver_native', 'native_aurora', 'background'],
+        ['python', 'conway_life', 'animation'],
+        ['python', 'clock_overlay', 'overlay'],
+        ['python', 'emoji_arranger', 'overlay'],
+      ].map(([provider, plugin_id, role]) => ({
+        provider, plugin_id, role,
+        browser_capabilities: {activation_ready: true, managed_identity: {
+          provider, component_id: plugin_id, component_digest: 'c'.repeat(64),
           runtime_digest: 'd'.repeat(64), parameter_schema_version: 1,
         }},
-      }]},
+      }))},
       observation: {
         controller_session_id: 'session', controller_state_revision: 7, is_running: true,
         installation_profile_digest: 'e'.repeat(64), active_identity: {scene_identity: prior},
@@ -525,9 +530,16 @@ const context = {
   $: (selector) => nodes[selector],
 };
 vm.runInNewContext(source + `
-  ; const scene = browserSceneForWall({animation: {component_id: 'conway_life', parameters: {seed: 23}}, widgets: []});
-  assert.equal(scene.background.component_id, 'conway_life');
-  assert.equal(scene.background.parameters.seed, 23);
+  ; const authored = {schema: 'ledgrid.scene.v2', background: {component_id: 'native_aurora', provider: 'receiver_native', bundle_digest: 'f'.repeat(64), parameters: {gain: .37, seed: 12}}, animation: {component_id: 'conway_life', provider: 'python', parameters: {seed: 23}}, widgets: [
+    {id: 'status.clock', visible: false, component: {component_id: 'clock_overlay', provider: 'python', parameters: {show_seconds: true}}},
+    {id: 'message', visible: true, component: {component_id: 'emoji_arranger', provider: 'python', parameters: {text: 'HI'}}},
+  ], look: {pace: .35, palette_id: 'ember', presentation_brightness: 1.75}, plants: {effects: {version: 1, active: ['shadow'], strengths: {shadow: .5}}}};
+  const scene = browserSceneForWall(authored);
+  assert.equal(scene.schema, 'ledgrid.browser-scene-v2');
+  assert.equal(JSON.stringify(scene.scene), JSON.stringify(authored));
+  assert.deepEqual(scene.components.map(item => item.slot_id), ['background', 'animation', 'widget:status.clock', 'widget:message']);
+  assert.equal(scene.components[0].parameters.gain, .37);
+  assert.equal(scene.components[1].parameters.seed, 23);
   renderStatus({connected: true, running: true, armed: true, current: {revision: 8, digest: 'b'.repeat(64)}, desired: {revision: 8, digest: 'b'.repeat(64)}, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
   assert.equal(nodes['#wallActivationFailure'].hidden, false);
   assert.equal(nodes['#wallActivationFailure'].textContent, 'Activation rejected by mocked wall.');

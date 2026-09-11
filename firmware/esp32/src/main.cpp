@@ -393,6 +393,7 @@ void display_task(void*) {
     bool foreground_due = false;
     bool has_rendered_base = false;
     bool native_base = false;
+    ledgrid::PresentationContext presentation_context{};
     std::uint64_t native_frame_index = 0;
     lock_runtime();
     receiver_runtime.service_foreground(now_us);
@@ -401,7 +402,8 @@ void display_task(void*) {
       base_due = receiver_runtime.local_frame_due(now_us);
       foreground_due = receiver_runtime.foreground_refresh_pending();
       parameters = receiver_runtime.local_parameters();
-      luminance = receiver_runtime.active_context().luminance_q8_8;
+      presentation_context = receiver_runtime.active_context();
+      luminance = presentation_context.luminance_q8_8;
       hue_shift = receiver_runtime.active_modifier_strength_q8_8(
           ledgrid::kHueShiftModifierId);
       scene_time = receiver_runtime.scene_time_us(now_us);
@@ -467,7 +469,9 @@ void display_task(void*) {
           ledgrid::NativeModuleRenderResult native_result{};
           lock_native();
           rendered = native_module_manager.render(
-              scene_time, scene_time,
+              scene_time, presentation_context.wire_version == 2
+                  ? static_cast<std::uint64_t>(scene_time * presentation_context.canonical_pace)
+                  : scene_time,
               native_frame_index,
               startup_frame, ticket.output.rgb_bytes(), &native_result);
           base_changed = rendered && native_result.changed;
@@ -519,9 +523,22 @@ void display_task(void*) {
       }
       unlock_runtime();
       if (!composed) continue;
+#if !LEDGRID_ENABLE_INSTALLATION_PROFILES
+      if (presentation_context.wire_version == 2 &&
+          !ledgrid::apply_canonical_final_presentation(composite_frame,
+              ticket.output.rgb_bytes(), nullptr, presentation_context)) continue;
+#endif
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
       bool optic_succeeded = true;
-      if (hue_shift > 0 && installation_profiles_available()) {
+      if (presentation_context.wire_version == 2) {
+        lock_profile();
+        const auto& profile = installation_profile_manager.active_view();
+        const bool available = profile_view_matches_output(profile, ticket.output);
+        optic_succeeded = ledgrid::apply_canonical_final_presentation(
+            composite_frame, ticket.output.rgb_bytes(), available ? &profile : nullptr,
+            presentation_context);
+        unlock_profile();
+      } else if (hue_shift > 0 && installation_profiles_available()) {
         lock_profile();
         const auto& profile = installation_profile_manager.active_view();
         if (profile_view_matches_output(profile, ticket.output)) {

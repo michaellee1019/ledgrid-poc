@@ -458,7 +458,7 @@ MAX_LOCAL_BACKGROUND_CADENCE_HZ = 200
 PRESENTATION_CONTEXT_VERSION = 1
 PRESENTATION_CONTEXT_BEGIN_BYTES = 58
 PRESENTATION_CONTEXT_SET_MIN_BYTES = 145
-PRESENTATION_CONTEXT_SET_MAX_BYTES = 187
+PRESENTATION_CONTEXT_SET_MAX_BYTES = 259
 PRESENTATION_CONTEXT_COMMIT_BYTES = 74
 SPARSE_OVERLAY_PROTOCOL_VERSION = 1
 CONTROLLER_SESSION_BYTES = 16
@@ -3076,7 +3076,7 @@ class LEDController:
         if not minimum <= len(packet) <= maximum:
             expected = str(minimum) if minimum == maximum else f"{minimum}..{maximum}"
             raise ValueError(f"presentation context packet must be {expected} bytes")
-        if packet[0] != command or packet[1] != PRESENTATION_CONTEXT_VERSION:
+        if packet[0] != command or packet[1] not in (PRESENTATION_CONTEXT_VERSION, 2):
             raise ValueError("presentation context command/version mismatch")
         return packet
 

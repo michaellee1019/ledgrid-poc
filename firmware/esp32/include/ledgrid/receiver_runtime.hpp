@@ -29,6 +29,7 @@ constexpr std::size_t kPresentationContextBeginBytes = 58;
 constexpr std::size_t kPresentationContextSetBaseBytes = 145;
 constexpr std::size_t kPresentationContextSetEntryBytes = 3;
 constexpr std::size_t kPresentationContextSetMaxBytes = 187;
+constexpr std::size_t kCanonicalFinalPresentationBytes = 72;
 constexpr std::size_t kPresentationContextCommitBytes = 74;
 constexpr std::uint16_t kQ8_8One = 256;
 constexpr std::uint8_t kPresentationModifierCount = 14;
@@ -86,6 +87,13 @@ struct SparseOverlayStatus {
 };
 
 struct PresentationContext {
+  std::uint8_t wire_version = 1;
+  std::uint8_t canonical_scene_digest[32] = {};
+  double canonical_pace = 1.0;
+  double canonical_brightness = 1.0;
+  double canonical_shadow = 0.0;
+  double canonical_illuminate = 0.0;
+  double canonical_hue_shift = 0.0;
   std::uint8_t session[16] = {};
   std::uint64_t scene_revision = 0;
   std::uint64_t scene_epoch = 0;

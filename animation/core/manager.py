@@ -232,7 +232,10 @@ class PreviewLEDController:
         pass
 
 
-class AnimationManager:
+from animation.core.canonical_receiver_scene import CanonicalReceiverSceneMixin
+
+
+class AnimationManager(CanonicalReceiverSceneMixin):
     """Manages animation playback and plugin system"""
 
     # The checked-in package manifests are the single source of truth. Keeping
@@ -1749,6 +1752,8 @@ class AnimationManager:
         revision: int,
         present_at_scene_time_us: int,
     ) -> ReceiverPresentationContext:
+        if getattr(self, "_canonical_receiver_scene", None) is not None:
+            return self._canonical_presentation_context(publisher, revision=revision, present_at_scene_time_us=present_at_scene_time_us)
         with self._presentation_state_guard():
             vibe = self._resolved_vibe
         return ReceiverPresentationContext(
@@ -1819,6 +1824,8 @@ class AnimationManager:
         force_refresh: bool = False,
     ) -> OverlayFrame:
         with self._scene_state_guard():
+            if getattr(self, "_canonical_receiver_scene", None) is not None:
+                return self._render_canonical_receiver_foreground(now, force_refresh=force_refresh)
             compositor = self._receiver_foreground_compositor
             if not self._receiver_hybrid_mode or compositor is None:
                 raise RuntimeError("no receiver hybrid scene is active")
@@ -1876,6 +1883,8 @@ class AnimationManager:
         scene_time_us: int,
         resolved_vibe: Optional[ResolvedVibe] = None,
     ) -> np.ndarray:
+        if getattr(self, "_canonical_receiver_scene", None) is not None:
+            return self._canonical_receiver_preview
         resolved = self._resolved_vibe if resolved_vibe is None else resolved_vibe
         if scene.background.plugin_id == COMPILED_RAINBOW_PLUGIN_ID:
             luminance = quantize_q8_8(
@@ -2043,6 +2052,10 @@ class AnimationManager:
         self, scene: SceneState, error: Any
     ) -> bool:
         diagnostic = str(error)
+        if getattr(self, "_canonical_receiver_scene", None) is not None:
+            self.stop_animation(clear_leds=False)
+            self._receiver_last_status = {"healthy": False, "telemetry_complete": False, "error": diagnostic, "fallback_active": False}
+            return False
         with self.frame_data_lock:
             previous_preview = np.asarray(
                 self.current_frame_data, dtype=np.uint8
@@ -2095,7 +2108,7 @@ class AnimationManager:
         return started
 
     def _start_receiver_hybrid_scene(
-        self, scene: SceneState, *, adopt: bool = False
+        self, scene: SceneState, *, adopt: bool = False, canonical_candidate=None
     ) -> bool:
         if adopt and (self.is_running or self._scene_mode):
             print("✗ Receiver-native adoption requires an unowned startup manager")
@@ -2170,6 +2183,8 @@ class AnimationManager:
             )
             context_revision = self._next_receiver_context_revision(scene.revision)
             with self._scene_state_guard():
+                if canonical_candidate is not None:
+                    self._canonical_receiver_scene, self._canonical_receiver_runtime = canonical_candidate
                 self._scene_mode = True
                 self._scene_compatibility_mode = False
                 self._scene_allows_compatibility_components = False
@@ -2267,6 +2282,11 @@ class AnimationManager:
                 return False
             print(f"✗ Receiver hybrid scene fell back: {exc}")
             traceback.print_exc()
+            if canonical_candidate is not None:
+                # The guarded coordinator restores the exact prior snapshot;
+                # a substituted Python fallback must never count as success.
+                self.stop_animation(clear_leds=False)
+                return False
             return self._activate_known_python_fallback(scene, exc)
 
     def start_scene(
@@ -2277,6 +2297,8 @@ class AnimationManager:
         _allow_compatibility_components: bool = False,
     ) -> bool:
         """Validate and start a complete fixed-slot scene atomically."""
+        if isinstance(scene_payload, dict) and scene_payload.get("schema") == "ledgrid.scene.v2":
+            return self.start_canonical_scene(scene_payload)
         try:
             scene = self._resolve_scene_state(
                 scene_payload,
@@ -2490,6 +2512,8 @@ class AnimationManager:
         return dict(clearer(resolved))
 
     def _clear_scene_state(self) -> None:
+        self._canonical_receiver_scene = None
+        self._canonical_receiver_runtime = None
         self._scene_mode = False
         self._scene_background = None
         self._scene_overlay = None
@@ -2837,6 +2861,9 @@ class AnimationManager:
     def get_scene_state(self) -> Optional[Dict[str, Any]]:
         """Return a detached, scene-only serialized snapshot of live state."""
         with self._scene_state_guard():
+            canonical = getattr(self, "_canonical_receiver_scene", None)
+            if canonical is not None and self._scene_mode:
+                return canonical.scene
             return (
                 self._active_scene_state.to_dict()
                 if self._scene_mode and self._active_scene_state is not None
@@ -2863,6 +2890,8 @@ class AnimationManager:
         stale_policy: Optional[Any],
         remove: bool,
     ) -> bool:
+        if getattr(self, "_canonical_receiver_scene", None) is not None:
+            raise ValueError("canonical Scene components require a complete guarded activation")
         failure: Optional[Exception] = None
         with self._scene_state_guard():
             scene = self._active_scene_state
@@ -3591,6 +3620,8 @@ class AnimationManager:
             "fallback_active": self._receiver_fallback_active,
             "error": self._receiver_hybrid_error,
             "source_scene_revision": scene.revision if scene is not None else None,
+            "canonical_scene_digest": (getattr(self, "_canonical_receiver_scene", None).identity.digest if getattr(self, "_canonical_receiver_scene", None) is not None else None),
+            "preview_kind": "host_foreground_only" if getattr(self, "_canonical_receiver_scene", None) is not None else "build_time_native_simulation",
             "context_revision": self._receiver_context_revision,
             "context_digest": (
                 self._receiver_context.context_digest.hex()

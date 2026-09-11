@@ -145,6 +145,28 @@ def plant_modifier_digest(state: PlantModifierState) -> bytes:
 
 
 @dataclass(frozen=True)
+class CanonicalFinalPresentation:
+    """Exact Scene-owned final pass; version 2 peers reject unknown bytes."""
+
+    scene_digest: str
+    pace: float
+    brightness: float
+    shadow: float = 0.0
+    illuminate: float = 0.0
+    hue_shift: float = 0.0
+
+    def __post_init__(self) -> None:
+        _digest_bytes("scene_digest", self.scene_digest)
+        for name in ("pace", "brightness", "shadow", "illuminate", "hue_shift"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= (2 if name in ("pace", "brightness") else 1):
+                raise ValueError(f"canonical {name} is outside its finite range")
+
+    def to_bytes(self) -> bytes:
+        return bytes.fromhex(self.scene_digest) + struct.pack(">5d", self.pace, self.brightness, self.shadow, self.illuminate, self.hue_shift)
+
+
+@dataclass(frozen=True)
 class ReceiverPresentationContext:
     """Complete host-resolved context staged before receiver activation."""
 
@@ -155,6 +177,11 @@ class ReceiverPresentationContext:
     vibe: ResolvedVibe
     plant_modifiers: PlantModifierState
     plant_revision: int
+    canonical_final: CanonicalFinalPresentation | None = None
+
+    @property
+    def wire_version(self) -> int:
+        return 2 if self.canonical_final is not None else 1
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "controller_session_id", _session_id(self.controller_session_id))
@@ -164,6 +191,8 @@ class ReceiverPresentationContext:
         _uint64("plant_revision", self.plant_revision)
         if not isinstance(self.vibe, ResolvedVibe):
             raise TypeError("vibe must be a ResolvedVibe")
+        if self.canonical_final is not None and not isinstance(self.canonical_final, CanonicalFinalPresentation):
+            raise TypeError("canonical_final must be CanonicalFinalPresentation")
         profile = self.vibe.profile
         state = self.vibe.state
         if state.vibe_id not in VIBE_ID_TO_WIRE:
@@ -220,6 +249,8 @@ def _context_body(context: ReceiverPresentationContext) -> bytes:
     plant = _plant_body(context.plant_modifiers)
     body.append(plant[1])
     body.extend(plant[2:])
+    if context.canonical_final is not None:
+        body.extend(context.canonical_final.to_bytes())
     return bytes(body)
 
 
@@ -227,7 +258,7 @@ def serialize_presentation_context_begin(context: ReceiverPresentationContext) -
     packet = struct.pack(
         ">BB16sQ32s",
         PRESENTATION_CONTEXT_BEGIN,
-        PRESENTATION_CONTEXT_VERSION,
+        context.wire_version,
         context.controller_session_id,
         context.scene_revision,
         context.context_digest,
@@ -239,10 +270,11 @@ def serialize_presentation_context_begin(context: ReceiverPresentationContext) -
 
 def serialize_presentation_context_set(context: ReceiverPresentationContext) -> bytes:
     packet = struct.pack(
-        ">BB16s", PRESENTATION_CONTEXT_SET, PRESENTATION_CONTEXT_VERSION,
+        ">BB16s", PRESENTATION_CONTEXT_SET, context.wire_version,
         context.controller_session_id,
     ) + _context_body(context)
     expected = SET_BASE_BYTES + SET_ENTRY_BYTES * len(context.plant_modifiers.active)
+    expected += 72 if context.canonical_final is not None else 0
     if len(packet) != expected:  # contract assertion, not input validation
         raise AssertionError("presentation-context SET layout drifted")
     return packet
@@ -252,7 +284,7 @@ def serialize_presentation_context_commit(context: ReceiverPresentationContext) 
     packet = struct.pack(
         ">BB16sQQQ32s",
         PRESENTATION_CONTEXT_COMMIT,
-        PRESENTATION_CONTEXT_VERSION,
+        context.wire_version,
         context.controller_session_id,
         context.scene_revision,
         context.scene_epoch,

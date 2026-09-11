@@ -230,6 +230,18 @@ def _preset_fingerprint(animation: str, preset_id: str, params: dict[str, Any]) 
     return component_preset_fingerprint(animation, preset_id, params)
 
 
+def _canonical_saved_scene(raw_scene, provider_policy):
+    from web.composer_final_preview import current_component_catalog
+    from ipc.scene_contract import normalize_composer_scene
+    try:
+        scene = normalize_composer_scene({"origin": "composer", "scene": raw_scene}, current_component_catalog()).scene
+        if not provider_policy.allows_receiver_background(scene["background"]["component_id"]):
+            raise ValueError("canonical native Background is disabled by receiver policy")
+        return scene
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Canonical saved Scene cannot be restored exactly: {exc}") from exc
+
+
 def _scene_from_status(
     status: dict[str, Any], animation: str, params: dict[str, Any],
     *, provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
@@ -237,6 +249,8 @@ def _scene_from_status(
     raw_scene = status.get("scene_state")
     if not isinstance(raw_scene, dict):
         raw_scene = status.get("scene")
+    if isinstance(raw_scene, dict) and raw_scene.get("schema") == "ledgrid.scene.v2":
+        return _canonical_saved_scene(raw_scene, provider_policy)
     if isinstance(raw_scene, dict) and raw_scene.get("schema"):
         try:
             return normalize_scene_payload(
@@ -352,10 +366,17 @@ def _desired_display_state(
                     "Controller status has no managed-native restoration authority"
                 )
             parameter_digest = driver.get("parameter_digest")
+            canonical = scene.get("schema") == "ledgrid.scene.v2"
+            payload_digest = driver.get("payload_digest") if canonical else background.get("expected_payload_digest")
+            if canonical:
+                from animation.core.activation_qualification import canonical_json_sha256
+                if receiver_status.get("canonical_scene_digest") != canonical_json_sha256(scene) or driver.get("effective_parameters") != background["parameters"]:
+                    raise RuntimeError("Controller canonical native context is not exact")
             if (
                 driver.get("bundle_digest") != background.get("bundle_digest")
                 or driver.get("payload_digest")
-                != background.get("expected_payload_digest")
+                != payload_digest
+                or not isinstance(payload_digest, str) or re.fullmatch(r"[0-9a-f]{64}", payload_digest) is None
                 or not isinstance(parameter_digest, str)
                 or re.fullmatch(r"[0-9a-f]{64}", parameter_digest) is None
             ):
@@ -364,7 +385,7 @@ def _desired_display_state(
                 )
             result["native_expectation"] = {
                 "bundle_digest": background["bundle_digest"],
-                "payload_digest": background["expected_payload_digest"],
+                "payload_digest": payload_digest,
                 "parameter_digest": parameter_digest,
             }
     elif isinstance(prior.get("native_expectation"), dict):
@@ -454,7 +475,7 @@ def save_status(
 
     stopped_selected_scene = not bool(status.get("is_running"))
     if not animation and scene is not None:
-        animation = _safe_animation_name(scene["background"].get("plugin_id"))
+        animation = _safe_animation_name(scene["background"].get("plugin_id", scene["background"].get("component_id")))
         if not animation:
             raise RuntimeError(
                 "Controller selected scene has an invalid background animation"
@@ -465,7 +486,7 @@ def save_status(
     )
     if native_background:
         background = scene["background"]
-        params = dict(background.get("resolved_parameters") or {})
+        params = dict(background.get("parameters", background.get("resolved_parameters")) or {})
         params.update(background.get("parameter_overrides") or {})
     elif stopped_selected_scene and scene is not None:
         # Guarded power-off keeps an exact selected scene even though no plugin
@@ -623,7 +644,8 @@ def _load_desired_display_state(
 ) -> dict[str, Any]:
     """Validate the aggregate before exposing any values to controller startup."""
     raw_scene = state.get("scene")
-    fallback_scene = _known_python_fallback_scene(raw_scene)
+    canonical = isinstance(raw_scene, dict) and raw_scene.get("schema") == "ledgrid.scene.v2"
+    fallback_scene = None if canonical else _known_python_fallback_scene(raw_scene)
     for alias, validator, message in (
         ("animation_speed_scale", _positive_finite_number, "animation speed scale"),
         ("target_fps", _positive_int, "target FPS"),
@@ -636,6 +658,8 @@ def _load_desired_display_state(
         state.get("schema") != DESIRED_DISPLAY_SCHEMA
         or state.get("schema_version") != DESIRED_DISPLAY_VERSION
     ):
+        if canonical:
+            raise RuntimeError("Canonical saved Scene has an unsupported desired-display envelope")
         scene = fallback_scene
         fallback_reason = (
             f"unsupported desired display schema/version: "
@@ -643,7 +667,7 @@ def _load_desired_display_state(
         )
     else:
         try:
-            scene = normalize_scene_payload(
+            scene = _canonical_saved_scene(raw_scene, provider_policy) if canonical else normalize_scene_payload(
                 raw_scene, provider_policy=provider_policy
             )
         except (SceneValidationError, TypeError, ValueError) as exc:
@@ -696,13 +720,13 @@ def _load_desired_display_state(
     resolved_vibe, vibe_fallback = _expected_restored_vibe(vibe)
 
     background = scene["background"]
-    params = dict(background.get("resolved_parameters") or {})
+    params = dict(background.get("parameters", background.get("resolved_parameters")) or {})
     params.update(background.get("parameter_overrides") or {})
     result = dict(state)
     result.update({
         "scene": scene,
         "fallback_scene": fallback_scene,
-        "animation": background["plugin_id"],
+        "animation": background.get("plugin_id", background.get("component_id")),
         "params": params,
         "animation_speed_scale": tempo,
         "target_fps": target_fps,

@@ -233,6 +233,13 @@ def _global_settings_digest(value: Mapping[str, Any]) -> str:
     return str(global_settings_digest(value))
 
 
+def _normalize_managed_scene(manager: Any, value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping) and value.get("schema") == "ledgrid.scene.v2":
+        from ipc.scene_contract import normalize_composer_scene
+        return normalize_composer_scene({"origin": "composer", "scene": value}, manager_scene_v2_catalog(manager)).scene
+    return normalize_scene_payload(value, catalog=manager_component_catalog(manager) or None, provider_policy=manager_scene_provider_policy(manager))
+
+
 def _scene_digest(value: Mapping[str, Any]) -> str:
     return _canonical_json_sha256(value)
 
@@ -290,6 +297,7 @@ def _normalize_activation_command(
     value: Any,
     *,
     catalog: list[dict[str, Any]] | None = None,
+    canonical_catalog: Any = None,
     provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
     now: int | None = None,
 ) -> dict[str, Any]:
@@ -301,6 +309,7 @@ def _normalize_activation_command(
         return dict(normalize_scene_activation_command(
             value,
             catalog=catalog,
+            canonical_catalog=canonical_catalog,
             provider_policy=provider_policy,
             now=now,
         ))
@@ -427,11 +436,7 @@ class ControllerActivationCoordinator:
         manager_status = self._manager_status()
         self._selected_scene = self._live_scene(manager_status)
         if self._selected_scene is None and restored_selected_scene is not None:
-            self._selected_scene = normalize_scene_payload(
-                restored_selected_scene,
-                catalog=manager_component_catalog(self.manager) or None,
-                provider_policy=manager_scene_provider_policy(self.manager),
-            )
+            self._selected_scene = _normalize_managed_scene(self.manager, restored_selected_scene)
         self._active_identity = self._derive_active_identity()
 
     @property
@@ -495,11 +500,7 @@ class ControllerActivationCoordinator:
             return None
         if not isinstance(scene, Mapping):
             raise ControllerActivationError("manager returned a non-object scene state")
-        return normalize_scene_payload(
-            scene,
-            catalog=manager_component_catalog(self.manager) or None,
-            provider_policy=manager_scene_provider_policy(self.manager),
-        )
+        return _normalize_managed_scene(self.manager, scene)
 
     def _current_scene(
         self, status: Mapping[str, Any] | None = None
@@ -561,10 +562,15 @@ class ControllerActivationCoordinator:
     ) -> list[dict[str, Any]]:
         if scene is None:
             return []
-        items: list[tuple[str, Mapping[str, Any]]] = [
-            ("background", scene["background"]),
-            ("known_python_fallback", scene["known_python_fallback"]),
-        ]
+        canonical = scene.get("schema") == "ledgrid.scene.v2"
+        if canonical:
+            items = [("background", scene["background"]), ("animation", scene["animation"])]
+            items.extend((f"widget:{widget['id']}", widget["component"]) for widget in scene["widgets"])
+        else:
+            items = [
+                ("background", scene["background"]),
+                ("known_python_fallback", scene["known_python_fallback"]),
+            ]
         items.extend(
             (str(overlay["slot_id"]), overlay["component"])
             for overlay in scene.get("overlays", [])
@@ -577,7 +583,7 @@ class ControllerActivationCoordinator:
         result = []
         for slot_id, component in items:
             provider = component.get("provider", "python")
-            component_id = component.get("plugin_id")
+            component_id = component.get("plugin_id", component.get("component_id"))
             descriptor = catalog.get((provider, component_id), {})
             component_digest = _canonical_json_sha256(descriptor or component)
             controller_runtime_digest = _canonical_json_sha256({
@@ -619,7 +625,7 @@ class ControllerActivationCoordinator:
             "scene_identity": (
                 None
                 if scene is None
-                else {"revision": scene["revision"], "digest": _scene_digest(scene)}
+                else {"revision": 2 if scene.get("schema") == "ledgrid.scene.v2" else scene["revision"], "digest": _scene_digest(scene)}
             ),
             "component_identities": self._component_identities(scene),
             "global_settings_identity": {
@@ -797,6 +803,7 @@ class ControllerActivationCoordinator:
         command = _normalize_activation_command(
             command_payload,
             catalog=manager_component_catalog(self.manager) or None,
+            canonical_catalog=manager_scene_v2_catalog(self.manager),
             provider_policy=manager_scene_provider_policy(self.manager),
         )
         activation_id = command["activation_id"]
@@ -825,6 +832,7 @@ class ControllerActivationCoordinator:
         command = _normalize_activation_command(
             command_payload,
             catalog=manager_component_catalog(self.manager) or None,
+            canonical_catalog=manager_scene_v2_catalog(self.manager),
             provider_policy=manager_scene_provider_policy(self.manager),
         )
         durable = normalize_scene_activation_status(durable_status_payload)
@@ -866,6 +874,7 @@ class ControllerActivationCoordinator:
         command = _normalize_activation_command(
             command_payload,
             catalog=manager_component_catalog(self.manager) or None,
+            canonical_catalog=manager_scene_v2_catalog(self.manager),
             provider_policy=manager_scene_provider_policy(self.manager),
         )
         durable = normalize_scene_activation_status(durable_status_payload)
@@ -923,6 +932,7 @@ class ControllerActivationCoordinator:
         command = _normalize_activation_command(
             command_payload,
             catalog=manager_component_catalog(self.manager) or None,
+            canonical_catalog=manager_scene_v2_catalog(self.manager),
             provider_policy=manager_scene_provider_policy(self.manager),
         )
         durable = normalize_scene_activation_status(durable_status_payload)
@@ -965,6 +975,7 @@ class ControllerActivationCoordinator:
                     current_status,
                     desired["scene"],
                     desired["installation_profile_digest"],
+                    next((item.get("expected_payload_digest") for item in command["basis"]["components"] if item["slot_id"] == "background"), None),
                 )
                 if self._uses_receiver_runtime(desired["scene"])
                 else None
@@ -1024,6 +1035,7 @@ class ControllerActivationCoordinator:
         command = _normalize_activation_command(
             command_payload,
             catalog=manager_component_catalog(self.manager) or None,
+            canonical_catalog=manager_scene_v2_catalog(self.manager),
             provider_policy=manager_scene_provider_policy(self.manager),
         )
         durable = normalize_scene_activation_status(durable_status_payload)
@@ -1058,6 +1070,7 @@ class ControllerActivationCoordinator:
                 current_status,
                 desired["scene"],
                 desired["installation_profile_digest"],
+                next((item.get("expected_payload_digest") for item in command["basis"]["components"] if item["slot_id"] == "background"), None),
             ) is not None
         )
         desired_is_current = bool(
@@ -1376,6 +1389,7 @@ class ControllerActivationCoordinator:
         status: Mapping[str, Any],
         scene: Mapping[str, Any],
         installation_profile_digest: str,
+        expected_payload_digest: str | None = None,
     ) -> dict[str, Any] | None:
         """Return exact fresh receiver/runtime evidence for one desired scene."""
 
@@ -1391,15 +1405,18 @@ class ControllerActivationCoordinator:
             or background.get("provider") != "receiver_native"
         ):
             return None
-        revision = scene.get("revision")
+        canonical = scene.get("schema") == "ledgrid.scene.v2"
+        revision = sample["context_revision"] if canonical else scene.get("revision")
+        if canonical and receiver.get("canonical_scene_digest") != _scene_digest(scene):
+            return None
         if (
-            sample["source_scene_revision"] != revision
+            (not canonical and sample["source_scene_revision"] != revision)
             or sample["binding_scene_revision"] != revision
         ):
             return None
         driver = receiver.get("driver")
-        resolved_parameters = background.get("resolved_parameters")
-        overrides = background.get("parameter_overrides")
+        resolved_parameters = background.get("parameters") if canonical else background.get("resolved_parameters")
+        overrides = {} if canonical else background.get("parameter_overrides")
         if (
             not isinstance(driver, Mapping)
             or not isinstance(resolved_parameters, Mapping)
@@ -1409,7 +1426,7 @@ class ControllerActivationCoordinator:
         effective_parameters = dict(resolved_parameters)
         effective_parameters.update(overrides)
         bundle_digest = background.get("bundle_digest")
-        payload_digest = background.get("expected_payload_digest")
+        payload_digest = expected_payload_digest if canonical else background.get("expected_payload_digest")
         parameter_digest = driver.get("parameter_digest")
         if not (
             driver.get("state") == "active"
@@ -1545,15 +1562,14 @@ class ControllerActivationCoordinator:
         self._fault("preflighting", "after_cas", activation_id)
         self._check_cancelled(record)
 
-        scene = normalize_scene_payload(
-            desired["scene"],
-            catalog=manager_component_catalog(self.manager) or None,
-            provider_policy=manager_scene_provider_policy(self.manager),
-        )
+        scene = _normalize_managed_scene(self.manager, desired["scene"])
         self._fault("preflighting", "scene", activation_id)
         scene_preflight = getattr(self.manager, "preflight_scene", None)
         if callable(scene_preflight):
-            scene_preflight(scene)
+            if scene.get("schema") == "ledgrid.scene.v2":
+                scene_preflight(scene, installation_profile_digest=desired["installation_profile_digest"])
+            else:
+                scene_preflight(scene)
         self._check_cancelled(record)
 
         globals_state = _normalize_global_settings(desired["global_settings"])
@@ -1830,7 +1846,8 @@ class ControllerActivationCoordinator:
             return self._derive_active_identity(), False, True
         if self._uses_receiver_runtime(scene):
             evidence = self._receiver_activation_evidence(
-                status, scene, profile_digest
+                status, scene, profile_digest,
+                next((item.get("expected_payload_digest") for item in record.command["basis"]["components"] if item["slot_id"] == "background"), None),
             )
             complete = evidence is not None
             fresh = bool(
@@ -1910,6 +1927,11 @@ class ControllerActivationCoordinator:
                 raise ControllerActivationError(
                     "post-rollback controller snapshot differs from prior state"
                 )
+            if snapshot.scene is not None and snapshot.scene.get("schema") == "ledgrid.scene.v2" and snapshot.global_settings["output"]["power"]:
+                prior_components = snapshot.active_identity.get("component_identities", [])
+                payload_digest = next((item.get("expected_payload_digest") for item in prior_components if item["slot_id"] == "background"), None)
+                if self._receiver_activation_evidence(self._manager_status(), snapshot.scene, snapshot.installation_profile_digest, payload_digest) is None:
+                    raise ControllerActivationError("canonical rollback lacks exact receiver proof")
             self._active_identity = _copy_json(snapshot.active_identity)
             self._global_settings_revision = snapshot.global_settings["revision"]
             self._state_revision += 1
@@ -2194,6 +2216,15 @@ def manager_scene_provider_policy(manager: Any) -> SceneProviderPolicy:
     return policy
 
 
+def manager_scene_v2_catalog(manager: Any) -> Any:
+    """Return the controller's closed canonical Scene v2 catalog."""
+    getter = getattr(manager, "scene_v2_component_catalog", None)
+    if callable(getter):
+        return getter()
+    from web.composer_final_preview import current_component_catalog
+    return current_component_catalog()
+
+
 def manager_component_catalog(manager: Any) -> list[dict]:
     def scene_v1_catalog(items: Any) -> list[dict]:
         """Adapt Scene v2 product roles at the legacy controller boundary."""
@@ -2286,11 +2317,7 @@ def component_params(component: dict) -> dict:
 
 
 def start_scene(manager: Any, scene_payload: dict) -> bool:
-    scene = normalize_scene_payload(
-        scene_payload,
-        catalog=manager_component_catalog(manager) or None,
-        provider_policy=manager_scene_provider_policy(manager),
-    )
+    scene = _normalize_managed_scene(manager, scene_payload)
     starter = getattr(manager, "start_scene", None)
     if callable(starter):
         return bool(starter(scene))
@@ -2362,11 +2389,7 @@ def restore_display_state(manager: Any, state: dict) -> bool:
     catalog = manager_component_catalog(manager) or None
     provider_policy = manager_scene_provider_policy(manager)
     try:
-        scene = normalize_scene_payload(
-            raw_scene,
-            catalog=catalog,
-            provider_policy=provider_policy,
-        )
+        scene = _normalize_managed_scene(manager, raw_scene)
     except SceneValidationError:
         # A receiver scene saved by a canary-capable release remains useful
         # data when ordinary production (all gates off) starts later. Resolve
@@ -2444,6 +2467,12 @@ def restore_display_state(manager: Any, state: dict) -> bool:
             "manager cannot preflight a nonempty installation profile"
         )
 
+    if scene.get("schema") == "ledgrid.scene.v2":
+        preflight = getattr(manager, "preflight_scene", None)
+        if not callable(preflight):
+            raise ValueError("canonical restore requires manager preflight")
+        preflight(scene, installation_profile_digest=installation_profile_digest)
+
     prior_profile_digest = EMPTY_INSTALLATION_PROFILE_DIGEST
     current_status = getattr(manager, "get_current_status", None)
     if callable(current_status):
@@ -2463,7 +2492,8 @@ def restore_display_state(manager: Any, state: dict) -> bool:
             background = scene.get("background", {})
             adopter = getattr(manager, "adopt_scene", None)
             if (
-                background.get("provider") == "receiver_native"
+                scene.get("schema") != "ledgrid.scene.v2"
+                and background.get("provider") == "receiver_native"
                 and background.get("plugin_id") != "compiled_rainbow"
                 and callable(adopter)
             ):

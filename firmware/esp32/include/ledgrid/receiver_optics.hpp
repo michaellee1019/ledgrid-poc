@@ -7,6 +7,10 @@
 #include "ledgrid/installation_profile.hpp"
 
 namespace ledgrid {
+struct PresentationContext;
+bool apply_canonical_final_presentation(std::uint8_t* rgb, std::size_t rgb_bytes,
+    const InstallationProfileViewV1* profile, const PresentationContext& context);
+
 
 // Stable semantic classes for the installation-geometry diagnostic. Edge
 // variants retain their class identity in red/green and differ only in blue.

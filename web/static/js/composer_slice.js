@@ -3,7 +3,7 @@
   const root = document.querySelector('.composer');
   const api = root.dataset.apiRoot;
   const $ = (selector) => document.querySelector(selector);
-  const nativeDigest = 'd0b8c0f9c7d55a8f58b6156e20c59afe6e4c5a7e2821cb6b3a29d9af81c296bf';
+  const nativeDigest = '024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce';
   const DEFAULT_SCENE_PACE = .7;
   function newUuid() {
     const browserCrypto = typeof globalThis.crypto === 'object' ? globalThis.crypto : null;
@@ -782,14 +782,16 @@
   });
   const vibeForPalette = Object.freeze({mist: 'quiet', neutral: 'neutral', spectrum: 'vivid', ember: 'cozy'});
   const paletteForVibe = Object.freeze({quiet: 'mist', neutral: 'neutral', vivid: 'spectrum', celebration: 'spectrum', cozy: 'ember'});
-  function managedWallComponent(componentId, role = 'background') {
+  function managedWallComponent(componentId, role = 'background', provider = null) {
     return state.wall.bootstrap?.components?.find((component) => (
-      component.provider === 'python' && component.plugin_id === componentId && component.role === role
+      (!provider || component.provider === provider)
+      && component.plugin_id === componentId && component.role === role
+      && component.browser_capabilities?.activation_ready === true
       && component.browser_capabilities?.managed_identity
     ));
   }
-  function wallComponentReference(componentId, parameters, role = 'background') {
-    const component = managedWallComponent(componentId, role);
+  function wallComponentReference(componentId, parameters, role = 'background', provider = null) {
+    const component = managedWallComponent(componentId, role, provider);
     const managed = component?.browser_capabilities?.managed_identity;
     if (!managed) throw new Error(`${componentId} is not activation-ready on this wall.`);
     const managedParameters = structuredClone(parameters || {});
@@ -821,6 +823,7 @@
     };
   }
   function composerSceneFromWall(scene, observation) {
+    if (scene?.schema === 'ledgrid.scene.v2') return structuredClone(scene);
     const selected = scene?.background?.provider === 'python' ? scene.background : scene?.known_python_fallback;
     if (!selected?.plugin_id) throw new Error('The selected wall scene has no editable Python animation.');
     const parameters = {...structuredClone(selected.resolved_parameters || {}), ...structuredClone(selected.parameter_overrides || {})};
@@ -859,45 +862,44 @@
     };
   }
   function browserSceneForWall(scene) {
-    const background = wallComponentReference(scene.animation.component_id, scene.animation.parameters, 'animation');
-    const layers = [];
-    const clock = (scene.widgets || []).find((widget) => widget.visible && widget.component?.component_id === 'clock_overlay');
-    if (clock) layers.push({
-      role: 'clock', component: wallComponentReference('clock_overlay', clock.component.parameters, 'overlay'),
-      enabled: true, opacity: 255, blend_mode: 'source_over',
-    });
+    const components = [{
+      slot_id: 'background',
+      ...wallComponentReference(scene.background.component_id, scene.background.parameters, 'background', scene.background.provider),
+    }, {
+      slot_id: 'animation',
+      ...wallComponentReference(scene.animation.component_id, scene.animation.parameters, 'animation', scene.animation.provider),
+    }];
+    (scene.widgets || []).forEach((widget) => components.push({
+      slot_id: `widget:${widget.id}`,
+      ...wallComponentReference(widget.component.component_id, widget.component.parameters, 'overlay', widget.component.provider),
+    }));
     const profileDigest = state.wall.observation?.installation_profile_digest
       || state.wall.bootstrap?.installation_profile?.digest;
     if (!/^[0-9a-f]{64}$/.test(profileDigest || '')) throw new Error('The wall has no managed installation profile.');
     return {
-      schema: 'ledgrid.browser-scene', schema_version: 1,
-      revision: Math.max(1, Number(state.wall.scene?.revision || 1)),
-      background, layers, installation_profile: {digest: profileDigest}, fallback: structuredClone(background),
+      schema: 'ledgrid.browser-scene-v2', schema_version: 1,
+      scene: structuredClone(scene), components,
+      installation_profile: {digest: profileDigest},
     };
   }
   function globalSettingsForWall(scene, power, targetFps) {
     const observation = state.wall.observation || {};
     const bootstrap = state.wall.bootstrap || {};
-    const lookUnchanged = Boolean(state.wall.adoptedLook
-      && JSON.stringify(scene.look || {}) === JSON.stringify(state.wall.adoptedLook));
-    const vibeId = lookUnchanged && state.wall.adoptedVibeId
-      ? state.wall.adoptedVibeId
-      : (vibeForPalette[scene.look?.palette_id] || 'neutral');
+    const observedVibe = observation.vibe?.state || observation.vibe || {};
+    const vibeId = observedVibe.vibe_id || observedVibe.id || 'neutral';
     const profile = bootstrap.vibe_profiles?.find((item) => item.vibe_id === vibeId)
       || bootstrap.vibe_profiles?.find((item) => item.vibe_id === 'neutral');
     if (!profile?.resolved_profile_digest) throw new Error('The selected wall vibe is unavailable.');
     const allowedModifiers = new Set(bootstrap.global_control_contract?.plant_modifier_ids || []);
-    const active = (scene.plants?.effects?.active || []).filter((id) => allowedModifiers.has(id));
-    const strengths = Object.fromEntries(active.map((id) => [id, Math.max(0, Math.min(1, Number(scene.plants.effects.strengths?.[id] ?? .5)))]));
+    const active = (observation.plant_modifiers?.active || []).filter((id) => allowedModifiers.has(id));
+    const strengths = Object.fromEntries(active.map((id) => [id, Number(observation.plant_modifiers.strengths?.[id] ?? .5)]));
     const revision = Number(observation.active_identity?.global_settings_identity?.revision ?? observation.controller_state_revision);
     if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('The wall settings observation has no usable revision.');
     const baseline = Number(bootstrap.global_control_contract?.operator_speed_baseline || .3);
-    const brightness = lookUnchanged
-      ? Number(observation.brightness ?? 128)
-      : Math.round(Number(scene.look?.presentation_brightness ?? .5) * 255);
-    const animationSpeed = lookUnchanged
-      ? Number(observation.animation_speed_scale ?? baseline)
-      : baseline * Math.max(0, Math.min(2, Number(scene.look?.pace ?? 1)));
+    // Scene owns its authored palette, pace, effects and presentation brightness.
+    // Preserve the separately observed installation output controls.
+    const brightness = Number(observation.brightness ?? 128);
+    const animationSpeed = Number(observation.animation_speed_scale ?? baseline);
     return {
       schema: 'ledgrid.global-settings-state', schema_version: 1, revision,
       vibe: {vibe_id: profile.vibe_id, profile_version: profile.profile_version, resolved_profile_digest: profile.resolved_profile_digest},
@@ -914,7 +916,7 @@
   }
   async function refreshWallStatus({adopt = false, preserveAuthored = false} = {}) {
     if (!state.wall.bootstrap) state.wall.bootstrap = await requestJson('/api/v1/composer/bootstrap');
-    const priorRevision = state.wall.scene?.revision;
+    const priorRevision = state.wall.observation?.active_identity?.scene_identity?.digest || state.wall.scene?.revision;
     const [scenePayload, observation] = await Promise.all([
       requestJson('/api/v1/scene'), requestJson('/api/v1/composer/settings/observed'),
     ]);
@@ -922,7 +924,7 @@
     state.wall.observation = observation;
     syncFrameRateObservation(observation);
     const shouldAdopt = Boolean(!preserveAuthored && scenePayload.scene && (adopt || (
-      !state.wall.dirty && priorRevision != null && priorRevision !== scenePayload.scene.revision
+      !state.wall.dirty && priorRevision != null && priorRevision !== (observation.active_identity?.scene_identity?.digest || scenePayload.scene.revision)
     )));
     if (shouldAdopt) {
       const current = composerSceneFromWall(scenePayload.scene, observation);

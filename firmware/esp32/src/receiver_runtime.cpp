@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 
 #include "ledgrid/sha256.hpp"
 #include "ledgrid/startup_animation.hpp"
@@ -186,10 +187,17 @@ ReceiverOperationResult ReceiverRuntime::update_local(
   return finish(ReceiverOperationResult::Ok);
 }
 
+static double read_context_double(const std::uint8_t* data) {
+  const std::uint64_t bits = read_u64(data);
+  double value;
+  std::memcpy(&value, &bits, sizeof(value));
+  return value;
+}
+
 ReceiverOperationResult ReceiverRuntime::context_begin(
     const std::uint8_t* command, std::size_t size) {
   if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
-  if (size != kPresentationContextBeginBytes || command[1] != kPresentationContextVersion) {
+  if (size != kPresentationContextBeginBytes || (command[1] != kPresentationContextVersion && command[1] != 2)) {
     return finish(ReceiverOperationResult::InvalidSize);
   }
   const std::uint8_t* session = command + 2;
@@ -219,6 +227,7 @@ ReceiverOperationResult ReceiverRuntime::context_begin(
     }
   }
   staged_context_ = {};
+  staged_context_.wire_version = command[1];
   std::memcpy(staged_context_.session, session, 16);
   staged_context_.scene_revision = revision;
   std::memcpy(staged_context_.context_digest, digest, 32);
@@ -230,25 +239,29 @@ ReceiverOperationResult ReceiverRuntime::context_set(
     const std::uint8_t* command, std::size_t size) {
   if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
   if (size < kPresentationContextSetBaseBytes ||
-      size > kPresentationContextSetMaxBytes ||
-      command[1] != kPresentationContextVersion) {
+      size > kPresentationContextSetMaxBytes + kCanonicalFinalPresentationBytes ||
+      (command[1] != kPresentationContextVersion && command[1] != 2)) {
     return finish(ReceiverOperationResult::InvalidSize);
   }
+  if (command[1] != staged_context_.wire_version && command[1] != active_context_.wire_version)
+    return finish(ReceiverOperationResult::InvalidContext);
   const std::uint8_t modifier_count = command[144];
   if (size != kPresentationContextSetBaseBytes +
                   static_cast<std::size_t>(modifier_count) *
-                      kPresentationContextSetEntryBytes) {
+                      kPresentationContextSetEntryBytes + (command[1] == 2 ? kCanonicalFinalPresentationBytes : 0)) {
     return finish(ReceiverOperationResult::InvalidSize);
   }
   std::uint8_t context_digest[32] = {};
   sha256(command + 18, size - 18, context_digest);
   if (context_state_ == PresentationContextState::Active &&
+      command[1] == active_context_.wire_version &&
       equal_bytes(command + 2, active_context_.session, 16) &&
       read_u64(command + 18) == active_context_.scene_revision &&
       equal_bytes(context_digest, active_context_.context_digest, 32)) {
     return finish(ReceiverOperationResult::Ok);
   }
   if (context_state_ == PresentationContextState::Ready &&
+      command[1] == staged_context_.wire_version &&
       equal_bytes(command + 2, staged_context_.session, 16) &&
       read_u64(command + 18) == staged_context_.scene_revision &&
       equal_bytes(context_digest, staged_context_.context_digest, 32)) {
@@ -297,6 +310,28 @@ ReceiverOperationResult ReceiverRuntime::context_set(
   if (!equal_bytes(plant_digest, command + 112, 32)) {
     return finish(ReceiverOperationResult::DigestMismatch);
   }
+  if (command[1] != staged_context_.wire_version)
+    return finish(ReceiverOperationResult::InvalidContext);
+  if (command[1] == 2) {
+    const auto* extension = command + kPresentationContextSetBaseBytes + modifier_count * 3U;
+    const double pace = read_context_double(extension + 32);
+    const double brightness = read_context_double(extension + 40);
+    const double shadow = read_context_double(extension + 48);
+    const double illuminate = read_context_double(extension + 56);
+    const double hue_shift = read_context_double(extension + 64);
+    if (!std::isfinite(pace) || pace < 0 || pace > 2 ||
+        !std::isfinite(brightness) || brightness < 0 || brightness > 2 ||
+        !std::isfinite(shadow) || shadow < 0 || shadow > 1 ||
+        !std::isfinite(illuminate) || illuminate < 0 || illuminate > 1 ||
+        !std::isfinite(hue_shift) || hue_shift < 0 || hue_shift > 1 || luminance != kQ8_8One || modifier_count != 0)
+      return finish(ReceiverOperationResult::InvalidContext);
+    std::memcpy(staged_context_.canonical_scene_digest, extension, 32);
+    staged_context_.canonical_pace = pace;
+    staged_context_.canonical_brightness = brightness;
+    staged_context_.canonical_shadow = shadow;
+    staged_context_.canonical_illuminate = illuminate;
+    staged_context_.canonical_hue_shift = hue_shift;
+  }
   staged_context_.vibe_id = command[26];
   staged_context_.vibe_profile_version = read_u32(command + 27);
   staged_context_.vibe_revision = read_u64(command + 31);
@@ -324,10 +359,11 @@ ReceiverOperationResult ReceiverRuntime::context_commit(
     const std::uint8_t* command, std::size_t size) {
   if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
   if (size != kPresentationContextCommitBytes ||
-      command[1] != kPresentationContextVersion) {
+      (command[1] != kPresentationContextVersion && command[1] != 2)) {
     return finish(ReceiverOperationResult::InvalidSize);
   }
   if (context_state_ == PresentationContextState::Active &&
+      command[1] == active_context_.wire_version &&
       equal_bytes(command + 2, active_context_.session, 16) &&
       read_u64(command + 18) == active_context_.scene_revision &&
       read_u64(command + 26) == active_context_.scene_epoch &&
@@ -341,6 +377,7 @@ ReceiverOperationResult ReceiverRuntime::context_commit(
       !equal_bytes(command + 42, staged_context_.context_digest, 32)) {
     return finish(ReceiverOperationResult::InvalidState);
   }
+  if (command[1] != staged_context_.wire_version) return finish(ReceiverOperationResult::InvalidContext);
   staged_context_.scene_epoch = read_u64(command + 26);
   staged_context_.present_at_scene_time_us = read_u64(command + 34);
   active_context_ = staged_context_;
