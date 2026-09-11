@@ -11,11 +11,20 @@ import zipfile
 from pathlib import Path
 
 from animation.core.plugin_loader import AnimationPluginLoader
+from animation.browser_preview.python.runtime import PLUGIN_SPECS as SOURCE_PLUGIN_SPECS
+from tools.build_browser_python_bundle import discover_python_plugins
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUNDLE_PATH = REPO_ROOT / "web/static/generated/composer/ledgrid_python_runtime.zip"
 RESULT_PREFIX = "BROWSER_MATRIX_RESULT="
+
+
+def _current_clock_presets():
+    membership = json.loads(
+        (REPO_ROOT / "web/composer_preset_membership.v1.json").read_text()
+    )
+    return set(membership["components"]["clock_overlay"]["preset_ids"])
 
 
 EVENT_RGBA_MATRIX_SCRIPT = r'''
@@ -80,6 +89,9 @@ defaults_rendered = 0
 presets_rendered = 0
 role_counts = {}
 fixed_wall_clock_frames = 0
+clock_presets = set(json.loads(
+    (repo_root / "web/composer_preset_membership.v1.json").read_text()
+)["components"]["clock_overlay"]["preset_ids"])
 
 def render_case(label, plugin_id, class_name, params):
     global defaults_rendered, presets_rendered, fixed_wall_clock_frames
@@ -121,6 +133,11 @@ for plugin_id, spec in PLUGIN_SPECS.items():
 for preset_path in sorted((repo_root / "animation/plugins").glob("*/presets/*.json")):
     payload = json.loads(preset_path.read_text(encoding="utf-8"))
     plugin_id = payload["animation"]
+    # Clock's accepted current packet has three local-control presets. The
+    # retained legacy files contain retired face/palette/global controls and
+    # are not published by Composer's authoritative membership.
+    if plugin_id == "clock_overlay" and payload["preset_id"] not in clock_presets:
+        continue
     if plugin_id not in PLUGIN_SPECS:
         # Receiver-native presets are outside the Python provider catalog.
         provider = json.loads(
@@ -153,6 +170,16 @@ elif clock_overlay.frame_format != "premultiplied-rgba":
         "error": "clock_overlay must transfer premultiplied RGBA", "traceback": "",
     })
 
+emoji_arranger = PLUGIN_SPECS.get("emoji_arranger")
+if emoji_arranger is None or (
+    emoji_arranger.role, emoji_arranger.frame_format
+) != ("overlay", "premultiplied-rgba"):
+    failures.append({
+        "case": "catalog:emoji_arranger", "plugin": "emoji_arranger",
+        "error": "Emoji Message must transfer as a premultiplied RGBA widget",
+        "traceback": "",
+    })
+
 for plugin_id in ("fireworks", "flame_burst"):
     spec = PLUGIN_SPECS.get(plugin_id)
     if spec is None or spec.role != "animation":
@@ -180,6 +207,25 @@ if failures:
 
 
 class BrowserPythonCatalogMatrixTests(unittest.TestCase):
+    def test_widget_role_and_alpha_match_in_source_and_published_runtime(self):
+        built = {plugin.plugin_id: plugin for plugin in discover_python_plugins(REPO_ROOT)}
+        with zipfile.ZipFile(BUNDLE_PATH) as archive:
+            published = {
+                plugin["pluginId"]: plugin
+                for plugin in json.loads(archive.read("ledgrid_browser_manifest.json"))["plugins"]
+            }
+        for plugin_id in ("clock_overlay", "emoji_arranger"):
+            with self.subTest(plugin=plugin_id):
+                for specs in (SOURCE_PLUGIN_SPECS, built):
+                    self.assertEqual(
+                        (specs[plugin_id].role, specs[plugin_id].frame_format),
+                        ("overlay", "premultiplied-rgba"),
+                    )
+                self.assertEqual(
+                    (published[plugin_id]["role"], published[plugin_id]["frameFormat"]),
+                    ("overlay", "premultiplied-rgba"),
+                )
+
     def test_event_rgba_defaults_and_representative_presets_render_from_bundle(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:
@@ -207,6 +253,11 @@ class BrowserPythonCatalogMatrixTests(unittest.TestCase):
         loader = AnimationPluginLoader()
         authoritative_plugins = loader.scan_plugins()
         authoritative_presets = list(loader.iter_curated_preset_files())
+        authoritative_presets = [
+            path for path in authoritative_presets
+            if path.parent.parent.name != "clock_overlay"
+            or path.stem in _current_clock_presets()
+        ]
 
         with tempfile.TemporaryDirectory() as temp_dir:
             with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:

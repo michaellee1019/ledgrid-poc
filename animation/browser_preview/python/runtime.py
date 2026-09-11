@@ -84,7 +84,7 @@ def _catalog_payload() -> Mapping[str, Any]:
                     f"unsupported component alpha behavior {alpha_behavior!r}: {plugin_id}"
                 )
             if (
-                canonical_role == "animation"
+                canonical_role in {"animation", "overlay"}
                 and alpha_behavior == "premultiplied_rgba"
             ):
                 role = canonical_role

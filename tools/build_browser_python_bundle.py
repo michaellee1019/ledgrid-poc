@@ -74,10 +74,10 @@ def browser_component_format(
                 f"unsupported component alpha behavior {alpha_behavior!r}: {plugin_id}"
             )
         # Legacy browser scenes transport opaque Python renderers as RGB
-        # backgrounds. Only Scene-v2 premultiplied Animation planes need a
-        # distinct transport role and four-channel frame contract here.
+        # backgrounds. Premultiplied Animation and Widget planes both need
+        # their declared transport role and four-channel frame contract.
         if (
-            canonical_role == "animation"
+            canonical_role in {"animation", "overlay"}
             and alpha_behavior == "premultiplied_rgba"
         ):
             return canonical_role, "premultiplied-rgba"
