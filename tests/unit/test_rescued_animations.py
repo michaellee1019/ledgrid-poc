@@ -130,12 +130,12 @@ class PixelChaseAnimationTests(unittest.TestCase):
         first = animation.generate_frame(0.2, 0)
         self.assertEqual(animation.semantic_snapshot()["heads"], (11, 39, 67, 95))
         self.assertEqual(np.count_nonzero(first.pixels[:, 3]), 12)
-        self.assertEqual(first.dirty_ranges, ((9, 12), (37, 40), (65, 68), (93, 96)))
+        self.assertEqual(first.dirty_ranges, ((11, 14), (39, 42), (67, 70), (95, 98)))
 
-        # Heads are opaque and the two following physical path positions fade.
+        # Heads are opaque and the two previously visited positions fade.
         self.assertEqual(int(first.pixels[11, 3]), 255)
-        self.assertGreater(int(first.pixels[10, 3]), int(first.pixels[9, 3]))
-        self.assertGreater(int(first.pixels[9, 3]), 0)
+        self.assertEqual(int(first.pixels[12, 3]), 170)
+        self.assertEqual(int(first.pixels[13, 3]), 85)
         self.assertTrue(np.all(first.pixels[:, :3] <= first.pixels[:, 3:4]))
 
         unchanged = animation.generate_frame(0.21, 1)
