@@ -1,394 +1,348 @@
-#!/usr/bin/env python3
-"""Ethereal, mask-driven glow for the living plant wall."""
+"""Scene v2 Plant Glow: semantic light shaped by installed plant geometry."""
 
-import json
+from __future__ import annotations
+
 import math
-from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, Optional, Set
+from typing import Any, Mapping
 
 import numpy as np
 
-from animation import AnimationBase, RenderedFrame
-from animation.core.compositing import OverlayFrame
+from animation import AnimationBase
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.compositing import OverlayFrame, coverage_dirty_union
+from animation.core.plant_awareness import INSTALLATION_GEOMETRY_CONTACT_INPUT
 from animation.core.presentation_contracts import ResolvedScene
-from animation.libraries.mask_effects import build_halo_weights, indices_from_payload
-from animation.plugins.conway_life import ConwayLifeAnimation
-from animation.plugins.pinball import PinballAnimation
+from animation.libraries.mask_effects import build_halo_weights
 
 
 class PlantGlowAnimation(AnimationBase):
-    """Render distinct foliage and globe cores with soft logical-pixel halos."""
+    """Illuminate exact foliage/globe cores and their local exterior halos.
+
+    The installation profile owns the masks. Plant Glow only derives a bounded
+    presentation halo from the provider-qualified contact; it never authors or
+    persists calibration geometry.
+    """
 
     ANIMATION_NAME = "Plant Glow"
-    ANIMATION_DESCRIPTION = "Breathing foliage and globe masks over color, Conway, or pinball worlds"
+    ANIMATION_DESCRIPTION = "Breathing semantic light traces the wall's foliage and rooting globes"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.1"
-    # Plant Glow owns the preserved choices for its legacy borrowed Conway
-    # backdrop. Conway Life is now a Scene v2 overlay and intentionally no
-    # longer exports a ``BACKGROUNDS`` compatibility constant.
-    CONWAY_BACKGROUND_STYLES = (
-        "void", "twilight", "deep_ocean", "aurora", "earth", "starfield",
-        "ember", "arcade",
-    )
-    CONWAY_STYLE_PALETTES = {
-        "void": "neutral",
-        "twilight": "spectrum",
-        "deep_ocean": "mist",
-        "aurora": "spectrum",
-        "earth": "neutral",
-        "starfield": "mist",
-        "ember": "ember",
-        "arcade": "spectrum",
-    }
+    ANIMATION_VERSION = "3.0"
 
-    def __init__(self, controller, config: Dict[str, Any] = None):
-        super().__init__(controller, config)
-        self.default_params.update(
-            {
-                "brightness": 0.24,
-                "background_red": 0,
-                "background_green": 0,
-                "background_blue": 3,
-                "background_source": "color",
-                "background_style": "aurora",
-                "background_strength": 0.32,
-                "background_speed": 1.0,
-                "background_seed": 95,
-                "foliage_red": 54,
-                "foliage_green": 255,
-                "foliage_blue": 132,
-                "foliage_halo_red": 18,
-                "foliage_halo_green": 110,
-                "foliage_halo_blue": 255,
-                "globe_red": 255,
-                "globe_green": 72,
-                "globe_blue": 224,
-                "globe_halo_red": 108,
-                "globe_halo_green": 34,
-                "globe_halo_blue": 255,
-                "glow_radius": 2,
-                "glow_strength": 0.72,
-                "glow_falloff": 1.4,
-                "breath_speed": 0.18,
-                "breath_depth": 0.24,
-                "shimmer": 0.10,
-                "mask_path": "config/plant_pixel_map_32x138.json",
-                "globe_mask_path": "config/plant_globe_map_32x138.json",
-            }
+    COMPONENT_ID, COMPONENT_VERSION = "plant_glow", 1
+    PROVIDER, ROLE = "python", "animation"
+    FRAME_FORMAT = "rgba_uint8_premultiplied_strip_major"
+    TIMING_POLICY, PALETTE_POLICY = "scaled_context", "semantic"
+    CAPABILITIES = frozenset(
+        (
+            "semantic_palette_roles",
+            "source_cadence",
+            "scaled_context",
+            "installation_geometry_contact",
         )
-        self.params = {**self.default_params, **self.config}
-        self.foliage_indices: Set[int] = set()
-        self.globe_indices: Set[int] = set()
-        self.globe_region_count = 0
-        self.mask_load_error = ""
-        self.globe_mask_load_error = ""
-        self._linear_frame = np.zeros((self.get_pixel_count(), 3), dtype=np.float32)
-        self._phase = (
-            np.arange(self.get_pixel_count(), dtype=np.float32) * np.float32(2.3999632)
-        ) % np.float32(2.0 * math.pi)
-        self._foliage_core = np.zeros(self.get_pixel_count(), dtype=bool)
-        self._globe_core = np.zeros(self.get_pixel_count(), dtype=bool)
+    )
+    PLANT_MODIFIER_SUPPORT = frozenset()
+    INSTALLATION_GEOMETRY_CONTACT = True
+    SOURCE_FPS = 30.0
+
+    DEFAULTS = MappingProxyType(
+        {
+            "glow_radius": 2,
+            "glow_strength": 0.72,
+            "glow_falloff": 1.4,
+            "breath_speed": 0.18,
+            "breath_depth": 0.24,
+            "shimmer": 0.10,
+            "foliage_intensity": 1.0,
+            "globe_intensity": 1.0,
+        }
+    )
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID,
+        version=COMPONENT_VERSION,
+        provider=PROVIDER,
+        role=ROLE,
+        timing_policy=TIMING_POLICY,
+        alpha_behavior="premultiplied_rgba",
+        palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent", "simulation_inputs"),
+        fidelity_exceptions=(),
+        optional_simulation_inputs=(INSTALLATION_GEOMETRY_CONTACT_INPUT,),
+        defaults=DEFAULTS,
+        parameter_normalizer=lambda values: PlantGlowAnimation._normalized_parameters(values),
+    )
+    SEMANTIC_PALETTES = MappingProxyType(
+        {
+            "neutral": {
+                "foliage": (54, 255, 132),
+                "foliage_halo": (18, 110, 255),
+                "globe": (255, 72, 224),
+                "globe_halo": (108, 34, 255),
+            },
+            "mist": {
+                "foliage": (112, 231, 255),
+                "foliage_halo": (55, 122, 255),
+                "globe": (232, 247, 255),
+                "globe_halo": (142, 171, 255),
+            },
+            "spectrum": {
+                "foliage": (53, 255, 160),
+                "foliage_halo": (34, 157, 255),
+                "globe": (255, 55, 224),
+                "globe_halo": (141, 46, 255),
+            },
+            "ember": {
+                "foliage": (255, 126, 30),
+                "foliage_halo": (255, 58, 9),
+                "globe": (255, 232, 105),
+                "globe_halo": (255, 103, 18),
+            },
+        }
+    )
+
+    def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
+        self._authored_config = dict(config or {})
+        super().__init__(controller, self._authored_config)
+        self.default_params = dict(self.DEFAULTS)
+        self.params = self._normalized_parameters(self._authored_config)
+        self.width, self.height = self.get_strip_info()
+        self._buffers = tuple(
+            np.zeros((self.get_pixel_count(), 4), dtype=np.uint8) for _ in range(2)
+        )
+        self._last_pixels, self._last_key = self._buffers[0], None
+        self._revision = 0
+        self._presentation_context: ResolvedScene | None = None
+        self._geometry_key: tuple[Any, ...] | None = None
+        self._foliage_core = np.zeros(self.get_pixel_count(), dtype=np.bool_)
+        self._globe_core = np.zeros(self.get_pixel_count(), dtype=np.bool_)
         self._foliage_halo = np.zeros(self.get_pixel_count(), dtype=np.float32)
         self._globe_halo = np.zeros(self.get_pixel_count(), dtype=np.float32)
-        self._background_animation: Optional[AnimationBase] = None
-        self._background_key = None
-        self._load_masks()
+        self._phase = (
+            np.arange(self.get_pixel_count(), dtype=np.float32) * np.float32(2.3999632)
+        ) % np.float32(math.tau)
+
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        supplied = dict(values)
+        unknown = sorted(set(supplied) - set(cls.DEFAULTS))
+        if unknown:
+            raise ValueError(f"Plant Glow does not accept non-local parameters: {unknown!r}")
+        result = dict(cls.DEFAULTS)
+        result.update(supplied)
+        radius = result["glow_radius"]
+        if isinstance(radius, bool) or not isinstance(radius, int) or not 0 <= radius <= 5:
+            raise ValueError("glow_radius must be an integer from 0 to 5")
+        bounds = (
+            ("glow_strength", 0.0, 1.5),
+            ("glow_falloff", 0.1, 4.0),
+            ("breath_speed", 0.0, 2.0),
+            ("breath_depth", 0.0, 0.8),
+            ("shimmer", 0.0, 0.5),
+            ("foliage_intensity", 0.0, 1.0),
+            ("globe_intensity", 0.0, 1.5),
+        )
+        for name, low, high in bounds:
+            value = result[name]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not low <= float(value) <= high
+            ):
+                raise ValueError(f"{name} must be a finite number from {low} to {high}")
+            result[name] = float(value)
+        return result
+
+    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+        return {
+            "glow_radius": {
+                "type": "int", "min": 0, "max": 5, "default": 2,
+                "description": "Exterior halo radius in logical pixels",
+            },
+            "glow_strength": {
+                "type": "float", "min": 0.0, "max": 1.5, "default": 0.72,
+                "description": "Halo intensity around the exact plant cores",
+            },
+            "glow_falloff": {
+                "type": "float", "min": 0.1, "max": 4.0, "default": 1.4,
+                "description": "How quickly exterior light fades",
+            },
+            "breath_speed": {
+                "type": "float", "min": 0.0, "max": 2.0, "default": 0.18,
+                "description": "Breathing cycles per scaled Scene second",
+            },
+            "breath_depth": {
+                "type": "float", "min": 0.0, "max": 0.8, "default": 0.24,
+                "description": "Depth of the breathing pulse",
+            },
+            "shimmer": {
+                "type": "float", "min": 0.0, "max": 0.5, "default": 0.10,
+                "description": "Fine spatial variation along halo edges",
+            },
+            "foliage_intensity": {
+                "type": "float", "min": 0.0, "max": 1.0, "default": 1.0,
+                "description": "Relative foliage core and halo light",
+            },
+            "globe_intensity": {
+                "type": "float", "min": 0.0, "max": 1.5, "default": 1.0,
+                "description": "Relative rooting-globe core and halo light",
+            },
+        }
+
+    def update_parameters(self, new_params: Mapping[str, Any]) -> None:
+        old_geometry = (self.params["glow_radius"], self.params["glow_falloff"])
+        self.params = self._normalized_parameters({**self.params, **dict(new_params)})
+        if old_geometry != (self.params["glow_radius"], self.params["glow_falloff"]):
+            self._geometry_key = None
+        self._last_key = None
+
+    def on_presentation_context_changed(
+        self, old: ResolvedScene | None, new: ResolvedScene
+    ) -> None:
+        del old
+        descriptor = new.descriptor
+        identity = (
+            descriptor.component_id,
+            descriptor.version,
+            descriptor.provider.value,
+            descriptor.role.value,
+        )
+        if identity != (self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE):
+            raise ValueError("Plant Glow received a context for another component")
+        if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
+            raise ValueError("Plant Glow requires a semantic Scene v2 palette")
+        self._presentation_context = new
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene) -> OverlayFrame:
+        self.set_presentation_context(context)
+        return self.generate_frame(context.phase_time, self.frame_count)
+
+    def _ensure_geometry(self, context: ResolvedScene | None) -> tuple[Any, ...]:
+        contact = None if context is None else context.installation_geometry
+        contact_identity = None if contact is None else contact.identity
+        available = bool(contact is not None and contact.available)
+        key = (
+            contact_identity,
+            available,
+            self.params["glow_radius"],
+            self.params["glow_falloff"],
+            self.width,
+            self.height,
+        )
+        if key == self._geometry_key:
+            return key
+        if available and contact.geometry.foliage.shape == (self.width, self.height):
+            foliage = contact.geometry.foliage_flat & ~contact.geometry.globes_flat
+            globes = contact.geometry.globes_flat
+            self._foliage_core, self._foliage_halo = build_halo_weights(
+                np.flatnonzero(foliage), self.width, self.height,
+                self.params["glow_radius"], self.params["glow_falloff"],
+            )
+            self._globe_core, self._globe_halo = build_halo_weights(
+                np.flatnonzero(globes), self.width, self.height,
+                self.params["glow_radius"], self.params["glow_falloff"],
+            )
+        else:
+            self._foliage_core.fill(False)
+            self._globe_core.fill(False)
+            self._foliage_halo.fill(0.0)
+            self._globe_halo.fill(0.0)
+        self._geometry_key = key
+        return key
 
     @staticmethod
-    def _resolve_mask_path(configured_path: str) -> Path:
-        path = Path(configured_path)
-        if path.is_absolute():
-            return path
-        return (Path(__file__).resolve().parents[3] / path).resolve()
+    def _composite_layer(
+        output: np.ndarray, color: tuple[int, int, int], opacity: np.ndarray
+    ) -> None:
+        indices = np.flatnonzero(opacity > 0.0)
+        if not indices.size:
+            return
+        alpha = np.rint(np.clip(opacity[indices], 0.0, 1.0) * 255.0).astype(np.uint16)
+        source = (np.asarray(color, dtype=np.uint16)[None, :] * alpha[:, None] + 127) // 255
+        inverse = 255 - alpha
+        destination = output[indices].astype(np.uint16)
+        output[indices, :3] = np.minimum(
+            255, source + (destination[:, :3] * inverse[:, None] + 127) // 255
+        ).astype(np.uint8)
+        output[indices, 3] = np.minimum(
+            255, alpha + (destination[:, 3] * inverse + 127) // 255
+        ).astype(np.uint8)
 
-    def _read_mask(self, parameter: str, keys, error_attribute: str):
-        configured = str(self.params[parameter])
-        path = self._resolve_mask_path(configured)
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            setattr(self, error_attribute, f"Failed to read {path}: {exc}")
-            return {}, set()
-        setattr(self, error_attribute, "")
-        return payload, indices_from_payload(payload, self.get_pixel_count(), keys)
-
-    def _load_masks(self):
-        _, self.foliage_indices = self._read_mask(
-            "mask_path", ("covered_indices",), "mask_load_error"
-        )
-        globe_payload, self.globe_indices = self._read_mask(
-            "globe_mask_path", ("globe_indices", "covered_indices"), "globe_mask_load_error"
-        )
-        self.globe_region_count = int(globe_payload.get("region_count", 0))
-        # Globes are a higher-priority semantic layer if a malformed calibration overlaps.
-        self.foliage_indices -= self.globe_indices
-        self._rebuild_geometry()
-
-    def _rebuild_geometry(self):
-        strip_count, leds_per_strip = self.get_strip_info()
-        radius = int(self.params.get("glow_radius", 2))
-        falloff = float(self.params.get("glow_falloff", 1.4))
-        self._foliage_core, self._foliage_halo = build_halo_weights(
-            self.foliage_indices, strip_count, leds_per_strip, radius, falloff
-        )
-        self._globe_core, self._globe_halo = build_halo_weights(
-            self.globe_indices, strip_count, leds_per_strip, radius, falloff
-        )
-
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        schema = super().get_parameter_schema()
-        colors = {
-            "background_red": (0, "Background red"),
-            "background_green": (0, "Background green"),
-            "background_blue": (3, "Background blue"),
-            "foliage_red": (54, "Foliage core red"),
-            "foliage_green": (255, "Foliage core green"),
-            "foliage_blue": (132, "Foliage core blue"),
-            "foliage_halo_red": (18, "Foliage halo red"),
-            "foliage_halo_green": (110, "Foliage halo green"),
-            "foliage_halo_blue": (255, "Foliage halo blue"),
-            "globe_red": (255, "Globe core red"),
-            "globe_green": (72, "Globe core green"),
-            "globe_blue": (224, "Globe core blue"),
-            "globe_halo_red": (108, "Globe halo red"),
-            "globe_halo_green": (34, "Globe halo green"),
-            "globe_halo_blue": (255, "Globe halo blue"),
-        }
-        for name, (default, description) in colors.items():
-            schema[name] = {
-                "type": "int", "min": 0, "max": 255,
-                "default": default, "description": description,
-            }
-        schema.update(
-            {
-                "glow_radius": {
-                    "type": "int", "min": 0, "max": 5, "default": 2,
-                    "description": "Exterior halo radius in logical pixels",
-                },
-                "background_source": {
-                    "type": "str", "default": "color",
-                    "options": ["color", "conway", "pinball"],
-                    "description": "Backdrop renderer beneath the calibrated plant masks",
-                },
-                "background_style": {
-                    "type": "str", "default": "aurora",
-                    "options": list(self.CONWAY_BACKGROUND_STYLES),
-                    "description": "Conway atmosphere used when background source is conway",
-                },
-                "background_strength": {
-                    "type": "float", "min": 0.0, "max": 1.0, "default": 0.32,
-                    "description": "Intensity of a borrowed Conway or pinball backdrop",
-                },
-                "background_speed": {
-                    "type": "float", "min": 0.1, "max": 3.0, "default": 1.0,
-                    "description": "Motion speed of the borrowed backdrop",
-                },
-                "background_seed": {
-                    "type": "int", "min": 0, "max": 9999, "default": 95,
-                    "description": "Repeatable pinball table action seed",
-                },
-                "glow_strength": {
-                    "type": "float", "min": 0.0, "max": 2.0, "default": 0.72,
-                    "description": "Halo intensity relative to the mask core",
-                },
-                "glow_falloff": {
-                    "type": "float", "min": 0.1, "max": 4.0, "default": 1.4,
-                    "description": "Halo decay exponent",
-                },
-                "breath_speed": {
-                    "type": "float", "min": 0.0, "max": 2.0, "default": 0.18,
-                    "description": "Slow breathing cycles per second",
-                },
-                "breath_depth": {
-                    "type": "float", "min": 0.0, "max": 0.8, "default": 0.24,
-                    "description": "Breathing modulation depth",
-                },
-                "shimmer": {
-                    "type": "float", "min": 0.0, "max": 0.5, "default": 0.10,
-                    "description": "Spatial edge shimmer depth",
-                },
-                "mask_path": {
-                    "type": "str", "default": "config/plant_pixel_map_32x138.json",
-                    "description": "Path to the foliage mask JSON",
-                },
-                "globe_mask_path": {
-                    "type": "str", "default": "config/plant_globe_map_32x138.json",
-                    "description": "Path to the globe mask JSON",
-                },
-            }
-        )
-        return schema
-
-    def update_parameters(self, new_params: Dict[str, Any]):
-        geometry_keys = {"mask_path", "globe_mask_path", "glow_radius", "glow_falloff"}
-        needs_reload = bool({"mask_path", "globe_mask_path"} & new_params.keys())
-        needs_geometry = bool(geometry_keys & new_params.keys())
-        super().update_parameters(new_params)
-        background_keys = {
-            "background_source", "background_style", "background_speed", "background_seed",
-        }
-        if background_keys & new_params.keys():
-            self._clear_background_animation()
-        if needs_reload:
-            self._load_masks()
-        elif needs_geometry:
-            self._rebuild_geometry()
-
-    def _color(self, prefix: str) -> np.ndarray:
-        context = self.presentation_context
-        if context is not None and context.vibe_id != "neutral":
-            role = {
-                "background": "background_low",
-                "foliage": "primary",
-                "foliage_halo": "secondary",
-                "globe": "accent",
-                "globe_halo": "secondary",
-            }[prefix]
-            return np.asarray(context.palette_roles[role], dtype=np.float32)
-        return np.asarray(
-            [self.params[f"{prefix}_red"], self.params[f"{prefix}_green"], self.params[f"{prefix}_blue"]],
-            dtype=np.float32,
-        )
-
-    def _clear_background_animation(self):
-        if self._background_animation is not None:
-            self._background_animation.cleanup()
-        self._background_animation = None
-        self._background_key = None
-
-    def cleanup(self):
-        self._clear_background_animation()
-        super().cleanup()
-
-    def _borrowed_background(
-        self, time_elapsed: float, frame_count: int
-    ) -> Optional[np.ndarray]:
-        source = str(self.params.get("background_source", "color"))
-        if source == "color":
-            return None
-
-        style = str(self.params.get("background_style", "aurora"))
-        speed = float(self.params.get("background_speed", 1.0))
-        seed = int(self.params.get("background_seed", 95))
-        key = (
-            source,
-            style,
-            speed,
-            seed,
-        )
-        if self._background_animation is None or self._background_key != key:
-            if source == "conway":
-                conway_config = {
-                    "seed": seed,
-                    "rule": "B3/S23",
-                    "initial_density": 0.12,
-                    "generations_per_second": float(
-                        np.clip(5.0 * speed, 0.5, 20.0)
-                    ),
-                    "seed_cells": [],
-                }
-                self._background_animation = ConwayLifeAnimation(
-                    self.controller,
-                    conway_config,
-                )
-            else:
-                self._background_animation = PinballAnimation(
-                    self.controller,
-                    {
-                        "table_tick_hz": float(
-                            np.clip(40.5 * speed, 12.0, 90.0)
-                        ),
-                        "render_fps": 100.0,
-                        "chaos": 0.72,
-                        "seed": seed,
-                    },
-                )
-            self._background_key = key
-
-        if isinstance(self._background_animation, ConwayLifeAnimation):
-            palette_id = self.CONWAY_STYLE_PALETTES.get(style, "neutral")
-            parameters = MappingProxyType(dict(self._background_animation.params))
-            rendered = self._background_animation.render_resolved_scene(
-                ResolvedScene(
-                    canonical_scene=MappingProxyType({
-                        "owner": "plant_glow",
-                        "background_style": style,
-                    }),
-                    canonical_bytes=f"plant_glow:{style}".encode("ascii"),
-                    digest="0" * 64,
-                    descriptor=self._background_animation.component_descriptor(),
-                    parameters=parameters,
-                    palette=MappingProxyType({"palette_id": palette_id}),
-                    phase_time=max(0.0, float(time_elapsed)),
-                    plant_inputs=MappingProxyType({
-                        "foliage_density": 0.0,
-                        "globe_proximity": 0.0,
-                        "occlusion": 0.0,
-                    }),
-                )
-            )
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> OverlayFrame:
+        del frame_count
+        context = self._presentation_context
+        if context is None:
+            phase_time = max(0.0, float(time_elapsed))
+            palette_id, parameters = "neutral", self.params
         else:
-            rendered = self._background_animation.generate_frame(
-                time_elapsed, frame_count
+            phase_time = max(0.0, float(context.phase_time))
+            palette_id = str(context.palette["palette_id"])
+            parameters = context.parameters
+        self.params = self._normalized_parameters(parameters)
+        geometry_key = self._ensure_geometry(context)
+        tick = int(math.floor(phase_time * self.SOURCE_FPS + 1.0e-9))
+        key = (tick, palette_id, tuple(self.params.items()), geometry_key)
+        if key == self._last_key:
+            return OverlayFrame(
+                self._last_pixels, revision=self._revision,
+                changed=False, dirty_ranges=(),
             )
-        if isinstance(rendered, OverlayFrame):
-            # Conway is premultiplied RGBA. Plant Glow borrows it over black,
-            # so its premultiplied RGB channels are already the correct result.
-            return rendered.pixels[:, :3]
-        return rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
-        speed = float(self.params.get("speed", 1.0))
-        breath_speed = float(self.params.get("breath_speed", 0.18))
-        breath_depth = float(np.clip(self.params.get("breath_depth", 0.24), 0.0, 0.8))
-        shimmer_depth = float(np.clip(self.params.get("shimmer", 0.10), 0.0, 0.5))
-        glow_strength = max(0.0, float(self.params.get("glow_strength", 0.72)))
-        phase = time_elapsed * speed * breath_speed * 2.0 * math.pi
-        foliage_breath = 1.0 - breath_depth + breath_depth * (0.5 + 0.5 * math.sin(phase))
-        globe_breath = 1.0 - breath_depth + breath_depth * (0.5 + 0.5 * math.sin(phase + 1.7))
+        output = self._buffers[1] if self._last_pixels is self._buffers[0] else self._buffers[0]
+        output.fill(0)
+        palette = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
+        phase = tick / self.SOURCE_FPS * self.params["breath_speed"] * math.tau
+        depth = self.params["breath_depth"]
+        foliage_breath = 1.0 - depth + depth * (0.5 + 0.5 * math.sin(phase))
+        globe_breath = 1.0 - depth + depth * (0.5 + 0.5 * math.sin(phase + 1.7))
+        shimmer = 1.0 + self.params["shimmer"] * np.sin(self._phase + phase * 1.9)
+        foliage_intensity = self.params["foliage_intensity"]
+        globe_intensity = self.params["globe_intensity"]
 
-        linear = self._linear_frame
-        background = self._borrowed_background(time_elapsed, frame_count)
-        if background is None:
-            linear[:] = self._color("background")
-        else:
-            np.multiply(
-                background,
-                float(np.clip(self.params.get("background_strength", 0.32), 0.0, 1.0)),
-                out=linear,
-                casting="unsafe",
-            )
-        shimmer = 1.0 + shimmer_depth * np.sin(self._phase + phase * 1.9)
-        foliage_level = self._foliage_halo * shimmer * glow_strength * foliage_breath
-        globe_level = self._globe_halo * shimmer * glow_strength * globe_breath
-        linear += foliage_level[:, None] * self._color("foliage_halo")
-        linear += globe_level[:, None] * self._color("globe_halo")
-        linear[self._foliage_core] = self._color("foliage") * foliage_breath
-        linear[self._globe_core] = self._color("globe") * globe_breath
+        self._composite_layer(
+            output, palette["foliage_halo"],
+            self._foliage_halo * shimmer * self.params["glow_strength"]
+            * foliage_breath * foliage_intensity,
+        )
+        self._composite_layer(
+            output, palette["globe_halo"],
+            self._globe_halo * shimmer * self.params["glow_strength"]
+            * globe_breath * globe_intensity,
+        )
+        self._composite_layer(
+            output, palette["foliage"],
+            self._foliage_core.astype(np.float32) * foliage_breath * foliage_intensity,
+        )
+        self._composite_layer(
+            output, palette["globe"],
+            self._globe_core.astype(np.float32) * globe_breath * globe_intensity,
+        )
 
-        frame = self.next_frame_buffer(clear=False)
-        np.clip(linear, 0.0, 255.0, out=linear)
-        np.copyto(frame, linear, casting="unsafe")
-        return self.apply_brightness_array(frame, out=frame)
+        dirty = coverage_dirty_union(self._last_pixels, output)
+        changed = bool(dirty)
+        if changed:
+            self._revision += 1
+        self._last_pixels, self._last_key = output, key
+        return OverlayFrame(output, revision=self._revision, changed=changed, dirty_ranges=dirty)
 
-    def get_runtime_stats(self) -> Dict[str, Any]:
-        stats = {
-            "foliage_pixels": len(self.foliage_indices),
-            "globe_pixels": len(self.globe_indices),
-            "globe_regions": self.globe_region_count,
+    def semantic_snapshot(self) -> Mapping[str, Any]:
+        """Plant Glow has no simulation or RNG state for geometry changes to reset."""
+        return MappingProxyType({})
+
+    def get_runtime_stats(self) -> dict[str, Any]:
+        return {
+            "geometry_role": "exact-core illumination with exterior presentation halos",
+            "geometry_available": bool(self._geometry_key and self._geometry_key[1]),
+            "foliage_pixels": int(np.count_nonzero(self._foliage_core)),
+            "globe_pixels": int(np.count_nonzero(self._globe_core)),
             "foliage_halo_pixels": int(np.count_nonzero(self._foliage_halo)),
             "globe_halo_pixels": int(np.count_nonzero(self._globe_halo)),
-            "glow_radius": int(self.params.get("glow_radius", 2)),
-            "background_source": str(self.params.get("background_source", "color")),
-            "background_style": str(self.params.get("background_style", "aurora")),
-            "plant_aware": self.plant_aware_enabled(),
-            "background_plant_routing": False,
-            "mask_path": str(self.params.get("mask_path")),
-            "globe_mask_path": str(self.params.get("globe_mask_path")),
+            "source_fps": self.SOURCE_FPS,
         }
-        if self.mask_load_error:
-            stats["mask_load_error"] = self.mask_load_error
-        if self.globe_mask_load_error:
-            stats["globe_mask_load_error"] = self.globe_mask_load_error
-        return stats
