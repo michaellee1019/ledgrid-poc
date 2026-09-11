@@ -1265,22 +1265,37 @@ class ControllerActivationCoordinator:
         return wall, installer, candidate
 
     @staticmethod
-    def _receiver_profile_is_exact(wall: Any, candidate: Any) -> bool:
+    def _receiver_profile_proof_error(wall: Any, candidate: Any) -> str | None:
+        boundary = "wall status refresh"
         try:
             wall_status = wall.status()
-            if (
-                getattr(wall_status, "healthy", False) is not True
-                or getattr(wall_status, "active_profile_id", None)
-                != candidate.profile_id
-            ):
-                return False
-            return all(
-                receiver.transaction_snapshot().active_binding
-                == candidate.binding_for(receiver_id)
-                for receiver_id, receiver in enumerate(wall.receivers)
-            )
-        except (AttributeError, RuntimeError, OSError):
-            return False
+            if getattr(wall_status, "healthy", False) is not True:
+                health = getattr(wall_status, "health", None)
+                return f"wall is not healthy (health={getattr(health, 'value', health)!r})"
+            active_profile_id = getattr(wall_status, "active_profile_id", None)
+            if active_profile_id != candidate.profile_id:
+                return (
+                    f"wall active profile {active_profile_id!r} does not match "
+                    f"candidate {candidate.profile_id!r}"
+                )
+            for receiver_id, receiver in enumerate(wall.receivers):
+                boundary = f"receiver {receiver_id} profile snapshot"
+                actual = receiver.transaction_snapshot().active_binding
+                expected = candidate.binding_for(receiver_id)
+                if actual != expected:
+                    return (
+                        f"receiver {receiver_id} active binding {actual!r} "
+                        f"does not match candidate binding {expected!r}"
+                    )
+            return None
+        except (AttributeError, RuntimeError, OSError) as exc:
+            return f"{boundary} failed: {type(exc).__name__}: {exc}"
+
+    @staticmethod
+    def _receiver_profile_is_exact(wall: Any, candidate: Any) -> bool:
+        return ControllerActivationCoordinator._receiver_profile_proof_error(
+            wall, candidate
+        ) is None
 
     def _receiver_profile_matches(self, profile_digest: str) -> bool:
         if profile_digest == EMPTY_INSTALLATION_PROFILE_DIGEST:
@@ -1650,12 +1665,17 @@ class ControllerActivationCoordinator:
                 getattr(result, "error", None)
                 or "receiver installation-profile transaction failed"
             )
-        if (
-            getattr(result, "profile_id", None) != candidate.profile_id
-            or not self._receiver_profile_is_exact(wall, candidate)
-        ):
+        installed_profile_id = getattr(result, "profile_id", None)
+        proof_error = (
+            f"installer reported profile {installed_profile_id!r}, "
+            f"expected {candidate.profile_id!r}"
+            if installed_profile_id != candidate.profile_id
+            else self._receiver_profile_proof_error(wall, candidate)
+        )
+        if proof_error is not None:
             raise ControllerActivationError(
-                "receiver installation-profile identity proof is stale or incomplete"
+                "receiver installation-profile identity proof is stale or incomplete: "
+                + proof_error
             )
 
     def _apply_profile(

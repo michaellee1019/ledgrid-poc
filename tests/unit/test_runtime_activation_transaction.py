@@ -377,6 +377,69 @@ class _DisabledReceiverProfileController:
         raise RuntimeError("disabled receiver profile installer must not run")
 
 
+class ReceiverProfileProofDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.binding = SimpleNamespace(profile_id=PROFILE_A, payload_digest="b" * 64)
+        self.candidate = SimpleNamespace(
+            profile_id=PROFILE_A, binding_for=lambda _receiver_id: self.binding,
+        )
+        self.snapshot = SimpleNamespace(active_binding=self.binding)
+        self.wall = SimpleNamespace(
+            status=lambda: SimpleNamespace(healthy=True, active_profile_id=PROFILE_A),
+            receivers=[SimpleNamespace(transaction_snapshot=lambda: self.snapshot)],
+        )
+        self.coordinator = ControllerActivationCoordinator.__new__(ControllerActivationCoordinator)
+        result = SimpleNamespace(success=True, profile_id=PROFILE_A)
+        self.coordinator._receiver_profile_context = lambda _: (
+            self.wall, lambda candidate: result, self.candidate,
+        )
+
+    def test_successful_exact_proof_preserves_boolean_and_install_behavior(self):
+        self.assertTrue(self.coordinator._receiver_profile_is_exact(self.wall, self.candidate))
+        self.assertIsNone(self.coordinator._install_receiver_profile(PROFILE_A))
+
+    def test_wrong_installer_identity_is_reported_without_another_status_read(self):
+        self.coordinator._receiver_profile_context = lambda _: (
+            self.wall, lambda candidate: SimpleNamespace(success=True, profile_id="d" * 64),
+            self.candidate,
+        )
+        with patch.object(self.wall, "status") as status:
+            with self.assertRaisesRegex(RuntimeError, "installer reported profile"):
+                self.coordinator._install_receiver_profile(PROFILE_A)
+        status.assert_not_called()
+
+    def test_failed_proofs_keep_boolean_false_and_report_specific_install_reason(self):
+        def unavailable_status():
+            raise RuntimeError("receiver 3 returned no fresh profile status")
+
+        def unavailable_snapshot():
+            raise OSError("snapshot transport failed")
+
+        cases = (
+            (lambda: setattr(self.wall, "status", unavailable_status),
+             "wall status refresh failed: RuntimeError: receiver 3 returned no fresh profile status"),
+            (lambda: setattr(self.wall, "status", lambda: SimpleNamespace(
+                healthy=False, health=SimpleNamespace(value="degraded"))),
+             "wall is not healthy (health='degraded')"),
+            (lambda: setattr(self.wall, "status", lambda: SimpleNamespace(
+                healthy=True, active_profile_id="c" * 64)),
+             "wall active profile"),
+            (lambda: setattr(self.snapshot, "active_binding", None),
+             "receiver 0 active binding None does not match candidate binding"),
+            (lambda: setattr(self.wall.receivers[0], "transaction_snapshot", unavailable_snapshot),
+             "receiver 0 profile snapshot failed: OSError: snapshot transport failed"),
+        )
+        for mutate, reason in cases:
+            with self.subTest(reason=reason):
+                self.setUp()
+                mutate()
+                self.assertFalse(self.coordinator._receiver_profile_is_exact(self.wall, self.candidate))
+                with self.assertRaises(RuntimeError) as caught:
+                    self.coordinator._install_receiver_profile(PROFILE_A)
+                self.assertIn("identity proof is stale or incomplete", str(caught.exception))
+                self.assertIn(reason, str(caught.exception))
+
+
 class RuntimeActivationTransactionTests(unittest.TestCase):
     def test_controller_catalog_adapts_only_clock_widget_to_scene_v1_overlay(self) -> None:
         source = [
