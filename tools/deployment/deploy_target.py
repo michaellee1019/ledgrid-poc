@@ -1414,6 +1414,48 @@ def _receiver_inventory_module():
     return receiver_firmware_inventory
 
 
+def _receiver_identity_authority_module():
+    try:
+        from tools.deployment import receiver_identity_authority
+    except ModuleNotFoundError:  # Direct execution from an uploaded snapshot.
+        import receiver_identity_authority  # type: ignore[no-redef]
+    return receiver_identity_authority
+
+
+def preflight_receiver_identity(
+    root: Path,
+    *,
+    expected_config_digest: str,
+    expected_firmware_sha256: str | None,
+) -> Mapping[str, Any]:
+    """Require independent mapping evidence before a stale-producing deploy."""
+
+    authority = _receiver_identity_authority_module()
+    return authority.preflight_receiver_identity_refresh(
+        root,
+        expected_receiver_hybrid_digest=expected_config_digest,
+        expected_firmware_sha256=expected_firmware_sha256,
+    )
+
+
+def refresh_receiver_identity(
+    root: Path,
+    *,
+    expected_authority_digest: str | None,
+    expected_config_digest: str,
+    expected_firmware_sha256: str | None,
+) -> Mapping[str, Any]:
+    """Rotate and validate receiver identity before application activation."""
+
+    authority = _receiver_identity_authority_module()
+    return authority.refresh_receiver_identity_authority(
+        root,
+        expected_authority_digest=expected_authority_digest,
+        expected_receiver_hybrid_digest=expected_config_digest,
+        expected_firmware_sha256=expected_firmware_sha256,
+    )
+
+
 def _discover_receiver_devices(
     *,
     receiver_count: int,
@@ -3880,6 +3922,14 @@ def _parser() -> argparse.ArgumentParser:
     flash.add_argument("--expected-config-digest")
     flash.add_argument("--expected-installation-digest")
     flash.add_argument("--force", action="store_true")
+    identity_preflight = subparsers.add_parser("preflight-receiver-identity")
+    identity_preflight.add_argument("--expected-config-digest", required=True)
+    identity_preflight.add_argument("--expected-firmware-sha256")
+    identity_refresh = subparsers.add_parser("refresh-receiver-identity")
+    identity_refresh.add_argument("--expected-authority-digest")
+    identity_refresh.add_argument("--expect-authority-absent", action="store_true")
+    identity_refresh.add_argument("--expected-config-digest", required=True)
+    identity_refresh.add_argument("--expected-firmware-sha256")
     subparsers.add_parser("capture-state")
     activate_parser = subparsers.add_parser("activate")
     activate_parser.add_argument("release_id")
@@ -3954,6 +4004,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             expected_config_digest=args.expected_config_digest,
             expected_installation_digest=args.expected_installation_digest,
             force=args.force,
+        )
+    elif args.command == "preflight-receiver-identity":
+        result = preflight_receiver_identity(
+            root,
+            expected_config_digest=args.expected_config_digest,
+            expected_firmware_sha256=args.expected_firmware_sha256,
+        )
+    elif args.command == "refresh-receiver-identity":
+        if bool(args.expected_authority_digest) == bool(args.expect_authority_absent):
+            raise ValueError(
+                "identity refresh requires exactly one expected authority state"
+            )
+        result = refresh_receiver_identity(
+            root,
+            expected_authority_digest=(
+                None if args.expect_authority_absent else args.expected_authority_digest
+            ),
+            expected_config_digest=args.expected_config_digest,
+            expected_firmware_sha256=args.expected_firmware_sha256,
         )
     elif args.command == "capture-state":
         result = capture_state(root)

@@ -854,6 +854,37 @@ class CoordinatorDeployment:
             artifacts=artifacts,
         )
 
+    def _receiver_identity_preflight(self, _context: DeployContext) -> OperationResult:
+        selection = self.context.state.get("firmware_selection")
+        if not isinstance(selection, dict):
+            raise RuntimeError("receiver identity preflight has no firmware selection")
+        config_digest = selection.get("receiver_hybrid_config_digest")
+        firmware_sha256 = selection.get("firmware_sha256")
+        if not isinstance(config_digest, str):
+            raise RuntimeError("receiver identity preflight config selection is malformed")
+        args = ["--expected-config-digest", config_digest]
+        if isinstance(firmware_sha256, str):
+            args.extend(("--expected-firmware-sha256", firmware_sha256))
+        result = self.target.run("preflight-receiver-identity", *args)
+        rotation_required = result.get("rotation_required")
+        current_digest = result.get("current_authority_digest")
+        if type(rotation_required) is not bool:
+            raise RuntimeError("receiver identity preflight returned no rotation decision")
+        if current_digest is not None and (
+            not isinstance(current_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", current_digest) is None
+        ):
+            raise RuntimeError("receiver identity preflight returned an invalid authority digest")
+        if rotation_required and result.get("mapping_validated") is not True:
+            raise RuntimeError("receiver identity rotation mapping was not validated")
+        self.context.state["receiver_identity_preflight"] = {
+            "rotation_required": rotation_required,
+            "current_authority_digest": current_digest,
+        }
+        return OperationResult(
+            outcome=str(result.get("outcome", "executed")), details=result
+        )
+
     def _topology_migrate(self, _context: DeployContext) -> OperationResult:
         result = self.target.run("migrate-receiver-topology")
         if (
@@ -989,6 +1020,50 @@ class CoordinatorDeployment:
                     installed_digest,
                     "2",
                     target_id=installed_digest,
+                ),
+            ),
+        )
+
+    def _receiver_identity_refresh(self, _context: DeployContext) -> OperationResult:
+        selection = self.context.state.get("firmware_selection")
+        preflight = self.context.state.get("receiver_identity_preflight")
+        if not isinstance(selection, dict) or not isinstance(preflight, dict):
+            raise RuntimeError("receiver identity refresh has no preflight basis")
+        config_digest = selection.get("receiver_hybrid_config_digest")
+        firmware_sha256 = selection.get("firmware_sha256")
+        expected_authority = preflight.get("current_authority_digest")
+        if not isinstance(config_digest, str):
+            raise RuntimeError("receiver identity refresh config selection is malformed")
+        args = ["--expected-config-digest", config_digest]
+        if expected_authority is None:
+            args.append("--expect-authority-absent")
+        elif isinstance(expected_authority, str):
+            args.extend(("--expected-authority-digest", expected_authority))
+        else:
+            raise RuntimeError("receiver identity refresh preflight digest is malformed")
+        if isinstance(firmware_sha256, str):
+            args.extend(("--expected-firmware-sha256", firmware_sha256))
+        result = self.target.run("refresh-receiver-identity", *args)
+        authority_digest = result.get("authority_digest")
+        if (
+            not isinstance(authority_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", authority_digest) is None
+        ):
+            raise RuntimeError("receiver identity refresh returned no valid authority")
+        rotated = result.get("rotated")
+        if type(rotated) is not bool:
+            raise RuntimeError("receiver identity refresh returned no rotation result")
+        if bool(preflight.get("rotation_required")) != rotated:
+            raise RuntimeError("receiver identity refresh disagrees with preflight")
+        return OperationResult(
+            outcome=str(result.get("outcome", "executed")),
+            details=result,
+            artifacts=(
+                Artifact(
+                    "receiver_identity_authority",
+                    "receiver_identity_authority",
+                    authority_digest,
+                    "1",
                 ),
             ),
         )
@@ -1282,8 +1357,10 @@ class CoordinatorDeployment:
                 {
                     "receiver.topology_migrate": self._topology_migrate,
                     "receiver.firmware_build": self._firmware_build,
+                    "receiver.identity_preflight": self._receiver_identity_preflight,
                     "host.provision": self._provision,
                     "receiver.firmware_flash": self._firmware_flash,
+                    "receiver.identity_refresh": self._receiver_identity_refresh,
                 }
             )
         return operations

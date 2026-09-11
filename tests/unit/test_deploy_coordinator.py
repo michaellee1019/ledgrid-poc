@@ -241,7 +241,7 @@ class DeployCoordinatorTests(unittest.TestCase):
     def test_mode_order_is_stable_and_firmware_build_precedes_first_downtime(self):
         full_ids = [item[0] for item in FULL_STEP_ORDER]
         self.assertEqual(
-            full_ids[:8],
+            full_ids[:9],
             [
                 "source.validate",
                 "tests.run",
@@ -249,6 +249,7 @@ class DeployCoordinatorTests(unittest.TestCase):
                 "app.stage",
                 "app.bootstrap_legacy",
                 "receiver.firmware_build",
+                "receiver.identity_preflight",
                 "state.capture",
                 "host.provision",
             ],

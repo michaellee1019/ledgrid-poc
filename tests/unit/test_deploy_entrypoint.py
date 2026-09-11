@@ -309,6 +309,15 @@ class _FakeTarget:
                     ],
                 },
             }
+        if command == "preflight-receiver-identity":
+            return {
+                "outcome": "executed" if self.firmware_changed else "skipped",
+                "rotation_required": self.firmware_changed,
+                "current_authority_digest": "a" * 64,
+                "mapping_validated": self.firmware_changed,
+                "receiver_hybrid_digest": ROLLOUT_CONFIG_DIGEST,
+                "expected_firmware_sha256": FIRMWARE_SHA256,
+            }
         if command == "provision":
             return {
                 "runtime": {"installed": False},
@@ -326,6 +335,19 @@ class _FakeTarget:
                 "firmware_sha256": FIRMWARE_SHA256,
                 "firmware_installation_digest": FIRMWARE_INSTALLATION_DIGEST,
                 "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
+            }
+        if command == "refresh-receiver-identity":
+            return {
+                "outcome": "executed" if self.firmware_changed else "skipped",
+                "rotated": self.firmware_changed,
+                "authority_digest": ("e" if self.firmware_changed else "a") * 64,
+                "archived_authority": (
+                    "run_state/receiver_identity_authority_archive/"
+                    + "a" * 64
+                    + ".json"
+                    if self.firmware_changed
+                    else None
+                ),
             }
         if command == "validate-app":
             return {"release_id": self.candidate, "digest": self.candidate}
@@ -4424,6 +4446,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "support_release",
                 "receiver_firmware_build",
                 "receiver_firmware_installation",
+                "receiver_identity_authority",
             ],
         )
         local_commands = [call[0] for call in runner.calls]
@@ -4436,9 +4459,11 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "cleanup-snapshot",
                 "bootstrap-legacy-app",
                 "build-firmware",
+                "preflight-receiver-identity",
                 "capture-state",
                 "provision",
                 "flash-firmware",
+                "refresh-receiver-identity",
                 "validate-app",
                 "current-release",
                 "activate",
@@ -4512,6 +4537,60 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         commands = [command for command, _args in target.calls]
         self.assertIn("restart", commands)
         self.assertIn("restore-state", commands)
+
+    def test_identity_preflight_failure_stops_before_capture_provision_or_flash(self) -> None:
+        deployment, context, _runner, target = self._deployment(
+            firmware_changed=True
+        )
+        original_run = target.run
+
+        def fail_missing_mapping(command: str, *args: str):
+            if command == "preflight-receiver-identity":
+                target.calls.append((command, args))
+                raise RuntimeError("receiver identity mapping is missing")
+            return original_run(command, *args)
+
+        target.run = fail_missing_mapping  # type: ignore[method-assign]
+        try:
+            receipt = DeployCoordinator().run(context, deployment.steps())
+        finally:
+            deployment.close()
+
+        self.assertEqual(receipt.outcome, "failure")
+        commands = [command for command, _args in target.calls]
+        self.assertIn("preflight-receiver-identity", commands)
+        self.assertNotIn("capture-state", commands)
+        self.assertNotIn("provision", commands)
+        self.assertNotIn("flash-firmware", commands)
+        self.assertNotIn("activate", commands)
+
+    def test_firmware_change_rotates_identity_before_app_validation(self) -> None:
+        deployment, context, _runner, target = self._deployment(
+            firmware_changed=True
+        )
+        try:
+            receipt = DeployCoordinator().run(context, deployment.steps())
+        finally:
+            deployment.close()
+
+        self.assertEqual(receipt.outcome, "success")
+        commands = [command for command, _args in target.calls]
+        self.assertLess(
+            commands.index("preflight-receiver-identity"),
+            commands.index("capture-state"),
+        )
+        self.assertLess(
+            commands.index("refresh-receiver-identity"),
+            commands.index("validate-app"),
+        )
+        refresh_args = next(
+            args for command, args in target.calls
+            if command == "refresh-receiver-identity"
+        )
+        self.assertIn("--expected-authority-digest", refresh_args)
+        self.assertIn("a" * 64, refresh_args)
+        self.assertIn("--expected-firmware-sha256", refresh_args)
+        self.assertIn(FIRMWARE_SHA256, refresh_args)
 
     def test_firmware_flash_passes_only_strict_build_selection(self) -> None:
         deployment, context, _runner, target = self._deployment()

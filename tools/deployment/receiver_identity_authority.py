@@ -12,7 +12,9 @@ hardware-serial binding before a new authority record can be published.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import hashlib
 import json
 import os
@@ -43,6 +45,14 @@ RECEIVER_IDENTITY_AUTHORITY_VERSION = 1
 RECEIVER_IDENTITY_AUTHORITY_RELATIVE_PATH = Path(
     "run_state/receiver_identity_authority.json"
 )
+RECEIVER_IDENTITY_AUTHORITY_ARCHIVE_RELATIVE_PATH = Path(
+    "run_state/receiver_identity_authority_archive"
+)
+RECEIVER_IDENTITY_MAPPING_RELATIVE_PATH = Path(
+    "run_state/receiver_identity_mapping.json"
+)
+RECEIVER_IDENTITY_MAPPING_SCHEMA = "ledgrid.receiver-identity-mapping"
+RECEIVER_IDENTITY_MAPPING_VERSION = 1
 RECEIVER_IDENTITY_AUTHORITY_MAX_BYTES = 64 * 1024
 RECEIVER_IDENTITY_EVIDENCE_SCHEMA = "ledgrid.receiver-identity-evidence"
 RECEIVER_IDENTITY_EVIDENCE_VERSION = 1
@@ -54,6 +64,10 @@ _AUTHORITY_KEYS = frozenset({
     "firmware_inventory_digest", "identities", "authority_digest",
 })
 _EVIDENCE_KEYS = frozenset({"schema", "schema_version", "identities"})
+_MAPPING_KEYS = frozenset({"schema", "schema_version", "identities"})
+_MAPPING_IDENTITY_KEYS = frozenset({
+    "logical_device", "spi_route", "hardware_serial",
+})
 _IDENTITY_KEYS = frozenset({
     "logical_device", "spi_route", "hardware_serial", "firmware_sha256",
 })
@@ -107,6 +121,14 @@ def receiver_identity_authority_path(root: Path) -> Path:
     return _authority_path(root)
 
 
+def receiver_identity_mapping_path(root: Path) -> Path:
+    """Return the target-owned independent logical-to-serial mapping path."""
+
+    if not isinstance(root, Path):
+        raise TypeError("receiver identity root must be a pathlib.Path")
+    return root / RECEIVER_IDENTITY_MAPPING_RELATIVE_PATH
+
+
 @dataclass(frozen=True)
 class ReceiverIdentity:
     """One exact logical receiver binding from operator evidence."""
@@ -134,6 +156,38 @@ class ReceiverIdentity:
             "spi_route": list(self.spi_route),
             "hardware_serial": self.hardware_serial,
             "firmware_sha256": self.firmware_sha256,
+        }
+
+
+@dataclass(frozen=True)
+class ReceiverIdentityMapping:
+    """One durable operator binding independent of installed firmware bytes."""
+
+    logical_device: int
+    spi_route: tuple[int, int]
+    hardware_serial: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.logical_device) is not int
+            or not 0 <= self.logical_device < FINALIZED_RECEIVER_COUNT
+        ):
+            raise ReceiverIdentityAuthorityError(
+                "logical_device is outside the finalized roster"
+            )
+        if (
+            not isinstance(self.spi_route, tuple)
+            or len(self.spi_route) != 2
+            or any(type(value) is not int or value < 0 for value in self.spi_route)
+        ):
+            raise ReceiverIdentityAuthorityError("spi_route is malformed")
+        _require_serial(self.hardware_serial)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "logical_device": self.logical_device,
+            "spi_route": list(self.spi_route),
+            "hardware_serial": self.hardware_serial,
         }
 
 
@@ -214,6 +268,48 @@ def _validate_identities(identities: Sequence[ReceiverIdentity]) -> None:
     ):
         if len(set(values)) != len(values):
             raise ReceiverIdentityAuthorityError(f"receiver identity authority has duplicate {label}")
+
+
+def _parse_mapping_identity(payload: Any, *, label: str) -> ReceiverIdentityMapping:
+    if not isinstance(payload, Mapping):
+        raise ReceiverIdentityAuthorityError(f"{label} is not an object")
+    _require_exact_keys(payload, _MAPPING_IDENTITY_KEYS, label)
+    route = payload["spi_route"]
+    if (
+        not isinstance(route, list)
+        or len(route) != 2
+        or any(type(value) is not int or value < 0 for value in route)
+    ):
+        raise ReceiverIdentityAuthorityError(f"{label} spi_route is malformed")
+    return ReceiverIdentityMapping(
+        logical_device=payload["logical_device"],
+        spi_route=(route[0], route[1]),
+        hardware_serial=payload["hardware_serial"],
+    )
+
+
+def _validate_mapping(identities: Sequence[ReceiverIdentityMapping]) -> None:
+    if not isinstance(identities, tuple) or len(identities) != FINALIZED_RECEIVER_COUNT:
+        raise ReceiverIdentityAuthorityError(
+            f"receiver identity mapping requires exactly {FINALIZED_RECEIVER_COUNT} identities"
+        )
+    expected_routes = tuple(tuple(route) for route in WALL_DEVICE_MAP)
+    for expected_logical, identity in enumerate(identities):
+        if not isinstance(identity, ReceiverIdentityMapping):
+            raise ReceiverIdentityAuthorityError("receiver identity mapping contains an invalid identity")
+        if identity.logical_device != expected_logical:
+            raise ReceiverIdentityAuthorityError(
+                "receiver identity mapping must be in exact logical-device order"
+            )
+        if identity.spi_route != expected_routes[expected_logical]:
+            raise ReceiverIdentityAuthorityError(
+                f"receiver mapping {expected_logical} spi route does not match configured topology"
+            )
+    serials = [identity.hardware_serial for identity in identities]
+    if len(set(serials)) != len(serials):
+        raise ReceiverIdentityAuthorityError(
+            "receiver identity mapping has duplicate hardware serials"
+        )
 
 
 def _read_regular_json(path: Path, *, maximum_bytes: int, label: str) -> dict[str, Any]:
@@ -305,6 +401,29 @@ def _parse_authority(payload: Mapping[str, Any]) -> ReceiverIdentityAuthority:
     )
 
 
+def _validate_authority_sources(
+    authority: ReceiverIdentityAuthority,
+    *,
+    topology_digest: str,
+    inventory_digest: str,
+    inventory: Mapping[str, str],
+) -> None:
+    if authority.receiver_hybrid_digest != topology_digest:
+        raise ReceiverIdentityAuthorityError("receiver-hybrid topology digest is stale")
+    if authority.firmware_inventory_digest != inventory_digest:
+        raise ReceiverIdentityAuthorityError("receiver firmware inventory digest is stale")
+    expected_serials = {identity.hardware_serial for identity in authority.identities}
+    if set(inventory) != expected_serials:
+        raise ReceiverIdentityAuthorityError(
+            "receiver firmware inventory does not match identity roster"
+        )
+    for identity in authority.identities:
+        if inventory[identity.hardware_serial] != identity.firmware_sha256:
+            raise ReceiverIdentityAuthorityError(
+                f"receiver {identity.logical_device} firmware identity does not match inventory"
+            )
+
+
 def load_receiver_identity_authority(root: Path) -> ReceiverIdentityAuthority:
     """Load one immutable, fully cross-validated target identity snapshot."""
 
@@ -315,19 +434,49 @@ def load_receiver_identity_authority(root: Path) -> ReceiverIdentityAuthority:
     authority = _parse_authority(payload)
     topology_digest, _routes = _current_topology(root)
     inventory_digest, inventory = _current_inventory(root)
-    if authority.receiver_hybrid_digest != topology_digest:
-        raise ReceiverIdentityAuthorityError("receiver-hybrid topology digest is stale")
-    if authority.firmware_inventory_digest != inventory_digest:
-        raise ReceiverIdentityAuthorityError("receiver firmware inventory digest is stale")
-    expected_serials = {identity.hardware_serial for identity in authority.identities}
-    if set(inventory) != expected_serials:
-        raise ReceiverIdentityAuthorityError("receiver firmware inventory does not match identity roster")
-    for identity in authority.identities:
-        if inventory[identity.hardware_serial] != identity.firmware_sha256:
-            raise ReceiverIdentityAuthorityError(
-                f"receiver {identity.logical_device} firmware identity does not match inventory"
-            )
+    _validate_authority_sources(
+        authority,
+        topology_digest=topology_digest,
+        inventory_digest=inventory_digest,
+        inventory=inventory,
+    )
     return authority
+
+
+def _parse_operator_mapping(
+    evidence: Mapping[str, Any],
+) -> tuple[ReceiverIdentityMapping, ...]:
+    _require_exact_keys(evidence, _MAPPING_KEYS, "operator receiver identity mapping")
+    if evidence["schema"] != RECEIVER_IDENTITY_MAPPING_SCHEMA:
+        raise ReceiverIdentityAuthorityError(
+            "unsupported operator receiver identity mapping schema"
+        )
+    if evidence["schema_version"] != RECEIVER_IDENTITY_MAPPING_VERSION:
+        raise ReceiverIdentityAuthorityError(
+            "unsupported operator receiver identity mapping schema version"
+        )
+    raw_identities = evidence["identities"]
+    if not isinstance(raw_identities, list):
+        raise ReceiverIdentityAuthorityError(
+            "operator receiver identity mapping identities are malformed"
+        )
+    identities = tuple(
+        _parse_mapping_identity(raw, label=f"operator receiver mapping {index}")
+        for index, raw in enumerate(raw_identities)
+    )
+    _validate_mapping(identities)
+    return identities
+
+
+def load_receiver_identity_mapping(root: Path) -> tuple[ReceiverIdentityMapping, ...]:
+    """Load the explicit mapping without consulting an existing authority."""
+
+    payload = _read_regular_json(
+        receiver_identity_mapping_path(root),
+        maximum_bytes=RECEIVER_IDENTITY_AUTHORITY_MAX_BYTES,
+        label="receiver identity mapping",
+    )
+    return _parse_operator_mapping(payload)
 
 
 def _parse_operator_evidence(evidence: Mapping[str, Any]) -> tuple[ReceiverIdentity, ...]:
@@ -370,6 +519,292 @@ def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+@contextmanager
+def _authority_write_lock(root: Path):
+    lock_path = _authority_path(root).with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise ReceiverIdentityAuthorityError(
+                "receiver identity authority lock is not a target-owned regular file"
+            )
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def provision_receiver_identity_mapping(
+    root: Path, *, operator_mapping: Mapping[str, Any]
+) -> tuple[ReceiverIdentityMapping, ...]:
+    """Atomically persist the independent exact-five operator mapping."""
+
+    identities = _parse_operator_mapping(operator_mapping)
+    path = receiver_identity_mapping_path(root)
+    with _authority_write_lock(root):
+        _topology_digest, routes = _current_topology(root)
+        _inventory_digest, inventory = _current_inventory(root)
+        if tuple(identity.spi_route for identity in identities) != routes:
+            raise ReceiverIdentityAuthorityError(
+                "operator receiver identity mapping routes do not match configured topology"
+            )
+        if {identity.hardware_serial for identity in identities} != set(inventory):
+            raise ReceiverIdentityAuthorityError(
+                "operator receiver identity mapping serials do not match firmware inventory"
+            )
+        if path.exists() or path.is_symlink():
+            raise ReceiverIdentityAuthorityError(
+                "receiver identity mapping is already provisioned"
+            )
+        _atomic_write(
+            path,
+            {
+                "schema": RECEIVER_IDENTITY_MAPPING_SCHEMA,
+                "schema_version": RECEIVER_IDENTITY_MAPPING_VERSION,
+                "identities": [identity.to_dict() for identity in identities],
+            },
+        )
+    return load_receiver_identity_mapping(root)
+
+
+def _candidate_authority(
+    mappings: tuple[ReceiverIdentityMapping, ...],
+    *,
+    topology_digest: str,
+    inventory_digest: str,
+    inventory: Mapping[str, str],
+) -> ReceiverIdentityAuthority:
+    if {identity.hardware_serial for identity in mappings} != set(inventory):
+        raise ReceiverIdentityAuthorityError(
+            "receiver identity mapping serials do not match firmware inventory"
+        )
+    identities = tuple(
+        ReceiverIdentity(
+            logical_device=mapping.logical_device,
+            spi_route=mapping.spi_route,
+            hardware_serial=mapping.hardware_serial,
+            firmware_sha256=inventory[mapping.hardware_serial],
+        )
+        for mapping in mappings
+    )
+    canonical = {
+        "schema": RECEIVER_IDENTITY_AUTHORITY_SCHEMA,
+        "schema_version": RECEIVER_IDENTITY_AUTHORITY_VERSION,
+        "receiver_hybrid_digest": topology_digest,
+        "firmware_inventory_digest": inventory_digest,
+        "identities": [identity.to_dict() for identity in identities],
+    }
+    return ReceiverIdentityAuthority(
+        receiver_hybrid_digest=topology_digest,
+        firmware_inventory_digest=inventory_digest,
+        identities=identities,
+        authority_digest=_canonical_digest(canonical),
+    )
+
+
+def _existing_authority(root: Path) -> ReceiverIdentityAuthority | None:
+    path = _authority_path(root)
+    if not path.exists() and not path.is_symlink():
+        return None
+    return _parse_authority(
+        _read_regular_json(
+            path,
+            maximum_bytes=RECEIVER_IDENTITY_AUTHORITY_MAX_BYTES,
+            label="receiver identity authority",
+        )
+    )
+
+
+def preflight_receiver_identity_refresh(
+    root: Path,
+    *,
+    expected_receiver_hybrid_digest: str,
+    expected_firmware_sha256: str | None,
+) -> Mapping[str, Any]:
+    """Prove rotation inputs before any deployment mutation begins."""
+
+    expected_receiver_hybrid_digest = _require_digest(
+        expected_receiver_hybrid_digest, "expected_receiver_hybrid_digest"
+    )
+    if expected_firmware_sha256 is not None:
+        expected_firmware_sha256 = _require_digest(
+            expected_firmware_sha256, "expected_firmware_sha256"
+        )
+    topology_digest, routes = _current_topology(root)
+    if topology_digest != expected_receiver_hybrid_digest:
+        raise ReceiverIdentityAuthorityError(
+            "planned receiver-hybrid digest does not match target topology"
+        )
+    _inventory_digest, inventory = _current_inventory(root)
+    existing = _existing_authority(root)
+    rotation_required = existing is None
+    if existing is not None:
+        try:
+            load_receiver_identity_authority(root)
+        except ReceiverIdentityAuthorityError:
+            rotation_required = True
+        if expected_firmware_sha256 is not None and any(
+            identity.firmware_sha256 != expected_firmware_sha256
+            for identity in existing.identities
+        ):
+            rotation_required = True
+    mapping_validated = False
+    if rotation_required:
+        mappings = load_receiver_identity_mapping(root)
+        if tuple(identity.spi_route for identity in mappings) != routes:
+            raise ReceiverIdentityAuthorityError(
+                "receiver identity mapping routes do not match configured topology"
+            )
+        if {identity.hardware_serial for identity in mappings} != set(inventory):
+            raise ReceiverIdentityAuthorityError(
+                "receiver identity mapping serials do not match firmware inventory"
+            )
+        mapping_validated = True
+    return {
+        "outcome": "executed" if rotation_required else "skipped",
+        "rotation_required": rotation_required,
+        "current_authority_digest": (
+            None if existing is None else existing.authority_digest
+        ),
+        "mapping_validated": mapping_validated,
+        "receiver_hybrid_digest": topology_digest,
+        "expected_firmware_sha256": expected_firmware_sha256,
+    }
+
+
+def refresh_receiver_identity_authority(
+    root: Path,
+    *,
+    expected_authority_digest: str | None,
+    expected_receiver_hybrid_digest: str,
+    expected_firmware_sha256: str | None,
+) -> Mapping[str, Any]:
+    """CAS-rotate stale authority from mapping plus verified current inventory."""
+
+    if expected_authority_digest is not None:
+        expected_authority_digest = _require_digest(
+            expected_authority_digest, "expected_authority_digest"
+        )
+    expected_receiver_hybrid_digest = _require_digest(
+        expected_receiver_hybrid_digest, "expected_receiver_hybrid_digest"
+    )
+    if expected_firmware_sha256 is not None:
+        expected_firmware_sha256 = _require_digest(
+            expected_firmware_sha256, "expected_firmware_sha256"
+        )
+
+    with _authority_write_lock(root):
+        existing = _existing_authority(root)
+        observed_digest = None if existing is None else existing.authority_digest
+        if observed_digest != expected_authority_digest:
+            raise ReceiverIdentityAuthorityError(
+                "receiver identity authority changed after refresh preflight"
+            )
+        topology_digest, routes = _current_topology(root)
+        if topology_digest != expected_receiver_hybrid_digest:
+            raise ReceiverIdentityAuthorityError(
+                "receiver-hybrid topology changed after refresh preflight"
+            )
+        inventory_digest, inventory = _current_inventory(root)
+        if expected_firmware_sha256 is not None and any(
+            firmware_sha256 != expected_firmware_sha256
+            for firmware_sha256 in inventory.values()
+        ):
+            raise ReceiverIdentityAuthorityError(
+                "receiver firmware inventory does not match planned firmware"
+            )
+
+        if existing is not None:
+            try:
+                _validate_authority_sources(
+                    existing,
+                    topology_digest=topology_digest,
+                    inventory_digest=inventory_digest,
+                    inventory=inventory,
+                )
+            except ReceiverIdentityAuthorityError:
+                pass
+            else:
+                if expected_firmware_sha256 is None or all(
+                    identity.firmware_sha256 == expected_firmware_sha256
+                    for identity in existing.identities
+                ):
+                    return {
+                        "outcome": "skipped",
+                        "rotated": False,
+                        "authority_digest": existing.authority_digest,
+                        "archived_authority": None,
+                    }
+
+        mappings = load_receiver_identity_mapping(root)
+        if tuple(identity.spi_route for identity in mappings) != routes:
+            raise ReceiverIdentityAuthorityError(
+                "receiver identity mapping routes do not match configured topology"
+            )
+        candidate = _candidate_authority(
+            mappings,
+            topology_digest=topology_digest,
+            inventory_digest=inventory_digest,
+            inventory=inventory,
+        )
+        _validate_authority_sources(
+            candidate,
+            topology_digest=topology_digest,
+            inventory_digest=inventory_digest,
+            inventory=inventory,
+        )
+
+        archive_path: Path | None = None
+        if existing is not None:
+            archive_path = (
+                root
+                / RECEIVER_IDENTITY_AUTHORITY_ARCHIVE_RELATIVE_PATH
+                / f"{existing.authority_digest}.json"
+            )
+            if archive_path.exists() or archive_path.is_symlink():
+                archived = _parse_authority(
+                    _read_regular_json(
+                        archive_path,
+                        maximum_bytes=RECEIVER_IDENTITY_AUTHORITY_MAX_BYTES,
+                        label="archived receiver identity authority",
+                    )
+                )
+                if archived.authority_digest != existing.authority_digest:
+                    raise ReceiverIdentityAuthorityError(
+                        "archived receiver identity authority conflicts with stale authority"
+                    )
+            else:
+                _atomic_write(archive_path, existing.to_dict())
+
+        latest = _existing_authority(root)
+        latest_digest = None if latest is None else latest.authority_digest
+        if latest_digest != observed_digest:
+            raise ReceiverIdentityAuthorityError(
+                "receiver identity authority changed during refresh"
+            )
+        _atomic_write(_authority_path(root), candidate.to_dict())
+        published = load_receiver_identity_authority(root)
+        if published.authority_digest != candidate.authority_digest:
+            raise ReceiverIdentityAuthorityError(
+                "receiver identity authority replacement failed validation"
+            )
+        return {
+            "outcome": "executed",
+            "rotated": True,
+            "authority_digest": published.authority_digest,
+            "previous_authority_digest": observed_digest,
+            "archived_authority": (
+                None if archive_path is None else archive_path.relative_to(root).as_posix()
+            ),
+        }
+
+
 def provision_receiver_identity_authority(
     root: Path, *, operator_evidence: Mapping[str, Any]
 ) -> ReceiverIdentityAuthority:
@@ -406,19 +841,24 @@ def provision_receiver_identity_authority(
         authority_digest=_canonical_digest(canonical),
     )
     existing_path = _authority_path(root)
-    if existing_path.exists() or existing_path.is_symlink():
-        # An invalid existing record is never silently overwritten.
-        existing = load_receiver_identity_authority(root)
-        if existing.authority_digest == authority.authority_digest:
-            raise ReceiverIdentityAuthorityError("receiver identity authority already has this digest")
-    _atomic_write(existing_path, authority.to_dict())
+    with _authority_write_lock(root):
+        if existing_path.exists() or existing_path.is_symlink():
+            # An invalid existing record is never silently overwritten.
+            existing = load_receiver_identity_authority(root)
+            if existing.authority_digest == authority.authority_digest:
+                raise ReceiverIdentityAuthorityError(
+                    "receiver identity authority already has this digest"
+                )
+        _atomic_write(existing_path, authority.to_dict())
     return load_receiver_identity_authority(root)
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("action", choices=("show", "provision"))
+    parser.add_argument(
+        "action", choices=("show", "show-mapping", "provision", "provision-mapping")
+    )
     parser.add_argument("--evidence", type=Path)
     return parser
 
@@ -428,29 +868,52 @@ def main() -> int:
     root = args.root.expanduser().resolve()
     if args.action == "show":
         authority = load_receiver_identity_authority(root)
+        output: Mapping[str, Any] = authority.to_dict()
+    elif args.action == "show-mapping":
+        mapping = load_receiver_identity_mapping(root)
+        output = {
+            "schema": RECEIVER_IDENTITY_MAPPING_SCHEMA,
+            "schema_version": RECEIVER_IDENTITY_MAPPING_VERSION,
+            "identities": [identity.to_dict() for identity in mapping],
+        }
     else:
         if args.evidence is None:
-            raise SystemExit("provision requires --evidence")
-        try:
-            evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise SystemExit("operator evidence is unreadable") from exc
-        if not isinstance(evidence, Mapping):
-            raise SystemExit("operator evidence is not an object")
-        authority = provision_receiver_identity_authority(
-            root, operator_evidence=evidence
+            raise SystemExit(f"{args.action} requires --evidence")
+        evidence = _read_regular_json(
+            args.evidence,
+            maximum_bytes=RECEIVER_IDENTITY_AUTHORITY_MAX_BYTES,
+            label="operator evidence",
         )
-    print(json.dumps(authority.to_dict(), sort_keys=True, separators=(",", ":")))
+        if args.action == "provision":
+            authority = provision_receiver_identity_authority(
+                root, operator_evidence=evidence
+            )
+            output = authority.to_dict()
+        else:
+            mapping = provision_receiver_identity_mapping(
+                root, operator_mapping=evidence
+            )
+            output = {
+                "schema": RECEIVER_IDENTITY_MAPPING_SCHEMA,
+                "schema_version": RECEIVER_IDENTITY_MAPPING_VERSION,
+                "identities": [identity.to_dict() for identity in mapping],
+            }
+    print(json.dumps(output, sort_keys=True, separators=(",", ":")))
     return 0
 
 
 __all__ = [
     "RECEIVER_IDENTITY_AUTHORITY_RELATIVE_PATH",
+    "RECEIVER_IDENTITY_AUTHORITY_ARCHIVE_RELATIVE_PATH",
     "RECEIVER_IDENTITY_AUTHORITY_SCHEMA", "RECEIVER_IDENTITY_AUTHORITY_VERSION",
     "RECEIVER_IDENTITY_EVIDENCE_SCHEMA", "RECEIVER_IDENTITY_EVIDENCE_VERSION",
-    "ReceiverIdentity", "ReceiverIdentityAuthority", "ReceiverIdentityAuthorityError",
-    "load_receiver_identity_authority", "provision_receiver_identity_authority",
-    "receiver_identity_authority_path",
+    "RECEIVER_IDENTITY_MAPPING_RELATIVE_PATH", "RECEIVER_IDENTITY_MAPPING_SCHEMA",
+    "RECEIVER_IDENTITY_MAPPING_VERSION", "ReceiverIdentity", "ReceiverIdentityAuthority",
+    "ReceiverIdentityAuthorityError", "ReceiverIdentityMapping",
+    "load_receiver_identity_authority", "load_receiver_identity_mapping",
+    "preflight_receiver_identity_refresh", "provision_receiver_identity_authority",
+    "provision_receiver_identity_mapping", "receiver_identity_authority_path",
+    "receiver_identity_mapping_path", "refresh_receiver_identity_authority",
 ]
 
 

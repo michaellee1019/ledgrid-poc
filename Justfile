@@ -200,6 +200,7 @@ test-deployment:
 		tests/unit/test_configure_spi.py \
 		tests/unit/test_firmware_reconciliation.py \
 		tests/unit/test_receiver_firmware_inventory.py \
+		tests/unit/test_receiver_identity_authority.py \
 		tests/unit/test_gate_policy.py \
 		tests/unit/test_preserve_deploy_settings.py \
 		tests/unit/test_receiver_hybrid_config.py

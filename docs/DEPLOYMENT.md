@@ -211,10 +211,33 @@ today's USB path: logical receivers 0–4 are respectively
 `44:b1:76:c5:15:7c`, `9c:13:9e:bb:3d:14`, `44:b1:76:c3:cf:58`,
 `44:b1:76:c3:cf:80`, and `94:a9:90:f4:e4:9c`. Their SPI routes are
 `(0,0)`, `(0,1)`, `(1,1)`, `(1,0)`, and `(1,2)`. If
-`run_state/receiver_identity_authority.json` must be reprovisioned, build the
-operator evidence from this mapping plus the current five-record firmware
-ledger and run `python -m tools.deployment.receiver_identity_authority`; never
-infer the mapping from `/dev/ttyACM*` order or current USB locations.
+`run_state/receiver_identity_mapping.json` is absent, provision its independent
+logical/route/serial evidence once from this documented roster:
+
+```json
+{"schema":"ledgrid.receiver-identity-mapping","schema_version":1,"identities":[{"logical_device":0,"spi_route":[0,0],"hardware_serial":"44:b1:76:c5:15:7c"},{"logical_device":1,"spi_route":[0,1],"hardware_serial":"9c:13:9e:bb:3d:14"},{"logical_device":2,"spi_route":[1,1],"hardware_serial":"44:b1:76:c3:cf:58"},{"logical_device":3,"spi_route":[1,0],"hardware_serial":"44:b1:76:c3:cf:80"},{"logical_device":4,"spi_route":[1,2],"hardware_serial":"94:a9:90:f4:e4:9c"}]}
+```
+
+Save that JSON as a target-owned regular file outside `run_state`, then run:
+
+```bash
+python -m tools.deployment.receiver_identity_authority --root "$PWD" \
+  provision-mapping --evidence /path/to/operator-mapping.json
+```
+
+The command requires the exact five serials already present in the verified
+firmware ledger and writes the mapping atomically with mode `0600`. Full deployment
+uses it only when the planned config or firmware would stale the current
+authority: a read-only preflight runs before host or firmware mutation, and a
+post-flash compare-and-swap archives and replaces the old authority before app
+activation. Missing or invalid mapping evidence fails before flashing. Never
+infer the mapping from `/dev/ttyACM*` order, current USB locations, an old
+authority, or the spare receiver.
+
+The older `provision --evidence` action remains available for explicit recovery
+from a complete firmware-bound evidence packet. It still refuses to overwrite
+a stale authority; normal deployments rotate only through the independent
+mapping path above.
 
 Successful installations are recorded atomically in the target-owned
 `run_state/receiver_firmware_inventory.json` ledger. Each record binds one
@@ -222,9 +245,10 @@ factory hardware serial to the complete flash-installation digest, selected
 PlatformIO environment, and application-image digest. An ordinary full deploy
 then behaves as follows:
 
-- A missing ledger causes one initialization flash of all attached boards. This
-  is intentional: the old aggregate marker cannot prove which physical boards
-  were flashed.
+- A missing ledger fails the receiver-identity preflight before flash. A blank
+  target needs a separate reviewed first-install ceremony that proves the exact
+  operator mapping and attached roster before creating its first inventory;
+  the old aggregate marker cannot prove which physical boards were flashed.
 - A newly installed board has no matching record, so only its currently
   discovered port is flashed.
 - A firmware, flash-layout, or selected-environment change flashes every board
