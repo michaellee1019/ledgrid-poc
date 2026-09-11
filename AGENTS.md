@@ -152,6 +152,24 @@ When the user's request is simply `start`, treat it as explicit authorization to
 
 Autopilot may reconcile Beads, create local branches and worktrees, claim work, spawn subagents, make local commits, integrate completed work, close Beads, and continue to the next ready item without asking between ordinary local steps. It does not authorize git or Dolt pushes, a squash or merge to `main`, physical-wall or receiver operations, deployment, or a product decision outside the accepted epic.
 
+### Small-fix fast path
+
+Use the smallest delivery process justified by uncertainty and consequence. This fast path also applies to ordinary scoped requests outside autopilot and takes precedence over the default dispatch, steward, and validation cadence below. It does not expand commit, push, deployment, hardware, or product authority.
+
+A small fix has understood behavior and a localized cause, one ownership area, and focused acceptance. File count alone is not a risk measure. Shared Scene/schema or compositor/protocol changes, persistence or data-integrity changes, risky live-state transitions, new simulation behavior, and hardware work retain the stronger gates below.
+
+- The coordinator implements small fixes directly. Do not spawn a steward or implementation worker merely to hand off an already understood correction. Delegate only a concrete independent task with useful concurrent work; changing to a cheaper model alone does not justify a handoff.
+- Reconcile relevant claims, dirty work, and the current base once. If an accepted leaf is actionable, refresh its base and readiness locally; stale wave labels or an old handoff date alone do not require a portfolio review. Do not scan the whole backlog for a scoped user request.
+- Use the current suitable checkout when ownership is exclusive and no pre-integration review gate applies. Otherwise use one implementation branch/worktree. Independent acceptance still uses a separate agent and isolated worktree. Do not create extra implementation lanes for one fix.
+- For a behavior correction, add or use a focused regression that demonstrates the old failure and corrected behavior, then run changed-language syntax/lint, relevant adjacent tests, and `git diff --check`. Documentation-only edits need consistency/link checks, not application tests.
+- Browser validation is triggered by changed UI wiring, browser-only execution, asset loading, or a defect that production render tests cannot establish. A renderer's visibility in Composer alone does not trigger browser setup. For browser changes, exercise only the affected path; validate live acknowledgements only when publication or acknowledgement behavior changed. Rebuild shipped generated assets when their inputs change.
+- Benchmark when work per frame, allocations, source cadence, simulation complexity, or a performance acceptance criterion changes. A cache correctness fix with unchanged work/cadence normally needs cache/changed-frame assertions, not a timing report. Contact sheets, full palette/geometry matrices, and long simulations require a corresponding visual family or behavioral change.
+- Retain one focused independent review for visible behavior, including small renderer fixes; routine documentation/mechanical edits can be coordinator-reviewed. A small-fix reviewer checks the diff and decisive regression, not a new evidence program. Use the model table's small-fix effort; high-consequence gates are unchanged.
+- Reuse successful checks tied to the exact candidate commit and relevant environment. Each role does not need to rerun the entire package. Rerun affected checks after source changes, conflict resolution, a changed integration base, environment differences, or a concrete concern; a no-op rebase is not itself a reason.
+- Keep one concise Beads handoff with candidate SHA, checks, acceptance, and any blocker. Prefer a persistent test over a temporary evidence script. Do not repeatedly rewrite epic notes or re-inspect unchanged state while another agent runs; prepare independent work or wait. If setup or coordination overtakes the fix, simplify the approach within the required gates.
+
+For an Emoji-style pulse/cache correction, the expected path is direct implementation, a resolved-Scene source/final regression, affected asset refresh, one focused independent review, and local integration when authorized. A portfolio steward, implementation subagent, new benchmark report, and live-acknowledgement exercise are unnecessary.
+
 ### Lean startup
 
 Run `bd prime`, then reconcile only the state that can cause duplicate or lost work:
@@ -165,7 +183,7 @@ git worktree list --porcelain
 
 Inspect the live agent tree too. Repair mismatches before claiming anything: integrate a completed handoff, preserve dirty work, or return an orphaned claim to `open` with a short interruption note. Do not create a planning phase merely to restate the backlog.
 
-The integration base is the recorded `codex/ib7-selective-reconstruction` branch and its registered clean worktree. Treat `update-animation-pipeline` as a donor and never merge it wholesale. A sane, minimal eventual history onto `main` matters, but is secondary to reaching the right product and a convincing end-to-end demo. Do not stop visible product work merely to inventory, rewrite history, prune broadly, or perfect a future squash.
+Use the integration branch recorded by the latest accepted Beads handoff and verify it against Git. The historical selective-reconstruction line is already incorporated into the current `update-animation-pipeline` integration branch; do not recreate its deleted branch or reconcile old prose on every start. Never merge a donor wholesale into another line or infer permission to merge to `main`. A sane, minimal eventual history onto `main` matters, but is secondary to reaching the right product and a convincing end-to-end demo. Do not stop visible product work merely to inventory, rewrite history, prune broadly, or perfect a future squash.
 
 Use `bd ready --json` and select unassigned descendants of `ledgrid-poc-ib7`. Rank the shortest dependency path to the current Live-First demo first: user-visible behavior, shared contract unblockers, safety and operability, then complexity deletion. Defer broad renderer migration, inventory, verification-only work, documentation programs, and merge-history cleanup until the demo boundary or an actual dependency requires them. A leaf needs actionable acceptance, an identifiable ownership/conflict area, and focused validation; do not block delivery to perfect estimates, prose, or execution cards.
 
@@ -175,7 +193,7 @@ Optimize first for a compelling, varied catalog that is fun to explore: visibly 
 
 Deliberately incur reversible technical debt when it buys catalog breadth or faster feedback. During implementation, review, or debugging, turn polish findings and state-management edge cases into linked follow-up Beads and continue unless they threaten safety, corrupt user work, invalidate the shared Scene v2 contract, or break the current browser/live demo. Perfect cache behavior, exhaustive recovery, speculative abstractions, full compatibility, and exhaustive test matrices are normally backlog work rather than blockers. Do not silently discard a finding: record its reproduction, impact, and suggested boundary in Beads.
 
-Keep feedback fast. A user-visible leaf should normally get focused contract tests and one short browser smoke covering selection, intuitive control response, Preview, and the relevant live acknowledgement. Favor rapid visual confirmation over expanding a verification program. Batch physical-wall checks at useful demo checkpoints and only when the user has separately authorized wall or deployment operations; the `start` contract alone still does not authorize them.
+Keep feedback fast. Use focused contract tests and the small-fix validation triggers above. A new browser feature normally needs one short smoke covering its selection, control response and Preview; include live acknowledgement only when that boundary changes. Favor rapid visual confirmation over expanding a verification program. Batch physical-wall checks at useful demo checkpoints and only when the user has separately authorized wall or deployment operations; the `start` contract alone still does not authorize them.
 
 ### Model selection
 
@@ -185,10 +203,12 @@ Choose the model for the Bead's uncertainty, consequence of error, and ownership
 | --- | --- | --- |
 | Coordinator: cross-cutting decisions, dispatch, integration, and escalation | `gpt-6-astra` | `high` |
 | Portfolio steward: bounded queue, dependency, and wave maintenance | `gpt-5.6-sol` | `high` |
-| Bounded implementation or source-evidence collection with a clear existing pattern | `gpt-5.6-terra` | `high` |
+| Bounded implementation with a clear existing pattern, when delegation is useful | `gpt-5.6-terra` | `medium`; `low` for straightforward corrections |
+| Catalog-wide source-evidence collection | `gpt-5.6-terra` | `high` |
 | Complex implementation or investigation across components, simulation behavior, or live state | `gpt-5.6-sol` | `high` |
 | Hardest implementation/debugging, architectural ambiguity, or repeatedly failed reasoning | `gpt-6-astra` | `high`; `xhigh` for unresolved deep reasoning |
-| Independent review of ordinary user-visible behavior and bounded modernization evidence | `gpt-5.6-sol` | `high` |
+| Focused independent review of a small visible correction | `gpt-5.6-sol` | `medium` |
+| Independent acceptance of a new user-visible feature or modernization evidence | `gpt-5.6-sol` | `high` |
 | Independent review of shared Scene/schema, compositor/protocol, safety/data integrity, or risky live-state changes | `gpt-6-astra` | `high` |
 | Mechanical edits, narrow lookups, or straightforward check execution with objective results | `gpt-5.6-luna` | `low` or `medium` |
 
@@ -200,7 +220,7 @@ For delegated work, pass the selected model and supported effort explicitly. Whe
 
 ### Portfolio steward
 
-Start a short-lived portfolio steward before dispatch when the current wave is missing or stale, after each batch of up to 15 selected Beads, or earlier when no product leaf is ready, an item stalls or reopens twice, priorities/dependencies disagree, or Beads/worktree/branch reality drifts. Use at most one steward at a time, selected by the model policy above.
+Use a short-lived portfolio steward when the coordinator cannot resolve a real queue, dependency, ownership, or priority ambiguity with a bounded inspection, or when planning several independent workstreams would save time. At a batch boundary of up to 15 selected Beads, check whether stewardship is needed; do not spawn one automatically. Missing/stale wave metadata alone is insufficient when the next accepted leaf is clear. Use at most one steward at a time, selected by the model policy above.
 
 The steward reads the binding Scene v2 decision, epic, recent handoffs, ready/blocked queues, and branch progress. It may prepare or repair at most 15 bounded executable Beads, partition them into dependency-ordered non-conflicting waves, clarify acceptance from accepted decisions, and retire stale coordination work. It normally changes Beads only, leaves a short epic note, and exits before implementation dispatch. It must not inflate the backlog, rewrite product intent, implement code, authorize pushes/hardware, or claim later waves.
 
@@ -216,17 +236,17 @@ Each worker gets one claimed Bead, one local `codex/` branch, one isolated workt
 
 A worker implements the smallest complete product increment, runs baseline validation, makes one logical commit, and records a concise Beads handoff with tip SHA, changed paths, checks, and any generated output. It adds `merge-ready` but does not merge or close its own implementation Bead.
 
-Baseline validation is changed-language syntax or lint, focused tests, and `git diff --check`. Add one adjacent regression only when a shared contract changed. Use one browser smoke only for a user-visible browser boundary. Full browser matrices, aggregate preflight, firmware matrices, and soak tests belong at release or hardware boundaries, not ordinary leaves.
+Baseline validation follows the small-fix triggers: changed-language syntax or lint, focused regression/adjacent tests, and `git diff --check`. Use a browser smoke only when the affected boundary requires browser evidence. Full browser matrices, aggregate preflight, firmware matrices, and soak tests belong at release or hardware boundaries, not ordinary leaves.
 
 ### Risk-tiered acceptance
 
-Shared schemas, compositor or protocol work, risky live-state changes, and user-visible acceptance require an independent reviewer selected by the model policy above: Astra for shared contracts and high-consequence changes, Sol for ordinary user-visible acceptance. The reviewer works from an isolated worktree, checks the accepted Bead rather than redesigning it, records actionable findings or approval, and does not merge. The coordinator may review routine bounded leaves that do not meet those independent-review triggers. A review is a gate on integration, not a separate long-running implementation lane.
+Shared schemas, compositor or protocol work, risky live-state changes, and user-visible acceptance require an independent reviewer selected by the model policy above: Astra for shared contracts and high-consequence changes, Sol for ordinary user-visible acceptance. The reviewer works from an isolated worktree, checks the accepted Bead rather than redesigning it, records actionable findings or approval, and does not merge. The coordinator may review routine bounded leaves that do not meet those independent-review triggers. A review is a gate on integration, not a separate long-running implementation lane. For small visible corrections, use the focused review exception above: inspect the exact candidate and reproduce the decisive regression, reusing other trustworthy same-candidate checks. Do not inherit the catalog-modernization evidence checklist solely because a fix belongs to an Animation.
 
 Reviewers must distinguish demo blockers from follow-up debt. Block integration only for a concrete failure of the accepted user-visible path, safety or data-integrity risk, a broken shared contract, or a regression likely to derail the next breadth wave. Record lower-impact correctness, perfect-state-management, maintainability, and rare edge-case findings as follow-up Beads, then approve the bounded demo increment when its primary path is convincing.
 
 ### Animation modernization review discipline
 
-Use a review-before-implementation pass for catalog-wide animation modernization, including `ledgrid-poc-ib7.82`. An evidence worker records source-read-only evidence for one non-overlapping family, and an independent reviewer reproduces the important claims. Select both models by the policy above; routine evidence starts with Terra and Sol acceptance, while complex simulation/timing analysis and shared-contract risks use the higher tiers. Create implementation children only from accepted `implement` dispositions or accepted product blockers; keep `retain-current`, `defer`, and `not-applicable` findings documented without turning them into speculative work.
+Use a review-before-implementation pass for catalog-wide animation modernization. The finite `ledgrid-poc-ib7.82` program is closed; its accepted dispositions remain evidence for follow-ups. A localized correction to an already reviewed component uses the small-fix path, not a repeat family audit. An evidence worker records source-read-only evidence for one non-overlapping family, and an independent reviewer reproduces the important claims. Select both models by the policy above; routine evidence starts with Terra and Sol acceptance, while complex simulation/timing analysis and shared-contract risks use the higher tiers. Create implementation children only from accepted `implement` dispositions or accepted product blockers; keep `retain-current`, `defer`, and `not-applicable` findings documented without turning them into speculative work.
 
 For every component, record exactly one disposition for semantic palette, premultiplied RGBA/background composition, installation geometry, and direct interaction. Evidence must use a real resolved Scene at every sample through the production render path, including Scene palette and pace. Direct `generate_frame` calls, constructor defaults, or a context installed once at the wrong elapsed time do not prove Scene timing or palette behavior. Preserve fixed 33x138 fingerprints, semantic state and RNG digests, cache/source-tick behavior, focused tests, and desktop mean/p95/p99/max plus changed-frame ratio; never present desktop timing as Raspberry Pi evidence.
 
@@ -240,6 +260,6 @@ When acceptance requests changes, append corrected evidence instead of overwriti
 
 ### Continuous integration loop
 
-Wait for the first worker to finish, review the handoff, obtain required independent acceptance, and acquire the Beads merge slot only for integration. Rebase onto the current selective-reconstruction tip, rerun the focused checks on the prospective tip, fast-forward merge, record the integrated SHA, close the Bead, release the slot, and remove only the clean merged worktree. Unlock and claim the next dependency wave only after its prerequisites integrate, then refill available implementation capacity.
+Wait for the first worker to finish, review the handoff, obtain required independent acceptance, and acquire the Beads merge slot only for integration. Rebase onto the recorded current integration tip, validate affected changes if the prospective tip differs from the tested candidate, fast-forward merge, record the integrated SHA, close the Bead, release the slot, and remove only the clean merged worktree. Reuse exact-candidate checks after a no-op rebase. Unlock and claim the next dependency wave only after its prerequisites integrate, then refill available implementation capacity.
 
 Continue until the user says `stop`, no meaningful local work can proceed, or a real permission/product decision is required. On stop, interrupt workers, wait for the live tree to empty, release the merge slot, reconcile every `in_progress` Bead, and preserve dirty or unmerged worktrees. Never stage `.beads/**`, traces, screenshots, or local run state—except `.beads/interactions.jsonl`: validate its append-only JSONL records and commit that audit log when it changes. Never treat that commit as a substitute for `bd dolt push`/pull or a Dolt backup.

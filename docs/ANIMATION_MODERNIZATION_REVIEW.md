@@ -4,18 +4,9 @@ This document captures the evidence method and the current handoff for the Scene
 
 ## Current handoff
 
-As of 2026-09-01, `ledgrid-poc-ib7.82` covers exactly 39 retained Animation IDs and the four shipped starter Look IDs at selective-reconstruction base `25c76925841a4223c560a94a89965362552de12d`. The older `pixel_chase` audit row is outside the retained catalog.
+The finite `ledgrid-poc-ib7.82` review and accepted product modernization program closed on 2026-09-11 after the Emoji cache correction integrated at `197ce0a`. It covers 39 retained Animation IDs and four shipped starter Looks; `pixel_chase` remains outside that surface. Existing follow-up debt and hardware authority gates remain tracked in Beads.
 
-Family reviews `.82.1` through `.82.8` are independently accepted and closed. Their accepted findings have produced gated implementation children through `.82.6.2`; those children remain open, unassigned, and without `worktree-ready` until the final shipped-Looks review `.82.11` clears the breadth gate. No push, deployment, receiver, camera, or physical-wall action is authorized by this program.
-
-The next fresh `Start` should:
-
-1. Run the normal Beads reconciliation and confirm the selective-reconstruction worktree is still clean at the recorded tip and the merge slot is free.
-2. Start one Sol/high portfolio steward for the just-accepted `.82.7` and `.82.8` findings. It should create only bounded children warranted by accepted findings, avoid duplicates, keep every implementation child blocked by `.82.11`, and unlock exactly `.82.9` and `.82.10` for read-only review.
-3. Continue the same Terra evidence/Sol acceptance loop for `.82.9` foundational ambient Animations and `.82.10` narrative/pixel-art Animations.
-4. Review `.82.11` shipped whole-scene Looks last, reconcile the complete coverage ledger, then decide which accepted implementation wave becomes runnable.
-
-Use `bd show ledgrid-poc-ib7.82 --json` and the epic comments for the exact child inventory. Do not recreate already-scheduled work from prose summaries.
+For current status and the integration base, use `bd show ledgrid-poc-ib7.82 --json` and the latest accepted epic handoff. Do not reconstruct a runnable wave from this historical evidence guide. Local corrections to already reviewed components use [AGENTS.md — Small-fix fast path](../AGENTS.md#small-fix-fast-path); the full evidence contract below applies to a family review or a change affecting those axes, not every follow-up fix.
 
 ## Evidence contract
 

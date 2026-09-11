@@ -214,8 +214,9 @@ For an animation with many presets:
    tall aspect ratio and inspect it. Warm fixed-step scenes through sequential
    source or semantic ticks before capture; a single late-time call is an invalid
    sample for simulations that correctly cap first-call catch-up.
-5. Run `tests.unit.test_curated_animation_presets`, the focused plugin test,
-   the full suite, and both default and animated/stress benchmarks.
+5. Run the affected curated-preset and plugin tests. Use default/stress
+   benchmarks when renderer work or density changes; reserve full-suite
+   qualification for a release or a cross-cutting change.
 
 When changing a parameter across the whole curated library, update every
 deterministic preset generator (notably `scripts/generate_cute_gif_pack.py`) and
@@ -238,13 +239,15 @@ curated JSON, then render every preset through its real plugin.
 
 ## Validation commands
 
+These are command recipes, not a per-leaf checklist. Follow AGENTS.md small-fix validation triggers. Prefer the existing project `.venv/bin/python` (the saved-project absolute path also works from isolated worktrees) and installed project tools; use `uv` below only when dependencies are unavailable. Reuse working fixtures instead of rebuilding unrelated native infrastructure for a local renderer fix.
+
 Run the focused test first:
 
 ```bash
 uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' python -m unittest tests.unit.test_<plugin> -v
 ```
 
-Run all Python tests before handoff:
+For a release or cross-cutting change requiring full Python qualification:
 
 ```bash
 uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with opencv-python-headless python -m unittest discover -s tests -p 'test_*.py'
@@ -253,7 +256,7 @@ uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with o
 If output is filtered, enable shell `pipefail` or capture the Python process's
 status directly. Do not trust the exit code from a final `tail`/`rg` process.
 
-Run the standard rendering acceptance benchmark:
+When render performance or workload changes, use the rendering acceptance benchmark:
 
 ```bash
 uv run --with numpy --with pillow tools/benchmarks/animation_render.py --frames 100 --check --max-p95-ms 4.0 --json
@@ -261,7 +264,7 @@ uv run --with numpy --with pillow tools/benchmarks/animation_render.py --frames 
 
 The benchmark’s 4 ms plugin p95 gate preserves headroom inside the 5 ms period at
 200 FPS. For configuration-sensitive effects, also make a targeted benchmark
-using the deployed 32-strip by 138-LED geometry, the actual 200 Hz manager call
+using the current canonical 33-strip by 138-LED geometry, the actual 200 Hz manager call
 cadence, maximum effect strength, and maximum supported entity count. Retain p99
 and maximum semantic-event frames even when the p95 gate passes.
 

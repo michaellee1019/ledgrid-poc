@@ -7,6 +7,16 @@ description: Create, improve, debug, or review real-time procedural animations, 
 
 Build animations as observable systems: clarify the intended motion or behavior, preserve the host render contract, validate the visual outcome through simulation, and measure performance at realistic hardware dimensions.
 
+## Choose validation proportional to the change
+
+For an understood local correction, use the repository's small-fix path. Read the affected renderer and relevant contract/tests, implement directly when practical, and validate the failure through the production render boundary. Preserve independent review when the repository requires it. The sections below describe applicable techniques, not a mandatory checklist for every animation edit.
+
+- Cache/timing correctness needs deterministic resolved-Scene samples with real palette and pace, plus source/final equality or changed-frame assertions relevant to the defect. Do not require new latency measurements when work per frame and cadence are unchanged.
+- Add benchmarks for changed complexity, allocations, source rate, entity limits, or performance acceptance. Scope default/stress measurements to the affected path.
+- Inspect representative rendered output when appearance changes. Contact sheets and broad palette/geometry matrices belong to family/preset work or changes spanning those axes, not an isolated correction preserving art.
+- Use browser smoke for changed UI wiring, browser-only behavior, loading, or a defect not established by production render tests. Being selectable in Composer does not by itself require browser setup or live-acknowledgement testing. Refresh generated assets when their inputs change.
+- Reuse exact-candidate validation. Prefer an existing regression harness over temporary evidence scripts; do not repeat discovery, benchmarks or a completed family review merely to hand off to another role.
+
 ## Establish the outcome
 
 Translate subjective requests into observable acceptance criteria before editing. Infer low-risk details from the repository and continue; ask only when a choice would materially change the result.
@@ -25,7 +35,7 @@ Tell the user what constraint or discovery is shaping the implementation. Report
 
 ## Inspect before designing
 
-Read the animation base class, plugin loader/registry, two nearby plugins, animation tests, and existing benchmark tooling. Check the worktree and preserve unrelated changes.
+For a new renderer or unfamiliar architecture, read the animation base class, plugin loader/registry, relevant nearby examples and test/benchmark tooling. For a localized fix, reuse established context and read only the affected implementation, contract and tests. Check the worktree and preserve unrelated changes.
 
 Determine the frame contract:
 
@@ -421,7 +431,7 @@ Cover as applicable:
 
 Run deterministic multi-seed simulations long enough for the requested emergent outcome. Report concrete results such as lines cleared, resets, surviving duration, or convergence—not “looks intelligent.” A unit test for one constructed board state and a longer simulation serve different purposes; use both when the behavior is emergent.
 
-Benchmark with realistic dimensions, the actual manager call rate, source-rate
+When benchmarking is warranted by the change, use realistic dimensions, the actual manager call rate, source-rate
 cadence, normal settings, and the worst supported density. Record mean, p95,
 p99, maximum frame time, changed-frame ratio, and behavioral output. A passing
 p95 can coexist with severe semantic-tick spikes, so report and investigate p99
@@ -431,7 +441,7 @@ event spikes are excessive.
 
 For visual-only effects, render representative frames or short clips when tooling exists and inspect them. For a large preset family, build a labeled contact sheet covering every preset at the real aspect ratio; check legibility, clipping, blank outputs, unwanted repetition, and whether variants differ structurally. Do not substitute code review for visual verification.
 
-Benchmark cached/default and animated/stress paths separately. A default clock
+When benchmarking, measure cached/default and animated/stress paths separately. A default clock
 may look exceptionally cheap because repeated frames are correctly unchanged;
 that number does not characterize aurora, particles, glow, maximum density, or
 other continuously rendered variants.

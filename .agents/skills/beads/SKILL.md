@@ -9,11 +9,7 @@ Use Beads as the durable project state. Keep implementation, coordination, block
 
 ## First Step
 
-Run:
-
-```bash
-bd prime
-```
+Run `bd prime` when session context is missing or stale. Reuse context already loaded in this session; do not repeat it for each scoped follow-up.
 
 If it prints nothing, run `bd where`.
 
@@ -23,6 +19,12 @@ If it prints nothing, run `bd where`.
 - When the user says `start`, run the repository's Beads Autopilot contract from `AGENTS.md`. `resume` and `keep going` continue it. `stop` quiesces it.
 
 The `start` command is explicit authority for local Beads mutations, local worktrees and branches, model-directed subagents, local commits, serial integration, and continued dispatch during the session. It is not authority to push, squash to `main`, operate hardware, deploy destructively, or make a new product decision.
+
+## Small fixes
+
+Apply [AGENTS.md — Small-fix fast path](../../../AGENTS.md#small-fix-fast-path) before choosing agents or worktrees. The coordinator handles understood local corrections directly; a clear accepted leaf does not need a steward or separate implementation worker. Ordinary scoped requests use the compact workflow, without a full backlog/wave refresh. This changes process, not permissions.
+
+Preserve independent acceptance for visible behavior and stronger review for shared contracts/live-state integrity. For a small visible fix, use one focused Sol/medium review of the exact candidate and decisive regression; routine documentation/mechanical edits can be coordinator-reviewed. Browser and benchmark work require the triggers in AGENTS.md. Record checks once against the candidate and reuse them unless relevant code, base, environment, or evidence changes.
 
 ## Autopilot Startup
 
@@ -41,7 +43,7 @@ Do not require a perfect execution card. A dispatchable leaf needs clear enough 
 
 ## Model Roles
 
-Use [AGENTS.md — Model selection](../../../AGENTS.md#model-selection) as the authoritative routing policy. The coordinator defaults to Astra/high; route bounded implementation to Terra/high, complex work to Sol/high, and the hardest reasoning to Astra/high. Luna/low or medium is only for mechanical work with objective results. Follow that policy's escalation, supported-effort, and context-handoff rules rather than hard-coding all workers to one model. Small scoped requests do not need delegation.
+Use [AGENTS.md — Model selection](../../../AGENTS.md#model-selection) as the authoritative routing policy. The coordinator handles small fixes directly. When delegation adds value, route bounded implementation to Terra/medium (low for straightforward corrections), complex work to Sol/high, and the hardest reasoning to Astra/high. Luna/low or medium is only for mechanical work with objective results. Follow that policy's escalation, supported-effort, and context-handoff rules rather than hard-coding all workers to one model. Small scoped requests do not need delegation.
 
 Implementation workers:
 
@@ -53,12 +55,12 @@ Implementation workers:
 Portfolio steward:
 
 - Use at most one; default to Sol/high and escalate to Astra/high for unresolved cross-cutting constraints.
-- Follow AGENTS.md's steward cadence: before dispatch when the wave is missing/stale, after a batch of up to 15 selected Beads, or earlier on its stall, dependency, or state-drift triggers.
+- Use a steward for unresolved portfolio ambiguity or useful multi-workstream planning. At batch boundaries, assess the need; stale metadata alone does not trigger an agent.
 - Keep the review bounded and normally Beads-only. Prepare or repair at most 15 leaves in dependency-ordered waves, clarify from accepted decisions, and leave a short epic comment. Only the current runnable wave receives `worktree-ready`; later waves remain unclaimed.
 
 Independent acceptance:
 
-- Use a separate reviewer in an isolated worktree before integration when AGENTS.md requires it. Default to Sol/high for ordinary user-visible acceptance and bounded modernization evidence; use Astra/high for shared Scene/schema, compositor/protocol, safety/data integrity, and risky live-state changes.
+- Use a separate reviewer in an isolated worktree before integration when AGENTS.md requires it. Use Sol/medium for focused small-fix review and Sol/high for new visible features or modernization evidence; use Astra/high for shared Scene/schema, compositor/protocol, safety/data integrity, and risky live-state changes.
 - A stronger implementation model does not waive independent review. Apply the existing demo-blocker threshold and record lesser findings as follow-up Beads.
 - Keep one coordinator, at most two implementation workers, and at most one steward or reviewer within the four-agent limit.
 
@@ -66,9 +68,9 @@ Independent acceptance:
 
 Claim immediately before launch. Never overlap exact conflict domains or shared generated-output ownership. The coordinator keeps the integration branch and merge slot.
 
-For ordinary leaves, validation is changed-language syntax or lint, focused tests, and `git diff --check`. Add one adjacent regression only for a shared contract and one browser smoke only at a user-visible browser boundary. Reserve broad suites for release or hardware boundaries.
+For ordinary code leaves, use changed-language syntax/lint, focused regression and relevant adjacent tests, and `git diff --check`. Documentation edits need consistency checks. Follow AGENTS.md for browser and benchmark triggers; do not turn a local correction into an evidence program. Reserve broad suites for release or cross-cutting risk.
 
-When a worker finishes: inspect its handoff, obtain required independent acceptance, acquire the merge slot, rebase onto the current integration tip, rerun focused checks, fast-forward merge, record the integrated SHA, close the Bead, release the slot, clean the merged worktree, and refill the free implementation slot. Continue until stopped, genuinely blocked, or new authority is required.
+When a worker finishes: inspect its handoff, obtain required independent acceptance, acquire the merge slot, rebase onto the recorded current integration tip, rerun affected checks only if the tested candidate or relevant environment changed, fast-forward merge, record the integrated SHA, close the Bead, release the slot, clean the merged worktree, and refill the free implementation slot. Continue until stopped, genuinely blocked, or new authority is required.
 
 On `stop`, interrupt workers, wait for the live tree to empty, release the merge slot, reconcile every `in_progress` Bead, and preserve dirty or unmerged worktrees.
 
