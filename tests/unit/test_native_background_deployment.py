@@ -562,6 +562,39 @@ class NativeRuntimeCommandTests(unittest.TestCase):
         self.assertEqual(observed[1][1]["method"], "POST")
         self.assertIn(self.bundle, observed[1][0])
 
+    def test_install_receipt_works_while_python_scene_remains_active(self):
+        telemetry = self.operations_telemetry(state="ready")
+        driver = telemetry["receiver_native"]["driver"]
+        self.assertEqual(
+            [(d["logical_device"], d["global_strip_offset"]) for d in driver["capability_report"]["devices"]],
+            [(0, 0), (1, 8), (2, 16), (3, 24), (4, 32)],
+        )
+        telemetry["receiver_native"] = None
+        telemetry["diagnostics"]["driver_stats"] = {"aggregate": {"native_background": driver}}
+        telemetry["qualification"]["scene"] = {"provider_mode": "python_host"}
+        with mock.patch.object(native_entrypoint, "_api_json", return_value=telemetry):
+            status = native_entrypoint._wait_native_command(
+                "wall@example.invalid", 7, bundle_digest=self.bundle,
+                payload_digest=self.payload, expected_state="ready",
+                expected_operation="install", timeout=.2,
+            )
+        self.assertEqual(status["receiver_hybrid"]["driver"]["state"], "ready")
+        self.assertNotIn("healthy", status["receiver_hybrid"])
+        self.assertIsNotNone(native_entrypoint._native_command_status_error(
+            status, bundle_digest=self.bundle, payload_digest=self.payload,
+            expected_state="active", expected_operation="activate",
+        ))
+        driver.update(state="degraded", error="receiver 0 preflight was not acknowledged")
+        with mock.patch.object(native_entrypoint, "_api_json", return_value=telemetry), \
+             mock.patch.object(native_entrypoint.time, "sleep") as sleep, \
+             self.assertRaisesRegex(native_entrypoint.NativeBackgroundWorkflowError, "receiver 0 preflight"):
+            native_entrypoint._wait_native_command(
+                "wall@example.invalid", 7, bundle_digest=self.bundle,
+                payload_digest=self.payload, expected_state="ready",
+                expected_operation="install", timeout=.2,
+            )
+        sleep.assert_not_called()
+
     def test_start_rejects_before_any_target_request(self):
         api = mock.Mock()
         with mock.patch.object(native_entrypoint, "_api_json", api), self.assertRaisesRegex(

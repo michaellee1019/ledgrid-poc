@@ -81,8 +81,8 @@ NATIVE_RECEIPT_DIRECTORY = DEFAULT_LOCAL_RECEIPTS.parent / "native-receipts"
 FINALIZED_NATIVE_TOPOLOGY = {
     0: (8, 0, False),
     1: (8, 8, False),
-    2: (8, 24, True),
-    3: (8, 16, True),
+    2: (8, 16, True),
+    3: (8, 24, True),
     4: (1, 32, False),
 }
 PACKAGE_GLOBAL_INPUTS = (
@@ -842,6 +842,19 @@ def _wait_native_command(
             timeout=min(timeout, 10.0),
         )
         status = _native_operations_status(telemetry)
+        receiver = status.get("receiver_hybrid")
+        driver = receiver.get("driver") if isinstance(receiver, Mapping) else None
+        if (
+            status.get("last_command_id") == command_id
+            and isinstance(driver, Mapping)
+            and driver.get("operation") == expected_operation
+            and driver.get("bundle_digest") == bundle_digest
+            and driver.get("payload_digest") == payload_digest
+            and driver.get("error")
+        ):
+            raise NativeBackgroundWorkflowError(
+                f"native {expected_operation} failed: {driver['error']}"
+            )
         if (
             status.get("last_command_id") == command_id
             and _native_command_status_error(
@@ -879,11 +892,21 @@ def _native_operations_status(telemetry: Mapping[str, Any]) -> dict[str, Any]:
         raise NativeBackgroundWorkflowError(
             "target operations telemetry is incomplete"
         )
+    receiver = telemetry.get("receiver_native")
+    driver_stats = diagnostics.get("driver_stats")
+    aggregate = driver_stats.get("aggregate") if isinstance(driver_stats, Mapping) else None
+    native_driver = aggregate.get("native_background") if isinstance(aggregate, Mapping) else None
+    if isinstance(native_driver, Mapping):
+        # Install/probe operations do not change Python display ownership. The
+        # driver's operation receipt remains authoritative in that mode; do
+        # not synthesize active-scene health or agreement from it.
+        receiver = {**(dict(receiver) if isinstance(receiver, Mapping) else {}),
+                    "driver": dict(native_driver)}
     return {
         **dict(controller),
         **dict(qualification),
-        "driver_stats": diagnostics.get("driver_stats"),
-        "receiver_hybrid": telemetry.get("receiver_native"),
+        "driver_stats": driver_stats,
+        "receiver_hybrid": receiver,
         "installation_profile_digest": (
             telemetry.get("calibration", {}).get("installation_profile_digest")
             if isinstance(telemetry.get("calibration"), Mapping) else None
