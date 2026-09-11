@@ -3,3 +3,4 @@
 managed_components/
 sdkconfig.*
 !sdkconfig.defaults
+!sdkconfig.native.defaults

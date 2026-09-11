@@ -1,0 +1,7 @@
+# The production receiver keeps the ELF loader disabled in sdkconfig.defaults.
+# Only the explicit native-module canary environment opts into executable
+# modules and places their code/data in the installed octal PSRAM.
+CONFIG_ELF_LOADER=y
+CONFIG_ELF_DYNAMIC_LOAD_SHARED_OBJECT=y
+CONFIG_ELF_FILE_SYSTEM_BASE_PATH="/profilecache"
+CONFIG_ELF_LOADER_LOAD_PSRAM=y
