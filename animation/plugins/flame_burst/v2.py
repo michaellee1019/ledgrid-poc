@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from threading import Lock
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -29,6 +30,7 @@ class FlameBurstAnimation(AnimationBase):
         self._x = np.linspace(-1., 1., self.width, dtype=np.float32)[:, None]; self._y = np.linspace(-1., 1., self.height, dtype=np.float32)[None, :]
         self._last_tick: int | None = None; self._last_render_key: tuple[Any, ...] | None = None; self._presentation_context: ResolvedScene | None = None; self._presentation_only_refresh = False; self._rng = np.random.default_rng(self.params["seed"])
         self._ignitions: list[tuple[float,float,float,float]] = []; self._cadence_phase, self._manual_events, self._last_manual_tick = 1., 0, -9999
+        self._interaction_lock = Lock(); self._pending_ignition: tuple[float, float, float] | None = None
 
     @classmethod
     def component_descriptor(cls) -> ComponentDescriptor: return cls.COMPONENT_DESCRIPTOR
@@ -46,10 +48,13 @@ class FlameBurstAnimation(AnimationBase):
     def set_presentation_context(self, context: ResolvedScene) -> None: self.on_presentation_context_changed(self._presentation_context, context)
     def render_resolved_scene(self, context: ResolvedScene) -> OverlayFrame: self.set_presentation_context(context); return self.generate_frame(context.phase_time, self.frame_count)
     def handle_interaction(self, kind: str, x: float, y: float, strength: float = 1.) -> bool:
-        if kind != "primary" or not all(isinstance(v,(int,float)) and math.isfinite(float(v)) for v in (x,y,strength)) or not 0. <= x < self.width or not 0. <= y < self.height or not 0. < strength <= 1.: return False
-        tick = -1 if self._last_tick is None else self._last_tick
-        if tick-self._last_manual_tick < int(self.SIM_HZ/5): return False
-        self._last_manual_tick=tick; self._manual_events+=1; self._ignite(float(x)/max(1,self.width-1)*2-1,float(y)/max(1,self.height-1)*2-1,.7+.3*float(strength)); self._last_render_key=None; return True
+        if kind != "primary" or not all(not isinstance(v, bool) and isinstance(v,(int,float)) and math.isfinite(float(v)) for v in (x,y,strength)) or not 0. <= x < self.width or not 0. <= y < self.height or not 0. < strength <= 1.: return False
+        ignition = (float(x) / max(1, self.width - 1) * 2 - 1, float(y) / max(1, self.height - 1) * 2 - 1, .7 + .3 * float(strength))
+        with self._interaction_lock:
+            tick = -1 if self._last_tick is None else self._last_tick
+            if tick-self._last_manual_tick < int(self.SIM_HZ/5) or self._pending_ignition is not None: return False
+            self._last_manual_tick = tick; self._pending_ignition = ignition
+        return True
     def generate_frame(self, time_elapsed: float, frame_count: int) -> OverlayFrame:
         del frame_count
         phase_time,palette,values=(max(0.,float(time_elapsed)),"neutral",self.params) if self._presentation_context is None else (max(0.,float(self._presentation_context.phase_time)),str(self._presentation_context.palette["palette_id"]),self._presentation_context.parameters)
@@ -67,11 +72,17 @@ class FlameBurstAnimation(AnimationBase):
         self._paint(palette); self._last_render_key=key; return OverlayFrame(self._pixels,revision=self._last_tick or 0,changed=True)
     def cadence_snapshot(self) -> Mapping[str,Any]: return MappingProxyType({"simulation_hz":self.SIM_HZ,"tick":self._last_tick,"active_ignitions":len(self._ignitions),"manual_ignitions":self._manual_events})
     def get_runtime_stats(self) -> dict[str,Any]: return dict(self.cadence_snapshot())
-    def _reset(self) -> None: self._rng=np.random.default_rng(self.params["seed"]); self._ignitions.clear(); self._cadence_phase=1.; self._last_tick=None; self._last_manual_tick=-9999
+    def _reset(self) -> None:
+        self._rng=np.random.default_rng(self.params["seed"]); self._ignitions.clear(); self._cadence_phase=1.; self._last_tick=None; self._last_manual_tick=-9999; self._manual_events=0
+        with self._interaction_lock: self._pending_ignition = None
     def _ignite(self,x:float|None=None,y:float|None=None,energy:float=1.) -> None:
         if x is None: x,y=float(self._rng.uniform(-.78,.78)),float(self._rng.uniform(-.58,.58))
         self._ignitions.append((float(x),float(y),0.,float(energy))); self._ignitions=self._ignitions[-self.MAX_IGNITIONS:]
     def _step(self) -> None:
+        with self._interaction_lock:
+            ignition, self._pending_ignition = self._pending_ignition, None
+        if ignition is not None:
+            self._ignite(*ignition); self._manual_events += 1
         self._cadence_phase+=self.params["ignition_cadence"]/self.SIM_HZ
         if self._cadence_phase>=1.: self._cadence_phase-=1.; self._ignite()
         life=.32+self.params["ember_linger"]*1.5; self._ignitions=[(x,y,age+1./self.SIM_HZ,e) for x,y,age,e in self._ignitions if age+1./self.SIM_HZ<life]

@@ -1,5 +1,5 @@
 {
-  "cacheVersion": "g-3120389dd474238a0f92",
+  "cacheVersion": "g-c658079b752f2f1a8b93",
   "capturedAssets": [
     "/composer"
   ],
@@ -31,7 +31,7 @@
     },
     {
       "bytes": 501786,
-      "sha256": "05e84f121e5d0aa2ee45f7005cda38d483c9169baf93c85de36cd13c70a57deb",
+      "sha256": "010a1d7c3631ea06f5b9569cbb8ad90a42c6a53cbbf16170e6f39799a4bb4988",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
@@ -45,13 +45,13 @@
       "url": "/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
     },
     {
-      "bytes": 2383208,
-      "sha256": "7bdea7234a8e2dc94268d6fe546a77dbd561b783982d6ba15888df724c1ab50b",
+      "bytes": 2383328,
+      "sha256": "9961308f13737f7c82fe7018afed21c037edc727a091cc2cba1092aa88ddeadc",
       "url": "/static/generated/composer/ledgrid_python_runtime.zip"
     },
     {
       "bytes": 1490,
-      "sha256": "ecb7fcbf39f3138f3c5b1c95fd23bb10ff0f074b315bb121362008f9ac3a31d9",
+      "sha256": "aab0d5e14eecc617c0d7646e270d30e0ad4bb007198eaca7cf46cb16d3db4d9f",
       "url": "/static/generated/composer/service_worker_config.v1.js"
     },
     {
@@ -115,7 +115,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "g-81e796ea052309ac9915",
+  "previousCacheVersion": "g-3120389dd474238a0f92",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",

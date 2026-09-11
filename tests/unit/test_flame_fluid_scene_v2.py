@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import unittest
 from pathlib import Path
@@ -67,6 +68,48 @@ class FlameFluidSceneV2Tests(unittest.TestCase):
             varied.generate_frame(0., 0)
             changed = varied.generate_frame(4.5, 91).pixels
             self.assertFalse(np.array_equal(frames[-1], changed))
+
+    def test_flame_primary_is_queued_until_the_next_semantic_step(self) -> None:
+        flame = FlameBurstAnimation(self.controller, {"seed": 77, "ignition_cadence": .12})
+        initial = flame.generate_frame(0., 0)
+        before = (
+            tuple(flame._ignitions), flame._rng.bit_generator.state,
+            flame.cadence_snapshot(), flame._last_render_key,
+            hashlib.sha256(initial.pixels.tobytes()).hexdigest(),
+        )
+        self.assertTrue(flame.handle_interaction("primary", 8., 60., 1.))
+        self.assertFalse(flame.handle_interaction("primary", 8., 60., 1.))
+        self.assertFalse(flame.handle_interaction("secondary", 8., 60., 1.))
+        self.assertFalse(flame.handle_interaction("primary", 33., 60., 1.))
+        self.assertFalse(flame.handle_interaction("primary", 8., 138., 1.))
+        self.assertFalse(flame.handle_interaction("primary", 8., 60., float("nan")))
+        same_tick = flame.generate_frame(0., 1)
+        after_queue = (
+            tuple(flame._ignitions), flame._rng.bit_generator.state,
+            flame.cadence_snapshot(), flame._last_render_key,
+            hashlib.sha256(same_tick.pixels.tobytes()).hexdigest(),
+        )
+        self.assertEqual(before, after_queue)
+        self.assertFalse(same_tick.changed)
+        next_tick = flame.generate_frame(1. / flame.SIM_HZ, 2)
+        self.assertTrue(next_tick.changed)
+        self.assertEqual(flame.cadence_snapshot()["manual_ignitions"], 1)
+        self.assertIn((8. / 32. * 2 - 1, 60. / 137. * 2 - 1, 1. / flame.SIM_HZ, 1.), tuple(flame._ignitions))
+        repeated = flame.generate_frame(1. / flame.SIM_HZ, 3)
+        self.assertFalse(repeated.changed)
+        self.assertEqual(flame.cadence_snapshot()["manual_ignitions"], 1)
+
+    def test_flame_no_input_seeded_runs_remain_identical_for_240_ticks(self) -> None:
+        left = FlameBurstAnimation(self.controller, {"seed": 77})
+        right = FlameBurstAnimation(self.controller, {"seed": 77})
+        for tick in range(241):
+            left_frame = left.generate_frame(tick / left.SIM_HZ, tick)
+            right_frame = right.generate_frame(tick / right.SIM_HZ, tick)
+            np.testing.assert_array_equal(left_frame.pixels, right_frame.pixels)
+            self.assertEqual(tuple(left._ignitions), tuple(right._ignitions))
+            self.assertEqual(left._rng.bit_generator.state, right._rng.bit_generator.state)
+            self.assertEqual(left.cadence_snapshot(), right.cadence_snapshot())
+            self.assertEqual(left._last_render_key, right._last_render_key)
 
     def test_local_remix_keeps_hidden_seed_and_selected_only_contract(self) -> None:
         catalog = ComponentPresetCatalog(ROOT, {"flame_burst": FlameBurstAnimation._normalized_parameters, "fluid_tank": FluidTankAnimation._normalized_parameters})
