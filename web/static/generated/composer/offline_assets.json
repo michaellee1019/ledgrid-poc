@@ -1,5 +1,5 @@
 {
-  "cacheVersion": "g-dc47575e3d255881bc9f",
+  "cacheVersion": "g-04526bfc4857acc70638",
   "capturedAssets": [
     "/composer"
   ],
@@ -30,8 +30,8 @@
       "url": "/static/generated/composer/aurora_curtains_native.wasm"
     },
     {
-      "bytes": 510143,
-      "sha256": "010bf0baf2a5c7bfe94f66580e3c4a69bb3ccb9746c28a64ae7b33b009d7e8f5",
+      "bytes": 510305,
+      "sha256": "00c93f8b4d8d4fff5490b0852249c43dda83cc1554dbd454a4f5698436b8c3f3",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
@@ -56,7 +56,7 @@
     },
     {
       "bytes": 1538,
-      "sha256": "57874d6890edf56a6a146bfa68c45b0778419e6bf93b897139f29f565b772c7c",
+      "sha256": "5868d3ccff86d446f09ce04454df31add7251da7077548f4ee06ad33403a0010",
       "url": "/static/generated/composer/service_worker_config.v1.js"
     },
     {
@@ -120,7 +120,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "g-d4dbb5f0c6f925a7d6aa",
+  "previousCacheVersion": "g-dc47575e3d255881bc9f",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",
