@@ -463,6 +463,11 @@ class ReceiverHybridSceneManagerTests(unittest.TestCase):
                 self.assertFalse(receiver["healthy"])
                 self.assertTrue(receiver["fallback_active"])
                 self.assertIn("not acknowledged", receiver["error"])
+                if behavior == "snapshot":
+                    self.assertIn(
+                        "initial sparse snapshot disagreement", receiver["error"]
+                    )
+                    self.assertIn("foreground_publish_failed", receiver["error"])
                 self.assertEqual(_ClockOverlay.instances[-1].cleanups, 1)
 
     def test_status_reports_healthy_agreement_and_failed_renewal_degradation(self):

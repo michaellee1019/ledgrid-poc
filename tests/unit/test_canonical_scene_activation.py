@@ -43,8 +43,10 @@ class _Transport(_Controller):
     def __init__(self):
         super().__init__()
         self.reject_next = False
+        self.reject_sparse_next = False
         self.corrupt_next = None
         self.foreground = None
+        self.sparse_status = {}
         self.profile_wall = FakeInstallationProfileWall(capacity_bytes=1024*1024)
 
     def installation_profile_wall(self):
@@ -70,7 +72,24 @@ class _Transport(_Controller):
 
     def publish_sparse_overlay(self, pixels, **fields):
         self.foreground = pixels.copy()
+        if self.reject_sparse_next:
+            self.reject_sparse_next = False
+            self.sparse_status = {
+                'state': 'foreground_cleared',
+                'operation': 'foreground_publish_failed',
+                'error': (
+                    'receiver 1 did not acknowledge foreground commit 0x32; '
+                    'sequence 1712, expected 1713'
+                ),
+                'cleanup_errors': [],
+            }
+            return False
         return super().publish_sparse_overlay(pixels, **fields)
+
+    def get_stats(self):
+        stats = super().get_stats()
+        stats['aggregate']['local_background'] = dict(self.sparse_status)
+        return stats
 
 
 class _Channel(LocalControlChannel):
@@ -380,6 +399,36 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertIn('payload_digest', failed_receipt['error'])
         self.assertEqual(self.manager.get_scene_state(),scene)
         self.assertEqual(failed_receipt['observed_identity'],receipt['observed_identity'])
+
+    def test_sparse_snapshot_failure_receipt_retains_exact_driver_operation(self):
+        _, _, prior = self.activate(self.scene)
+        candidate = deepcopy(self.scene)
+        candidate['look']['pace'] = .91
+        request, checked = self.check(candidate)
+        self.controller.reject_sparse_next = True
+        failed = {
+            **request,
+            'check_token': checked['check_token'],
+            'expected_controller_session_id': checked['basis']['controller']['session_id'],
+            'expected_controller_state_revision': checked['basis']['controller']['state_revision'],
+        }
+
+        response = self.client.put(
+            '/api/v1/scene',
+            json=failed,
+            headers={'Idempotency-Key': checked['basis_digest']},
+        )
+        receipt = self.channel.read_activation_status(
+            response.get_json()['activation_id']
+        )
+
+        self.assertEqual(receipt['phase'], 'rolled_back', receipt)
+        self.assertIn('foreground_publish_failed', receipt['error'])
+        self.assertIn('receiver 1', receipt['error'])
+        self.assertIn('commit 0x32', receipt['error'])
+        self.assertIn('sequence 1712, expected 1713', receipt['error'])
+        self.assertEqual(receipt['observed_identity'], prior['observed_identity'])
+        self.assertEqual(self.manager.get_scene_state(), self.scene)
 
     def test_saved_canonical_scene_roundtrip_and_stale_native_identity_preserve_bytes(self):
         _,_,receipt=self.activate(self.scene)

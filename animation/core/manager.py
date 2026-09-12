@@ -2260,7 +2260,15 @@ class AnimationManager(CanonicalReceiverSceneMixin):
             if not self._publish_receiver_foreground(
                 foreground, scene_time_us=0, now=self.start_time
             ):
-                raise RuntimeError("initial sparse foreground snapshot was not acknowledged")
+                # The publisher captured the aggregate driver operation before
+                # compensation and host takeover replace live controller
+                # status.  Preserve that exact failed command and receiver
+                # evidence in the guarded activation receipt.
+                sparse_status = publisher.get_status()
+                raise RuntimeError(
+                    "initial sparse foreground snapshot was not acknowledged: "
+                    + repr(sparse_status)
+                )
             with self._presentation_state_guard():
                 resolved = self._resolved_vibe
             preview = self._receiver_preview_frame(
