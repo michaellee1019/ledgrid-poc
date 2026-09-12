@@ -24,6 +24,12 @@ int esp_elf_relocate(esp_elf_t*, const std::uint8_t*);
 void esp_elf_deinit(esp_elf_t*);
 '''
 
+LOG_HEADER = r'''
+#pragma once
+void test_log(const char*, const char*, ...) __attribute__((format(printf, 2, 3)));
+#define ESP_LOGE(tag, ...) test_log(tag, __VA_ARGS__)
+'''
+
 HARNESS = r'''
 #include <cassert>
 #include <cstdio>
@@ -31,13 +37,27 @@ HARNESS = r'''
 #include <cstring>
 #include <string>
 #include <new>
+#include <cerrno>
+#include <cstdarg>
+#include <vector>
 #include "esp_elf.h"
 #include "ledgrid/esp_native_module.hpp"
 #include "ledgrid/native_module_filesystem.hpp"
 
 static std::string directory, opened_name;
 static int opens, closes, inits, relocates, deinits, failure, entry_calls;
-static bool missing_symbol;
+static bool missing_symbol, null_api;
+static std::vector<std::string> logs;
+void test_log(const char* tag, const char* format, ...) {
+  assert(std::strcmp(tag, "native-loader") == 0);
+  char message[512]; va_list args; va_start(args,format);
+  std::vsnprintf(message,sizeof(message),format,args); va_end(args);
+  logs.emplace_back(message);
+}
+static bool logged(const char* expected) {
+  for (const auto& message : logs) if (message.find(expected) != std::string::npos) return true;
+  return false;
+}
 void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
   if (failure == 4) return nullptr;
   try { return ::operator new(size); } catch (...) { return nullptr; }
@@ -47,7 +67,7 @@ static int context(void*, const ledgrid_native_context_v2*) { return 0; }
 static int render(void*, const ledgrid_native_render_request_v2*, ledgrid_native_render_result_v2*) { return 0; }
 static int cleanup(void*) { return 0; }
 static ledgrid_native_background_api_v2 api{2, sizeof(api), 8, 8, initialize, context, render, cleanup};
-static const ledgrid_native_background_api_v2* entrypoint() { ++entry_calls; return &api; }
+static const ledgrid_native_background_api_v2* entrypoint() { ++entry_calls; return null_api ? nullptr : &api; }
 static esp_symtab_t symbols[2];
 int esp_elf_open(elf_file_t* file, const char* name) {
   ++opens; opened_name = name;
@@ -57,20 +77,20 @@ int esp_elf_open(elf_file_t* file, const char* name) {
   auto* source = std::fopen(path.c_str(), "rb");
   if (!source) return -1;
   std::fclose(source);
-  if (failure == 1) return -1;
+  if (failure == 1) { errno=EIO; return -11; }
   file->payload = static_cast<std::uint8_t*>(std::malloc(1));
   file->payload[0] = 42; file->size = 1;
   return 0;
 }
 void esp_elf_close(elf_file_t* file) { ++closes; std::free(file->payload); file->payload = nullptr; }
-int esp_elf_init(esp_elf_t* module) { ++inits; *module = {}; return failure == 2 ? -1 : 0; }
+int esp_elf_init(esp_elf_t* module) { ++inits; *module = {}; return failure == 2 ? -22 : 0; }
 int esp_elf_relocate(esp_elf_t* module, const std::uint8_t* bytes) {
   ++relocates; assert(bytes && bytes[0] == 42);
   symbols[0] = {nullptr, nullptr};
   symbols[1] = {reinterpret_cast<void*>(entrypoint), const_cast<char*>(
       missing_symbol ? "wrong_entrypoint" : LEDGRID_NATIVE_BACKGROUND_ENTRYPOINT_V2)};
   module->num = 2; module->symtab = symbols;
-  return failure == 3 ? -1 : 0;
+  return failure == 3 ? -33 : 0;
 }
 void esp_elf_deinit(esp_elf_t* module) { ++deinits; *module = {}; }
 // The production load/resolve/unload definitions are compiled separately.
@@ -99,13 +119,20 @@ int main(int argc, char** argv) {
       "/profilecache/n"+std::string(63,'a')+".bin", std::string("/profilecache/")}) {
     ledgrid::EspNativeModuleBackend backend;
     assert(!backend.load(bad.c_str())); assert(opens == 0);
+#ifndef TEST_ROOT_MISMATCH
+    assert(logged("invalid managed payload path"));
+#endif
+    // Unvalidated paths must never be copied to diagnostic output.
+    for (const auto& message : logs) assert(message.find(bad) == std::string::npos);
+    logs.clear();
   }
 #ifdef TEST_ROOT_MISMATCH
   ledgrid::EspNativeModuleBackend backend;
   assert(!backend.load(path.c_str())); assert(opens == 0);
+  assert(logged("load root mismatch: configured=/wrong-cache expected=/profilecache"));
 #else
   for (int stage : {1,2,3,4,0}) {
-    opens=closes=inits=relocates=deinits=entry_calls=0; failure=stage;
+    opens=closes=inits=relocates=deinits=entry_calls=0; failure=stage; logs.clear();
     ledgrid::EspNativeModuleBackend backend;
     assert(backend.load(path.c_str()) == (stage == 0));
     assert(opened_name == name && std::string("/profilecache/")+opened_name == path);
@@ -113,12 +140,19 @@ int main(int argc, char** argv) {
     assert(inits == (stage == 1 || stage == 4 ? 0 : 1));
     assert(relocates == (stage == 1 || stage == 2 || stage == 4 ? 0 : 1));
     assert(deinits == (stage == 3 ? 1 : 0));
+    if (stage == 1) { assert(logged("load open failed:")); assert(logged("rc=-11 errno=")); }
+    if (stage == 2) { assert(logged("load init failed:")); assert(logged("rc=-22")); }
+    if (stage == 3) { assert(logged("load relocate failed:")); assert(logged("rc=-33")); }
+    if (stage == 4) assert(logged("load allocation failed:"));
+    if (stage == 0) assert(logs.empty());
     if (stage) {
       assert(!backend.resolve_entrypoint());
       failure=0; assert(backend.load(path.c_str()));
     }
     assert(!backend.load(path.c_str()));
+    logs.clear();
     assert(backend.resolve_entrypoint() && entry_calls == 1);
+    assert(logs.empty());
     assert(!backend.resolve_entrypoint());
     const int before=deinits;
     assert(backend.unload()); assert(deinits == before+1);
@@ -127,9 +161,18 @@ int main(int argc, char** argv) {
   }
   for (bool absent : {true,false}) {
     ledgrid::EspNativeModuleBackend backend;
-    missing_symbol=absent; api.abi_version=absent ? 2 : 99;
+    missing_symbol=absent; api.abi_version=absent ? 2 : 99; logs.clear();
     assert(backend.load(path.c_str())); assert(!backend.resolve_entrypoint());
+    assert(logged(absent ? "entrypoint absent:" : "entrypoint ABI rejected: abi=99"));
     assert(backend.unload());
+  }
+#endif
+#ifndef TEST_ROOT_MISMATCH
+  {
+    ledgrid::EspNativeModuleBackend backend;
+    missing_symbol=false; null_api=true; logs.clear();
+    assert(backend.load(path.c_str())); assert(!backend.resolve_entrypoint());
+    assert(logged("entrypoint returned null:"));
   }
 #endif
   std::remove(stored.c_str());
@@ -144,6 +187,7 @@ class EspNativeLoaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             (directory / "esp_elf.h").write_text(ELF_HEADER)
+            (directory / "esp_log.h").write_text(LOG_HEADER)
             (directory / "harness.cpp").write_text(HARNESS)
             sources = ROOT / "firmware/esp32/src"
             for mismatch in (False, True):
