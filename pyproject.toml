@@ -17,6 +17,7 @@ dependencies = [
 [dependency-groups]
 test = [
     "pytest>=8.4.2,<10",
+    "pyyaml>=6,<7",
 ]
 calibration = [
     "opencv-python-headless>=4.10,<5",
