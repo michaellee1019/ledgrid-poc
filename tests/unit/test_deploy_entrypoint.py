@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 from typing import Any, Mapping
@@ -35,6 +36,10 @@ from tools.deployment.deploy_coordinator import (
     FULL_STEP_ORDER,
     ROLLBACK_STEP_ORDER,
     SSHAtomicJSONReceiptStore,
+)
+from tools.deployment.native_preview_identity import (
+    NATIVE_AURORA_BUNDLE_DIGEST,
+    NATIVE_AURORA_COMPONENT_ID,
 )
 from tools.deployment.receiver_hybrid_config import (
     DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
@@ -261,8 +266,8 @@ class _FakeTarget:
             return {"release_id": self.candidate, "reused": self.unchanged}
         if command == "build-native-host-preview":
             return {
-                "plugin_id": "native_aurora",
-                "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+                "plugin_id": NATIVE_AURORA_COMPONENT_ID,
+                "bundle_digest": NATIVE_AURORA_BUNDLE_DIGEST,
                 "reused": self.unchanged,
             }
         if command == "cleanup-snapshot":
@@ -4383,6 +4388,111 @@ class CoordinatorDeploymentGateTests(unittest.TestCase):
                     ("just", "deploy-precheck"), cwd=ROOT,
                 )
 
+    def test_direct_script_stage_uses_dependency_free_native_identity(self):
+        probe = textwrap.dedent(
+            """
+            import json
+            from pathlib import Path
+            import runpy
+            from types import SimpleNamespace
+            import sys
+
+            entrypoint = Path(sys.argv[1]).resolve()
+            repo_root = Path(sys.argv[2]).resolve()
+            sys.path.insert(0, str(entrypoint.parent))
+            loaded = runpy.run_path(str(entrypoint), run_name="_direct_deploy_entrypoint")
+
+            class Evidence:
+                path = repo_root
+
+                @staticmethod
+                def to_dict():
+                    return {"snapshot_id": "a" * 64}
+
+            class Target:
+                incoming = "fake-root/.incoming/direct-script"
+
+                def __init__(self):
+                    self.calls = []
+                    self._helper_path = None
+
+                def run(self, command, *args):
+                    self.calls.append((command, args))
+                    if command == "stage-support":
+                        return {"support_release_id": None}
+                    if command == "stage-app":
+                        return {"release_id": "b" * 64}
+                    if command == "build-native-host-preview":
+                        return {
+                            "plugin_id": args[3],
+                            "bundle_digest": args[5],
+                            "reused": True,
+                        }
+                    if command == "cleanup-snapshot":
+                        return {"removed": True}
+                    raise AssertionError(command)
+
+            target = Target()
+            deployment = object.__new__(loaded["CoordinatorDeployment"])
+            deployment.config = SimpleNamespace(
+                target="fake@wall",
+                root=repo_root,
+                ssh_options=(),
+                deploy_dir="fake-root",
+            )
+            deployment.target = target
+            deployment._freeze = lambda _context: Evidence()
+            context = SimpleNamespace(
+                attempt_id="direct-script",
+                state={},
+                command=lambda *_args, **_kwargs: SimpleNamespace(
+                    duration_seconds=0.01
+                ),
+            )
+            result = deployment._stage(context)
+            print(json.dumps({
+                "commands": [command for command, _args in target.calls],
+                "native": context.state["native_host_preview"],
+                "details_native": result.details["native_host_preview"],
+            }, sort_keys=True))
+            """
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    probe,
+                    os.fspath(ROOT / "tools/deployment/deploy_entrypoint.py"),
+                    os.fspath(ROOT),
+                ),
+                cwd=temporary,
+                env={
+                    **os.environ,
+                    "PYTHONPATH": os.fspath(Path(temporary) / "missing"),
+                    "PYTHONNOUSERSITE": "1",
+                },
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(
+            payload["commands"],
+            [
+                "stage-support",
+                "stage-app",
+                "build-native-host-preview",
+                "cleanup-snapshot",
+            ],
+        )
+        self.assertEqual(payload["native"]["plugin_id"], NATIVE_AURORA_COMPONENT_ID)
+        self.assertEqual(
+            payload["native"]["bundle_digest"], NATIVE_AURORA_BUNDLE_DIGEST
+        )
+        self.assertEqual(payload["details_native"], payload["native"])
+
 
 class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -4534,9 +4644,9 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "--snapshot",
                 target.incoming,
                 "--plugin-id",
-                "native_aurora",
+                NATIVE_AURORA_COMPONENT_ID,
                 "--bundle-digest",
-                "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+                NATIVE_AURORA_BUNDLE_DIGEST,
             ),
         )
         self.assertTrue(context.state["native_host_preview"]["reused"])

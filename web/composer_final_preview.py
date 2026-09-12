@@ -76,10 +76,12 @@ from animation.plugins.physarum_network import PhysarumNetworkAnimation
 from animation.plugins.reaction_diffusion_garden import ReactionDiffusionGardenAnimation
 from animation.plugins.wind_in_the_reeds import WindInTheReedsAnimation
 from ipc.scene_contract import CanonicalScene
+from tools.deployment.native_preview_identity import (
+    NATIVE_AURORA_BUNDLE_DIGEST,
+    NATIVE_AURORA_COMPONENT_ID,
+)
 
 
-NATIVE_AURORA_COMPONENT_ID = "native_aurora"
-NATIVE_AURORA_BUNDLE_DIGEST = "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce"
 NATIVE_AURORA_PAYLOAD_DIGEST = "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37"
 NATIVE_AURORA_HOST_ARTIFACT_DIGEST = "a546fc1ff316e0db63316a2ab7512552f986721de1d43a7aa373361cae8f7da0"
 

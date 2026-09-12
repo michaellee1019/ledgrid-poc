@@ -51,6 +51,10 @@ try:
         source_identity,
         working_tree_dirty,
     )
+    from tools.deployment.native_preview_identity import (
+        NATIVE_AURORA_BUNDLE_DIGEST,
+        NATIVE_AURORA_COMPONENT_ID,
+    )
     from tools.deployment.receiver_hybrid_config import (
         DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
         NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
@@ -77,6 +81,10 @@ except ModuleNotFoundError:  # Direct ``python tools/deployment/deploy_entrypoin
         manifest_plan,
         source_identity,
         working_tree_dirty,
+    )
+    from native_preview_identity import (  # type: ignore[no-redef]
+        NATIVE_AURORA_BUNDLE_DIGEST,
+        NATIVE_AURORA_COMPONENT_ID,
     )
     from receiver_hybrid_config import (  # type: ignore[no-redef]
         DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
@@ -712,10 +720,6 @@ class CoordinatorDeployment:
         self.target._helper_path = (
             f"{self.config.deploy_dir}/releases/{release_id}"
             "/tools/deployment/deploy_target.py"
-        )
-        from web.composer_final_preview import (
-            NATIVE_AURORA_BUNDLE_DIGEST,
-            NATIVE_AURORA_COMPONENT_ID,
         )
         native_preview = self.target.run(
             "build-native-host-preview",
