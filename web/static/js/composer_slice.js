@@ -537,7 +537,7 @@
     try {
       const frame = await result;
       if (state.gallery.thumbnails.get(key) !== result) return;
-      state.gallery.thumbnails.set(key, frame);
+      // Keep the shared promise stable while replacement canvases await it.
       drawFrameIntoCanvas(canvas, frame);
       canvas.setAttribute('aria-label', `${entry.name} representative 33 by 138 preview`);
     } catch (_) {
