@@ -219,6 +219,61 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
         completed = subprocess.run(['node', '-e', javascript, selection], capture_output=True, text=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
+    def test_gallery_detail_follows_the_selected_row_and_ignores_stale_presets(self) -> None:
+        script = Path('web/static/js/composer_slice.js').read_text(encoding='utf-8')
+        detail_code = script[
+            script.index('function placeGalleryDetail'):script.index('async function selectGalleryEntry')
+        ]
+        javascript = r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const makeElement = (tag = 'div') => ({
+  tag, className: '', dataset: {}, children: [], hidden: false, textContent: '',
+  setAttribute(key, value) { this[key] = value; },
+  append(...nodes) { this.children.push(...nodes); },
+  replaceChildren(...nodes) { this.children = nodes; },
+  addEventListener() {},
+  after(node) { this.afterNode = node; },
+});
+const detail = makeElement('section');
+const cards = ['early', 'next', 'late'].map((key) => {
+  const card = makeElement(); card.className = 'gallery-card'; card.dataset.galleryKey = key; return card;
+});
+const grid = {querySelectorAll: () => cards};
+const pending = [];
+const context = {
+  state: {gallery: {detail: null, detailToken: 0}}, api: '/api/composer',
+  $: (selector) => selector === '#galleryDetail' ? detail : grid,
+  window: {matchMedia: () => ({matches: false})},
+  document: {createElement: makeElement},
+  fetch: () => new Promise((resolve) => pending.push(resolve)),
+  encodeURIComponent,
+  selectGalleryEntry() {},
+};
+vm.runInNewContext(process.argv[1] + '; this.place = placeGalleryDetail; this.show = showGalleryDetail;', context);
+assert.equal(context.place({key: 'early'}), true);
+assert.equal(cards[1].afterNode, detail, 'desktop detail follows the selected two-card row');
+context.window.matchMedia = () => ({matches: true});
+assert.equal(context.place({key: 'late'}), true);
+assert.equal(cards[2].afterNode, detail, 'phone detail follows the selected one-card row');
+context.show({key: 'early', component_id: 'early', name: 'Early', description: '', available: true, preset_count: 1});
+context.show({key: 'late', component_id: 'late', name: 'Late', description: '', available: true, preset_count: 1});
+pending[1]({ok: true, json: async () => ({presets: [{name: 'Late preset', parameters: {}}]})});
+setImmediate(() => {
+  setImmediate(() => {
+    assert.equal(detail.children[3].children[0].textContent, 'Late preset');
+    pending[0]({ok: true, json: async () => ({presets: [{name: 'Stale early preset', parameters: {}}]})});
+    setImmediate(() => setImmediate(() => {
+      assert.equal(detail.children[3].children[0].textContent, 'Late preset', 'stale presets cannot replace the newest detail');
+    }));
+  });
+});
+'''
+        completed = subprocess.run(['node', '-e', javascript, detail_code], capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn('grid-column: 1 / -1', Path('web/static/css/composer_slice.css').read_text(encoding='utf-8'))
+        self.assertIn('overflow-wrap: anywhere', Path('web/static/css/composer_slice.css').read_text(encoding='utf-8'))
+
     def test_each_gallery_default_has_a_fixed_inert_33_by_138_preview(self) -> None:
         entries = self.client.get('/api/composer/gallery').get_json()['entries']
         before_draft = self.interface.working_draft.get()

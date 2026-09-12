@@ -22,7 +22,7 @@
   const clientId = newUuid();
   const state = { status: {connected: true, running: true, armed: true, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
     scene: null, history: [], redo: [], sequence: 0, intent: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
-    gallery: {entries: [], digest: null, query: '', filter: 'all', favorites: new Set(), thumbnails: new Map(), detail: null, thumbnailObserver: null, thumbnailQueue: [], thumbnailQueued: new Set(), thumbnailActive: 0},
+    gallery: {entries: [], digest: null, query: '', filter: 'all', favorites: new Set(), thumbnails: new Map(), detail: null, detailToken: 0, thumbnailObserver: null, thumbnailQueue: [], thumbnailQueued: new Set(), thumbnailActive: 0},
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
@@ -591,6 +591,19 @@
     state.gallery.thumbnailObserver = observer;
     cards.forEach(({canvas}) => observer.observe(canvas));
   }
+  function placeGalleryDetail(entry) {
+    const detail = $('#galleryDetail');
+    const cards = [...$('#galleryGrid').querySelectorAll('.gallery-card')];
+    const selectedIndex = cards.findIndex((card) => card.dataset.galleryKey === entry.key);
+    if (selectedIndex < 0) { detail.hidden = true; return false; }
+    // The Gallery becomes one column on a phone.  Keep this in sync with the
+    // narrow-screen Gallery rule so the detail follows the selected card row.
+    const columns = window.matchMedia?.('(max-width: 760px)').matches ? 1 : 2;
+    const rowEnd = Math.min(cards.length - 1, Math.floor(selectedIndex / columns) * columns + columns - 1);
+    cards[rowEnd].after(detail);
+    detail.hidden = false;
+    return true;
+  }
   function showGalleryDetail(entry) {
     const detail = $('#galleryDetail'); detail.replaceChildren(); detail.hidden = false;
     const heading = document.createElement('h3'); heading.textContent = entry.name;
@@ -599,18 +612,20 @@
     const presets = document.createElement('div'); presets.className = 'gallery-preset-list'; presets.setAttribute('aria-label', `${entry.name} presets`);
     detail.append(heading, description, status, presets);
     state.gallery.detail = entry.key;
+    const detailToken = ++state.gallery.detailToken;
+    placeGalleryDetail(entry);
     if (!entry.available) return;
     const loading = document.createElement('span'); loading.className = 'muted'; loading.textContent = 'Loading presets…'; presets.append(loading);
     fetch(`${api}/components/${encodeURIComponent(entry.component_id)}/presets`).then((response) => response.json().then((body) => ({response, body}))).then(({response, body}) => {
       if (!response.ok) throw new Error(body.error || 'Presets are unavailable.');
-      if (state.gallery.detail !== entry.key) return;
+      if (state.gallery.detail !== entry.key || state.gallery.detailToken !== detailToken) return;
       presets.replaceChildren();
       (body.presets || []).forEach((preset) => {
         const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name;
         button.addEventListener('click', () => selectGalleryEntry(entry, preset)); presets.append(button);
       });
       if (!presets.childElementCount) presets.textContent = 'No authored presets.';
-    }).catch((error) => { if (state.gallery.detail === entry.key) presets.textContent = error.message; });
+    }).catch((error) => { if (state.gallery.detail === entry.key && state.gallery.detailToken === detailToken) presets.textContent = error.message; });
   }
   async function selectGalleryEntry(entry, preset = null) {
     if (!entry.available) return;
@@ -639,7 +654,7 @@
     grid.replaceChildren();
     const cards = [];
     entries.forEach((entry) => {
-      const card = document.createElement('div'); card.className = 'gallery-card'; card.setAttribute('role', 'listitem');
+      const card = document.createElement('div'); card.className = 'gallery-card'; card.dataset.galleryKey = entry.key; card.setAttribute('role', 'listitem');
       const select = document.createElement('button'); select.type = 'button'; select.className = 'gallery-select'; select.setAttribute('aria-current', String(state.scene?.animation?.component_id === entry.component_id)); select.disabled = !entry.available;
       const canvas = document.createElement('canvas'); canvas.className = 'gallery-thumb'; canvas.width = 33; canvas.height = 138; canvas.setAttribute('aria-label', `${entry.name} preview loading`);
       const copy = document.createElement('span'); copy.className = 'gallery-card-copy';
@@ -652,6 +667,9 @@
       favorite.addEventListener('click', (event) => { event.stopPropagation(); if (state.gallery.favorites.has(entry.key)) state.gallery.favorites.delete(entry.key); else state.gallery.favorites.add(entry.key); writeGalleryFavorites(); renderGallery(); });
       card.append(select, favorite); grid.append(card); cards.push({canvas, entry});
     });
+    const detailEntry = entries.find((entry) => entry.key === state.gallery.detail);
+    if (detailEntry) placeGalleryDetail(detailEntry);
+    else $('#galleryDetail').hidden = true;
     scheduleGalleryThumbnails(cards);
     $('#galleryCount').textContent = `${entries.length} animation${entries.length === 1 ? '' : 's'}`;
     $('#galleryEmpty').hidden = entries.length > 0;
