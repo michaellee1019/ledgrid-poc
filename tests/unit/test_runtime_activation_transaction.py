@@ -906,6 +906,35 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
                 self.assertEqual(published[-1]["phase"], status["phase"])
                 self.assert_status_history_valid(published)
 
+    def test_rolling_back_receipt_retains_the_activation_failure(self) -> None:
+        published: list[dict] = []
+
+        def inject(phase: str, boundary: str, _activation_id: str) -> None:
+            if phase == "applying" and boundary == "vibe":
+                raise RuntimeError("native activation was not acknowledged")
+
+        manager, coordinator = self.coordinator(
+            status_sink=published.append,
+            fault_injector=inject,
+        )
+        before = manager.state()
+
+        status = coordinator.activate(self.command(coordinator))
+
+        rolling_back = next(
+            item for item in published if item["phase"] == "rolling_back"
+        )
+        self.assertEqual(
+            rolling_back["error"], "native activation was not acknowledged"
+        )
+        self.assertIsNone(rolling_back["rollback"]["result"])
+        self.assertFalse(rolling_back["telemetry"]["complete"])
+        self.assertEqual(status["phase"], "rolled_back")
+        self.assertEqual(status["error"], rolling_back["error"])
+        self.assertEqual(status["rollback"]["result"], "succeeded")
+        self.assertEqual(manager.state(), before)
+        self.assert_status_history_valid(published)
+
     def test_persistent_rollback_publication_failure_still_restores_state(self) -> None:
         recovered = False
         published: list[dict] = []

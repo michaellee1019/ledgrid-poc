@@ -1912,7 +1912,11 @@ class ControllerActivationCoordinator:
             self._sleep(self.observation_interval)
 
     def _rollback(
-        self, record: _ActivationRecord, snapshot: ControllerStateSnapshot
+        self,
+        record: _ActivationRecord,
+        snapshot: ControllerStateSnapshot,
+        *,
+        activation_error: str | None = None,
     ) -> bool:
         record.status["rollback"].update(
             available=True, snapshot_id=snapshot.snapshot_id
@@ -1920,7 +1924,10 @@ class ControllerActivationCoordinator:
         # Publication is still staged and retried, but compensation must run
         # even when the status filesystem is unavailable.
         self._set_phase(
-            record, "rolling_back", publication_required=False
+            record,
+            "rolling_back",
+            error=activation_error,
+            publication_required=False,
         )
         try:
             self._fault("rolling_back", "before_restore", record.command["activation_id"])
@@ -2088,7 +2095,11 @@ class ControllerActivationCoordinator:
             except Exception as exc:
                 timed_out = isinstance(exc, (ControllerActivationTimedOut, TimeoutError))
                 if mutation_started and record.snapshot is not None:
-                    rolled_back = self._rollback(record, record.snapshot)
+                    rolled_back = self._rollback(
+                        record,
+                        record.snapshot,
+                        activation_error=str(exc),
+                    )
                     terminal = "timed_out" if timed_out else (
                         "rolled_back" if rolled_back else "failed"
                     )
