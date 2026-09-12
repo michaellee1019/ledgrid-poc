@@ -10,6 +10,9 @@
 #include "esp_elf.h"
 #include "esp_log.h"
 #include "sdkconfig.h"
+#if CONFIG_ELF_LOADER_CACHE_OFFSET
+#include "private/elf_platform.h"
+#endif
 
 namespace ledgrid {
 namespace {
@@ -84,8 +87,13 @@ bool EspNativeModuleBackend::resolve_entrypoint() {
       if (module->symtab[index].name != nullptr &&
           std::strcmp(module->symtab[index].name,
                       LEDGRID_NATIVE_BACKGROUND_ENTRYPOINT_V2) == 0) {
-        entrypoint = reinterpret_cast<ledgrid_native_background_entrypoint_v2>(
-            module->symtab[index].addr);
+        auto address = reinterpret_cast<std::uintptr_t>(module->symtab[index].addr);
+#if CONFIG_ELF_LOADER_CACHE_OFFSET
+        // The exported symbol table holds the allocation's data-bus address.
+        // Match the loader's relocation path before calling PSRAM code.
+        address = elf_remap_text(module, address);
+#endif
+        entrypoint = reinterpret_cast<ledgrid_native_background_entrypoint_v2>(address);
         break;
       }
     }

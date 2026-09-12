@@ -43,6 +43,7 @@ HARNESS = r'''
 #include <sys/mman.h>
 #include <unistd.h>
 #include "esp_elf.h"
+#include "sdkconfig.h"
 #include "ledgrid/esp_native_module.hpp"
 #include "ledgrid/native_module_filesystem.hpp"
 
@@ -72,6 +73,12 @@ static int cleanup(void*) { return 0; }
 static ledgrid_native_background_api_v2 api{2, sizeof(api), 8, 8, initialize, context, render, cleanup};
 static const ledgrid_native_background_api_v2* entrypoint() { ++entry_calls; return null_api ? nullptr : short_api ? short_api : &api; }
 static esp_symtab_t symbols[2];
+// An intentionally uncallable data alias must be translated before invocation.
+static constexpr std::uintptr_t data_alias = 0x1234;
+std::uintptr_t elf_remap_text(esp_elf_t* module, std::uintptr_t address) {
+  assert(module && address == data_alias);
+  return reinterpret_cast<std::uintptr_t>(entrypoint);
+}
 int esp_elf_open(elf_file_t* file, const char* name) {
   ++opens; opened_name = name;
   // Exact upstream join: FS_PATH + "/" + name. The test directory substitutes
@@ -90,7 +97,13 @@ int esp_elf_init(esp_elf_t* module) { ++inits; *module = {}; return failure == 2
 int esp_elf_relocate(esp_elf_t* module, const std::uint8_t* bytes) {
   ++relocates; assert(bytes && bytes[0] == 42);
   symbols[0] = {nullptr, nullptr};
-  symbols[1] = {reinterpret_cast<void*>(entrypoint), const_cast<char*>(
+  symbols[1] = {
+#if CONFIG_ELF_LOADER_CACHE_OFFSET
+      reinterpret_cast<void*>(data_alias),
+#else
+      reinterpret_cast<void*>(entrypoint),
+#endif
+      const_cast<char*>(
       missing_symbol ? "wrong_entrypoint" : LEDGRID_NATIVE_BACKGROUND_ENTRYPOINT_V2)};
   module->num = 2; module->symtab = symbols;
   return failure == 3 ? -33 : 0;
@@ -214,12 +227,18 @@ class EspNativeLoaderTests(unittest.TestCase):
             (directory / "esp_elf.h").write_text(ELF_HEADER)
             (directory / "esp_log.h").write_text(LOG_HEADER)
             (directory / "harness.cpp").write_text(HARNESS)
+            (directory / "private").mkdir()
+            (directory / "private/elf_platform.h").write_text(
+                '#pragma once\n#include "esp_elf.h"\n'
+                'std::uintptr_t elf_remap_text(esp_elf_t*, std::uintptr_t);\n'
+            )
             sources = ROOT / "firmware/esp32/src"
-            for mismatch in (False, True):
-                with self.subTest(loader_root_mismatch=mismatch):
+            for mismatch, cache_offset in ((False, False), (False, True), (True, True)):
+                with self.subTest(loader_root_mismatch=mismatch, cache_offset=cache_offset):
                     base = "/wrong-cache" if mismatch else "/profilecache"
                     (directory / "sdkconfig.h").write_text(
                         f'#define CONFIG_ELF_FILE_SYSTEM_BASE_PATH "{base}"\n'
+                        f'#define CONFIG_ELF_LOADER_CACHE_OFFSET {int(cache_offset)}\n'
                     )
                     executable = directory / "loader_test"
                     compiled = subprocess.run([
