@@ -713,6 +713,16 @@ class CoordinatorDeployment:
             f"{self.config.deploy_dir}/releases/{release_id}"
             "/tools/deployment/deploy_target.py"
         )
+        from web.composer_final_preview import (
+            NATIVE_AURORA_BUNDLE_DIGEST,
+            NATIVE_AURORA_COMPONENT_ID,
+        )
+        native_preview = self.target.run(
+            "build-native-host-preview",
+            "--snapshot", self.target.incoming,
+            "--plugin-id", NATIVE_AURORA_COMPONENT_ID,
+            "--bundle-digest", NATIVE_AURORA_BUNDLE_DIGEST,
+        )
         context.state.update(
             {
                 "snapshot": evidence,
@@ -720,6 +730,7 @@ class CoordinatorDeployment:
                 "support_id": support_id,
                 "app_stage": app,
                 "support_stage": support,
+                "native_host_preview": native_preview,
             }
         )
         cleanup = self.target.run(
@@ -735,6 +746,7 @@ class CoordinatorDeployment:
                 "upload_duration_seconds": upload.duration_seconds,
                 "app": app,
                 "support": support,
+                "native_host_preview": native_preview,
                 "incoming_cleanup": cleanup,
             },
         )

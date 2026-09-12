@@ -259,6 +259,12 @@ class _FakeTarget:
             return {"support_release_id": self.support, "reused": self.unchanged}
         if command == "stage-app":
             return {"release_id": self.candidate, "reused": self.unchanged}
+        if command == "build-native-host-preview":
+            return {
+                "plugin_id": "native_aurora",
+                "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+                "reused": self.unchanged,
+            }
         if command == "cleanup-snapshot":
             return {"removed": True}
         if command == "bootstrap-legacy-app":
@@ -4456,6 +4462,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
             [
                 "stage-support",
                 "stage-app",
+                "build-native-host-preview",
                 "cleanup-snapshot",
                 "bootstrap-legacy-app",
                 "build-firmware",
@@ -4518,6 +4525,53 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         self.assertNotIn("restore-state", commands)
         self.assertEqual(commands.count("activate"), 1)
         self.assertIn("health", commands, "fresh external health must never be cached")
+        preview_call = next(
+            call for call in target.calls if call[0] == "build-native-host-preview"
+        )
+        self.assertEqual(
+            preview_call[1],
+            (
+                "--snapshot",
+                target.incoming,
+                "--plugin-id",
+                "native_aurora",
+                "--bundle-digest",
+                "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+            ),
+        )
+        self.assertTrue(context.state["native_host_preview"]["reused"])
+        self.assertLess(
+            commands.index("build-native-host-preview"),
+            commands.index("cleanup-snapshot"),
+        )
+
+    def test_preview_preparation_failure_stops_before_cleanup_or_state_changes(self) -> None:
+        deployment, context, _runner, target = self._deployment()
+        original_run = target.run
+
+        def fail_preview_preparation(command: str, *args: str):
+            if command == "build-native-host-preview":
+                target.calls.append((command, args))
+                raise RuntimeError("injected native Preview preparation failure")
+            return original_run(command, *args)
+
+        target.run = fail_preview_preparation  # type: ignore[method-assign]
+        try:
+            receipt = DeployCoordinator().run(context, deployment.steps())
+        finally:
+            deployment.close()
+
+        self.assertEqual(receipt.outcome, "failure")
+        self.assertIn("injected native Preview preparation failure", receipt.error)
+        commands = [command for command, _args in target.calls]
+        self.assertEqual(
+            commands,
+            ["stage-support", "stage-app", "build-native-host-preview"],
+        )
+        self.assertNotIn("cleanup-snapshot", commands)
+        self.assertNotIn("capture-state", commands)
+        self.assertNotIn("activate", commands)
+        self.assertNotIn("release_id", context.state)
 
     def test_firmware_mutation_restarts_and_restores_even_when_app_is_unchanged(self) -> None:
         deployment, context, _runner, target = self._deployment(
