@@ -23,24 +23,30 @@ class Element {
 const grid = new Element(), detail = new Element(), count = {}, empty = {};
 const pendingPresetTarget = new Element(); detail.append(pendingPresetTarget); grid.append(detail);
 let entries = [{key:'early',component_id:'early',available:true,parameters:{}},{key:'late',component_id:'late',available:true,parameters:{}}];
+const layout = {matches:true, addEventListener(event, handler) { assert.equal(event,'change'); this.change=handler; }};
 const context = {
   state:{gallery:{detail:'early',favorites:new Set()},scene:{}},
   $: selector => ({'#galleryGrid':grid,'#galleryDetail':detail.parent ? detail : null,'#galleryCount':count,'#galleryEmpty':empty})[selector],
   galleryEntries:()=>entries,
-  window:{matchMedia:()=>({matches:true})}, document:{createElement:()=>new Element()},
+  window:{matchMedia:()=>layout}, document:{createElement:()=>new Element()},
   scheduleGalleryThumbnails(){},
 };
-vm.runInNewContext(process.argv[1] + ';this.render=renderGallery;',context);
+vm.runInNewContext(process.argv[1] + ';this.render=renderGallery;installGalleryLayoutListener();',context);
 context.render(); context.render();
 assert.equal(grid.children.filter(node=>node===detail).length,1);
 assert.equal(grid.children[1],detail,'detail stays beside the selected phone card');
 assert.equal(detail.children[0],pendingPresetTarget,'pending preset target survives publication rerender');
+layout.matches=false; layout.change();
+assert.equal(grid.children[2],detail,'desktop change follows the two-card row without publication');
+layout.matches=true; layout.change();
+assert.equal(grid.children[1],detail,'phone change follows the selected one-card row without publication');
 entries=[]; context.render(); assert.equal(detail.hidden,true); assert.equal(detail.parent,grid);
 entries=[{key:'early',component_id:'early',available:true}]; context.render();
 assert.equal(detail.hidden,false); assert.equal(detail.parent,grid);
 '''
     result = subprocess.run(['node', '-e', runner, placement + render], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+    assert "window.addEventListener('online', refreshStatus);\n  installGalleryLayoutListener();" in source
 
 
 def test_pending_thumbnail_repaints_every_replacement_canvas():

@@ -604,6 +604,12 @@
     detail.hidden = false;
     return true;
   }
+  function installGalleryLayoutListener() {
+    window.matchMedia?.('(max-width: 760px)')?.addEventListener?.('change', () => {
+      const entry = galleryEntries().find((entry) => entry.key === state.gallery.detail);
+      if (entry) placeGalleryDetail(entry);
+    });
+  }
   function showGalleryDetail(entry) {
     const detail = $('#galleryDetail'); detail.replaceChildren(); detail.hidden = false;
     const heading = document.createElement('h3'); heading.textContent = entry.name;
@@ -1503,6 +1509,7 @@
   // A transport return is not a second workflow. Refreshing status lets the
   // server-side coordinator converge the newest valid scene safely.
   window.addEventListener('online', refreshStatus);
+  installGalleryLayoutListener();
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene to replace it immediately.`; }
   async function hydrateCurrentScene() {
     await refreshStatus();
