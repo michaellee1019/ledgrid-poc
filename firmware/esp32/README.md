@@ -319,3 +319,15 @@ not merge it wholesale or preserve its signed envelope, frame tracks, exclusive
 playback, single-digest cache model, render-only watchdog, or partial-RGB
 takeover semantics. Its physical handoff did not qualify the installed SPI1
 wiring, so branch tests do not replace the roadmap's H0 and wall gates.
+
+Native callback crash attribution uses a checksummed, publish-last marker in
+`RTC_NOINIT` memory. It survives software restart (including the 25 ms native
+watchdog), panic, and watchdog resets. Successful callbacks clear it without
+flash access. The phase clock still includes marker preparation, and the
+watchdog deadline is unchanged. Power-on, brownout, and power-glitch resets
+discard this transient marker; interrupted power alone does not blame a module.
+The module ledger and established quarantine remain durable in NVS. Boot
+recovery persists quarantine before clearing the marker; a failed save retains
+the marker and keeps the failed module quarantined while host takeover or the
+next warm boot can retry persistence. Old firmware's outstanding NVS phase markers
+are recovered and removed once through the same quarantine path.

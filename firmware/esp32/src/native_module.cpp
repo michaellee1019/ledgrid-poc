@@ -203,8 +203,9 @@ bool NativeModuleManager::begin() {
     quarantines_ = increment_u16(quarantines_);
     transfer_state_ = NativeModuleTransferState::Quarantined;
     result_ = NativeModuleResult::Quarantined;
-    save_state();
-    persistence_->clear_phase();
+    // Retire the retained crash marker only after quarantine is durable. A
+    // storage failure must not turn a later warm reboot into a clean boot.
+    if (save_state()) persistence_->clear_phase();
   } else {
     transfer_state_ = ledger_.staged.present
         ? NativeModuleTransferState::Staged
@@ -640,8 +641,13 @@ NativeModuleResult NativeModuleManager::fail_phase(
   if (failure == NativeModuleResult::Watchdog || recovery_watchdog) {
     watchdog_events_ = increment_u16(watchdog_events_);
   }
-  save_state();
-  persistence_->clear_phase();
+  if (save_state()) {
+    persistence_->clear_phase();
+  } else {
+    // Recovery may have cleared/overwritten its own phase marker. Retain the
+    // actual failure for boot recovery when NVS cannot persist quarantine.
+    persistence_->mark_phase(quarantine_payload_, attributed_phase_);
+  }
   return finish(failure);
 }
 
@@ -1104,6 +1110,7 @@ void NativeModuleManager::host_takeover() {
   clear_binding(&candidate.active);
   if (candidate.generation != UINT64_MAX) ++candidate.generation;
   ledger_persistence_dirty_ = !save_ledger(candidate);
+  if (!ledger_persistence_dirty_) persistence_->clear_phase();
   executing_ = false;
   rendered_once_ = false;
   last_native_deadline_scene_time_us_ = 0;

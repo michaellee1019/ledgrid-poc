@@ -635,6 +635,28 @@ void test_slow_phase_is_watchdog_failure_and_boot_marker_quarantines() {
       static_cast<std::uint8_t>(restarted.status().transfer_state));
 }
 
+void test_failed_quarantine_save_retains_runtime_crash_marker() {
+  Rig rig;
+  const std::vector<std::uint8_t> payload(64, 5);
+  const auto descriptor = descriptor_for(payload);
+  stage(rig, descriptor, payload);
+  auto activate = activate_command(descriptor, rig.manager.ledger().generation);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::NativeModuleResult::Ok),
+      static_cast<std::uint8_t>(rig.manager.process(activate.data(), activate.size())));
+  rig.persistence.save_ok = false;
+  rig.backend.failure = ledgrid::NativeModulePhase::Render;
+  std::array<std::uint8_t, 138 * 3> frame{};
+  ledgrid::NativeModuleRenderResult result{};
+  TEST_ASSERT_FALSE(rig.manager.render(1000, 1000, 0, frame.data(), frame.size(), &result));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::NativeModulePhase::Render),
+      static_cast<std::uint8_t>(rig.persistence.phase));
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(descriptor.payload_digest,
+                             rig.persistence.attributed.data(), 32);
+  TEST_ASSERT_FALSE(rig.manager.active());
+}
+
 void test_failed_initialization_is_recovered_before_next_payload_activates() {
   Rig rig;
   const std::vector<std::uint8_t> failed_payload(48, 0x31);
@@ -851,10 +873,16 @@ void test_host_takeover_retries_dirty_boot_quarantine() {
   rig.persistence.save_ok = false;
   TEST_ASSERT_TRUE(rig.manager.begin());
   TEST_ASSERT_FALSE(rig.manager.ledger().active.present);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::NativeModulePhase::Render),
+      static_cast<std::uint8_t>(rig.persistence.phase));
   const auto saves = rig.persistence.save_calls;
   rig.persistence.save_ok = true;
   rig.manager.host_takeover();
   TEST_ASSERT_EQUAL_UINT32(saves + 1, rig.persistence.save_calls);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::NativeModulePhase::None),
+      static_cast<std::uint8_t>(rig.persistence.phase));
   std::array<std::uint8_t, 32> expected{};
   expected.fill(0xA1);
   TEST_ASSERT_EQUAL_MEMORY(expected.data(), rig.persistence.quarantine.data(), 32);
@@ -1381,6 +1409,7 @@ int main(int, char**) {
   RUN_TEST(test_wrong_geometry_and_capacity_preflight_fail_before_mutation);
   RUN_TEST(test_every_module_controlled_phase_is_attributed_and_quarantined);
   RUN_TEST(test_slow_phase_is_watchdog_failure_and_boot_marker_quarantines);
+  RUN_TEST(test_failed_quarantine_save_retains_runtime_crash_marker);
   RUN_TEST(test_failed_initialization_is_recovered_before_next_payload_activates);
   RUN_TEST(test_phase_marker_failure_never_enters_untrusted_backend);
   RUN_TEST(test_host_takeover_stops_module_and_protects_rollback_payload);

@@ -71,6 +71,7 @@ class NvsNativeModulePersistence final : public NativeModulePersistence {
 
  private:
   bool ready_ = false;
+  bool legacy_phase_present_ = false;
 };
 
 class EspNativeModuleClock final : public NativeModuleClock {
