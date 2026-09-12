@@ -24,7 +24,7 @@ p { margin: .25rem 0; }
 .muted, .empty, .status-line { color: #b6c7c9; font-size: .77rem; }
 label { display: grid; gap: .2rem; min-width: 0; color: #d9e6e7; font-size: .76rem; }
 label[hidden] { display: none !important; }
-.operation-row[hidden], .component-controls[hidden] { display: none !important; }
+.operation-row[hidden], .component-controls[hidden], .widget-settings[hidden] { display: none !important; }
 input, select { min-width: 0; min-height: 1.9rem; padding: .34rem .42rem; border: 1px solid #44656a; border-radius: 3px; background: #0d181c; color: #f5fbfb; font: inherit; }
 .button { min-height: 1.9rem; padding: .34rem .5rem; border: 0; border-radius: 3px; cursor: pointer; font: inherit; font-weight: 720; }
 .button.primary { background: #7ee0c8; color: #09201d; }
