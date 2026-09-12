@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections import deque
 import copy
 import unittest
 
 import numpy as np
 
 from animation.core.manager import PreviewLEDController
+from animation.core.presentation_contracts import resolve_scene
 from animation.plugins.snake import SnakeAnimation
 from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
 from web.app import AnimationWebInterface
@@ -55,6 +57,85 @@ class SnakeSceneV2Tests(unittest.TestCase):
         first.update_parameters({"snake_count": 7, "trails": .2})
         self.assertEqual(first.params["snake_count"], 7); self.assertEqual(first.params["trails"], .2)
         self.assertFalse(np.array_equal(before_edit, first.generate_frame(3.5, 5).pixels))
+
+    def test_resolved_scene_cadence_matches_authored_low_mid_high_and_fractional_rates(self) -> None:
+        catalog = current_component_catalog()
+        duration_seconds = 10
+        source_steps = int(SnakeAnimation.SIM_HZ * duration_seconds)
+        for cadence in (3.2, 6.5, 10.0, 18.0):
+            with self.subTest(cadence=cadence):
+                scene = self._scene()
+                scene["look"]["pace"] = 1.0
+                scene["animation"]["parameters"] = {"move_cadence": cadence, "seed": 314}
+                animation = SnakeAnimation(
+                    PreviewLEDController(strips=33, leds_per_strip=138),
+                    scene["animation"]["parameters"],
+                )
+                for step in range(source_steps + 1):
+                    resolved = resolve_scene(
+                        scene,
+                        catalog,
+                        monotonic_elapsed=step / SnakeAnimation.SIM_HZ,
+                    )
+                    animation.render_resolved_scene(resolved)
+
+                expected_moves = int(cadence * duration_seconds + 1.e-9)
+                self.assertEqual(animation.moves, expected_moves)
+                snapshot = animation.cadence_snapshot()
+                self.assertEqual(snapshot["simulation_steps"], source_steps)
+                self.assertEqual(snapshot["requested_moves_per_second"], cadence)
+                self.assertAlmostEqual(snapshot["actual_moves_per_second"], cadence)
+                stats = animation.get_runtime_stats()
+                self.assertEqual(stats["requested_moves_per_second"], cadence)
+                self.assertAlmostEqual(stats["actual_moves_per_second"], cadence)
+                self.assertAlmostEqual(stats["effective_moves_per_second"], cadence)
+
+    def test_catch_up_and_gameplay_growth_collision_and_wrap_remain_bounded(self) -> None:
+        catalog = current_component_catalog()
+        scene = self._scene()
+        scene["look"]["pace"] = 1.0
+        scene["animation"]["parameters"] = {
+            "move_cadence": 24.0,
+            "snake_count": 1,
+            "initial_length": 3,
+            "food_count": 1,
+            "ruleset": "wrap",
+            "seed": 314,
+        }
+        animation = SnakeAnimation(
+            PreviewLEDController(strips=8, leds_per_strip=8),
+            scene["animation"]["parameters"],
+        )
+        animation.render_resolved_scene(resolve_scene(scene, catalog, monotonic_elapsed=0.0))
+
+        snake = animation.snakes[0]
+        snake.body = deque(((7, 4), (6, 4), (5, 4)))
+        snake.direction = (1, 0)
+        snake.target_length = 3
+        animation.food = {(0, 4)}
+        animation.walls.clear()
+        animation.render_resolved_scene(
+            resolve_scene(scene, catalog, monotonic_elapsed=1.0 / SnakeAnimation.SIM_HZ)
+        )
+        self.assertEqual(snake.head, (0, 4))
+        self.assertEqual(snake.target_length, 6)
+        self.assertEqual(animation.food_eaten, 1)
+
+        animation.walls.update(((0, 3), (1, 4), (0, 5)))
+        animation.render_resolved_scene(
+            resolve_scene(scene, catalog, monotonic_elapsed=2.0 / SnakeAnimation.SIM_HZ)
+        )
+        self.assertFalse(snake.body)
+        self.assertEqual(animation.deaths, 1)
+
+        before = animation.cadence_snapshot()
+        animation.render_resolved_scene(resolve_scene(scene, catalog, monotonic_elapsed=100.0))
+        after = animation.cadence_snapshot()
+        self.assertEqual(
+            after["simulation_steps"] - before["simulation_steps"],
+            SnakeAnimation.MAX_CATCH_UP_STEPS,
+        )
+        self.assertEqual(after["moves"] - before["moves"], SnakeAnimation.MAX_CATCH_UP_STEPS)
 
     def test_batched_body_paint_matches_cell_by_cell_composition(self) -> None:
         animation = SnakeAnimation(PreviewLEDController(strips=33, leds_per_strip=138))

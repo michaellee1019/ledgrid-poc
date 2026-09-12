@@ -70,6 +70,8 @@ class SnakeAnimation(AnimationBase):
         self._presentation_context: ResolvedScene | None = None
         self._last_tick: int | None = None
         self._last_render_key: tuple[Any, ...] | None = None
+        self._move_credit = 0.0
+        self._simulation_steps = 0
         self.snakes: list[SnakeAgent] = []; self.food: set[Cell] = set(); self.walls: set[Cell] = set(); self.portals: dict[Cell, Cell] = {}
         self.moves = self.food_eaten = self.deaths = 0
         self._reset_world()
@@ -137,13 +139,30 @@ class SnakeAnimation(AnimationBase):
         return MappingProxyType({"seed": self.params["seed"], "tick": self._last_tick, "moves": self.moves, "food_eaten": self.food_eaten, "snakes": tuple(tuple(s.body) for s in self.snakes)})
 
     def cadence_snapshot(self) -> Mapping[str, Any]:
-        return MappingProxyType({"simulation_hz": self.SIM_HZ, "tick": self._last_tick, "moves": self.moves, "move_cadence": self.params["move_cadence"]})
+        actual = self._actual_moves_per_second()
+        return MappingProxyType({
+            "simulation_hz": self.SIM_HZ,
+            "tick": self._last_tick,
+            "simulation_steps": self._simulation_steps,
+            "moves": self.moves,
+            "move_credit": self._move_credit,
+            "move_cadence": self.params["move_cadence"],
+            "requested_moves_per_second": self.params["move_cadence"],
+            "actual_moves_per_second": actual,
+            "max_catch_up_steps": self.MAX_CATCH_UP_STEPS,
+        })
 
     def get_runtime_stats(self) -> dict[str, Any]:
-        return {"ruleset": self.params["ruleset"], "moves": self.moves, "food_eaten": self.food_eaten, "deaths": self.deaths, "alive_snakes": sum(bool(s.body) for s in self.snakes), "walls": len(self.walls), "effective_moves_per_second": self.params["move_cadence"]}
+        actual = self._actual_moves_per_second()
+        return {"ruleset": self.params["ruleset"], "moves": self.moves, "food_eaten": self.food_eaten, "deaths": self.deaths, "alive_snakes": sum(bool(s.body) for s in self.snakes), "walls": len(self.walls), "requested_moves_per_second": self.params["move_cadence"], "actual_moves_per_second": actual, "effective_moves_per_second": actual}
+
+    def _actual_moves_per_second(self) -> float:
+        if self._simulation_steps == 0:
+            return 0.0
+        return self.moves * self.SIM_HZ / self._simulation_steps
 
     def _reset_world(self) -> None:
-        self._rng = random.Random(self.params["seed"]); self._trail.fill(0.); self._snake_palette_cache.clear(); self._last_tick = None; self._last_render_key = None; self.moves = self.food_eaten = self.deaths = 0; self.food.clear(); self._build_terrain()
+        self._rng = random.Random(self.params["seed"]); self._trail.fill(0.); self._snake_palette_cache.clear(); self._last_tick = None; self._last_render_key = None; self._move_credit = 0.0; self._simulation_steps = 0; self.moves = self.food_eaten = self.deaths = 0; self.food.clear(); self._build_terrain()
         self.snakes = [SnakeAgent(hue_offset=index / self.params["snake_count"]) for index in range(self.params["snake_count"])]
         for snake in self.snakes: self._spawn_snake(snake)
         self._replenish_food()
@@ -203,10 +222,17 @@ class SnakeAnimation(AnimationBase):
         return dx + dy
 
     def _step_game(self) -> None:
-        # A tick does bounded work and cadence simply chooses which ticks move.
-        interval = max(1, int(round(self.SIM_HZ / self.params["move_cadence"])))
-        if self.moves % interval == 0: self._move_once()
-        self.moves += 1; self._trail *= math.exp(-self.params["trail_decay"] / self.SIM_HZ)
+        # Fractional credit preserves authored cadence without exceeding one
+        # game move per bounded 24 Hz simulation step.
+        self._move_credit += self.params["move_cadence"] / self.SIM_HZ
+        if self._move_credit + 1.e-12 >= 1.0:
+            self._move_once()
+            self._move_credit -= 1.0
+            if self._move_credit < 0.0:
+                self._move_credit = 0.0
+            self.moves += 1
+        self._simulation_steps += 1
+        self._trail *= math.exp(-self.params["trail_decay"] / self.SIM_HZ)
 
     def _move_once(self) -> None:
         occupied = self._occupied(); plans: dict[int, Cell | None] = {}; directions: dict[int, Direction] = {}
