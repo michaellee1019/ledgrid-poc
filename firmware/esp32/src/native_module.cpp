@@ -991,9 +991,19 @@ NativeModuleResult NativeModuleManager::clear_quarantine(
   if (!digest_equal(command + 1, quarantine_payload_)) {
     return finish(NativeModuleResult::NotFound);
   }
+  // Keep the in-memory quarantine retryable until both durable state and the
+  // retained crash marker are cleared. Otherwise a failed save consumes the
+  // clear intent, or a successful save leaves a marker that re-quarantines the
+  // same payload on the next warm boot.
+  const std::uint8_t cleared_payload[32] = {};
+  if (!persistence_->save(ledger_, cleared_payload) ||
+      !persistence_->clear_phase()) {
+    ledger_persistence_dirty_ = true;
+    return finish(NativeModuleResult::StorageError);
+  }
+  ledger_persistence_dirty_ = false;
   std::memset(quarantine_payload_, 0, 32);
   attributed_phase_ = NativeModulePhase::None;
-  if (!save_state()) return finish(NativeModuleResult::StorageError);
   transfer_state_ = ledger_.staged.present
       ? NativeModuleTransferState::Staged : NativeModuleTransferState::Idle;
   return finish(NativeModuleResult::Ok);

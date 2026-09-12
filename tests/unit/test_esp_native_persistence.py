@@ -231,6 +231,39 @@ int main() {
   quarantine_via_manager(retry,NativeModulePhase::Render);
   assert_loaded(retry,NativeModulePhase::None,payload.data());
 
+  // Explicit clear after a failed boot quarantine save must retire both the
+  // durable quarantine and retained attribution. A failed clear save keeps
+  // both the attribution and in-memory quarantine available for exact retry.
+  flash.clear();
+  assert(p.mark_phase(payload.data(),NativeModulePhase::Render));
+  NvsNativeModulePersistence clearing; assert(clearing.begin());
+  {
+    EmptyStore store; NoCallsBackend backend; Clock clock; std::uint8_t scratch[256]{};
+    NativeModuleManager manager(&store,&clearing,&backend,&clock,scratch,sizeof(scratch),true);
+    fail_writes=true;
+    assert(manager.begin());
+    std::uint8_t command[kNativeModuleQuarantineClearBytes]{0x5C};
+    std::memcpy(command+1,payload.data(),32);
+    assert(manager.process(command,sizeof(command))==NativeModuleResult::StorageError);
+    assert_loaded(clearing,NativeModulePhase::Render);
+    assert(std::memcmp(manager.status().quarantine_payload_digest,payload.data(),32)==0);
+    fail_writes=false;
+    assert(manager.process(command,sizeof(command))==NativeModuleResult::Ok);
+  }
+  std::uint8_t empty_digest[32]{};
+  assert_loaded(clearing,NativeModulePhase::None,empty_digest);
+  reset_reason=ESP_RST_SW;
+  NvsNativeModulePersistence cleared_boot; assert(cleared_boot.begin());
+  {
+    EmptyStore store; NoCallsBackend backend; Clock clock; std::uint8_t scratch[256]{};
+    NativeModuleManager manager(&store,&cleared_boot,&backend,&clock,scratch,sizeof(scratch),true);
+    assert(manager.begin());
+    const auto status=manager.status();
+    assert(status.result!=NativeModuleResult::Quarantined);
+    assert(status.watchdog_phase==NativeModulePhase::None);
+    assert(std::memcmp(status.quarantine_payload_digest,empty_digest,32)==0);
+  }
+
   // The old firmware's outstanding NVS crash marker still gets quarantined
   // once on upgrade, including on a cold boot, before retiring its legacy keys.
   flash["phase_payload"]={payload.begin(),payload.end()};
