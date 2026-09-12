@@ -398,6 +398,72 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         self.assertIn("`${api}/stop`", script)
         self.assertNotIn("`${api}/go-live`", script)
 
+    def test_scene_history_preserves_native_text_undo_and_syncs_action_availability(self) -> None:
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        history = script[
+            script.index("function updateHistoryActions") : script.index(
+                "async function loadLibrary"
+            )
+        ]
+        javascript = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+class Node { constructor() { this.disabled = null; } }
+const nodes = {'#undoScene': new Node(), '#redoScene': new Node(), '#operationMessage': new Node()};
+const state = {history: [], redo: [], scene: {revision: 2}, dirty: false};
+const context = {
+  assert, nodes, state, structuredClone, $: (selector) => nodes[selector],
+  applyScene(scene) { state.scene = structuredClone(scene); },
+  submit() { return Promise.resolve(); },
+};
+const run = vm.runInNewContext(process.argv[1] + `
+  ;(async () => {
+    updateHistoryActions();
+    assert.equal(nodes['#undoScene'].disabled, true);
+    assert.equal(nodes['#redoScene'].disabled, true);
+    remember({revision: 1});
+    assert.equal(nodes['#undoScene'].disabled, false);
+    assert.equal(nodes['#redoScene'].disabled, true);
+    await rewind('undo');
+    assert.equal(nodes['#undoScene'].disabled, true);
+    assert.equal(nodes['#redoScene'].disabled, false);
+    await rewind('redo');
+    assert.equal(nodes['#undoScene'].disabled, false);
+    assert.equal(nodes['#redoScene'].disabled, true);
+    clearHistory();
+    assert.equal(nodes['#undoScene'].disabled, true);
+    assert.equal(nodes['#redoScene'].disabled, true);
+
+    for (const editingTarget of [
+      {closest: (selector) => { assert.match(selector, /input, textarea/); return {}; }},
+      {closest: () => ({})},
+      {closest: () => ({})},
+    ]) {
+      let prevented = false;
+      handleSceneHistoryShortcut({metaKey: true, ctrlKey: false, shiftKey: false, key: 'z', target: editingTarget, preventDefault() { prevented = true; }});
+      assert.equal(prevented, false);
+    }
+    remember({revision: 1});
+    let prevented = false;
+    handleSceneHistoryShortcut({metaKey: false, ctrlKey: true, shiftKey: false, key: 'Z', target: {closest: () => null}, preventDefault() { prevented = true; }});
+    assert.equal(prevented, true);
+    await Promise.resolve();
+    assert.equal(nodes['#undoScene'].disabled, true);
+    assert.equal(nodes['#redoScene'].disabled, false);
+    prevented = false;
+    handleSceneHistoryShortcut({metaKey: true, ctrlKey: false, shiftKey: true, key: 'z', target: {closest: () => null}, preventDefault() { prevented = true; }});
+    assert.equal(prevented, true);
+  })()
+`, context);
+Promise.resolve(run).catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+        completed = subprocess.run(
+            ["node", "-e", javascript, history], check=False, capture_output=True, text=True
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn('document.addEventListener(\'keydown\', handleSceneHistoryShortcut);', script)
+        self.assertIn('[contenteditable]:not([contenteditable="false"])', script)
+
     def test_all_live_intents_share_the_serialized_newest_scene_publisher(self) -> None:
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
         self.assertIn("await submit(body.look.scene, {", script)

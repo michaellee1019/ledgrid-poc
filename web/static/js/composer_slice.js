@@ -1018,7 +1018,7 @@
       if (![...$('#animationChoice').options].some((option) => option.value === current.animation.component_id)) {
         $('#animationChoice').append(new Option(current.animation.component_id.replaceAll('_', ' '), current.animation.component_id));
       }
-      state.scene = current; state.selection = null; state.history = []; state.redo = []; state.dirty = false; state.wall.dirty = false;
+      state.scene = current; state.selection = null; clearHistory(); state.dirty = false; state.wall.dirty = false;
       state.wall.adoptedLook = structuredClone(current.look);
       state.wall.adoptedVibeId = observation?.vibe?.state?.vibe_id || observation?.vibe?.vibe_id || null;
       $('#sceneName').value = `Currently playing · ${current.animation.component_id.replaceAll('_', ' ')}`;
@@ -1055,13 +1055,20 @@
       ? (status.current ? (state.wall.dirty ? 'Publishing the newest valid edit.' : 'Live · every valid edit applies automatically.') : 'Live · choose or edit a scene to begin output.')
       : 'Output stopped · change any control or choose a scene to resume automatically.');
   }
+  function updateHistoryActions() {
+    $('#undoScene').disabled = state.history.length === 0;
+    $('#redoScene').disabled = state.redo.length === 0;
+  }
+  function clearHistory() {
+    state.history = []; state.redo = []; updateHistoryActions();
+  }
   async function acknowledgeUndo(revision) {
-    state.history = []; state.redo = [];
+    clearHistory();
     const result = await requestJson(`${api}/undo-ack`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, revision})});
     renderStatus(result.status || result);
   }
   function schedulePreview() { const generation = ++state.previewGeneration; const candidate = sceneFromControls(); state.scene = candidate; previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
-  function remember(previous) { state.history.push(previous); if (state.history.length > 40) state.history.shift(); state.redo = []; }
+  function remember(previous) { state.history.push(previous); if (state.history.length > 40) state.history.shift(); state.redo = []; updateHistoryActions(); }
   async function flushPublication() {
     state.publication.scheduled = false;
     if (state.publication.inFlight || !state.publication.queued) return;
@@ -1254,7 +1261,7 @@
       }
       else { const starterResponse = await fetch(`${api}/starters/${item.id}`); const starter = (await starterResponse.json()).starter; if (!intentIsCurrent(intentToken)) return; applyScene(starter.scene); publication = await submit(starter.scene, {builtin: true, requestBody: {scene: starter.scene, client_id: clientId, mutation_id: selectionMutation, client_sequence: selectionSequence}, intentToken}); if (!intentIsCurrent(intentToken) || publication.coalesced) return; $('#sceneName').value = starter.name; }
       if (!intentIsCurrent(intentToken)) return;
-      state.selection = item; state.history = []; state.redo = []; state.dirty = false; applyScene(state.scene); schedulePreview(); renderLibrary(); renderStatus(state.status);
+      state.selection = item; clearHistory(); state.dirty = false; applyScene(state.scene); schedulePreview(); renderLibrary(); renderStatus(state.status);
     } catch (error) { if (intentIsCurrent(intentToken) && error.status !== 409) $('#operationMessage').textContent = error.message || 'Scene could not be opened.'; }
   }
   function focusable(dialog) { return [...dialog.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter((node) => !node.disabled); }
@@ -1341,7 +1348,12 @@
       else { const response = await fetch(`${api}/looks/save`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); }
       await loadLibrary(); state.dirty = false; $('#saveState').textContent = 'Saved';
     } catch (error) { $('#operationMessage').textContent = error.message; } }
-  async function rewind(direction) { const source = direction === 'undo' ? state.history : state.redo; const next = source.pop(); if (!next) return; const opposite = direction === 'undo' ? state.redo : state.history; opposite.push(structuredClone(state.scene)); state.dirty = true; applyScene(next); try { await submit(next); } catch (error) { $('#operationMessage').textContent = error.message; } }
+  async function rewind(direction) { const source = direction === 'undo' ? state.history : state.redo; const next = source.pop(); if (!next) { updateHistoryActions(); return; } const opposite = direction === 'undo' ? state.redo : state.history; opposite.push(structuredClone(state.scene)); updateHistoryActions(); state.dirty = true; applyScene(next); try { await submit(next); } catch (error) { $('#operationMessage').textContent = error.message; } }
+  function isNativeTextEditingTarget(target) { return Boolean(target?.closest?.('input, textarea, [contenteditable]:not([contenteditable="false"])')); }
+  function handleSceneHistoryShortcut(event) {
+    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z' || isNativeTextEditingTarget(event.target)) return;
+    event.preventDefault(); rewind(event.shiftKey ? 'redo' : 'undo');
+  }
   async function loadLibrary() { const response = await fetch(`${api}/library`); state.library = await response.json(); renderLibrary(); }
   function wire() {
     ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
@@ -1367,9 +1379,9 @@
     document.querySelectorAll('[data-gallery-filter]').forEach((button) => button.addEventListener('click', () => { state.gallery.filter = button.dataset.galleryFilter; state.gallery.rendered = GALLERY_PAGE_SIZE; document.querySelectorAll('[data-gallery-filter]').forEach((candidate) => candidate.classList.toggle('active', candidate.dataset.galleryFilter === state.gallery.filter)); renderGallery(); }));
     $('#galleryMore').addEventListener('click', () => { state.gallery.rendered += GALLERY_PAGE_SIZE; renderGallery(); });
     $('#openScene').addEventListener('click', () => $('#librarySearch').focus()); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', stopOutput); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
-    document.addEventListener('keydown', (event) => { if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return; event.preventDefault(); rewind(event.shiftKey ? 'redo' : 'undo'); });
+    document.addEventListener('keydown', handleSceneHistoryShortcut);
   }
-  installPixelChaseControls(); installPlantGlowControls(); installMediaControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); applyScene(defaultScene());
+  installPixelChaseControls(); installPlantGlowControls(); installMediaControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); updateHistoryActions(); applyScene(defaultScene());
   if (![...$('#animationChoice').options].some((option) => option.value === 'snake')) $('#animationChoice').append(new Option('Snake Garden', 'snake'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'canopy_cup')) $('#animationChoice').append(new Option('Canopy Cup', 'canopy_cup'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'maze_chase')) $('#animationChoice').append(new Option('Maze Chase', 'maze_chase'));
