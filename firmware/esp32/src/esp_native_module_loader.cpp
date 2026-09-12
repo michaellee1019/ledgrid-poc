@@ -102,10 +102,20 @@ bool EspNativeModuleBackend::resolve_entrypoint() {
              LEDGRID_NATIVE_BACKGROUND_ENTRYPOINT_V2);
     return false;
   }
-  const bool valid =
-      api_->abi_version == LEDGRID_NATIVE_BACKGROUND_ABI_VERSION &&
-      api_->struct_size == sizeof(ledgrid_native_background_api_v2) &&
-      api_->state_size >= 1 &&
+  // Preserve the validation read order: an incompatible module may return
+  // only its version/header, so diagnostics cannot inspect its later fields.
+  if (api_->abi_version != LEDGRID_NATIVE_BACKGROUND_ABI_VERSION) {
+    ESP_LOGE(kLogTag, "entrypoint ABI rejected: abi=%u",
+             static_cast<unsigned>(api_->abi_version));
+    return false;
+  }
+  if (api_->struct_size != sizeof(ledgrid_native_background_api_v2)) {
+    ESP_LOGE(kLogTag, "entrypoint ABI size rejected: abi=%u api_bytes=%u",
+             static_cast<unsigned>(api_->abi_version),
+             static_cast<unsigned>(api_->struct_size));
+    return false;
+  }
+  const bool valid = api_->state_size >= 1 &&
       api_->state_size <= LEDGRID_NATIVE_BACKGROUND_MAX_STATE_BYTES &&
       api_->state_alignment >= 1 &&
       api_->state_alignment <= LEDGRID_NATIVE_BACKGROUND_MAX_STATE_ALIGNMENT &&

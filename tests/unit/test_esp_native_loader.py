@@ -40,6 +40,8 @@ HARNESS = r'''
 #include <cerrno>
 #include <cstdarg>
 #include <vector>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "esp_elf.h"
 #include "ledgrid/esp_native_module.hpp"
 #include "ledgrid/native_module_filesystem.hpp"
@@ -47,6 +49,7 @@ HARNESS = r'''
 static std::string directory, opened_name;
 static int opens, closes, inits, relocates, deinits, failure, entry_calls;
 static bool missing_symbol, null_api;
+static const ledgrid_native_background_api_v2* short_api;
 static std::vector<std::string> logs;
 void test_log(const char* tag, const char* format, ...) {
   assert(std::strcmp(tag, "native-loader") == 0);
@@ -67,7 +70,7 @@ static int context(void*, const ledgrid_native_context_v2*) { return 0; }
 static int render(void*, const ledgrid_native_render_request_v2*, ledgrid_native_render_result_v2*) { return 0; }
 static int cleanup(void*) { return 0; }
 static ledgrid_native_background_api_v2 api{2, sizeof(api), 8, 8, initialize, context, render, cleanup};
-static const ledgrid_native_background_api_v2* entrypoint() { ++entry_calls; return null_api ? nullptr : &api; }
+static const ledgrid_native_background_api_v2* entrypoint() { ++entry_calls; return null_api ? nullptr : short_api ? short_api : &api; }
 static esp_symtab_t symbols[2];
 int esp_elf_open(elf_file_t* file, const char* name) {
   ++opens; opened_name = name;
@@ -168,6 +171,28 @@ int main(int argc, char** argv) {
   }
 #endif
 #ifndef TEST_ROOT_MISMATCH
+  // Any read beyond the rejected version/header crosses into PROT_NONE.
+  // This catches diagnostic reads that bypass the original short circuit.
+  for (std::size_t header_bytes : {4U,8U}) {
+    const auto page_size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, page_size*2, PROT_READ|PROT_WRITE,
+                         MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    assert(mapping != MAP_FAILED);
+    auto* boundary = static_cast<unsigned char*>(mapping)+page_size;
+    assert(mprotect(boundary,page_size,PROT_NONE) == 0);
+    auto* header = reinterpret_cast<std::uint32_t*>(boundary-header_bytes);
+    header[0] = header_bytes == 4 ? 99 : 2;
+    if (header_bytes == 8) header[1] = 8;
+    short_api = reinterpret_cast<const ledgrid_native_background_api_v2*>(header);
+    ledgrid::EspNativeModuleBackend backend;
+    missing_symbol=false; logs.clear();
+    assert(backend.load(path.c_str())); assert(!backend.resolve_entrypoint());
+    assert(logged(header_bytes == 4 ? "entrypoint ABI rejected: abi=99"
+                                  : "entrypoint ABI size rejected: abi=2 api_bytes=8"));
+    assert(!logged("state_bytes="));
+    assert(backend.unload()); short_api=nullptr;
+    assert(munmap(mapping,page_size*2) == 0);
+  }
   {
     ledgrid::EspNativeModuleBackend backend;
     missing_symbol=false; null_api=true; logs.clear();
