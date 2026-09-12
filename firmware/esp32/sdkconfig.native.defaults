@@ -5,3 +5,8 @@ CONFIG_ELF_LOADER=y
 CONFIG_ELF_DYNAMIC_LOAD_SHARED_OBJECT=y
 CONFIG_ELF_FILE_SYSTEM_BASE_PATH="/profilecache"
 CONFIG_ELF_LOADER_LOAD_PSRAM=y
+# app_main handles SPI commands, including native activation/ELF loading.
+# Xtensa -O2 reports 3888 bytes for activation -> parameter decode -> SHA
+# alone, not a worst-case bound. Add 12800 bytes (12.5 KiB) reserved RAM over
+# IDF's 3584-byte default for callers, filesystem and loader stack margin.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
