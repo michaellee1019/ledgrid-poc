@@ -41,7 +41,7 @@ template:
           {{ observation_response.status == 200 and value_json is mapping
              and value_json.get('schema') == 'ledgrid.composer-settings-observation'
              and value_json.get('schema_version') == 1
-             and 'last_applied_command_id' in value_json
+             and value_json.get('last_applied_command_id') is number
              and value_json.get('controller_session_id') is string
              and value_json.get('controller_session_id') | length > 0
              and value_json.get('controller_state_revision') is integer
@@ -164,7 +164,7 @@ script:
                     {{ before_response.status != 200 or before_response.content is not mapping
                        or before_response.content.get('schema') != 'ledgrid.composer-settings-observation'
                        or before_response.content.get('schema_version') != 1
-                       or 'last_applied_command_id' not in before_response.content
+                       or before_response.content.get('last_applied_command_id') is not number
                        or before_response.content.controller_session_id is not string
                        or before_response.content.controller_session_id | length == 0
                        or before_response.content.controller_state_revision is not integer

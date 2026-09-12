@@ -238,6 +238,14 @@ class HomeAssistantPackageTests(unittest.TestCase):
             wall.run(brightness=26)
         self.assertEqual(wall.writes, [])
 
+    def test_new_web_with_old_controller_is_unavailable(self):
+        wall = WallHarness()
+        wall.state['last_applied_command_id'] = None
+        self.assertFalse(wall.available())
+        with self.assertRaises(ScriptFailure):
+            wall.run(brightness=26)
+        self.assertEqual(wall.writes, [])
+
     def test_missing_identity_is_unavailable(self):
         wall = WallHarness()
         wall.state['controller_session_id'] = None

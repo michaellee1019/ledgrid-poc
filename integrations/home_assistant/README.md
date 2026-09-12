@@ -22,7 +22,7 @@ homeassistant:
   packages: !include_dir_named packages
 ```
 
-The package merges its scripts, template entities and REST commands alongside the existing configuration. Do not edit the generated root `scripts.yaml`, replace the existing printer REST command, or use the retired grid-dashboard proxy. Follow smarthome's check/deployment workflow for the bounded configuration change. HA needs a restart to load a newly added package; startup only polls and sends no wall command. Home Assistant 2026.9.2 is the validated version.
+The package merges its scripts, template entities and REST commands alongside the existing configuration. The existing `switch.light_living_ledwall` is the protected power outlet; preserve it and use the new `light.led_grid_wall` for output controls. Do not edit the generated root `scripts.yaml`, replace the existing printer REST command, or use the retired grid-dashboard proxy. Follow smarthome's check/deployment workflow for the bounded configuration change. HA needs a restart to load a newly added package; startup only polls and sends no wall command. Home Assistant 2026.9.2 is the validated version.
 
 Entity IDs above are the defaults on a fresh installation. If the entity registry already reserves one, check the assigned IDs before using examples. Keep the observation sensor's ID `sensor.led_grid_wall_observation`, since the templates refer to it.
 
@@ -71,7 +71,7 @@ actions:
       value: 1.25
 ```
 
-For an automation that depends on acknowledged completion:
+Ordinary HA light/number service completion is dispatch semantics, not an acknowledgement receipt. Their displayed state remains observed and nonoptimistic. For an automation that depends on acknowledged completion:
 
 ```yaml
 actions:
