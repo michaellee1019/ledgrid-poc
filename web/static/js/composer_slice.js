@@ -651,6 +651,7 @@
   function refreshGallerySelection() { renderGallery(); }
   function renderGallery() {
     const grid = $('#galleryGrid'); const entries = galleryEntries();
+    const detail = $('#galleryDetail');
     grid.replaceChildren();
     const cards = [];
     entries.forEach((entry) => {
@@ -667,6 +668,9 @@
       favorite.addEventListener('click', (event) => { event.stopPropagation(); if (state.gallery.favorites.has(entry.key)) state.gallery.favorites.delete(entry.key); else state.gallery.favorites.add(entry.key); writeGalleryFavorites(); renderGallery(); });
       card.append(select, favorite); grid.append(card); cards.push({canvas, entry});
     });
+    // The detail lives in this grid; retain its node across card rebuilds so
+    // current preset requests and event handlers keep their attached target.
+    grid.append(detail);
     const detailEntry = entries.find((entry) => entry.key === state.gallery.detail);
     if (detailEntry) placeGalleryDetail(detailEntry);
     else $('#galleryDetail').hidden = true;
