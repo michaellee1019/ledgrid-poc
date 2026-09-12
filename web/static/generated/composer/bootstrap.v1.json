@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "0221aebfb7e3dba106a52aaeea57566f2994189f71c40d3bbbd26bdef0d8aebc",
+    "catalog_digest": "56cdb76cb4d59f99e7b0caf1aabe34b25ff50e3dd55ef77d739a59d0c4451b83",
     "kind": "bundled",
     "version": 1
   },
@@ -1115,11 +1115,15 @@
     },
     {
       "availability": {
-        "diagnostic": "native background package is not published: native_aurora",
-        "state": "unavailable"
+        "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+        "framebuffer_readback": false,
+        "payload_digest": "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37",
+        "preview_kind": "build_time_bundle",
+        "published_at": "1970-01-01T00:00:00Z",
+        "state": "ready"
       },
       "browser_capabilities": {
-        "activation_ready": false,
+        "activation_ready": true,
         "interactions": {
           "component_id": "native_aurora",
           "live_wall": {
@@ -1139,16 +1143,16 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "bundle_digest": null,
-          "component_digest": "b13634b0e307d141f0c9222a87a6dcdfb37d637ce63253103e2b73dcf280f1e8",
+          "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+          "component_digest": "ea97c4cbf081a08e9599ef10691bbf138a13efff58fe51819f8774ee4613b1e5",
           "component_id": "native_aurora",
-          "expected_payload_digest": null,
+          "expected_payload_digest": "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37",
           "parameter_schema_version": 1,
           "provider": "receiver_native",
           "runtime_digest": "856ae4a147b9dfdaf472e519005507b9707d159ca16c7dc61bb43199abcee017"
         },
         "previewable": true,
-        "reason": "native background package is not published: native_aurora",
+        "reason": null,
         "saveable": true
       },
       "browser_runtime": {
@@ -1163,22 +1167,26 @@
         "abi_schema": "ledgrid.native-background-abi",
         "abi_version": 2,
         "artifact_kind": "receiver_native_module",
+        "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
         "bundle_schema": "ledgrid.native-background-bundle",
         "bundle_version": 1,
+        "contract_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+        "expected_payload_digest": "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37",
+        "identity_authority": "managed_library",
         "source": "native/background.cpp",
         "target": "esp32-s3"
       },
       "class_name": null,
       "compatibility": {
         "classification": "receiver_native_source",
-        "composable": false,
-        "diagnostic": "native background package is not published: native_aurora",
+        "composable": true,
+        "diagnostic": "Trusted repository native source metadata is available for build and host preview; receiver activation remains disabled until Phase 4.",
         "implementation_authority": "managed_receiver",
         "implementation_loaded": false,
         "legacy_manifest": false,
         "parameter_metadata": "manifest"
       },
-      "component_digest": "b13634b0e307d141f0c9222a87a6dcdfb37d637ce63253103e2b73dcf280f1e8",
+      "component_digest": "ea97c4cbf081a08e9599ef10691bbf138a13efff58fe51819f8774ee4613b1e5",
       "defaults": {
         "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
         "gain": 0.72,

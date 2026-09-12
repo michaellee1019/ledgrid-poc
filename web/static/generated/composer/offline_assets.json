@@ -1,5 +1,5 @@
 {
-  "cacheVersion": "g-0987d53d1511ff148a8b",
+  "cacheVersion": "g-dcc01a0f846713c71ce0",
   "capturedAssets": [
     "/composer"
   ],
@@ -30,8 +30,8 @@
       "url": "/static/generated/composer/aurora_curtains_native.wasm"
     },
     {
-      "bytes": 542880,
-      "sha256": "0847d33b8c36c814727f69d7678468a5cfc67fd4072bfcdc62460f16acba3ab1",
+      "bytes": 543594,
+      "sha256": "b579c85634caf783f2233a401e905a356bfcf903c7749ae1ae42b8aa161e40f3",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
@@ -56,7 +56,7 @@
     },
     {
       "bytes": 1538,
-      "sha256": "8ecaf86a53a9fc9d36708addfe0d6df5bce52c7129171fffbf0d0ac64a3a623e",
+      "sha256": "b6d8067c221ab06b5e464a3305a4d1c9e318bc6f0386cae4b00b7e38d8f6670d",
       "url": "/static/generated/composer/service_worker_config.v1.js"
     },
     {
