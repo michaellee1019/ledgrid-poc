@@ -17,10 +17,9 @@ from animation.core.component_catalog import (
     ComponentRole,
 )
 from animation.core.plant_awareness import PlantModifierState
+from ipc.scene_schema import SCENE_V2_REVISION, SCENE_V2_SCHEMA
 
 
-SCENE_V2_SCHEMA = "ledgrid.scene.v2"
-SCENE_V2_REVISION = 2
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _STABLE_ID = re.compile(r"^[a-z][a-z0-9_]*(?:[.-][a-z0-9_]*)*$")
 _LEGACY_KEYS = frozenset({

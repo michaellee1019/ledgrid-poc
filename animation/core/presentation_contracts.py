@@ -973,13 +973,9 @@ from animation.core.component_catalog import (
     ComponentDescriptor as SceneV2ComponentDescriptor,
     PalettePolicy,
 )
-from ipc.scene_contract import (
-    SCENE_V2_SCHEMA as _SCENE_V2_SCHEMA,
-    normalize_composer_scene,
-)
+from ipc.scene_schema import SCENE_V2_SCHEMA
 
 
-SCENE_V2_SCHEMA = _SCENE_V2_SCHEMA
 PIPELINE_TRACE = (
     "validate_scene",
     "resolve_component_parameters",
@@ -1027,6 +1023,11 @@ def resolve_scene(
     monotonic_elapsed: float,
 ) -> ResolvedScene:
     """Resolve the selected Python Animation's v2 presentation context."""
+
+    # Canonicalization is a runtime dependency of scene resolution. Importing
+    # it while presentation contracts initialize creates a cycle when callers
+    # enter through ipc.scene_contract first.
+    from ipc.scene_contract import normalize_composer_scene
 
     if (
         isinstance(monotonic_elapsed, bool)
