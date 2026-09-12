@@ -27,7 +27,7 @@ class WallHarness:
         self.state = dict(schema='ledgrid.composer-settings-observation', schema_version=1,
                           controller_session_id='session-a', controller_state_revision=7,
                           observed_at=self.time, is_running=True, brightness=255,
-                          animation_speed_scale=0.3, last_command_id=0,
+                          animation_speed_scale=0.3, last_command_id=0, last_applied_command_id=0,
                           active_identity={'scene_digest': 'retained-scene'})
         self.writes = []
         self.reads = 0
@@ -36,6 +36,7 @@ class WallHarness:
         self.apply_commands = True
         self.restart_on_write = False
         self.manual_on_write = False
+        self.manual_matches_on_write = False
         self.env = NativeEnvironment(undefined=StrictUndefined)
         self.env.filters['to_json'] = json.dumps
         self.env.globals.update(now=lambda: datetime.fromtimestamp(self.time, timezone.utc),
@@ -66,6 +67,7 @@ class WallHarness:
                        and payload['expires_at'] >= self.time)
             self.state['last_command_id'] = command_id
             if matches:
+                self.state['last_applied_command_id'] = command_id
                 for field, value in payload.items():
                     if field in ('brightness', 'power', 'multiplier'):
                         key = {'power': 'is_running', 'multiplier': 'animation_speed_scale'}.get(field, field)
@@ -118,7 +120,7 @@ class WallHarness:
                     self.state['controller_session_id'] = 'session-b'
                 if self.manual_on_write:
                     self.state['controller_state_revision'] += 1
-                    self.state['brightness'] = 17
+                    self.state['brightness'] = data['payload'].get('brightness', 17) if self.manual_matches_on_write else 17
                 variables[step['response_variable']] = {'status': self.http_status,
                                                        'content': {'command_id': command_id}}
             elif step.get('event') == 'led_grid_wall_refresh':
@@ -218,6 +220,23 @@ class HomeAssistantPackageTests(unittest.TestCase):
                 self.assertNotEqual(wall.state['brightness'], 26)
                 wall.observe()
                 self.assertEqual(len(wall.writes), 1)
+
+    def test_rejected_command_cannot_acknowledge_coincidental_manual_value(self):
+        wall = WallHarness()
+        wall.manual_on_write = True
+        wall.manual_matches_on_write = True
+        with self.assertRaises(ScriptFailure):
+            wall.run(brightness=26)
+        self.assertEqual(len(wall.writes), 1)
+        self.assertEqual(wall.state['brightness'], 26)
+
+    def test_old_wall_without_guarded_ack_contract_is_unavailable(self):
+        wall = WallHarness()
+        del wall.state['last_applied_command_id']
+        self.assertFalse(wall.available())
+        with self.assertRaises(ScriptFailure):
+            wall.run(brightness=26)
+        self.assertEqual(wall.writes, [])
 
     def test_missing_identity_is_unavailable(self):
         wall = WallHarness()

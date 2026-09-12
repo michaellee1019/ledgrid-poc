@@ -13,7 +13,7 @@ Master brightness scales physical output independently of the selected Scene's a
 
 ## Install
 
-Deploy the matching wall code first: the package requires the guarded brightness/pace/power endpoints and `last_command_id` in observed settings. Check that `http://ledgridwall.local:5000/api/v1/composer/settings/observed` is reachable from Home Assistant. This is a trusted local-network API; do not expose it publicly.
+Deploy the matching wall code first: the package requires the guarded brightness/pace/power endpoints and `last_applied_command_id` in observed settings. Check that `http://ledgridwall.local:5000/api/v1/composer/settings/observed` is reachable from Home Assistant. This is a trusted local-network API; do not expose it publicly.
 
 Copy `led_grid_wall.yaml` into `new-hass-configs/packages/led_grid_wall.yaml` in the smarthome repository. Add or merge this block in `new-hass-configs/configuration.yaml`:
 
@@ -71,19 +71,37 @@ actions:
       value: 1.25
 ```
 
+For an automation that depends on acknowledged completion:
+
+```yaml
+actions:
+  - action: script.led_grid_wall_apply
+    data:
+      multiplier: 1.25
+    response_variable: wall_result
+  - condition: template
+    value_template: "{{ wall_result is mapping and wall_result.success | default(false) }}"
+```
+
 To wait explicitly for the full command result from another script/automation, call `script.led_grid_wall_apply` directly (not `script.turn_on`). Omitted fields are preserved. The action returns `success: true` only after matching observations, or `success: false` and an `error` message on rejection/acknowledgement timeout. Capture its `response_variable` and check `success` in automations that depend on completion. Network exceptions remain HA action errors; a multi-setting request can partially apply before a later failure, and does not issue a rollback that could overwrite newer manual input.
 
 ## State and failure behavior
 
 Polling adopts Composer changes every two seconds. Stale/missing controller identity, stale observation (15 seconds), or HTTP failure makes the entities unavailable. Values come from observed controller state, never HA helper restore state. Startup, reload and reconnect do not restore desired brightness or power. No automatic write retry or command queue is installed.
 
-Each command carries its captured controller session/revision and a 10-second expiry. The controller checks them immediately before applying it. The script waits for the same session, a newer revision, the matching command ID, and the requested value. Intervening changes abort the remaining fields of a multi-setting request. Concurrent requests may conflict and fail; submit a new request after observing current state. Keep HA and the wall clocks synchronized.
+Each command carries its captured controller session/revision and a 10-second expiry. The controller checks them immediately before applying it. The script waits for the same session, a newer revision, the matching applied command ID, and the requested value. Intervening changes abort the remaining fields of a multi-setting request. Concurrent requests may conflict and fail; submit a new request after observing current state. Keep HA and the wall clocks synchronized.
 
 These guarantees do not make an external automation's own startup trigger safe: do not add automations that call this script on HA startup/reconnect or restore values from helpers unless that is deliberately desired.
 
 ## Validation
 
 Run `uv run python -m unittest tests.unit.test_home_assistant_package`. The focused harness executes the shipped YAML action tree and templates against delayed fake HTTP/controller state, including zero/10% recall, power/pace, manual changes, stale sessions, unavailable responses and no replay. Also run HA's real `hass --script check_config` against an isolated configuration containing the package. Local fake-wall runtime acceptance and independent review are recorded in Bead `ledgrid-poc-ib7.123`.
+
+Run the real local HA exercise with a loopback fake wall (no installed-wall access):
+
+```sh
+uv run --python 3.14 --with homeassistant==2026.9.2 --with pyyaml python integrations/home_assistant/check_runtime.py
+```
 
 Live acceptance remains a separate authorized step: capture fresh wall selection/settings, exercise a 10% scene and a pace automation through HA, verify matching controller observations and retained Scene, and restore the captured state. Historical 0/26/255 examples are not restoration instructions.
 

@@ -17,7 +17,7 @@ async def main():
     state = dict(schema='ledgrid.composer-settings-observation', schema_version=1,
                  controller_session_id='fake-session', controller_state_revision=7,
                  observed_at=time.time(), is_running=True, brightness=255,
-                 animation_speed_scale=0.3, last_command_id=0,
+                 animation_speed_scale=0.3, last_command_id=0, last_applied_command_id=0,
                  active_identity={'scene_digest': 'retained'})
     writes = []
     mode = {'http': 200, 'apply': True}
@@ -38,6 +38,7 @@ async def main():
                 if key == 'multiplier': state['animation_speed_scale'] = value * 0.3
             state['controller_state_revision'] += 1
             state['last_command_id'] = command_id
+            state['last_applied_command_id'] = command_id
         return web.json_response({'success': True, 'command_id': command_id})
     app = web.Application()
     app.router.add_get('/api/v1/composer/settings/observed', observe)
@@ -48,6 +49,13 @@ async def main():
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     package = yaml.safe_load(Path(__file__).with_name('led_grid_wall.yaml').read_text().replace('ledgridwall.local:5000', f'127.0.0.1:{port}'))
+    package['scene'] = [{'id': 'fake_wall_ten_percent', 'name': 'Fake Wall Ten Percent',
+                         'entities': {'light.led_grid_wall': {'state': 'on', 'brightness': 26}}}]
+    package['automation'] = [{'id': 'fake_wall_pace', 'alias': 'Fake Wall Pace',
+                              'triggers': [{'trigger': 'event', 'event_type': 'fake_wall_pace'}],
+                              'actions': [{'action': 'number.set_value',
+                                           'target': {'entity_id': 'number.led_grid_wall_pace'},
+                                           'data': {'value': 1.25}}]}]
     with tempfile.TemporaryDirectory(prefix='ledgrid-ha-runtime-') as config_dir:
         hass = HomeAssistant(config_dir)
         loader.async_setup(hass)
@@ -68,16 +76,16 @@ async def main():
             await hass.services.async_call('light', 'turn_off', {'entity_id': 'light.led_grid_wall'}, blocking=True)
             await hass.async_block_till_done()
             assert not state['is_running']
-            await hass.services.async_call('light', 'turn_on', {'entity_id': 'light.led_grid_wall', 'brightness_pct': 10}, blocking=True)
+            await hass.services.async_call('scene', 'turn_on', {'entity_id': 'scene.fake_wall_ten_percent'}, blocking=True)
             await hass.async_block_till_done()
             assert state['is_running'] and state['brightness'] == 26
-            await hass.services.async_call('number', 'set_value', {'entity_id': 'number.led_grid_wall_pace', 'value': 1.25}, blocking=True)
+            hass.bus.async_fire('fake_wall_pace')
             await hass.async_block_till_done()
             assert state['animation_speed_scale'] == .375
             await hass.services.async_call('script', 'led_grid_wall_apply', {'brightness': 0}, blocking=True)
             assert state['brightness'] == 0 and state['is_running']
             assert state['active_identity'] == {'scene_digest': 'retained'}
-            print('brightness 0/26, power, pace, retained Scene: passed', flush=True)
+            print('brightness 0/26, power, HA scene + automation, retained Scene: passed', flush=True)
             state['brightness'] = 17
             state['controller_state_revision'] += 1
             count = len(writes)
