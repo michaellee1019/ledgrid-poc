@@ -22,7 +22,7 @@ homeassistant:
   packages: !include_dir_named packages
 ```
 
-The package merges its scripts, template entities and REST commands alongside the existing configuration. The existing `switch.light_living_ledwall` is the protected power outlet; preserve it and use the new `light.led_grid_wall` for output controls. Do not edit the generated root `scripts.yaml`, replace the existing printer REST command, or use the retired grid-dashboard proxy. Follow smarthome's check/deployment workflow for the bounded configuration change. HA needs a restart to load a newly added package; startup only polls and sends no wall command. Home Assistant 2026.9.2 is the validated version.
+The package merges its scripts, template entities and REST commands alongside the existing configuration. The existing `switch.light_living_ledwall` is the protected power outlet; preserve it and use the new `light.led_grid_wall` for output controls. Do not edit the generated root `scripts.yaml`, replace the existing printer REST command, or use the retired grid-dashboard proxy. Follow smarthome's check/deployment workflow for the bounded configuration change. HA needs a restart to load a newly added package; startup only polls and sends no wall command. Home Assistant 2026.9.2 passed the isolated runtime exercise; the installed configuration also passed `ha core check` on Home Assistant 2026.9.1.
 
 Entity IDs above are the defaults on a fresh installation. If the entity registry already reserves one, check the assigned IDs before using examples. Keep the observation sensor's ID `sensor.led_grid_wall_observation`, since the templates refer to it.
 
@@ -59,6 +59,10 @@ For an HA scene, include:
 ```
 
 In the installed smarthome workflow, operational lighting uses the repository's `script.fast_scene_<scene_id>` wrappers. Add the wall to the intended generator-owned scene through that workflow instead of bypassing it with native scene calls. The fragment above documents the entity state representation and does not install an automatic lighting schedule.
+
+The smarthome installation includes `script.fast_scene_led_grid_wall_ten_percent` for this recall. Its generator Scene sets `fastSceneConvergence: false`: the usual second mismatch pass would create a fresh guarded command and could overwrite an intervening Composer change. Preserve this single-dispatch setting for wall scenes. The existing protected outlet and whole-home `all_off` membership are unchanged.
+
+The installed configuration also defines `automation.led_grid_wall_pace_demo`, triggered only by the explicit `led_grid_wall_pace_demo` event, to set pace to 1.25x. It has no schedule or startup trigger.
 
 An automation can set pace through the entity:
 
