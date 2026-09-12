@@ -10,6 +10,7 @@ body { margin: 0; background: #081316; color: #edf4f5; font: 13px/1.35 system-ui
 .inspectors { display: contents; }
 .operations-pane { position: static; border-color: #4d796f; background: #152a2b; }
 .inspector { display: grid; align-content: start; gap: .45rem; }
+.widget-settings { display: grid; gap: .45rem; }
 .reset-layout { white-space: nowrap; }
 .panel-toggle { min-width: 2.75rem; min-height: 1.9rem; padding: .34rem .5rem; border: 0; border-radius: 3px; background: transparent; color: #b9e9dc; cursor: pointer; font: inherit; font-size: .68rem; font-weight: 720; white-space: nowrap; }
 .panel-content { display: grid; align-content: start; gap: .45rem; min-width: 0; margin-top: .5rem; }

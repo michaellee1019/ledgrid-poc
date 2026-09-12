@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from dataclasses import replace
+from html.parser import HTMLParser
 from pathlib import Path
 
 from animation.plugins.clock_overlay import ClockOverlayAnimation
@@ -35,6 +36,15 @@ class _WallChannel:
 
     def send_command(self, action: str, **data: object) -> None:
         self.commands.append({"action": action, **data})
+
+
+class _ComposerElementAudit(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.elements: list[tuple[str, dict[str, str]]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.elements.append((tag, {name: value or "" for name, value in attrs}))
 
 
 def _scene(overlays: list[dict] | None = None) -> dict:
@@ -117,6 +127,27 @@ class ComposerSliceTests(unittest.TestCase):
         self.interface.composer_looks = SceneLookStore(Path(self.tmp.name) / "looks.json")
         self.interface.working_draft = WorkingDraftStore(Path(self.tmp.name) / "recovery.json")
         self.client = self.interface.app.test_client()
+
+    def test_disabled_widget_settings_are_hidden_without_rewriting_widget_values(self) -> None:
+        html = Path("web/templates/composer.html").read_text(encoding="utf-8")
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        audit = _ComposerElementAudit()
+        audit.feed(html)
+        elements = {attrs.get("id"): (tag, attrs) for tag, attrs in audit.elements if attrs.get("id")}
+
+        self.assertEqual(elements["clockSettings"], ("div", {"id": "clockSettings", "class": "widget-settings", "hidden": ""}))
+        self.assertEqual(elements["emojiSettings"], ("div", {"id": "emojiSettings", "class": "widget-settings", "hidden": ""}))
+        self.assertLess(html.index('id="clockEnabled"'), html.index('id="clockSettings"'))
+        self.assertLess(html.index('id="emojiEnabled"'), html.index('id="emojiSettings"'))
+        self.assertLess(html.index('id="clockSettings"'), html.index('id="clockFormat"'))
+        self.assertLess(html.index('id="emojiSettings"'), html.index('id="emojiText"'))
+        self.assertIn("function syncWidgetDisclosure()", script)
+        self.assertIn("$('#clockSettings').hidden = !$('#clockEnabled').checked;", script)
+        self.assertIn("$('#emojiSettings').hidden = !$('#emojiEnabled').checked;", script)
+        self.assertIn("if (state.lastControl === 'clockEnabled' || state.lastControl === 'emojiEnabled') syncWidgetDisclosure();", script)
+        self.assertIn("'#emojiLineSpacing'", script)
+        self.assertIn("if (state.lastControl === 'clockEnabled') clock.visible = $('#clockEnabled').checked;", script)
+        self.assertIn("if (state.lastControl === 'emojiEnabled') emoji.visible = $('#emojiEnabled').checked;", script)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
