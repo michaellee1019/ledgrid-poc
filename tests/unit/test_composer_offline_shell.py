@@ -25,6 +25,9 @@ class ComposerOfflineShellTests(unittest.TestCase):
         response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
         self.assertIn(f'v={COMPOSER_SHELL_VERSION}', response.get_data(as_text=True))
+        browser_response = self.client.get('/composer')
+        self.assertEqual(browser_response.status_code, 200)
+        self.assertIn(f'v={COMPOSER_SHELL_VERSION}', browser_response.get_data(as_text=True))
         self.assertIn('composer/manifest.webmanifest', self.template)
         worker = self.client.get('/composer-sw.js')
         self.assertEqual(worker.status_code, 200)
@@ -34,13 +37,13 @@ class ComposerOfflineShellTests(unittest.TestCase):
         worker.close()
 
     def test_worker_precaches_only_versioned_shell_assets_and_never_api_state(self) -> None:
-        self.assertIn("const CACHE_NAME = 'composer-shell-v10'", self.worker)
-        for asset in ('composer_preview_scheduler.js', 'composer_slice.js', 'composer_shell.js', 'manifest.webmanifest', 'icon.svg', 'offline.html'):
+        self.assertIn("const CACHE_NAME = 'composer-shell-v11'", self.worker)
+        for asset in ('composer_preview_scheduler.js', 'composer_slice.js', 'composer_palette_layout.js', 'composer_shell.js', 'manifest.webmanifest', 'icon.svg', 'offline.html'):
             self.assertIn(asset, self.worker)
         self.assertIn("url.pathname.startsWith('/api/')", self.worker)
         self.assertIn("'Cache-Control':'no-store'", self.worker)
         self.assertIn("request.mode === 'navigate'", self.worker)
-        self.assertIn("caches.match('/static/composer/offline.html?v=composer-shell-v10')", self.worker)
+        self.assertIn("caches.match('/static/composer/offline.html?v=composer-shell-v11')", self.worker)
         self.assertNotIn("offline.html?v=composer-shell-v8", self.worker)
         self.assertNotIn("caches.put", self.worker)
         self.assertNotIn('/api/composer', self.worker)
@@ -61,7 +64,7 @@ class ComposerOfflineShellTests(unittest.TestCase):
         self.assertNotIn("Local Composer server is available", self.shell)
         self.assertNotIn("window.addEventListener('offline', setOffline)", self.shell)
         self.assertNotIn("navigator.onLine", self.shell)
-        self.assertIn("navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v10', {scope:'/'})", self.shell)
+        self.assertIn("navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v11', {scope:'/'})", self.shell)
         self.assertIn("fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`)", self.slice)
         self.assertIn("window.dispatchEvent(new Event('composer-server-unavailable'))", self.slice)
 

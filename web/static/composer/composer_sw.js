@@ -1,14 +1,15 @@
-const CACHE_NAME = 'composer-shell-v10';
+const CACHE_NAME = 'composer-shell-v11';
 const ROOT_SHELL = '/';
 const SHELL = [
   ROOT_SHELL,
-  '/static/css/composer_slice.css?v=composer-shell-v10',
-  '/static/js/composer_preview_scheduler.js?v=composer-shell-v10',
-  '/static/js/composer_slice.js?v=composer-shell-v10',
-  '/static/js/composer_shell.js?v=composer-shell-v10',
-  '/static/composer/manifest.webmanifest?v=composer-shell-v10',
-  '/static/composer/icon.svg?v=composer-shell-v10',
-  '/static/composer/offline.html?v=composer-shell-v10',
+  '/static/css/composer_slice.css?v=composer-shell-v11',
+  '/static/js/composer_preview_scheduler.js?v=composer-shell-v11',
+  '/static/js/composer_slice.js?v=composer-shell-v11',
+  '/static/js/composer_palette_layout.js?v=composer-shell-v11',
+  '/static/js/composer_shell.js?v=composer-shell-v11',
+  '/static/composer/manifest.webmanifest?v=composer-shell-v11',
+  '/static/composer/icon.svg?v=composer-shell-v11',
+  '/static/composer/offline.html?v=composer-shell-v11',
 ];
 
 self.addEventListener('install', (event) => event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL))));
@@ -27,7 +28,7 @@ self.addEventListener('fetch', (event) => {
   const request = event.request; const url = new URL(request.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith('/api/') || request.method !== 'GET') return;
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(async () => (await caches.match(ROOT_SHELL)) || caches.match('/static/composer/offline.html?v=composer-shell-v10')));
+    event.respondWith(fetch(request).catch(async () => (await caches.match(ROOT_SHELL)) || caches.match('/static/composer/offline.html?v=composer-shell-v11')));
     return;
   }
   const shellKey = `${url.pathname}${url.search}`;

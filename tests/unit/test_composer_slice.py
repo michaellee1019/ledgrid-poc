@@ -383,7 +383,7 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         html = Path("web/templates/composer.html").read_text(encoding="utf-8")
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
 
-        self.assertIn('id="liveAction" class="button primary wide" type="button">Stop</button>', html)
+        self.assertIn('id="liveAction" class="button primary" type="button">Stop</button>', html)
         self.assertIn("status: {connected: true, running: true, armed: true", script)
         self.assertIn("publication: {queued: null, afterStop: null, inFlight: null, scheduled: false}", script)
         self.assertIn("replacement?.resolve({coalesced: true});", script)
@@ -679,7 +679,8 @@ vm.runInNewContext(source + `
   assert.equal(scene.components[1].parameters.seed, 23);
   renderStatus({connected: true, running: true, armed: true, current: {revision: 8, digest: 'b'.repeat(64)}, desired: {revision: 8, digest: 'b'.repeat(64)}, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
   assert.equal(nodes['#wallActivationFailure'].hidden, false);
-  assert.equal(nodes['#wallActivationFailure'].children[0].textContent, 'Activation rejected by mocked wall. ');
+  assert.equal(nodes['#wallActivationFailure'].children[0].textContent, 'Live update failed. ');
+  assert.equal(nodes['#operationMessage'].textContent, 'Activation rejected by mocked wall.');
   assert.equal(nodes['#wallActivationFailure'].children[1].textContent, 'Retry once');
   assert.equal(nodes['#wallActivationFailure'].children[1].disabled, false);
   assert.equal(nodes['#liveAction'].disabled, false);

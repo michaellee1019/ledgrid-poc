@@ -11,13 +11,14 @@
 </head>
 <body>
 <main class="composer" data-api-root="/api/composer">
-  <div class="desktop-workspace" data-layout="docked-studio">
-    <aside id="library-pane" class="library-pane" aria-labelledby="library-title">
+  <div class="desktop-workspace" data-layout="responsive-panels">
+    <section id="library-pane" class="library-pane" aria-labelledby="library-title" data-panel-id="scenes">
       <div class="pane-heading"><div><p class="eyebrow">Library</p><h1 id="library-title">Scenes</h1></div><button id="resetComposerLayout" class="button text reset-layout" type="button">Reset layout</button></div>
       <label>Search scenes <input id="librarySearch" type="search" placeholder="Search scenes"></label>
       <div class="library-filters" role="group" aria-label="Scene collection"><button class="button text active" data-library-filter="all" type="button">All</button><button class="button text" data-library-filter="starter" type="button">Built-ins</button><button class="button text" data-library-filter="look" type="button">Saved</button><button class="button text" data-library-filter="favorites" type="button">Favorites</button></div>
       <ol id="libraryList" class="library-list" aria-live="polite"></ol><p id="libraryEmpty" class="empty">No scenes found.</p>
-      <section class="gallery" aria-labelledby="gallery-title">
+    </section>
+      <section class="gallery" aria-labelledby="gallery-title" data-panel-id="gallery">
         <div class="pane-heading"><div><p class="eyebrow">Animation catalog</p><h2 id="gallery-title">Gallery</h2></div><output id="galleryCount" class="gallery-count" aria-live="polite">Loading…</output></div>
         <label class="gallery-search">Search animations <input id="gallerySearch" type="search" placeholder="Search the Gallery"></label>
         <div class="gallery-filters" role="group" aria-label="Gallery collection"><button class="button text active" data-gallery-filter="all" type="button">All</button><button class="button text" data-gallery-filter="favorites" type="button">Favorites</button></div>
@@ -26,20 +27,17 @@
         <p id="galleryEmpty" class="empty" hidden>No animations match this search.</p>
         <section id="galleryDetail" class="gallery-detail" aria-live="polite" hidden></section>
       </section>
-    </aside>
-    <button class="dock-resizer" type="button" role="separator" aria-orientation="vertical" aria-controls="library-pane" aria-label="Resize Library dock" data-dock-resizer="library"></button>
-    <section class="preview-pane" aria-labelledby="preview-title">
-      <div class="pane-heading"><div><p class="eyebrow">Installed final</p><h2 id="preview-title">Preview</h2></div><strong id="previewIdentity">Rendering…</strong></div>
+    <section class="preview-pane" aria-labelledby="preview-title" data-panel-id="preview">
+      <div class="pane-heading"><div><p class="eyebrow">Installed final</p><h2 id="preview-title">Preview</h2></div></div>
       <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" tabindex="0" aria-label="Installed final Scene preview"></canvas></div>
       <p id="previewStatus" class="status-line" role="status" aria-live="polite">Rendering the current scene.</p>
     </section>
-    <button class="dock-resizer" type="button" role="separator" aria-orientation="vertical" aria-controls="inspector-dock" aria-label="Resize scene controls dock" data-dock-resizer="inspector"></button>
     <aside id="inspector-dock" class="inspector-dock" aria-label="Scene controls and live operations">
     <section class="control-workspace" aria-label="Scene control workspace" tabindex="-1">
-    <section class="global-scene-controls inspector" aria-labelledby="global-scene-controls-title">
+    <section class="global-scene-controls inspector" aria-labelledby="global-scene-controls-title" data-panel-id="global-scene">
       <div class="pane-heading"><div><p class="eyebrow">Global scene</p><h2 id="global-scene-controls-title">Motion</h2></div><button id="resetSceneSpeed" class="button text" type="button">Reset</button></div>
-      <label class="scene-speed-control" for="sceneSpeed">Speed <span>Applies immediately to the entire scene, including its background, animation, and widgets.</span><input id="sceneSpeed" type="range" min=".1" max="2" step=".05" value=".7" aria-describedby="sceneSpeedValue"><output id="sceneSpeedValue">0.70×</output></label>
-      <label class="target-fps-control" for="targetFps">Target FPS <span>Host presentation cadence. This does not change Scene pace or component source rates.</span><input id="targetFps" type="range" min="1" max="200" step="1" value="200" aria-describedby="targetFpsValue"><output id="targetFpsValue">200 FPS</output></label>
+      <label class="scene-speed-control" for="sceneSpeed">Speed <input id="sceneSpeed" type="range" min=".1" max="2" step=".05" value=".7" aria-describedby="sceneSpeedValue"><output id="sceneSpeedValue">0.70×</output></label>
+      <label class="target-fps-control" for="targetFps">Target FPS <input id="targetFps" type="range" min="1" max="200" step="1" value="200" aria-describedby="targetFpsValue"><output id="targetFpsValue">200 FPS</output></label>
       <p class="actual-fps" aria-label="Measured output frame rate"><span>Actual FPS</span><output id="actualFps">Measuring…</output></p>
     </section>
     <section class="inspectors" aria-label="Scene inspectors">
@@ -54,17 +52,14 @@
     <section class="inspector" aria-labelledby="reef-title"><div class="pane-heading"><p class="eyebrow">Cyclic Reef</p><h2 id="reef-title">Coral instrument</h2></div><div id="reefPresetCards" class="operation-row" aria-label="Cyclic Reef presets"></div><div class="field-grid"><label>Species <input data-reef-control id="reefSpecies" type="number" min="3" max="8" step="1" value="5"></label><label>Takeover pressure <input data-reef-control id="reefThreshold" type="number" min="1" max="5" step="1" value="2"></label><label>Mutation <input data-reef-control id="reefMutation" type="number" min="0" max=".02" step=".0005" value=".002"></label><label>Grazers <input data-reef-control id="reefGrazers" type="number" min="0" max="48" step="1" value="8"></label><label>Boundary glow <input data-reef-control id="reefGlow" type="number" min="0" max="1" step=".01" value=".55"></label><label>Topology <select data-reef-control id="reefTopology"><option value="wrap">Wrap</option><option value="closed">Closed</option></select></label><label>Reef pace <input data-reef-control id="reefPace" type="number" min=".25" max="2" step=".05" value="1"></label><label>Reef seed <input data-reef-control id="reefSeed" type="number" min="0" max="999999" step="1" value="13100"></label></div></section>
     <section class="inspector" aria-labelledby="arcade-trio-title"><div class="pane-heading"><p class="eyebrow">Arcade trio</p><h2 id="arcade-trio-title">Game instruments</h2></div><div id="mazePresetCards" class="operation-row" aria-label="Maze Chase presets"></div><div id="pinballPresetCards" class="operation-row" aria-label="Pinball presets"></div><div id="questPresetCards" class="operation-row" aria-label="Pixel Quest presets"></div><div class="field-grid"><label>Maze cadence <input id="mazeCadence" type="number" min="1.5" max="18" step=".1" value="9"></label><label>Hunter pressure <input id="mazeDifficulty" type="number" min="0" max="1" step=".01" value=".82"></label><label class="switch">Hunter radar <input id="mazeRadar" type="checkbox"></label><label>Table ticks <input id="pinballTicks" type="number" min="12" max="90" step=".5" value="40.5"></label><label>Mayhem <input id="pinballChaos" type="number" min="0" max="1" step=".01" value=".72"></label><label>Quest cadence <input id="questCadence" type="number" min="3" max="36" step=".1" value="12"></label><label>Challenge <input id="questDifficulty" type="number" min=".55" max="1.8" step=".01" value="1"></label><label class="switch">Story HUD <input id="questHud" type="checkbox" checked></label></div></section>
     </section>
-    <aside class="operations-pane" aria-labelledby="operations-title">
-      <div class="pane-heading"><div><p class="eyebrow">Operations</p><h2 id="operations-title">Current scene</h2></div><span id="saveState" class="state-chip">Loading</span></div>
-      <p id="sceneIdentity" class="identity">No current scene</p>
-      <section class="connection" aria-labelledby="connection-title"><p class="eyebrow" id="connection-title">Connection &amp; observed output</p><strong id="connectionState">Checking…</strong><p id="observedIdentity" class="identity">No observed output</p><p id="wallActivationFailure" class="wall-activation-failure" role="alert" hidden></p></section>
-      <button id="liveAction" class="button primary wide" type="button">Stop</button>
-      <details id="secondaryOperations" class="secondary-operations" open><summary>More scene controls</summary>
+    <aside class="operations-pane" aria-labelledby="operations-title" data-panel-id="operations">
+      <div class="pane-heading"><div><p class="eyebrow">Operations</p><h2 id="operations-title">Current scene</h2></div><div class="operations-summary"><span id="saveState" class="state-chip">Loading</span><strong id="connectionState">Checking…</strong><button id="liveAction" class="button primary" type="button">Stop</button></div><p id="wallActivationFailure" class="wall-activation-failure" role="alert" hidden></p></div>
+      <details id="secondaryOperations" class="secondary-operations"><summary>More scene controls</summary>
         <label>Name <input id="sceneName" maxlength="80" placeholder="Untitled scene"></label>
         <div class="operation-row"><button id="openScene" class="button secondary" type="button">Open</button><button id="saveScene" class="button secondary" type="button">Save</button><button id="saveAsScene" class="button secondary" type="button">Save As</button></div>
         <div class="operation-row"><button id="undoScene" class="button text" type="button">Undo</button><button id="redoScene" class="button text" type="button">Redo</button></div>
         <button id="checkScene" class="button secondary wide" type="button">Check</button>
-        <details class="diagnostics"><summary>Diagnostics</summary><dl><div><dt>Desired</dt><dd id="desiredIdentity">Unavailable</dd></div><div><dt>Observed</dt><dd id="diagnosticObserved">Unavailable</dd></div><div><dt>Revision</dt><dd id="sceneRevision">Unavailable</dd></div><div><dt>Message</dt><dd id="operationMessage">Checking current scene…</dd></div></dl></details>
+        <details class="diagnostics"><summary>Diagnostics</summary><dl><div><dt>Current scene</dt><dd id="sceneIdentity">Unavailable</dd></div><div><dt>Preview basis</dt><dd id="previewIdentity">Rendering…</dd></div><div><dt>Desired</dt><dd id="desiredIdentity">Unavailable</dd></div><div><dt>Observed</dt><dd id="observedIdentity">Unavailable</dd></div><div><dt>Revision</dt><dd id="sceneRevision">Unavailable</dd></div><div><dt>Message</dt><dd id="operationMessage">Checking current scene…</dd></div></dl></details>
       </details>
     </aside>
     </aside>

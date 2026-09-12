@@ -18,7 +18,7 @@
     const preview = document.querySelector('#scenePreview'); preview.setAttribute('aria-disabled', String(value)); root.classList.toggle('offline', value);
   }
   function show(text, action = null) { shell.hidden = false; message.textContent = text; retry.hidden = action !== 'retry'; update.hidden = action !== 'update'; }
-  function unavailableState() { [['#saveState', 'Unavailable offline'], ['#desiredIdentity', 'Unavailable offline'], ['#observedIdentity', 'Unavailable offline'], ['#diagnosticObserved', 'Unavailable offline'], ['#connectionState', 'Unavailable'], ['#previewIdentity', 'Unavailable offline'], ['#previewStatus', 'Local Composer server unavailable.'], ['#operationMessage', 'Local Composer server unavailable.']].forEach(([selector, text]) => { const node=document.querySelector(selector); if (node) node.textContent=text; }); }
+  function unavailableState() { [['#saveState', 'Unavailable offline'], ['#desiredIdentity', 'Unavailable offline'], ['#observedIdentity', 'Unavailable offline'], ['#connectionState', 'Unavailable'], ['#previewIdentity', 'Unavailable offline'], ['#previewStatus', 'Local Composer server unavailable.'], ['#operationMessage', 'Local Composer server unavailable.']].forEach(([selector, text]) => { const node=document.querySelector(selector); if (node) node.textContent=text; }); }
   function setOffline() { offline = true; window.__composerShellUnavailable=true; setMutationDisabled(true); unavailableState(); show('Local Composer server unavailable. This shell cannot show current scene or live state.', 'retry'); }
   function reconnect() { show('Reload Composer to reconnect and fetch current local state.', 'retry'); }
   function guard(event) {
@@ -31,7 +31,7 @@
   function applyUpdate() { if (!waiting) return; if (hasProtectedScene()) return show('Save the current scene before reloading this shell update.', 'update'); activatingUpdate=true; waiting.postMessage({type:'composer-shell-activate'}); }
   function register() {
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v10', {scope:'/'}).then((registration) => {
+    navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v11', {scope:'/'}).then((registration) => {
       if (registration.waiting) updateReady(registration.waiting);
       registration.addEventListener('updatefound', () => { const worker=registration.installing; if (!worker) return; worker.addEventListener('statechange', () => { if (worker.state === 'installed' && navigator.serviceWorker.controller) updateReady(worker); }); });
     });

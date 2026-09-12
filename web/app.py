@@ -156,7 +156,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v10"
+COMPOSER_SHELL_VERSION = "composer-shell-v11"
 CANONICAL_BROWSER_SCENE_SCHEMA = "ledgrid.browser-scene-v2"
 
 # The Gallery stays projected from the Scene v2 packet, while this small map
@@ -869,7 +869,11 @@ class AnimationWebInterface:
             Rendering, draft persistence, checking, and export happen in the
             browser. Loading this shell never observes or mutates live output.
             """
-            return render_template('composer.html', local_mode=self.local_mode)
+            return render_template(
+                'composer.html',
+                shell_version=COMPOSER_SHELL_VERSION,
+                local_mode=self.local_mode,
+            )
 
         @self.app.route('/composer-service-worker.js')
         def browser_composer_service_worker():

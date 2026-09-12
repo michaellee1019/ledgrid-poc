@@ -1,7 +1,6 @@
-"""Static acceptance checks for the compact docked Composer studio."""
+"""Static acceptance checks for the responsive compact Composer panels."""
 
 from pathlib import Path
-import re
 import unittest
 
 
@@ -12,97 +11,71 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.layout = Path("web/static/js/composer_palette_layout.js").read_text(encoding="utf-8")
         self.css = Path("web/static/css/composer_slice.css").read_text(encoding="utf-8")
 
-    def test_desktop_is_a_fixed_three_dock_studio(self) -> None:
-        for token in ("library-pane", "preview-pane", "inspector-dock", "operations-pane",
-                      "Background", "Animation", "Widgets", "Plants", "Look"):
-            self.assertIn(token, self.html)
+    def test_workspace_is_a_wrapping_panel_grid(self) -> None:
+        self.assertIn('data-layout="responsive-panels"', self.html)
         self.assertIn(
-            "grid-template-columns: clamp(176px, var(--library-width), 360px) .75rem minmax(0, 1fr) .75rem clamp(252px, var(--inspector-width), 480px)",
+            "grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr))",
             self.css,
         )
-        self.assertIn(".preview-pane { display: flex; flex-direction: column", self.css)
-        self.assertIn(".operations-pane { position: sticky; top: 0", self.css)
-        self.assertIn("overflow-x: hidden", self.css)
-        self.assertNotIn("palette-board", self.css)
-        self.assertNotIn("palette-shell", self.css)
-        self.assertNotIn("palette-stack", self.css)
+        self.assertIn(".inspector-dock, .control-workspace, .inspectors { display: contents; }", self.css)
+        self.assertNotIn("dock-resizer", self.html)
+        self.assertNotIn("position: sticky", self.css)
+        self.assertNotIn("--inspector-width", self.css)
+        self.assertLess(self.html.index("Global scene"), self.html.index("Background"))
 
-    def test_docks_have_a_single_intentional_vertical_scroll_owner(self) -> None:
-        self.assertIn(".library-pane { min-height: 0; padding: .6rem; overflow-y: auto; overflow-x: hidden", self.css)
-        self.assertIn(".inspector-dock { display: flex; flex-direction: column; min-height: 0; padding: .45rem; overflow-y: auto; overflow-x: hidden", self.css)
-        self.assertIn(".control-workspace { display: grid; align-content: start", self.css)
-        self.assertNotIn("overflow: auto", self.css)
-
-    def test_live_operations_lead_the_desktop_scroll_dock(self) -> None:
-        # The controls precede operations in source so phone display: contents
-        # can retain its operator-first order.  Desktop flex order must still
-        # put identity and Stop at the top of the dock before its long control
-        # tree, rather than relying on sticky after that tree has scrolled.
-        self.assertIn(".inspector-dock { display: flex; flex-direction: column", self.css)
-        self.assertIn(".operations-pane { position: sticky; top: 0; z-index: 1; order: -1", self.css)
-        self.assertIn(".operations-pane { order: 1; }", self.css)
-
-    def test_layout_bootstrap_keeps_preferences_out_of_scene_state(self) -> None:
-        self.assertIn("desktop-palette-layout.v3", self.layout)
-        self.assertIn("localStorage.removeItem", self.layout)
-        self.assertIn("data-layout', 'docked-studio", self.layout)
-        self.assertIn("ledgrid.composer.constrained-docks.v1", self.layout)
-        self.assertIn("version === 1", self.layout)
-        self.assertIn("JSON.parse", self.layout)
-        self.assertIn("catch (_) { return defaults; }", self.layout)
-        self.assertNotIn("/api/", self.layout)
-        self.assertNotIn("fetch(", self.layout)
-        for retired in ("dragstart", "moveToOwnColumn", "palette-resize-handle", "palette-header-controls"):
-            self.assertNotIn(retired, self.layout)
-
-    def test_layout_has_bounded_pointer_and_keyboard_resizers(self) -> None:
-        self.assertEqual(self.html.count('data-dock-resizer='), 2)
-        self.assertEqual(self.html.count('role="separator"'), 2)
-        for token in (
-            "bounds = Object.freeze({library: [176, 360], inspector: [252, 480]})",
-            "pointerdown",
-            "ArrowLeft",
-            "ArrowRight",
-            "aria-valuemin",
-            "aria-valuemax",
-            "aria-valuenow",
-            "resetComposerLayout",
+    def test_every_user_panel_has_a_stable_collapsed_preference(self) -> None:
+        for panel_id in (
+            "scenes", "gallery", "preview", "global-scene", "background",
+            "animation", "widgets", "plants", "look", "snake", "canopy",
+            "reef", "arcade-trio", "operations",
         ):
-            self.assertIn(token, self.layout if token != "resetComposerLayout" else self.html)
+            self.assertIn(f"['{panel_id}',", self.layout)
+        self.assertIn("ledgrid.composer.compact-panels.v2", self.layout)
+        self.assertIn("value.version !== 2", self.layout)
+        self.assertIn("[id, false]", self.layout)
+        self.assertIn("value.expanded[id] === true", self.layout)
+        self.assertIn("localStorage.removeItem(preferenceKey)", self.layout)
+        self.assertIn("ledgrid.composer.constrained-docks.v1", self.layout)
 
-    def test_named_inspectors_collapse_accessibly(self) -> None:
-        for name in ("Background", "Animation", "Widgets", "Plants", "Look"):
-            self.assertIn(name, self.layout)
-        self.assertIn("aria-expanded", self.layout)
-        self.assertIn("aria-controls", self.layout)
-        self.assertIn("collapsible-inspector.is-collapsed > .inspector-content { display: none", self.css)
-        self.assertIn("inspector-content", self.layout)
-        self.assertIn("inspector-toggle", self.layout)
+    def test_panel_headers_are_keyboard_and_screen_reader_operable(self) -> None:
+        for token in (
+            "toggle.type = 'button'",
+            "aria-controls",
+            "aria-expanded",
+            "'Collapse' : 'Expand'",
+            "collapsible-panel.is-collapsed > .panel-content { display: none",
+        ):
+            self.assertIn(token, self.layout if token != "collapsible-panel.is-collapsed > .panel-content { display: none" else self.css)
 
-    def test_dense_controls_preserve_the_existing_controller_contract(self) -> None:
-        self.assertEqual(self.html.count('id="sceneSpeed"'), 1)
-        self.assertEqual(self.html.count('id="targetFps"'), 1)
-        self.assertEqual(self.html.count('id="liveAction"'), 1)
-        self.assertIn('class="global-scene-controls inspector"', self.html)
-        self.assertIn(".field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr))", self.css)
-        self.assertIn("font: 13px/1.35", self.css)
-        self.assertIn("min-height: 1.9rem", self.css)
+    def test_layout_preferences_cannot_publish_or_control_the_wall(self) -> None:
+        for forbidden in ("fetch(", "/api/", "liveAction", "dispatchEvent", "submit("):
+            self.assertNotIn(forbidden, self.layout)
+        self.assertIn("owns no Scene data", self.layout)
+
+    def test_operations_header_keeps_stop_and_short_status_visible(self) -> None:
+        heading_start = self.html.index('<div class="pane-heading"><div><p class="eyebrow">Operations</p>')
+        heading_end = self.html.index("</div>\n      <details id=\"secondaryOperations\"", heading_start)
+        heading = self.html[heading_start:heading_end]
+        for element_id in ("saveState", "connectionState", "liveAction", "wallActivationFailure"):
+            self.assertIn(f'id="{element_id}"', heading)
+        self.assertNotIn('class="button primary wide"', heading)
+        self.assertIn(".operations-pane { position: static", self.css)
+
+    def test_exact_identities_live_only_in_diagnostics(self) -> None:
+        diagnostics = self.html[self.html.index('<details class="diagnostics">'):]
+        for element_id in ("sceneIdentity", "previewIdentity", "desiredIdentity", "observedIdentity", "sceneRevision"):
+            self.assertEqual(self.html.count(f'id="{element_id}"'), 1)
+            self.assertIn(f'id="{element_id}"', diagnostics)
+        preview_heading = self.html[self.html.index('id="preview-title"') - 100:self.html.index('id="scenePreview"')]
+        self.assertNotIn("previewIdentity", preview_heading)
+
+    def test_existing_scene_and_preview_contract_remains(self) -> None:
+        for element_id in ("sceneSpeed", "targetFps", "liveAction", "scenePreview"):
+            self.assertEqual(self.html.count(f'id="{element_id}"'), 1)
+        self.assertIn('width="33" height="138"', self.html)
         self.assertIn("pace: number('#sceneSpeed')", self.script)
         self.assertIn("$('#sceneSpeed').addEventListener('input', edit)", self.script)
-        self.assertNotIn("function queueOperatorSpeed", self.script)
-
-    def test_workspace_dom_keeps_preview_between_library_and_controls(self) -> None:
-        workspace = re.search(r'<div class="desktop-workspace"[^>]*>(?P<body>.*?)</div>\s*</main>', self.html, re.DOTALL)
-        self.assertIsNotNone(workspace)
-        body = workspace.group("body")
-        self.assertLess(body.index('class="library-pane"'), body.index('class="preview-pane"'))
-        self.assertLess(body.index('class="preview-pane"'), body.index('class="inspector-dock"'))
-        self.assertEqual(body.count('class="operations-pane"'), 1)
-
-    def test_gallery_thumbnails_keep_the_physical_wall_aspect_at_each_breakpoint(self) -> None:
-        self.assertIn(".gallery-thumb { inline-size: 1.2rem; block-size: auto; aspect-ratio: 33 / 138", self.css)
-        self.assertIn(".gallery-thumb { inline-size: 1.5rem; block-size: auto; aspect-ratio: 33 / 138", self.css)
-        self.assertIn(".gallery-select { grid-template-columns: 1.5rem minmax(0, 1fr); min-height: 6.9rem", self.css)
+        self.assertIn("aspect-ratio: 33 / 138", self.css)
 
 
 if __name__ == "__main__":

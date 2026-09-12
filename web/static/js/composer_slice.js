@@ -1034,8 +1034,8 @@
     // letting a later local Composer poll imply the desired scene is live.
     const status = state.wall.activationError ? wallStatus() : (payload.status || payload); state.status = status;
     state.revision = Math.max(state.revision || 0, status.revision || 0);
-    $('#connectionState').textContent = status.connected ? (status.running ? 'Connected · output running' : 'Connected · output stopped') : 'Disconnected';
-    $('#observedIdentity').textContent = identity(status.observed); $('#diagnosticObserved').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
+    $('#connectionState').textContent = status.connected ? (status.running ? 'Running' : 'Stopped') : 'Offline';
+    $('#observedIdentity').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
     $('#sceneIdentity').textContent = identity(status.current); $('#saveState').textContent = state.dirty ? 'Unsaved changes' : (state.selection?.kind === 'look' ? 'Saved look' : 'Current scene');
     const live = Boolean(status.running && status.armed);
     $('#liveAction').textContent = live ? 'Stop output' : 'Stopped';
@@ -1044,7 +1044,7 @@
     activationFailure.hidden = !state.wall.activationError;
     activationFailure.replaceChildren();
     if (state.wall.activationError) {
-      activationFailure.append(document.createTextNode(`${state.wall.activationError} `));
+      activationFailure.append(document.createTextNode('Live update failed. '));
       const retry = document.createElement('button');
       retry.type = 'button'; retry.className = 'button text'; retry.textContent = 'Retry once';
       retry.disabled = state.wall.activating || Boolean(state.publication.queued || state.publication.afterStop || state.publication.inFlight);
@@ -1369,10 +1369,7 @@
     $('#openScene').addEventListener('click', () => $('#librarySearch').focus()); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', stopOutput); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
     document.addEventListener('keydown', (event) => { if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return; event.preventDefault(); rewind(event.shiftKey ? 'redo' : 'undo'); });
   }
-  function syncSecondaryOperations() { $('#secondaryOperations').open = !window.matchMedia('(max-width: 760px)').matches; }
-  const phoneLayout = window.matchMedia('(max-width: 760px)');
-  phoneLayout.addEventListener('change', syncSecondaryOperations);
-  syncSecondaryOperations(); installPixelChaseControls(); installPlantGlowControls(); installMediaControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); applyScene(defaultScene());
+  installPixelChaseControls(); installPlantGlowControls(); installMediaControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); applyScene(defaultScene());
   if (![...$('#animationChoice').options].some((option) => option.value === 'snake')) $('#animationChoice').append(new Option('Snake Garden', 'snake'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'canopy_cup')) $('#animationChoice').append(new Option('Canopy Cup', 'canopy_cup'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'maze_chase')) $('#animationChoice').append(new Option('Maze Chase', 'maze_chase'));
