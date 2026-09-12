@@ -22,7 +22,7 @@ homeassistant:
   packages: !include_dir_named packages
 ```
 
-The package merges its scripts, template entities and REST commands alongside the existing configuration. The existing `switch.light_living_ledwall` is the protected power outlet; preserve it and use the new `light.led_grid_wall` for output controls. Do not edit the generated root `scripts.yaml`, replace the existing printer REST command, or use the retired grid-dashboard proxy. Follow smarthome's check/deployment workflow for the bounded configuration change. HA needs a restart to load a newly added package; startup only polls and sends no wall command. Home Assistant 2026.9.2 passed the isolated runtime exercise; the installed configuration also passed `ha core check` on Home Assistant 2026.9.1.
+The package merges its scripts, template entities and REST commands alongside the existing configuration. The existing `switch.light_living_ledwall` is the protected power outlet; preserve it and use the new `light.led_grid_wall` for output controls. Do not edit the generated root `scripts.yaml`, replace the existing printer REST command, or use the retired grid-dashboard proxy. Follow smarthome's check/deployment workflow for the bounded configuration change. HA needs a restart to load a newly added package; startup only polls and sends no wall command. Home Assistant 2026.9.2 passed the isolated runtime exercise; Home Assistant 2026.9.1 passed installed-wall brightness, power, scene, pace-automation and restart-without-replay checks.
 
 Entity IDs above are the defaults on a fresh installation. If the entity registry already reserves one, check the assigned IDs before using examples. Keep the observation sensor's ID `sensor.led_grid_wall_observation`, since the templates refer to it.
 
@@ -107,6 +107,6 @@ Run the real local HA exercise with a loopback fake wall (no installed-wall acce
 uv run --python 3.14 --with homeassistant==2026.9.2 --with pyyaml python integrations/home_assistant/check_runtime.py
 ```
 
-Live acceptance remains a separate authorized step: capture fresh wall selection/settings, exercise a 10% scene and a pace automation through HA, verify matching controller observations and retained Scene, and restore the captured state. Historical 0/26/255 examples are not restoration instructions.
+For future authorized live acceptance: capture fresh wall selection/settings, exercise a 10% scene and a pace automation through HA, verify matching controller observations and retained Scene, and restore the captured state. Historical 0/26/255 examples are not restoration instructions.
 
 References: [HA packages](https://www.home-assistant.io/docs/configuration/packages/), [template entities](https://www.home-assistant.io/integrations/template/), [REST commands](https://www.home-assistant.io/integrations/rest_command/), [HA scripts and responses](https://www.home-assistant.io/docs/scripts/).
