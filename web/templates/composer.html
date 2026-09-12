@@ -55,8 +55,9 @@
     <aside class="operations-pane" aria-labelledby="operations-title" data-panel-id="operations">
       <div class="pane-heading"><div><p class="eyebrow">Operations</p><h2 id="operations-title">Current scene</h2></div><div class="operations-summary"><span id="saveState" class="state-chip">Loading</span><strong id="connectionState">Checking…</strong><button id="liveAction" class="button primary" type="button">Stop</button></div><p id="wallActivationFailure" class="wall-activation-failure" role="alert" hidden></p></div>
       <details id="secondaryOperations" class="secondary-operations"><summary>More scene controls</summary>
-        <label>Name <input id="sceneName" maxlength="80" placeholder="Untitled scene"></label>
+        <label>Name <input id="sceneName" maxlength="80" placeholder="Untitled scene" aria-describedby="saveFeedback"></label>
         <div class="operation-row"><button id="openScene" class="button secondary" type="button">Open</button><button id="saveScene" class="button secondary" type="button">Save</button><button id="saveAsScene" class="button secondary" type="button">Save As</button></div>
+        <p id="saveFeedback" class="save-feedback status-line" role="status" aria-live="polite" aria-atomic="true" hidden></p>
         <div class="operation-row"><button id="undoScene" class="button text" type="button">Undo</button><button id="redoScene" class="button text" type="button">Redo</button></div>
         <button id="checkScene" class="button secondary wide" type="button">Check</button>
         <details class="diagnostics"><summary>Diagnostics</summary><dl><div><dt>Current scene</dt><dd id="sceneIdentity">Unavailable</dd></div><div><dt>Preview basis</dt><dd id="previewIdentity">Rendering…</dd></div><div><dt>Desired</dt><dd id="desiredIdentity">Unavailable</dd></div><div><dt>Observed</dt><dd id="observedIdentity">Unavailable</dd></div><div><dt>Revision</dt><dd id="sceneRevision">Unavailable</dd></div><div><dt>Message</dt><dd id="operationMessage">Checking current scene…</dd></div></dl></details>

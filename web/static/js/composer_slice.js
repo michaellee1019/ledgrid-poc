@@ -1344,10 +1344,30 @@
     });
   }
   async function check() { try { const response = await fetch(`${api}/check`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene: sceneFromControls()})}); const result = await response.json(); $('#checkMessage').textContent = response.ok ? 'This is advisory; it does not change output.' : (result.error || 'Check could not complete.'); const details = $('#checkDetails'); details.replaceChildren(); [['Scene identity', identity(result.basis)], ['Connection', result.status?.connected ? 'Connected' : 'Disconnected'], ['Publication', result.status?.connected ? 'Every valid edit applies automatically' : 'Edits will apply when the wall reconnects']].forEach(([term, description]) => { const entry = document.createElement('div'); entry.innerHTML = `<dt>${term}</dt><dd>${description}</dd>`; details.append(entry); }); if (result.status) renderStatus(result); openDialog($('#checkDialog')); } catch (error) { $('#operationMessage').textContent = error.message; } }
-  async function save(as) { try { const scene = sceneFromControls(); const name = $('#sceneName').value.trim(); if (as || state.selection?.kind !== 'look') { if (!name) throw new Error('Name this scene before Save As.'); const response = await fetch(`${api}/looks`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); state.selection = {kind: 'look', id: result.look.id, name: result.look.name}; }
-      else { const response = await fetch(`${api}/looks/save`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); }
-      await loadLibrary(); state.dirty = false; $('#saveState').textContent = 'Saved';
-    } catch (error) { $('#operationMessage').textContent = error.message; } }
+  function saveFeedback(message, stateName) {
+    const feedback = $('#saveFeedback');
+    feedback.textContent = message; feedback.dataset.state = stateName; feedback.hidden = false;
+  }
+  function focusSceneName() {
+    $('#secondaryOperations').open = true;
+    $('#sceneName').focus({preventScroll: true});
+  }
+  async function save(as) {
+    const name = $('#sceneName').value.trim();
+    const creatingLook = as || state.selection?.kind !== 'look';
+    if (creatingLook && !name) {
+      saveFeedback('Enter a scene name before saving.', 'error'); focusSceneName(); return;
+    }
+    try {
+      const scene = sceneFromControls();
+      if (creatingLook) {
+        const response = await fetch(`${api}/looks`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); state.selection = {kind: 'look', id: result.look.id, name: result.look.name};
+      } else {
+        const response = await fetch(`${api}/looks/save`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error);
+      }
+      await loadLibrary(); state.dirty = false; $('#saveState').textContent = 'Saved'; saveFeedback(`Saved ${state.selection?.name || name}.`, 'success');
+    } catch (error) { saveFeedback(error.message || 'This scene could not be saved. Try again.', 'error'); }
+  }
   async function rewind(direction) { const source = direction === 'undo' ? state.history : state.redo; const next = source.pop(); if (!next) { updateHistoryActions(); return; } const opposite = direction === 'undo' ? state.redo : state.history; opposite.push(structuredClone(state.scene)); updateHistoryActions(); state.dirty = true; applyScene(next); try { await submit(next); } catch (error) { $('#operationMessage').textContent = error.message; } }
   function isNativeTextEditingTarget(target) { return Boolean(target?.closest?.('input, textarea, [contenteditable]:not([contenteditable="false"])')); }
   function handleSceneHistoryShortcut(event) {

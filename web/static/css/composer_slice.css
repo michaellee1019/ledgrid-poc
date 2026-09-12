@@ -65,6 +65,8 @@ input, select { min-width: 0; min-height: 1.9rem; padding: .34rem .42rem; border
 .semantic-text { width: 100%; }
 .semantic-control:focus-within, .semantic-choice:focus-visible, .semantic-palette:focus-visible, .semantic-switch:focus-visible, .semantic-reset:focus-visible { outline: 2px solid #83d7c5; outline-offset: 2px; }
 .library-filters, .operation-row { display: flex; flex-wrap: wrap; gap: .25rem; margin: .4rem 0; }
+.save-feedback { margin: .15rem 0 .45rem; padding: .38rem .45rem; border-left: 3px solid #83d7c5; border-radius: 3px; background: #102b29; color: #d9f6ee; }
+.save-feedback[data-state="error"] { border-left-color: #e5ab77; background: #36251c; color: #fff1e6; }
 .library-list { display: grid; gap: .3rem; margin: .5rem 0; padding: 0; list-style: none; }
 .library-list button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 2rem; border: 1px solid #39565c; border-radius: 3px; background: #0d181c; color: #edf4f5; text-align: left; }
 .library-list button[aria-current="true"] { border-color: #83d7c5; box-shadow: 0 0 0 1px #83d7c577; }

@@ -461,6 +461,98 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
             ["node", "-e", javascript, history], check=False, capture_output=True, text=True
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_save_feedback_is_local_accessible_and_survives_status_polling(self) -> None:
+        html = Path("web/templates/composer.html").read_text(encoding="utf-8")
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        css = Path("web/static/css/composer_slice.css").read_text(encoding="utf-8")
+        save_source = script[
+            script.index("function saveFeedback") : script.index(
+                "  async function rewind", script.index("function saveFeedback")
+            )
+        ]
+        status_source = script[
+            script.index("function renderStatus") : script.index(
+                "  function updateHistoryActions", script.index("function renderStatus")
+            )
+        ]
+        self.assertIn('id="saveFeedback"', html)
+        self.assertIn('role="status"', html)
+        self.assertIn('aria-live="polite"', html)
+        self.assertIn('aria-describedby="saveFeedback"', html)
+        self.assertIn('.save-feedback[data-state="error"]', css)
+        self.assertNotIn("operationMessage", save_source)
+        self.assertNotIn("saveFeedback", status_source)
+        javascript = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+class Node {
+  constructor(value = '') { this.value = value; this.textContent = ''; this.hidden = true; this.dataset = {}; this.open = false; this.focused = false; }
+  focus() { this.focused = true; }
+}
+const nodes = {
+  '#sceneName': new Node('   '), '#secondaryOperations': new Node(),
+  '#saveFeedback': new Node(), '#saveState': new Node(),
+};
+const requests = [];
+const state = {selection: null, dirty: true};
+const context = {
+  assert, nodes, state, requests, replies: [], api: '/api/composer', process, console,
+  $: (selector) => nodes[selector],
+  sceneFromControls: () => ({schema: 'ledgrid.scene.v2'}),
+  loadLibrary: async () => {},
+  fetch: async (url, options) => {
+    requests.push({url, options});
+    const next = context.replies.shift();
+    return {ok: next.ok, json: async () => next.body};
+  },
+};
+vm.runInNewContext(process.argv[1] + `
+  ;(async () => {
+    await save(false);
+    assert.equal(requests.length, 0);
+    assert.equal(nodes['#saveFeedback'].textContent, 'Enter a scene name before saving.');
+    assert.equal(nodes['#saveFeedback'].dataset.state, 'error');
+    assert.equal(nodes['#secondaryOperations'].open, true);
+    assert.equal(nodes['#sceneName'].focused, true);
+
+    nodes['#sceneName'].value = 'Northern glow';
+    replies = [{ok: true, body: {look: {id: 'one', name: 'Northern glow'}}}];
+    await save(false);
+    assert.equal(requests.at(-1).url, '/api/composer/looks');
+    assert.equal(nodes['#saveFeedback'].textContent, 'Saved Northern glow.');
+    assert.equal(nodes['#saveFeedback'].dataset.state, 'success');
+    assert.equal(nodes['#sceneName'].focused, true, 'successful save must not steal focus');
+
+    nodes['#sceneName'].value = 'Northern glow copy';
+    replies = [{ok: true, body: {look: {id: 'two', name: 'Northern glow copy'}}}];
+    await save(true);
+    assert.equal(requests.at(-1).url, '/api/composer/looks');
+    assert.equal(nodes['#saveFeedback'].textContent, 'Saved Northern glow copy.');
+
+    state.selection = {kind: 'look', id: 'two', name: 'Northern glow copy'};
+    nodes['#sceneName'].value = 'Keep this typed name';
+    replies = [{ok: false, body: {error: 'Disk is temporarily unavailable'}}];
+    await save(false);
+    assert.equal(requests.at(-1).url, '/api/composer/looks/save');
+    assert.equal(nodes['#sceneName'].value, 'Keep this typed name');
+    assert.equal(nodes['#saveFeedback'].textContent, 'Disk is temporarily unavailable');
+    assert.equal(nodes['#saveFeedback'].dataset.state, 'error');
+
+    replies = [{ok: true, body: {}}];
+    await save(false);
+    assert.equal(nodes['#saveFeedback'].textContent, 'Saved Northern glow copy.');
+    assert.equal(nodes['#saveFeedback'].dataset.state, 'success');
+  })().catch((error) => { console.error(error); process.exitCode = 1; });
+`, context);
+"""
+        completed = subprocess.run(
+            ["node", "-e", javascript, save_source],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn('document.addEventListener(\'keydown\', handleSceneHistoryShortcut);', script)
         self.assertIn('[contenteditable]:not([contenteditable="false"])', script)
 
