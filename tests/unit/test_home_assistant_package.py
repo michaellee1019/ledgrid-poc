@@ -246,6 +246,29 @@ class HomeAssistantPackageTests(unittest.TestCase):
             wall.run(brightness=26)
         self.assertEqual(wall.writes, [])
 
+    def test_manual_scene_after_apply_aborts_remaining_fields(self):
+        wall = WallHarness()
+        observe = wall.observe
+        changed_scene = False
+
+        def observe_with_manual_scene():
+            nonlocal changed_scene
+            was_pending = wall.pending is not None
+            response = observe()
+            if was_pending and not changed_scene:
+                changed_scene = True
+                wall.state['controller_state_revision'] += 1
+                wall.state['active_identity'] = {'scene_digest': 'new-manual-scene'}
+                return observe()
+            return response
+
+        wall.observe = observe_with_manual_scene
+        with self.assertRaises(ScriptFailure):
+            wall.run(brightness=26, power=False)
+        self.assertEqual([call['route'] for call in wall.writes], ['brightness'])
+        self.assertTrue(wall.state['is_running'])
+        self.assertEqual(wall.state['active_identity'], {'scene_digest': 'new-manual-scene'})
+
     def test_missing_identity_is_unavailable(self):
         wall = WallHarness()
         wall.state['controller_session_id'] = None

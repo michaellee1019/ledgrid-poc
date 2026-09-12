@@ -89,7 +89,7 @@ To wait explicitly for the full command result from another script/automation, c
 
 Polling adopts Composer changes every two seconds. Stale/missing controller identity, stale observation (15 seconds), or HTTP failure makes the entities unavailable. Values come from observed controller state, never HA helper restore state. Startup, reload and reconnect do not restore desired brightness or power. No automatic write retry or command queue is installed.
 
-Each command carries its captured controller session/revision and a 10-second expiry. The controller checks them immediately before applying it. The script waits for the same session, a newer revision, the matching applied command ID, and the requested value. Intervening changes abort the remaining fields of a multi-setting request. Concurrent requests may conflict and fail; submit a new request after observing current state. Keep HA and the wall clocks synchronized.
+Each command carries its captured controller session/revision and a 10-second expiry. The controller checks them immediately before applying it. The script waits for the same session, exactly the next revision, the matching applied command ID, and the requested value. Intervening changes abort the remaining fields of a multi-setting request. Concurrent requests may conflict and fail; submit a new request after observing current state. Keep HA and the wall clocks synchronized.
 
 These guarantees do not make an external automation's own startup trigger safe: do not add automations that call this script on HA startup/reconnect or restore values from helpers unless that is deliberately desired.
 

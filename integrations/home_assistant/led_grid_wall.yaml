@@ -226,7 +226,7 @@ script:
                                 {{ after_response.status == 200 and after_response.content is mapping
                                    and after_response.content.controller_session_id == before.controller_session_id
                                    and after_response.content.controller_state_revision is integer
-                                   and after_response.content.controller_state_revision > before.controller_state_revision
+                                   and after_response.content.controller_state_revision == before.controller_state_revision + 1
                                    and after_response.content.last_applied_command_id == command_response.content.command_id
                                    and after_response.content[observed_field] == expected }}
                         until: "{{ matched or repeat.index >= 20 }}"
