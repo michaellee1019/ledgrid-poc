@@ -12,7 +12,6 @@
 #include <unistd.h>
 
 #include "esp_heap_caps.h"
-#include "esp_dlfcn.h"
 #include "esp_spiffs.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -23,7 +22,7 @@ namespace ledgrid {
 namespace {
 
 constexpr char kPartitionLabel[] = "profilecache";
-constexpr char kBasePath[] = "/profilecache";
+constexpr const char* kBasePath = kNativeModuleCacheBasePath;
 constexpr char kPartPath[] = "/profilecache/native-upload.part";
 constexpr char kPartMetaPath[] = "/profilecache/native-upload.meta.part";
 constexpr std::size_t kMetadataBytes = 48;
@@ -643,30 +642,6 @@ EspNativeModuleBackend::~EspNativeModuleBackend() {
   unload();
 }
 
-bool EspNativeModuleBackend::load(const char* path) {
-  if (path == nullptr || module_handle_ != nullptr) return false;
-  module_handle_ = dlopen(path, RTLD_NOW);
-  return module_handle_ != nullptr;
-}
-
-bool EspNativeModuleBackend::resolve_entrypoint() {
-  if (module_handle_ == nullptr || api_ != nullptr) return false;
-  auto entrypoint = reinterpret_cast<ledgrid_native_background_entrypoint_v2>(
-      dlsym(module_handle_, LEDGRID_NATIVE_BACKGROUND_ENTRYPOINT_V2));
-  if (entrypoint == nullptr) return false;
-  api_ = entrypoint();
-  return api_ != nullptr &&
-      api_->abi_version == LEDGRID_NATIVE_BACKGROUND_ABI_VERSION &&
-      api_->struct_size == sizeof(ledgrid_native_background_api_v2) &&
-      api_->state_size >= 1 &&
-      api_->state_size <= LEDGRID_NATIVE_BACKGROUND_MAX_STATE_BYTES &&
-      api_->state_alignment >= 1 &&
-      api_->state_alignment <= LEDGRID_NATIVE_BACKGROUND_MAX_STATE_ALIGNMENT &&
-      (api_->state_alignment & (api_->state_alignment - 1U)) == 0 &&
-      api_->initialize != nullptr && api_->update_context != nullptr &&
-      api_->render != nullptr && api_->cleanup != nullptr;
-}
-
 bool EspNativeModuleBackend::initialize(
     const NativeModuleDescriptor& descriptor,
     const NativeModuleTopology& topology,
@@ -749,17 +724,6 @@ bool EspNativeModuleBackend::cleanup() {
       api_->cleanup(state_) == LEDGRID_NATIVE_BACKGROUND_OK;
   heap_caps_free(state_);
   state_ = nullptr;
-  return ok;
-}
-
-bool EspNativeModuleBackend::unload() {
-  if (module_handle_ == nullptr) {
-    api_ = nullptr;
-    return true;
-  }
-  const bool ok = dlclose(module_handle_) == 0;
-  module_handle_ = nullptr;
-  api_ = nullptr;
   return ok;
 }
 

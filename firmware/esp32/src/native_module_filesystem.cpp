@@ -114,6 +114,16 @@ bool remove_if_present(const char* path, std::uint32_t* count) {
 
 }  // namespace
 
+const char* native_module_loader_name(const char* managed_path) {
+  constexpr std::size_t prefix_size = sizeof(kNativeModuleCacheBasePath) - 1;
+  if (managed_path == nullptr ||
+      std::strncmp(managed_path, kNativeModuleCacheBasePath, prefix_size) != 0 ||
+      managed_path[prefix_size] != '/') return nullptr;
+  const char* name = managed_path + prefix_size + 1;
+  std::uint8_t digest[kDigestBytes] = {};
+  return decode_name(name, ".bin", digest) ? name : nullptr;
+}
+
 NativeModuleCacheReconcileResult reconcile_native_module_cache(
     const char* base_path) {
   NativeModuleCacheReconcileResult result{};

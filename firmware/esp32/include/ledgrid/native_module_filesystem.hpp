@@ -4,6 +4,12 @@
 
 namespace ledgrid {
 
+constexpr char kNativeModuleCacheBasePath[] = "/profilecache";
+
+// Borrow the exact full-digest filename from a managed absolute payload path.
+// No normalization, directory traversal, metadata or shortened aliases allowed.
+const char* native_module_loader_name(const char* managed_path);
+
 struct NativeModuleCacheReconcileResult {
   bool ok = false;
   std::uint32_t removed_data_files = 0;
