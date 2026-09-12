@@ -30,6 +30,9 @@ FAST_CONFIG_FILES = {
     # process startup.  Omitting it from a fast release makes the candidate
     # controller healthy while the web process exits before readiness.
     PurePosixPath("web/composer_preset_membership.v1.json"),
+    # The target compiles a platform-local Preview peer from the immutable
+    # snapshot. This ABI header is one of the exact two bundle-bound inputs.
+    PurePosixPath("firmware/esp32/include/ledgrid/native_background_abi_v2.h"),
 }
 FAST_RUNTIME_FILES = {
     # Every immutable app release is a valid systemd target.  Omitting the

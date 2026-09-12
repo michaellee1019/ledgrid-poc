@@ -771,6 +771,82 @@ def stage_app(root: Path, snapshot: Path) -> Mapping[str, Any]:
     }
 
 
+def _build_native_host_preview(
+    root: Path,
+    snapshot: Path,
+    *,
+    plugin_id: str,
+    bundle_digest: str,
+) -> Mapping[str, Any]:
+    """Build one platform peer after dispatch into the installed app runtime."""
+
+    verify_snapshot(snapshot)
+    if re.fullmatch(r"[a-z][a-z0-9_]*", plugin_id) is None:
+        raise ValueError("native host preview plugin ID is invalid")
+    if RELEASE_PATTERN.fullmatch(bundle_digest) is None:
+        raise ValueError("native host preview bundle digest is invalid")
+    native_inputs = set(_manifest_paths(snapshot, "native-build-manifest.json"))
+    source = PurePosixPath(f"animation/plugins/{plugin_id}/native/background.cpp")
+    header = PurePosixPath("firmware/esp32/include/ledgrid/native_background_abi_v2.h")
+    if source not in native_inputs or not (snapshot / header.as_posix()).is_file():
+        raise RuntimeError("deployment snapshot lacks exact native host preview inputs")
+
+    from animation.core.native_background_library import NativeBackgroundLibrary
+    from animation.native.host_peer import build_host_peer
+
+    resolved = NativeBackgroundLibrary(
+        root / "receiver_library" / "native_backgrounds"
+    ).resolve(bundle_digest)
+    result = build_host_peer(
+        snapshot,
+        resolved.bundle_path,
+        root / "run_state" / "native_background_builds",
+        plugin_id=plugin_id,
+        bundle_digest=bundle_digest,
+    )
+    return {
+        "plugin_id": plugin_id,
+        "bundle_digest": bundle_digest,
+        "payload_digest": resolved.payload_digest,
+        **result,
+    }
+
+
+def build_native_host_preview(
+    root: Path,
+    snapshot: Path,
+    *,
+    plugin_id: str,
+    bundle_digest: str,
+) -> Mapping[str, Any]:
+    """Run host-peer validation and compilation with the installed app runtime."""
+
+    runtime_python = root / "venv" / "bin" / "python"
+    if not runtime_python.is_file():
+        raise RuntimeError("selected target runtime is missing; provision dependencies first")
+    helper = Path(__file__).resolve(strict=True)
+    completed = _command(
+        (
+            runtime_python,
+            helper,
+            "--root",
+            root,
+            "_build-native-host-preview-runtime",
+            "--snapshot",
+            snapshot,
+            "--plugin-id",
+            plugin_id,
+            "--bundle-digest",
+            bundle_digest,
+        ),
+        cwd=snapshot,
+    )
+    return _final_stdout_json_object(
+        completed.stdout,
+        label="native host preview runtime",
+    )
+
+
 def _legacy_service_working_directory(root: Path, unit: str) -> Optional[Path]:
     pid = _service_main_pid(unit)
     if pid <= 0:
@@ -3918,6 +3994,16 @@ def _parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--unit", default=DEFAULT_SYSTEMD_UNIT)
     stage_support_parser = subparsers.add_parser("stage-support")
     stage_support_parser.add_argument("--snapshot", type=_path, required=True)
+    host_preview = subparsers.add_parser("build-native-host-preview")
+    host_preview.add_argument("--snapshot", type=_path, required=True)
+    host_preview.add_argument("--plugin-id", required=True)
+    host_preview.add_argument("--bundle-digest", required=True)
+    host_preview_runtime = subparsers.add_parser(
+        "_build-native-host-preview-runtime", help=argparse.SUPPRESS,
+    )
+    host_preview_runtime.add_argument("--snapshot", type=_path, required=True)
+    host_preview_runtime.add_argument("--plugin-id", required=True)
+    host_preview_runtime.add_argument("--bundle-digest", required=True)
     cleanup = subparsers.add_parser("cleanup-snapshot")
     cleanup.add_argument("--snapshot", type=_path, required=True)
     validate = subparsers.add_parser("validate-app")
@@ -3998,6 +4084,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
     elif args.command == "stage-support":
         result = stage_support(root, args.snapshot)
+    elif args.command == "build-native-host-preview":
+        result = build_native_host_preview(
+            root,
+            args.snapshot,
+            plugin_id=args.plugin_id,
+            bundle_digest=args.bundle_digest,
+        )
+    elif args.command == "_build-native-host-preview-runtime":
+        result = _build_native_host_preview(
+            root,
+            args.snapshot,
+            plugin_id=args.plugin_id,
+            bundle_digest=args.bundle_digest,
+        )
     elif args.command == "cleanup-snapshot":
         result = cleanup_snapshot(root, args.snapshot)
     elif args.command == "validate-app":
