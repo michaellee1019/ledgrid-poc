@@ -2245,7 +2245,14 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         common_seed=parameters["common_seed"],
                     )
             if started is False:
-                raise RuntimeError("receiver-native background start was not acknowledged")
+                # Capture the operation before stop/rollback replaces driver status.
+                native_status = self.controller.get_stats().get('aggregate', {}).get(
+                    'native_background', {}
+                )
+                raise RuntimeError(
+                    "receiver-native background start was not acknowledged: "
+                    + repr(native_status)
+                )
             self._receiver_context = context
             foreground = self._render_receiver_foreground(
                 now=self.start_time, force_refresh=True
@@ -2286,7 +2293,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                 # The guarded coordinator restores the exact prior snapshot;
                 # a substituted Python fallback must never count as success.
                 self.stop_animation(clear_leds=False)
-                return False
+                raise RuntimeError(str(exc)) from exc
             return self._activate_known_python_fallback(scene, exc)
 
     def start_scene(

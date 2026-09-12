@@ -935,9 +935,14 @@ class MultiDeviceLEDController:
             )
         result = int(status.get("receiver_native_result", 0) or 0)
         if result != 1:
+            details = {key: value for key, value in status.items() if (
+                key.startswith('receiver_native_')
+                or key in ('receiver_hardware_serial', 'receiver_status_version',
+                           'receiver_active_context_digest')
+            )}
             raise RuntimeError(
                 f"receiver {receiver_id} rejected {operation}: "
-                f"{status.get('receiver_native_result_name', result)}"
+                f"{status.get('receiver_native_result_name', result)}; {details!r}"
             )
         return status
 

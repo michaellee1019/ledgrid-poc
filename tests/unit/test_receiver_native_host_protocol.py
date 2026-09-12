@@ -314,6 +314,20 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
         self.assertEqual(len(native_packets), 1)
         self.assertEqual(native_packets[0][:-2], b"\x57")
 
+    def test_rejected_native_ack_retains_receiver_and_failure_identity(self):
+        spi = _QueuedNativeSpi(result=18)
+        item = controller(spi)
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+        with self.assertRaises(RuntimeError) as caught:
+            item.native_stop()
+        message = str(caught.exception)
+        self.assertIn("receiver 4 rejected native command 0x57", message)
+        self.assertIn("quarantined (18)", message)
+        self.assertIn("receiver_native_quarantine_payload_digest", message)
+        self.assertIn("0a" * 32, message)
+        self.assertIn("receiver_native_watchdog_phase", message)
+        self.assertIn("receiver_operation_sequence", message)
+
     def test_native_commands_wait_for_a_free_dma_slot_before_single_send(self):
         for command in (protocol.CMD_NATIVE_PREFLIGHT, protocol.CMD_NATIVE_RESTORE):
             with self.subTest(command=command):

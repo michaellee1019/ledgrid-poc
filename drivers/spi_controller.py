@@ -2788,9 +2788,18 @@ class LEDController:
         result = int(status.get("receiver_native_result", 0) or 0)
         if result != 1:
             result_name = NATIVE_RESULT_NAMES.get(result, f"unknown_{result}")
+            # Keep the exact failed acknowledgement before compensation or a
+            # compact status query replaces these receiver diagnostics.
+            details = {key: value for key, value in status.items() if (
+                key.startswith("receiver_native_")
+                or key in ("receiver_logical_device", "receiver_hardware_serial",
+                           "receiver_status_version", "receiver_operation_sequence",
+                           "receiver_active_context_digest")
+            )}
             raise RuntimeError(
-                f"receiver rejected native command 0x{payload[0]:02x} "
-                f"with result {result_name} ({result})"
+                f"receiver {status.get('receiver_logical_device')} "
+                f"rejected native command 0x{payload[0]:02x} "
+                f"with result {result_name} ({result}); {details!r}"
             )
         return status
 

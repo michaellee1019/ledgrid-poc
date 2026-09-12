@@ -59,6 +59,7 @@ class _Transport(_Controller):
     def activate_native_background(self, resolved, *, context, parameters=None, installation_profile_digest=None, deterministic_seed=0):
         if self.reject_next:
             self.reject_next = False
+            self.native_status = {'state': 'compensated', 'error': 'receiver 2 rejected native activation: loader_failed', 'payload_digest': resolved.payload_digest}
             return False
         result = super().activate_native_background(resolved, context=context, parameters=parameters, installation_profile_digest=installation_profile_digest)
         self.native_status.update(effective_parameters=deepcopy(parameters), parameter_digest=canonical_json_sha256(parameters), context_digest=context.context_digest.hex(), installation_profile_digest=installation_profile_digest)
@@ -375,6 +376,8 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         failed_response=self.client.put('/api/v1/scene',json=failed,headers={'Idempotency-Key':checked['basis_digest']})
         failed_receipt=self.channel.read_activation_status(failed_response.get_json()['activation_id'])
         self.assertEqual(failed_receipt['phase'],'rolled_back',failed_receipt)
+        self.assertIn('receiver 2 rejected native activation: loader_failed', failed_receipt['error'])
+        self.assertIn('payload_digest', failed_receipt['error'])
         self.assertEqual(self.manager.get_scene_state(),scene)
         self.assertEqual(failed_receipt['observed_identity'],receipt['observed_identity'])
 
