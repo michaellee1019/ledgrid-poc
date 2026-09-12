@@ -22,7 +22,7 @@
   const clientId = newUuid();
   const state = { status: {connected: true, running: true, armed: true, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
     scene: null, history: [], redo: [], sequence: 0, intent: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
-    gallery: {entries: [], digest: null, query: '', filter: 'all', rendered: 0, favorites: new Set(), thumbnails: new Map(), detail: null},
+    gallery: {entries: [], digest: null, query: '', filter: 'all', favorites: new Set(), thumbnails: new Map(), detail: null, thumbnailObserver: null, thumbnailQueue: [], thumbnailQueued: new Set(), thumbnailActive: 0},
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
@@ -505,7 +505,9 @@
       look: {palette_id: $('#previewPalette').value, pace: number('#sceneSpeed'), presentation_brightness: number('#sceneLuminance')} };
   }
   const GALLERY_FIXED_PREVIEW = Object.freeze({monotonic_elapsed: 17, wall_time: '2026-01-01T12:00:00+00:00'});
-  const GALLERY_PAGE_SIZE = 12;
+  // Gallery membership is complete on first render.  Only the inert preview
+  // work waits for a card to approach the viewport.
+  const GALLERY_THUMBNAIL_CONCURRENCY = 3;
   const GALLERY_FAVORITES_KEY = 'ledgrid-composer-gallery-favorites-v1';
   function readGalleryFavorites() {
     try { return new Set(JSON.parse(window.localStorage.getItem(GALLERY_FAVORITES_KEY) || '[]').filter((key) => typeof key === 'string')); }
@@ -526,9 +528,20 @@
     next.animation = {component_id: entry.component_id, version: entry.version, provider: entry.provider, role: 'animation', parameters: structuredClone(parameters)};
     return next;
   }
-  function galleryThumbnailKey(entry) { return `${state.gallery.digest}:${entry.key}:default`; }
+  function stableGalleryJson(value) {
+    if (Array.isArray(value)) return `[${value.map(stableGalleryJson).join(',')}]`;
+    if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableGalleryJson(value[key])}`).join(',')}}`;
+    return JSON.stringify(value);
+  }
+  function galleryThumbnailKey(entry) {
+    // The preview endpoint renders this resolved Scene, not merely the
+    // catalog item.  Include every Scene-owned rendering input so a changed
+    // background, Look, widget, or plant optic cannot reuse an old thumbnail.
+    return stableGalleryJson({scene: galleryScene(entry), preview: GALLERY_FIXED_PREVIEW, catalog: state.gallery.digest, entry: entry.key});
+  }
   async function drawGalleryThumbnail(canvas, entry) {
     const key = galleryThumbnailKey(entry);
+    canvas.__galleryThumbnailKey = key;
     let result = state.gallery.thumbnails.get(key);
     if (!result) {
       result = preview(galleryScene(entry), GALLERY_FIXED_PREVIEW).then((body) => body.frame);
@@ -538,12 +551,45 @@
       const frame = await result;
       if (state.gallery.thumbnails.get(key) !== result) return;
       // Keep the shared promise stable while replacement canvases await it.
+      if (canvas.__galleryThumbnailKey !== key) return;
       drawFrameIntoCanvas(canvas, frame);
       canvas.setAttribute('aria-label', `${entry.name} representative 33 by 138 preview`);
     } catch (_) {
       state.gallery.thumbnails.delete(key);
+      if (canvas.__galleryThumbnailKey !== key) return;
       const unavailable = document.createElement('span'); unavailable.className = 'gallery-thumb-unavailable'; unavailable.textContent = 'Preview unavailable'; unavailable.setAttribute('aria-label', `${entry.name} preview unavailable`); canvas.replaceWith(unavailable);
     }
+  }
+  function pumpGalleryThumbnails() {
+    while (state.gallery.thumbnailActive < GALLERY_THUMBNAIL_CONCURRENCY && state.gallery.thumbnailQueue.length) {
+      const {canvas, entry} = state.gallery.thumbnailQueue.shift();
+      state.gallery.thumbnailQueued.delete(canvas);
+      state.gallery.thumbnailActive += 1;
+      drawGalleryThumbnail(canvas, entry).finally(() => { state.gallery.thumbnailActive -= 1; pumpGalleryThumbnails(); });
+    }
+  }
+  function queueGalleryThumbnail(canvas, entry) {
+    if (state.gallery.thumbnailQueued.has(canvas)) return;
+    state.gallery.thumbnailQueued.add(canvas);
+    state.gallery.thumbnailQueue.push({canvas, entry});
+    pumpGalleryThumbnails();
+  }
+  function scheduleGalleryThumbnails(cards) {
+    state.gallery.thumbnailObserver?.disconnect();
+    state.gallery.thumbnailQueue = [];
+    state.gallery.thumbnailQueued.clear();
+    if (typeof IntersectionObserver !== 'function') {
+      cards.forEach(({canvas, entry}) => queueGalleryThumbnail(canvas, entry));
+      return;
+    }
+    const observer = new IntersectionObserver((observations) => observations.forEach((observation) => {
+      if (!observation.isIntersecting) return;
+      observer.unobserve(observation.target);
+      const card = cards.find(({canvas}) => canvas === observation.target);
+      if (card) queueGalleryThumbnail(card.canvas, card.entry);
+    }), {rootMargin: '500px 0px'});
+    state.gallery.thumbnailObserver = observer;
+    cards.forEach(({canvas}) => observer.observe(canvas));
   }
   function showGalleryDetail(entry) {
     const detail = $('#galleryDetail'); detail.replaceChildren(); detail.hidden = false;
@@ -587,10 +633,9 @@
   function refreshGallerySelection() { renderGallery(); }
   function renderGallery() {
     const grid = $('#galleryGrid'); const entries = galleryEntries();
-    if (state.gallery.rendered > entries.length) state.gallery.rendered = entries.length;
-    const limit = Math.min(entries.length, Math.max(GALLERY_PAGE_SIZE, state.gallery.rendered || GALLERY_PAGE_SIZE));
     grid.replaceChildren();
-    entries.slice(0, limit).forEach((entry) => {
+    const cards = [];
+    entries.forEach((entry) => {
       const card = document.createElement('div'); card.className = 'gallery-card'; card.setAttribute('role', 'listitem');
       const select = document.createElement('button'); select.type = 'button'; select.className = 'gallery-select'; select.setAttribute('aria-current', String(state.scene?.animation?.component_id === entry.component_id)); select.disabled = !entry.available;
       const canvas = document.createElement('canvas'); canvas.className = 'gallery-thumb'; canvas.width = 33; canvas.height = 138; canvas.setAttribute('aria-label', `${entry.name} preview loading`);
@@ -602,16 +647,16 @@
       select.addEventListener('click', () => { showGalleryDetail(entry); selectGalleryEntry(entry); });
       const favorite = document.createElement('button'); favorite.type = 'button'; favorite.className = 'gallery-favorite'; favorite.setAttribute('aria-label', `Favorite ${entry.name}`); favorite.setAttribute('aria-pressed', String(state.gallery.favorites.has(entry.key))); favorite.textContent = state.gallery.favorites.has(entry.key) ? '★' : '☆';
       favorite.addEventListener('click', (event) => { event.stopPropagation(); if (state.gallery.favorites.has(entry.key)) state.gallery.favorites.delete(entry.key); else state.gallery.favorites.add(entry.key); writeGalleryFavorites(); renderGallery(); });
-      card.append(select, favorite); grid.append(card); drawGalleryThumbnail(canvas, entry);
+      card.append(select, favorite); grid.append(card); cards.push({canvas, entry});
     });
+    scheduleGalleryThumbnails(cards);
     $('#galleryCount').textContent = `${entries.length} animation${entries.length === 1 ? '' : 's'}`;
     $('#galleryEmpty').hidden = entries.length > 0;
-    const more = $('#galleryMore'); more.hidden = limit >= entries.length; more.textContent = `Show ${Math.min(GALLERY_PAGE_SIZE, entries.length - limit)} more animations`;
   }
   async function loadGallery() {
     try {
       const response = await fetch(`${api}/gallery`, {cache: 'no-store'}); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Gallery is unavailable.');
-      state.gallery.entries = Array.isArray(body.entries) ? body.entries : []; state.gallery.digest = body.catalog_digest; state.gallery.favorites = readGalleryFavorites(); state.gallery.rendered = GALLERY_PAGE_SIZE; renderGallery();
+      state.gallery.entries = Array.isArray(body.entries) ? body.entries : []; state.gallery.digest = body.catalog_digest; state.gallery.favorites = readGalleryFavorites(); renderGallery();
     } catch (error) { $('#galleryCount').textContent = 'Unavailable'; $('#galleryEmpty').hidden = false; $('#galleryEmpty').textContent = error.message || 'Gallery is unavailable.'; }
   }
   function syncPlantOpticControl(optic) {
@@ -1395,9 +1440,8 @@
     $('#removeEmoji').addEventListener('click', async () => { const next = structuredClone(state.scene || defaultScene()); next.widgets = next.widgets.filter((widget) => widget.component?.component_id !== 'emoji_arranger'); state.lastControl = 'removeEmoji'; try { await submit(next, {rememberEdit: true}); applyScene(next); } catch (error) { $('#operationMessage').textContent = error.message; } });
     $('#scenePreview').addEventListener('pointerdown', triggerInstrumentAtPointer);
     $('#librarySearch').addEventListener('input', (event) => { state.query = event.target.value; renderLibrary(); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.addEventListener('click', () => { state.filter = button.dataset.libraryFilter; renderLibrary(); }));
-    $('#gallerySearch').addEventListener('input', (event) => { state.gallery.query = event.target.value; state.gallery.rendered = GALLERY_PAGE_SIZE; renderGallery(); });
-    document.querySelectorAll('[data-gallery-filter]').forEach((button) => button.addEventListener('click', () => { state.gallery.filter = button.dataset.galleryFilter; state.gallery.rendered = GALLERY_PAGE_SIZE; document.querySelectorAll('[data-gallery-filter]').forEach((candidate) => candidate.classList.toggle('active', candidate.dataset.galleryFilter === state.gallery.filter)); renderGallery(); }));
-    $('#galleryMore').addEventListener('click', () => { state.gallery.rendered += GALLERY_PAGE_SIZE; renderGallery(); });
+    $('#gallerySearch').addEventListener('input', (event) => { state.gallery.query = event.target.value; renderGallery(); });
+    document.querySelectorAll('[data-gallery-filter]').forEach((button) => button.addEventListener('click', () => { state.gallery.filter = button.dataset.galleryFilter; document.querySelectorAll('[data-gallery-filter]').forEach((candidate) => candidate.classList.toggle('active', candidate.dataset.galleryFilter === state.gallery.filter)); renderGallery(); }));
     $('#openScene').addEventListener('click', () => $('#librarySearch').focus()); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', stopOutput); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
     document.addEventListener('keydown', handleSceneHistoryShortcut);
   }

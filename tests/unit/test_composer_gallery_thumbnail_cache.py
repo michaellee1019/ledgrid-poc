@@ -5,22 +5,22 @@ import subprocess
 
 def test_pending_thumbnail_repaints_every_replacement_canvas():
     source = Path('web/static/js/composer_slice.js').read_text()
-    drawing = source[source.index('function galleryThumbnailKey'):source.index('function showGalleryDetail')]
+    drawing = source[source.index('function stableGalleryJson'):source.index('function showGalleryDetail')]
     runner = r'''
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const state = {gallery: {digest:'catalog', thumbnails: new Map()}};
+const state = {gallery: {digest:'catalog', thumbnails: new Map()}, background: {gain:.5}};
 const pending = [];
 let requests = 0;
 const context = {state, GALLERY_FIXED_PREVIEW:{},
-  galleryScene: entry => entry,
+  galleryScene: entry => ({background: state.background, animation: entry}),
   preview: () => { requests++; return new Promise(resolve => pending.push(resolve)); },
   drawFrameIntoCanvas: (canvas, frame) => { canvas.frame = frame; },
 };
 const makeCanvas = () => ({setAttribute(key, value) { this[key] = value; }});
 vm.runInNewContext(process.argv[1] + '; this.draw = drawGalleryThumbnail;', context);
 (async () => {
-  const entry = {key:'sparkle', name:'Sparkle'};
+  const entry = {key:'sparkle', name:'Sparkle', parameters:{seed:1}};
   const detached = makeCanvas(), attached = makeCanvas(), replacedAgain = makeCanvas();
   const work = [context.draw(detached, entry), context.draw(attached, entry), context.draw(replacedAgain, entry)];
   assert.equal(requests, 1);
@@ -41,6 +41,16 @@ vm.runInNewContext(process.argv[1] + '; this.draw = drawGalleryThumbnail;', cont
   pending.shift()({frame:{pixels:'stale'}}); await old;
   assert.equal(stale.frame, undefined);
   pending.shift()({frame}); await current; assert.equal(fresh.frame, frame);
+  const unchanged = context.draw(makeCanvas(), entry);
+  assert.equal(requests, 3, 'matching Scene inputs reuse the resolved frame');
+  const altered = context.draw(makeCanvas(), {...entry, parameters:{seed:2}});
+  assert.equal(requests, 4, 'a changed animation default must use a new cache key');
+  await unchanged;
+  pending.shift()({frame}); await altered;
+  state.background = {gain:.8};
+  const changedBackground = context.draw(makeCanvas(), entry);
+  assert.equal(requests, 5, 'a changed resolved Scene background must use a new cache key');
+  pending.shift()({frame}); await changedBackground;
 })().catch(error => { console.error(error); process.exitCode = 1; });
 '''
     result = subprocess.run(['node', '-e', runner, drawing], capture_output=True, text=True)
