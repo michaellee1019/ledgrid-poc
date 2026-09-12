@@ -1222,6 +1222,7 @@ class SceneActivationApiTests(unittest.TestCase):
             "/api/config/target-fps",
             "/api/config/animation-speed",
             "/api/config/brightness",
+            "/api/config/power",
             "/api/config/plant-modifiers",
             "/api/stop",
         )

@@ -52,6 +52,52 @@ class ControllerActivationConflictError(ControllerActivationError):
     """The activation lost compare-and-swap or reused an identity incorrectly."""
 
 
+class ControllerCommandConflictError(ControllerActivationError):
+    """A bounded settings command lost its controller guard."""
+
+
+def normalize_controller_command_guard(
+    payload: Mapping[str, Any], *, now: float | None = None
+) -> dict[str, Any] | None:
+    """Validate the optional compare-and-expire settings-command fields."""
+    keys = {
+        "expected_controller_session_id",
+        "expected_controller_state_revision",
+        "expires_at",
+    }
+    present = keys.intersection(payload)
+    if not present:
+        return None
+    if present != keys:
+        raise ValueError(
+            "expected controller session, state revision, and expires_at "
+            "must be provided together"
+        )
+    session_id = payload["expected_controller_session_id"]
+    revision = payload["expected_controller_state_revision"]
+    expires_at = payload["expires_at"]
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("expected_controller_session_id must be a non-empty string")
+    if type(revision) is not int or revision < 0:
+        raise ValueError(
+            "expected_controller_state_revision must be a non-negative integer"
+        )
+    if (
+        isinstance(expires_at, bool)
+        or not isinstance(expires_at, (int, float))
+        or not math.isfinite(float(expires_at))
+    ):
+        raise ValueError("expires_at must be a finite Unix timestamp")
+    expiry = float(expires_at)
+    if now is not None and expiry <= now:
+        raise ValueError("controller command guard has expired")
+    return {
+        "expected_controller_session_id": session_id,
+        "expected_controller_state_revision": revision,
+        "expires_at": expiry,
+    }
+
+
 class ControllerActivationCancelled(ControllerActivationError):
     """The activation was cancelled before its first mutation."""
 
@@ -448,6 +494,12 @@ class ControllerActivationCoordinator:
     def current_identity_digest(self) -> str:
         with self._lock:
             return _canonical_json_sha256(self._active_identity)
+
+    def selected_scene(self) -> dict[str, Any] | None:
+        """Return the retained Scene used by a power-only resume."""
+        with self._lock:
+            scene = self._current_scene(self._manager_status())
+            return None if scene is None else _copy_json(scene)
 
     def set_status_sink(
         self, status_sink: Callable[[dict[str, Any]], None] | None
@@ -2184,12 +2236,30 @@ class ControllerActivationCoordinator:
             )
 
     @contextmanager
-    def legacy_mutation_guard(self):
+    def legacy_mutation_guard(
+        self, command_guard: Mapping[str, Any] | None = None
+    ):
         """Serialize legacy writes and invalidate checked bases on any change."""
 
         with self._execution_lock:
+            if command_guard is not None:
+                guard = normalize_controller_command_guard(command_guard)
+                assert guard is not None
+                if time.time() >= guard["expires_at"]:
+                    raise ControllerCommandConflictError(
+                        "controller settings command expired before execution"
+                    )
+                if self.session_id != guard["expected_controller_session_id"]:
+                    raise ControllerCommandConflictError(
+                        "controller settings command session is stale"
+                    )
+                if self._state_revision != guard["expected_controller_state_revision"]:
+                    raise ControllerCommandConflictError(
+                        "controller settings command revision is stale"
+                    )
             before_status = self._manager_status()
             before_power = bool(before_status.get("is_running", False))
+            before_scene = self._current_scene(before_status)
             before = self._derive_active_identity()
             completed = False
             try:
@@ -2201,7 +2271,9 @@ class ControllerActivationCoordinator:
                 after_power = bool(after_status.get("is_running", False))
                 if after_live_scene is not None:
                     self._selected_scene = after_live_scene
-                elif after_power or before_power != after_power:
+                elif before_power and not after_power and before_scene is not None:
+                    self._selected_scene = before_scene
+                elif after_power:
                     self._selected_scene = None
                 after = self._derive_active_identity()
                 if completed or after != before:

@@ -74,5 +74,20 @@ Browser entry points:
 - `GET /api/v1/composer/operations/telemetry` — deployment, receiver-diagnostic,
   and qualification telemetry
 - `POST /api/config/brightness` — set the receiver-wide 0–255 output brightness
+- `POST /api/config/power` - accept exactly boolean `power` plus the optional
+  guard fields below. Power off stops output while retaining the selected Scene;
+  power on resumes that Scene without selecting a default animation.
+
+Home Assistant and other automation callers may add all three guard fields to
+power, brightness, and animation-speed requests:
+`expected_controller_session_id`, `expected_controller_state_revision`, and
+`expires_at` (Unix seconds). The controller checks the guard immediately before
+mutation. Poll `GET /api/v1/composer/settings/observed` until the session still
+matches, `controller_state_revision` is newer, `last_applied_command_id` equals
+the POST response `command_id`, and the requested value matches. Treat a null
+`last_applied_command_id` as an older controller without guarded-control
+support. On startup or reconnect, poll and adopt observed state without sending
+a restore request.
+
 - `POST /api/config/target-fps`, `/api/config/animation-speed`, and
   `/api/config/plant-modifiers` — bounded Composer wall-setting updates

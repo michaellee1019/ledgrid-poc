@@ -111,7 +111,10 @@ from drivers.frame_codec import (
 )
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from ipc.control_channel import FileControlChannel
-from ipc.runtime_control import manager_controller_runtime_digests
+from ipc.runtime_control import (
+    manager_controller_runtime_digests,
+    normalize_controller_command_guard,
+)
 from ipc.scene_contract import (
     SCENE_ACTIVATION_BASIS_VERSION,
     BROWSER_SCENE_MAX_BYTES,
@@ -2067,16 +2070,22 @@ class AnimationWebInterface:
 
         @self.app.route('/api/config/animation-speed', methods=['POST'])
         def api_set_animation_speed():
-            payload = request.get_json(silent=True) or {}
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict):
+                return jsonify({'error': 'request body must be a JSON object'}), 400
             try:
+                guard = self._settings_command_guard(payload, {'multiplier'})
                 multiplier = float(payload.get('multiplier'))
-            except (TypeError, ValueError):
-                return jsonify({'error': 'multiplier must be numeric'}), 400
+            except (TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
             if not math.isfinite(multiplier) or multiplier <= 0:
                 return jsonify({'error': 'multiplier must be a positive finite number'}), 400
             speed_scale = DEFAULT_ANIMATION_SPEED_SCALE * multiplier
+            command_data = {'animation_speed_scale': speed_scale}
+            if guard is not None:
+                command_data['_controller_guard'] = guard
             command = self.control_channel.send_command(
-                'set_animation_speed_scale', animation_speed_scale=speed_scale
+                'set_animation_speed_scale', **command_data
             )
             return jsonify({
                 'success': True,
@@ -2091,17 +2100,45 @@ class AnimationWebInterface:
             if not isinstance(payload, dict):
                 return jsonify({'error': 'request body must be a JSON object'}), 400
             try:
+                guard = self._settings_command_guard(payload, {'brightness'})
                 brightness = AnimationManager.validate_output_brightness(
                     payload.get('brightness')
                 )
             except ValueError as exc:
                 return jsonify({'error': str(exc)}), 400
+            command_data = {'brightness': brightness}
+            if guard is not None:
+                command_data['_controller_guard'] = guard
             command = self.control_channel.send_command(
-                'set_output_brightness', brightness=brightness
+                'set_output_brightness', **command_data
             )
             return jsonify({
                 'success': True,
                 'brightness': brightness,
+                'command_id': self._command_id(command),
+            })
+
+        @self.app.route('/api/config/power', methods=['POST'])
+        def api_set_power():
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict):
+                return jsonify({'error': 'request body must be a JSON object'}), 400
+            try:
+                guard = self._settings_command_guard(payload, {'power'})
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            power = payload.get('power')
+            if type(power) is not bool:
+                return jsonify({'error': 'power must be boolean'}), 400
+            command_data = {'power': power}
+            if guard is not None:
+                command_data['_controller_guard'] = guard
+            command = self.control_channel.send_command(
+                'set_device_state', **command_data
+            )
+            return jsonify({
+                'success': True,
+                'power': power,
                 'command_id': self._command_id(command),
             })
 
@@ -2574,6 +2611,37 @@ class AnimationWebInterface:
     def _command_id(command: Any) -> Any:
         """Extract correlation when the configured control channel supplies it."""
         return command.get('command_id') if isinstance(command, dict) else None
+
+    def _settings_command_guard(
+        self, payload: Mapping[str, Any], setting_keys: set[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Validate a narrow setting body and optional controller guard."""
+        guard_keys = {
+            'expected_controller_session_id',
+            'expected_controller_state_revision',
+            'expires_at',
+        }
+        unknown = sorted(set(payload) - setting_keys - guard_keys)
+        if unknown:
+            raise ValueError(f"unsupported request fields: {', '.join(unknown)}")
+        guard = normalize_controller_command_guard(payload, now=time.time())
+        if guard is None:
+            return None
+        status = self.control_channel.read_status()
+        applied_id = (
+            status.get('last_applied_command_id')
+            if isinstance(status, Mapping)
+            else None
+        )
+        if (
+            isinstance(applied_id, bool)
+            or not isinstance(applied_id, (int, float))
+            or not math.isfinite(float(applied_id))
+        ):
+            raise ValueError(
+                "controller does not advertise guarded settings command support"
+            )
+        return guard
 
     def _activation_tokens(self) -> ActivationTokenStore:
         """Lazily open the durable hashed-token store only when Check is used."""
@@ -5079,6 +5147,8 @@ class AnimationWebInterface:
             'observed_at': status.get('timestamp'),
             'controller_session_id': status.get('controller_session_id'),
             'controller_state_revision': status.get('controller_state_revision'),
+            'last_command_id': status.get('last_command_id'),
+            'last_applied_command_id': status.get('last_applied_command_id'),
             'active_identity': (
                 dict(active_identity) if isinstance(active_identity, dict) else None
             ),

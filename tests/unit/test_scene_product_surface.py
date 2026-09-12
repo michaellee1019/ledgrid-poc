@@ -89,6 +89,7 @@ class _Channel:
         self.commands = []
         self.status = {
             "is_running": False,
+            "last_applied_command_id": 0,
             "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
             "led_info": {"strip_count": 2, "leds_per_strip": 3, "total_leds": 6},
         }
@@ -156,6 +157,86 @@ class SceneProductSurfaceTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_home_assistant_settings_routes_validate_and_correlate_commands(self):
+        guard = {
+            "expected_controller_session_id": "session-a",
+            "expected_controller_state_revision": 7,
+            "expires_at": 4_000_000_000.0,
+        }
+        cases = (
+            ("/api/config/power", {"power": False, **guard}, "set_device_state", {"power": False}),
+            ("/api/config/brightness", {"brightness": 0, **guard}, "set_output_brightness", {"brightness": 0}),
+            ("/api/config/brightness", {"brightness": 26, **guard}, "set_output_brightness", {"brightness": 26}),
+            (
+                "/api/config/animation-speed",
+                {"multiplier": 1.5, **guard},
+                "set_animation_speed_scale",
+                {"animation_speed_scale": 0.3 * 1.5},
+            ),
+        )
+        for path, body, action, setting in cases:
+            with self.subTest(path=path, body=body):
+                response = self.client.post(path, json=body)
+                self.assertEqual(response.status_code, 200, response.get_json())
+                command = self.channel.commands[-1]
+                self.assertEqual(response.get_json()["command_id"], command["command_id"])
+                self.assertEqual(command["action"], action)
+                self.assertEqual(
+                    {key: command["data"][key] for key in setting},
+                    setting,
+                )
+                self.assertEqual(command["data"]["_controller_guard"], guard)
+
+        before = len(self.channel.commands)
+        invalid = (
+            ("/api/config/power", {}),
+            ("/api/config/power", {"power": 1}),
+            ("/api/config/power", {"power": True, "animation": "gradient"}),
+            ("/api/config/brightness", {"brightness": True}),
+            ("/api/config/brightness", {"brightness": -1}),
+            ("/api/config/brightness", {"brightness": 256}),
+            ("/api/config/animation-speed", {"multiplier": 0}),
+            ("/api/config/animation-speed", {"multiplier": "nan"}),
+            ("/api/config/power", {
+                "power": True,
+                "expected_controller_session_id": "session-a",
+            }),
+        )
+        for endpoint, body in invalid:
+            with self.subTest(endpoint=endpoint, invalid=body):
+                self.assertEqual(self.client.post(endpoint, json=body).status_code, 400)
+        self.assertEqual(len(self.channel.commands), before)
+
+    def test_guarded_request_refuses_an_old_controller_without_applied_id(self):
+        self.channel.status.pop("last_applied_command_id")
+        before = len(self.channel.commands)
+        response = self.client.post("/api/config/power", json={
+            "power": False,
+            "expected_controller_session_id": "session-a",
+            "expected_controller_state_revision": 7,
+            "expires_at": 4_000_000_000.0,
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(len(self.channel.commands), before)
+
+    def test_observed_settings_distinguish_processed_and_applied_command_ids(self):
+        self.channel.status.update({
+            "controller_session_id": "session-a",
+            "controller_state_revision": 9,
+            "last_command_id": 13.0,
+            "last_applied_command_id": 12.0,
+            "brightness": 26,
+            "animation_speed_scale": 1.5,
+        })
+
+        response = self.client.get("/api/v1/composer/settings/observed")
+
+        self.assertEqual(response.status_code, 200)
+        observed = response.get_json()
+        self.assertEqual(observed["last_command_id"], 13.0)
+        self.assertEqual(observed["last_applied_command_id"], 12.0)
+        self.assertEqual(observed["brightness"], 26)
 
     def test_catalog_filters_and_explains_fixed_editor_compatibility(self):
         payload = self.client.get("/api/v1/components?provider=python&role=overlay").get_json()

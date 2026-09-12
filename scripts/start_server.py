@@ -33,6 +33,7 @@ from ipc.control_channel import FileControlChannel
 from ipc.runtime_control import (
     ControllerActivationConflictError,
     ControllerActivationError,
+    ControllerCommandConflictError,
     controller_activation_coordinator,
     restore_display_state as _restore_display_state,
     start_scene as _start_scene,
@@ -358,8 +359,9 @@ def controller_status_payload(
     manager: AnimationManager,
     *,
     release_id: str | None,
-    last_command_id: str | None,
+    last_command_id: str | float | None,
     updated_at: float,
+    last_applied_command_id: str | float | int | None = None,
 ) -> dict:
     """Build one controller snapshot with its immutable release identity."""
     payload = manager.get_current_frame()
@@ -372,6 +374,7 @@ def controller_status_payload(
     )
     payload['release_id'] = release_id
     payload['last_command_id'] = last_command_id
+    payload['last_applied_command_id'] = last_applied_command_id
     payload['updated_at'] = updated_at
     payload.update(controller_activation_coordinator(manager).controller_status())
     maintenance_identity = controller_maintenance_identity(manager.controller)
@@ -867,6 +870,7 @@ def run_controller_mode(args):
     # Seed from any existing control file so stale commands aren't re-executed on restart
     stale_cmd = channel.read_control()
     last_command_id = stale_cmd.get('command_id') if stale_cmd else None
+    last_applied_command_id = 0
     last_status_time = 0.0
 
     try:
@@ -905,6 +909,7 @@ def run_controller_mode(args):
                             presets_dir=Path(args.presets_dir),
                             state_path=Path(args.saved_state_file),
                         )
+                        last_applied_command_id = last_command_id
                         print(f"💾 Saved restart state: {manager.current_animation_name}/before-deploy")
                     except Exception as exc:
                         print(f"⚠️ Failed to save restart state: {exc}")
@@ -916,6 +921,7 @@ def run_controller_mode(args):
                     release_id=args.release_id,
                     last_command_id=last_command_id,
                     updated_at=now,
+                    last_applied_command_id=last_applied_command_id,
                 )
                 channel.write_status(status_payload)
                 last_status_time = now
@@ -1269,7 +1275,13 @@ def process_activation_commands(channel, activation_coordinator) -> int:
     return mutations
 
 
-def _dispatch_legacy_command(manager: AnimationManager, action: str, data: dict):
+def _dispatch_legacy_command(
+    manager: AnimationManager,
+    action: str,
+    data: dict,
+    *,
+    selected_scene: dict | None = None,
+):
     """Dispatch a command and report whether restart state changed."""
     if action == 'start':
         animation = data.get('animation')
@@ -1354,14 +1366,21 @@ def _dispatch_legacy_command(manager: AnimationManager, action: str, data: dict)
         try:
             applied = manager.set_output_brightness(requested)
             print(f"💡 Output brightness: {applied}")
-            return bool(manager.is_running)
+            return True
         except (RuntimeError, TypeError, ValueError):
             print(f"⚠️ Invalid output brightness: {requested!r}")
     elif action == 'set_device_state':
         try:
-            applied = manager.apply_device_state(data)
+            if (
+                data == {"power": True}
+                and not manager.is_running
+                and selected_scene is not None
+            ):
+                applied = _start_scene(manager, selected_scene)
+            else:
+                applied = manager.apply_device_state(data)
             print(f"🏛️ Device state: {data}")
-            return bool(applied and manager.is_running)
+            return bool(applied)
         except (RuntimeError, TypeError, ValueError) as exc:
             print(f"⚠️ Invalid device state: {exc}")
     elif action == 'set_plant_aware':
@@ -1479,8 +1498,19 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
 
     if action not in _LEGACY_CONTROLLER_MUTATIONS:
         return _dispatch_legacy_command(manager, action, data)
-    with coordinator.legacy_mutation_guard():
-        return _dispatch_legacy_command(manager, action, data)
+    command_data = dict(data)
+    command_guard = command_data.pop('_controller_guard', None)
+    try:
+        with coordinator.legacy_mutation_guard(command_guard):
+            return _dispatch_legacy_command(
+                manager,
+                action,
+                command_data,
+                selected_scene=coordinator.selected_scene(),
+            )
+    except (ControllerCommandConflictError, ValueError) as exc:
+        print(f"Controller settings command rejected: {exc}")
+        return False
 
 
 def run_web_mode(args):

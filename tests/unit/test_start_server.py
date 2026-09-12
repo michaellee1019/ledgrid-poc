@@ -1,6 +1,7 @@
 """Command routing and controller-startup helper tests."""
 
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -552,7 +553,7 @@ class StartServerTests(unittest.TestCase):
             "brightness": 128,
             "animation": "solid",
         }))
-        self.assertFalse(handle_command(
+        self.assertTrue(handle_command(
             manager, "set_device_state", {"power": False}
         ))
         self.assertFalse(handle_command(
@@ -566,6 +567,31 @@ class StartServerTests(unittest.TestCase):
             }),
             ("device", {"power": False}),
         ])
+
+    def test_power_only_resume_uses_retained_scene_instead_of_manager_default(self):
+        manager = _Manager()
+        retained_scene = {"selected": "twilight-sparkle"}
+
+        class Coordinator:
+            @staticmethod
+            def legacy_mutation_guard(_guard=None):
+                return nullcontext()
+
+            @staticmethod
+            def selected_scene():
+                return retained_scene
+
+        with (
+            patch(
+                "scripts.start_server.controller_activation_coordinator",
+                return_value=Coordinator(),
+            ),
+            patch("scripts.start_server._start_scene", return_value=True) as start_scene,
+        ):
+            self.assertTrue(handle_command(manager, "set_device_state", {"power": True}))
+
+        start_scene.assert_called_once_with(manager, retained_scene)
+        self.assertNotIn(("device", {"power": True}), manager.calls)
 
     def test_versioned_scene_commands_dispatch_to_manager_product_api(self):
         manager = _Manager()
@@ -684,6 +710,38 @@ class StartServerTests(unittest.TestCase):
             ("fps", 120),
             ("brightness", 102),
         ])
+
+    def test_powered_off_restart_restore_never_starts_the_selected_scene(self):
+        manager = _Manager()
+        component = {
+            "plugin_id": "solid",
+            "provider": "python",
+            "parameter_overrides": {},
+            "resolved_parameters": {"red": 4},
+        }
+        scene = {
+            "schema": "ledgrid.scene-state",
+            "schema_version": 1,
+            "revision": 20,
+            "background": component,
+            "overlays": [],
+            "known_python_fallback": component,
+        }
+
+        self.assertTrue(_restore_display_state(manager, {
+            "scene": scene,
+            "plant_modifiers": {
+                "version": 1,
+                "active": [],
+                "strengths": {},
+            },
+            "output": {"power": False, "brightness": 26},
+        }))
+
+        self.assertEqual(manager.calls[0], ("stop",))
+        self.assertFalse(any(call[0] == "scene" for call in manager.calls))
+        self.assertFalse(manager.is_running)
+        self.assertIn(("brightness", 26), manager.calls)
 
     def test_desired_display_is_fully_validated_before_scene_mutation(self):
         manager = _Manager()

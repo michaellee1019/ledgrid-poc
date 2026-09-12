@@ -26,12 +26,16 @@ class LocalControlChannel:
         self._activation_cancel_results: Dict[str, Dict[str, Any]] = {}
         self._activation_rollbacks: Dict[str, Dict[str, Any]] = {}
         self._activation_rollback_results: Dict[str, Dict[str, Any]] = {}
+        self.last_command_id: Any = 0
+        self.last_applied_command_id: Any = 0
 
     def read_status(self) -> Dict[str, Any]:
         payload = self.manager.get_current_frame()
         payload.update(self.manager.get_current_status())
         payload["updated_at"] = time.time()
         payload.update(self.activation_coordinator.controller_status())
+        payload["last_command_id"] = self.last_command_id
+        payload["last_applied_command_id"] = self.last_applied_command_id
         return payload
 
     def enqueue_activation(self, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -207,8 +211,12 @@ class LocalControlChannel:
     def send_command(self, action: str, **data: Any) -> Dict[str, Any]:
         if action in {"activate_scene", "cancel_activation"}:
             return self._send_command_unlocked(action, **data)
-        with self.activation_coordinator.legacy_mutation_guard():
-            return self._send_command_unlocked(action, **data)
+        guard = data.pop('_controller_guard', None)
+        with self.activation_coordinator.legacy_mutation_guard(guard):
+            command = self._send_command_unlocked(action, **data)
+        self.last_command_id = command["command_id"]
+        self.last_applied_command_id = command["command_id"]
+        return command
 
     def _send_command_unlocked(self, action: str, **data: Any) -> Dict[str, Any]:
         manager = self.manager
@@ -252,7 +260,17 @@ class LocalControlChannel:
         elif action == "set_output_brightness":
             manager.set_output_brightness(data.get("brightness"))
         elif action == "set_device_state":
-            manager.apply_device_state(data)
+            selected_scene = self.activation_coordinator.selected_scene()
+            if (
+                data == {"power": True}
+                and not manager.is_running
+                and selected_scene is not None
+            ):
+                applied = start_scene(manager, selected_scene)
+            else:
+                applied = manager.apply_device_state(data)
+            if applied is False:
+                raise RuntimeError("device state request was rejected")
         elif action == "set_plant_aware":
             manager.set_plant_aware(data.get("plant_aware"))
         elif action == "set_plant_modifiers":

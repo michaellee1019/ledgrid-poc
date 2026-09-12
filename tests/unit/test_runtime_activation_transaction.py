@@ -20,6 +20,7 @@ from ipc.runtime_control import (
     ControllerActivationConflictError,
     ControllerActivationCoordinator,
     ControllerActivationPublicationError,
+    ControllerCommandConflictError,
     manager_component_catalog,
     manager_controller_runtime_digests,
 )
@@ -733,6 +734,63 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
             coordinator.controller_status()["active_identity"],
             status["observed_identity"],
         )
+
+    def test_guarded_legacy_mutation_rejects_stale_revision_and_expiry(self) -> None:
+        manager, coordinator = self.coordinator()
+        guard = {
+            "expected_controller_session_id": coordinator.session_id,
+            "expected_controller_state_revision": 0,
+            "expires_at": 4_000_000_000.0,
+        }
+
+        with coordinator.legacy_mutation_guard(guard):
+            manager.set_output_brightness(26)
+
+        self.assertEqual(coordinator.state_revision, 1)
+        with self.assertRaisesRegex(ControllerCommandConflictError, "revision"):
+            with coordinator.legacy_mutation_guard(guard):
+                manager.set_output_brightness(27)
+        expired = {
+            **guard,
+            "expected_controller_state_revision": 1,
+            "expires_at": 1.0,
+        }
+        with self.assertRaisesRegex(ControllerCommandConflictError, "expired"):
+            with coordinator.legacy_mutation_guard(expired):
+                manager.set_output_brightness(27)
+        self.assertEqual(manager.brightness, 26)
+
+    def test_legacy_power_off_persists_dormant_selected_scene_for_restart(self) -> None:
+        manager, coordinator = self.coordinator()
+        with coordinator.legacy_mutation_guard():
+            manager.stop_animation()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state_path = root / "saved.json"
+            persist_controller_restart_state(
+                manager,
+                coordinator,
+                presets_dir=root / "presets",
+                state_path=state_path,
+            )
+            saved = load_saved_state(state_path)
+
+        self.assertFalse(saved["power"])
+        self.assertEqual(saved["scene"], self.initial_scene)
+        restarted_globals = deepcopy(self.initial_globals)
+        restarted_globals["output"]["power"] = False
+        restarted_manager = _FakeManager(self.catalog, None, restarted_globals)
+        restarted = ControllerActivationCoordinator(
+            restarted_manager,
+            restored_selected_scene=saved["scene"],
+        )
+        self.assertFalse(restarted_manager.is_running)
+        self.assertEqual(
+            restarted.controller_status()["scene_state"],
+            self.initial_scene,
+        )
+        self.assertEqual(restarted_manager.mutation_count, 0)
 
     def test_duplicate_id_and_basis_is_idempotent_but_rebinding_conflicts(self) -> None:
         manager, coordinator = self.coordinator()
@@ -2654,6 +2712,61 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         self.assertEqual(controller["controller_state_revision"], 1)
         self.assertEqual(
             controller["active_identity"], status["observed_identity"]
+        )
+
+    def test_local_repeated_power_retains_and_resumes_only_the_selected_scene(self) -> None:
+        manager = _FakeManager(
+            self.catalog, self.initial_scene, self.initial_globals
+        )
+
+        def apply_device_state(state):
+            if state.get("power") is False:
+                manager.stop_animation()
+            return True
+
+        manager.apply_device_state = apply_device_state
+        channel = LocalControlChannel(manager)
+
+        channel.send_command("set_device_state", power=False)
+        channel.send_command("set_device_state", power=False)
+        self.assertEqual(
+            channel.activation_coordinator.controller_status()["scene_state"],
+            self.initial_scene,
+        )
+
+        channel.send_command("set_device_state", power=True)
+        mutations_after_resume = manager.mutation_count
+        channel.send_command("set_device_state", power=True)
+
+        self.assertTrue(manager.is_running)
+        self.assertEqual(manager.scene, self.initial_scene)
+        self.assertEqual(manager.mutation_count, mutations_after_resume)
+
+    def test_local_failed_power_resume_does_not_advance_applied_command_id(self) -> None:
+        manager = _FakeManager(
+            self.catalog, self.initial_scene, self.initial_globals
+        )
+
+        def apply_device_state(state):
+            if state.get("power") is False:
+                manager.stop_animation()
+            return True
+
+        manager.apply_device_state = apply_device_state
+        channel = LocalControlChannel(manager)
+        channel.send_command("set_device_state", power=False)
+        applied_before = channel.last_applied_command_id
+        manager.start_scene = lambda _scene: False
+
+        with self.assertRaisesRegex(RuntimeError, "rejected"):
+            channel.send_command("set_device_state", power=True)
+
+        self.assertEqual(channel.last_applied_command_id, applied_before)
+        self.assertEqual(channel.last_command_id, applied_before)
+        self.assertFalse(manager.is_running)
+        self.assertEqual(
+            channel.activation_coordinator.controller_status()["scene_state"],
+            self.initial_scene,
         )
 
     def test_local_channel_exposes_correlated_cancel_and_rollback_results(self) -> None:
