@@ -1,6 +1,7 @@
 """Static acceptance checks for the responsive compact Composer panels."""
 
 from pathlib import Path
+import subprocess
 import unittest
 
 
@@ -10,6 +11,51 @@ class ComposerDesktopWorkspaceTests(unittest.TestCase):
         self.script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
         self.layout = Path("web/static/js/composer_palette_layout.js").read_text(encoding="utf-8")
         self.css = Path("web/static/css/composer_slice.css").read_text(encoding="utf-8")
+
+    def test_browse_scenes_expands_before_focusing_and_preserves_local_state(self) -> None:
+        browse = self.script[self.script.index('function browseScenes'):self.script.index('function wire()')]
+        runner = r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+for (const mode of ['collapsed', 'expanded', 'denied']) {
+  class Element {
+    constructor() {
+      this.children=[]; this.dataset={}; this.attributes={}; this.parent=null;
+      const classes=new Set();
+      this.classList={add:(...names)=>names.forEach(x=>classes.add(x)),toggle:(name,on)=>on?classes.add(name):classes.delete(name),contains:name=>classes.has(name)};
+    }
+    append(...nodes) { for (const node of nodes) { if(node.parent) node.parent.children.splice(node.parent.children.indexOf(node),1); this.children.push(node); node.parent=this; } }
+    setAttribute(key,value) { this.attributes[key]=value; }
+    addEventListener() {}
+  }
+  const panel=new Element(), heading=new Element(), search=new Element(), workspace=new Element();
+  panel.append(heading,search); search.value='Twilight';
+  panel.querySelector=selector=>selector.endsWith('.panel-toggle') ? heading.children.find(x=>x.className==='panel-toggle') : selector.includes('.eyebrow') ? {textContent:'Scenes'} : heading;
+  let saved=mode==='expanded' ? JSON.stringify({version:2,expanded:{scenes:true}}) : null;
+  const localStorage={getItem(){if(mode==='denied')throw new Error('denied');return saved;},setItem(key,value){if(mode==='denied')throw new Error('denied');saved=value;},removeItem(){if(mode==='denied')throw new Error('denied');}};
+  const state={query:'Twilight',scene:{animation:'sparkle'},history:[{saved:true}]};
+  const original=JSON.stringify(state);
+  const context={window:{localStorage},state,
+    document:{querySelector:selector=>selector==='.desktop-workspace'?workspace:selector==='.library-pane'?panel:null,createElement:()=>new Element()},
+    $:selector=>{assert.equal(selector,'#librarySearch');return search;},
+  };
+  let focus=0,scroll=0;
+  search.scrollIntoView=()=>{assert(!panel.classList.contains('is-collapsed'));scroll++;};
+  search.focus=()=>{assert(!panel.classList.contains('is-collapsed'));focus++;};
+  vm.runInNewContext(process.argv[1],context);
+  vm.runInNewContext(process.argv[2]+';this.browse=browseScenes;',context);
+  context.browse(); context.browse();
+  assert.equal(focus,2);assert.equal(scroll,2);assert.equal(search.value,'Twilight');
+  assert.equal(JSON.stringify(state),original,'browsing does not alter Scene, query or history');
+  assert.equal(heading.children[0].attributes['aria-expanded'],'true');
+  if(mode!=='denied')assert.equal(JSON.parse(saved).expanded.scenes,true);
+  assert.equal(context.window.ComposerPanelLayout.expand('unknown'),false);
+}
+'''
+        result = subprocess.run(['node', '-e', runner, self.layout, browse], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("$('#openScene').addEventListener('click', browseScenes);", self.script)
+        self.assertIn('type="button">Browse scenes</button>', self.html)
 
     def test_workspace_is_a_wrapping_panel_grid(self) -> None:
         self.assertIn('data-layout="responsive-panels"', self.html)

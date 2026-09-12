@@ -94,4 +94,15 @@
   });
   workspace.setAttribute('data-layout', 'responsive-panels');
   apply();
+  window.ComposerPanelLayout = Object.freeze({
+    expand(id) {
+      if (!panelIds.has(id)) return false;
+      if (expanded[id] !== true) {
+        expanded = {...expanded, [id]: true};
+        apply();
+        write();
+      }
+      return true;
+    },
+  });
 })();
