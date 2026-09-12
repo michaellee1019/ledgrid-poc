@@ -184,6 +184,41 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertNotIn('/activate', selection)
         self.assertNotIn('/check', selection)
 
+    def test_gallery_selection_does_not_claim_live_after_wall_rejection(self) -> None:
+        script = Path('web/static/js/composer_slice.js').read_text(encoding='utf-8')
+        selection = script[script.index('async function selectGalleryEntry'):script.index('function refreshGallerySelection')]
+        javascript = r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const state = {
+  intent: 0, dirty: false,
+  scene: {animation: {component_id: 'pinball'}},
+  wall: {activationError: 'Activation rejected by fixture.'},
+  publication: {queued: null, inFlight: null},
+};
+const operation = {textContent: 'Activation rejected by fixture.'};
+const context = {
+  assert, state, operation, structuredClone,
+  defaultScene: () => ({}),
+  galleryScene: (entry) => ({animation: {component_id: entry.component_id}}),
+  beginIntent: () => ++state.intent,
+  intentIsCurrent: (intent) => intent === state.intent,
+  applyScene: (scene) => { state.scene = scene; },
+  submit: async () => ({status: {connected: true}}),
+  refreshGallerySelection() {},
+  $: (selector) => { assert.equal(selector, '#operationMessage'); return operation; },
+};
+const run = vm.runInNewContext(process.argv[1] + `
+  ;(async () => {
+    await selectGalleryEntry({component_id: 'ascii_drop', name: 'ASCII Drop', available: true, parameters: {}});
+    assert.equal(operation.textContent, 'Activation rejected by fixture.');
+  })()
+`, context);
+Promise.resolve(run).catch((error) => { console.error(error); process.exitCode = 1; });
+'''
+        completed = subprocess.run(['node', '-e', javascript, selection], capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_each_gallery_default_has_a_fixed_inert_33_by_138_preview(self) -> None:
         entries = self.client.get('/api/composer/gallery').get_json()['entries']
         before_draft = self.interface.working_draft.get()

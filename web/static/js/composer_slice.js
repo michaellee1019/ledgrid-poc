@@ -623,6 +623,9 @@
       const published = await submit(next, {intentToken, rememberEdit: true, previous});
       if (!intentIsCurrent(intentToken) || published.coalesced) return;
       refreshGallerySelection();
+      // Publication can accept the authored Scene while the wall rejects its
+      // acknowledgement.  renderStatus already exposes that retryable failure.
+      if (state.wall.activationError) return;
       $('#operationMessage').textContent = preset ? `${entry.name} · ${preset.name} is live.` : `${entry.name} is live.`;
     } catch (error) {
       if (!intentIsCurrent(intentToken)) return;
