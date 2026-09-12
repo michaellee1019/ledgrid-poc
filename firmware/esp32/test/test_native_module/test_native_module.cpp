@@ -6,7 +6,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
+#include <functional>
+#include <future>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <sys/stat.h>
@@ -14,6 +18,7 @@
 
 #include "ledgrid/native_module.hpp"
 #include "ledgrid/native_module_filesystem.hpp"
+#include "ledgrid/native_status_cache.hpp"
 #include "ledgrid/protocol.hpp"
 #include "ledgrid/sha256.hpp"
 
@@ -109,13 +114,18 @@ std::string key(const std::uint8_t digest[32]) {
 class FakeStore final : public ledgrid::NativeModuleStore {
  public:
   bool ready() const override { return ready_value; }
-  std::uint32_t capacity_bytes() const override { return capacity; }
+  std::uint32_t capacity_bytes() const override {
+    ++storage_status_reads;
+    return capacity;
+  }
   std::uint32_t used_bytes() const override {
+    ++storage_status_reads;
     std::uint32_t used = 0;
     for (const auto& entry : committed) used += entry.second.size();
     return used;
   }
   std::uint32_t reserve_bytes() const override { return reserve; }
+  mutable std::uint32_t storage_status_reads = 0;
   std::uint64_t mutation_generation() const override { return generation; }
   bool probe(const std::uint8_t digest[32], std::uint32_t* size) const override {
     const auto found = committed.find(key(digest));
@@ -293,6 +303,7 @@ class FakeBackend final : public ledgrid::NativeModuleBackend {
   bool render(std::uint64_t now, std::uint64_t, std::uint64_t,
               std::uint8_t* output, std::size_t size,
               ledgrid::NativeModuleRenderResult* result) override {
+    if (render_hook) render_hook();
     const bool ok = pass(ledgrid::NativeModulePhase::Render);
     if (ok) {
       std::memset(output, 7, size);
@@ -305,6 +316,7 @@ class FakeBackend final : public ledgrid::NativeModuleBackend {
   bool unload() override { return pass(ledgrid::NativeModulePhase::Unload); }
 
   ledgrid::NativeModulePhase failure = ledgrid::NativeModulePhase::None;
+  std::function<void()> render_hook;
   bool render_changed = true;
   std::uint64_t deadline_delta = 16667;
   std::vector<ledgrid::NativeModulePhase> calls;
@@ -633,6 +645,17 @@ void test_slow_phase_is_watchdog_failure_and_boot_marker_quarantines() {
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<std::uint8_t>(ledgrid::NativeModuleTransferState::Quarantined),
       static_cast<std::uint8_t>(restarted.status().transfer_state));
+  ledgrid::NativeModuleStatusCache<std::mutex> boot_cache;
+  boot_cache.publish(restarted);
+  const auto boot_status = boot_cache.snapshot();
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::NativeModuleTransferState::Quarantined),
+      static_cast<std::uint8_t>(boot_status.transfer_state));
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(
+      descriptor.payload_digest, boot_status.quarantine_payload_digest, 32);
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(
+      prior.payload_digest, boot_status.rollback_payload_digest, 32);
+  TEST_ASSERT_EQUAL_UINT8(0, boot_status.flags & 128U);
 }
 
 void test_failed_quarantine_save_retains_runtime_crash_marker() {
@@ -975,6 +998,136 @@ void test_operation_result_latch_survives_render_result_race() {
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<std::uint8_t>(ledgrid::NativeModuleResult::RenderFailed),
       static_cast<std::uint8_t>(live_status.result));
+}
+
+void assert_cached_native_status_equal(
+    const ledgrid::NativeModuleStatusV1& expected,
+    const ledgrid::NativeModuleStatusV1& actual) {
+  ledgrid::ReceiverStatusV6 expected_receiver{}, actual_receiver{};
+  expected_receiver.native_module = expected;
+  actual_receiver.native_module = actual;
+  std::array<std::uint8_t, ledgrid::kStatusBytesV6> expected_bytes{}, actual_bytes{};
+  ledgrid::encode_receiver_status_v6(
+      expected_receiver, expected_bytes.data(), expected_bytes.size());
+  ledgrid::encode_receiver_status_v6(
+      actual_receiver, actual_bytes.data(), actual_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(
+      expected_bytes.data(), actual_bytes.data(), expected_bytes.size());
+}
+
+void test_native_status_queries_do_not_wait_for_in_progress_render() {
+  // Run the pre-fix reader as a negative control with the same real manager,
+  // blocked backend, and scheduling barrier. No timing assumption about native
+  // rendering is needed: the backend cannot finish until this test releases it.
+  for (bool legacy_reader : {true, false}) {
+    Rig rig;
+    const std::vector<std::uint8_t> payload(48, 0xEA);
+    const auto descriptor = descriptor_for(payload);
+    stage(rig, descriptor, payload);
+    auto activate = activate_command(descriptor, rig.manager.ledger().generation);
+    const auto result = rig.manager.process(activate.data(), activate.size());
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(ledgrid::NativeModuleResult::Ok),
+        static_cast<std::uint8_t>(result));
+    ledgrid::NativeModuleStatusCache<std::mutex> cache;
+    cache.publish(rig.manager);
+    const auto before_render = cache.snapshot();
+    ledgrid::NativeModuleOperationResultLatch latch;
+    latch.record(91, activate[0], result);
+    std::mutex native_mutex;
+    std::promise<void> entered, release;
+    auto entered_future = entered.get_future();
+    auto release_future = release.get_future().share();
+    rig.backend.render_hook = [&]() {
+      entered.set_value();
+      release_future.wait();
+    };
+    rig.backend.failure = ledgrid::NativeModulePhase::Render;
+    auto renderer = std::async(std::launch::async, [&]() {
+      std::lock_guard<std::mutex> guard(native_mutex);
+      std::array<std::uint8_t, 138 * 3> frame{};
+      ledgrid::NativeModuleRenderResult render_result{};
+      const bool rendered = rig.manager.render(
+          1000, 1000, 0, frame.data(), frame.size(), &render_result);
+      cache.publish(rig.manager, true);
+      return rendered;
+    });
+    entered_future.wait();
+    auto reader = std::async(std::launch::async, [&]() {
+      if (legacy_reader) {
+        std::lock_guard<std::mutex> guard(native_mutex);
+        return rig.manager.status();
+      }
+      return cache.snapshot();
+    });
+    const bool query_completed = reader.wait_for(std::chrono::milliseconds(250)) ==
+                                 std::future_status::ready;
+    // Always unblock and join before an assertion can leave the test.
+    release.set_value();
+    const bool rendered = renderer.get();
+    const auto read_status = reader.get();
+    TEST_ASSERT_EQUAL(!legacy_reader, query_completed);
+    TEST_ASSERT_FALSE(rendered);
+    if (!legacy_reader) assert_cached_native_status_equal(before_render, read_status);
+
+    // Completion publishes all failure fields, even while the successful
+    // activation result remains latched to its exact earlier operation.
+    auto failed = cache.snapshot();
+    assert_cached_native_status_equal(rig.manager.status(), failed);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(ledgrid::NativeModuleResult::RenderFailed),
+        static_cast<std::uint8_t>(failed.result));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(
+        descriptor.payload_digest, failed.quarantine_payload_digest, 32);
+    TEST_ASSERT_EQUAL_UINT8(0, failed.flags & 128U);
+    TEST_ASSERT_TRUE(latch.apply(91, activate[0], &failed));
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(ledgrid::NativeModuleResult::Ok),
+        static_cast<std::uint8_t>(failed.result));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(
+        descriptor.payload_digest, failed.quarantine_payload_digest, 32);
+    failed = cache.snapshot();
+    TEST_ASSERT_FALSE(latch.apply(92, activate[0], &failed));
+  }
+}
+
+void test_native_status_publication_refreshes_commands_without_render_storage_io() {
+  Rig rig;
+  ledgrid::NativeModuleStatusCache<std::mutex> cache;
+  cache.publish(rig.manager);
+  assert_cached_native_status_equal(rig.manager.status(), cache.snapshot());
+  const std::vector<std::uint8_t> payload(48, 0xEB);
+  const auto descriptor = descriptor_for(payload);
+  stage(rig, descriptor, payload);
+  cache.publish(rig.manager);
+  TEST_ASSERT_EQUAL_UINT32(payload.size(), cache.snapshot().used_bytes);
+  auto activate = activate_command(descriptor, rig.manager.ledger().generation);
+  rig.manager.process(activate.data(), activate.size());
+  cache.publish(rig.manager);
+  assert_cached_native_status_equal(rig.manager.status(), cache.snapshot());
+
+  const auto storage_reads = rig.store.storage_status_reads;
+  std::array<std::uint8_t, 138 * 3> frame{};
+  ledgrid::NativeModuleRenderResult render_result{};
+  TEST_ASSERT_TRUE(rig.manager.render(
+      1000, 1000, 0, frame.data(), frame.size(), &render_result));
+  cache.publish(rig.manager, true);
+  TEST_ASSERT_EQUAL_UINT32(storage_reads, rig.store.storage_status_reads);
+  assert_cached_native_status_equal(rig.manager.status(), cache.snapshot());
+  TEST_ASSERT_GREATER_THAN_UINT16(0, cache.snapshot().last_render_us);
+
+  const std::uint8_t malformed[] = {0x50};
+  const auto rejected = rig.manager.process(malformed, sizeof(malformed));
+  cache.publish(rig.manager);
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(ledgrid::NativeModuleResult::Ok),
+                        static_cast<int>(rejected));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(rejected),
+                        static_cast<std::uint8_t>(cache.snapshot().result));
+  assert_cached_native_status_equal(rig.manager.status(), cache.snapshot());
+  rig.manager.host_takeover();
+  cache.publish(rig.manager);
+  assert_cached_native_status_equal(rig.manager.status(), cache.snapshot());
+  TEST_ASSERT_EQUAL_UINT8(0, cache.snapshot().flags & 128U);
 }
 
 void test_status_v6_prefix_offsets_and_feature_gate_are_exact() {
@@ -1420,6 +1573,8 @@ int main(int, char**) {
   RUN_TEST(test_host_takeover_retries_dirty_boot_quarantine);
   RUN_TEST(test_probe_miss_succeeds_and_shared_payload_aliases_stay_pinned);
   RUN_TEST(test_operation_result_latch_survives_render_result_race);
+  RUN_TEST(test_native_status_queries_do_not_wait_for_in_progress_render);
+  RUN_TEST(test_native_status_publication_refreshes_commands_without_render_storage_io);
   RUN_TEST(test_status_v6_prefix_offsets_and_feature_gate_are_exact);
   RUN_TEST(test_extended_config_supports_fifth_receiver_without_changing_lane_mask);
   RUN_TEST(test_interrupted_upload_rejects_conflicts_and_abort_is_clean);

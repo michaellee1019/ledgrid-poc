@@ -1136,7 +1136,8 @@ void NativeModuleManager::copy_status_binding(
   std::memcpy(payload, binding.descriptor.payload_digest, 32);
 }
 
-NativeModuleStatusV1 NativeModuleManager::status() const {
+NativeModuleStatusV1 NativeModuleManager::status(
+    const NativeModuleStatusV1* prior_storage_status) const {
   NativeModuleStatusV1 status{};
   status.result = result_;
   status.transfer_state = transfer_state_;
@@ -1149,7 +1150,12 @@ NativeModuleStatusV1 NativeModuleManager::status() const {
                  (ledger_.rollback.present ? 32U : 0U) |
                  (!all_zero(quarantine_payload_, 32) ? 64U : 0U) |
                  (executing_ ? 128U : 0U);
-  if (store_ != nullptr && store_->ready()) {
+  if (prior_storage_status != nullptr) {
+    status.capacity_bytes = prior_storage_status->capacity_bytes;
+    status.used_bytes = prior_storage_status->used_bytes;
+    status.free_bytes = prior_storage_status->free_bytes;
+    status.reserve_bytes = prior_storage_status->reserve_bytes;
+  } else if (store_ != nullptr && store_->ready()) {
     status.capacity_bytes = store_->capacity_bytes();
     status.used_bytes = store_->used_bytes();
     status.free_bytes = status.capacity_bytes > status.used_bytes

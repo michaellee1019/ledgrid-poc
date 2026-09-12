@@ -13,6 +13,7 @@
 #include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/esp_installation_profile_store.hpp"
 #include "ledgrid/esp_native_module.hpp"
+#include "ledgrid/native_status_cache.hpp"
 #include "ledgrid/parallel_led_driver.hpp"
 #include "ledgrid/protocol.hpp"
 #include "ledgrid/receiver_task_policy.hpp"
@@ -126,6 +127,15 @@ ledgrid::NativeModuleManager native_module_manager(
     &native_module_clock, native_module_scratch, sizeof(native_module_scratch),
     true);
 ledgrid::NativeModuleOperationResultLatch native_operation_result_latch;
+class NativeStatusCriticalSection {
+ public:
+  void lock() { portENTER_CRITICAL(&mux_); }
+  void unlock() { portEXIT_CRITICAL(&mux_); }
+
+ private:
+  portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
+};
+ledgrid::NativeModuleStatusCache<NativeStatusCriticalSection> native_status_cache;
 std::atomic<bool> native_module_ready{false};
 #endif
 
@@ -204,7 +214,10 @@ void lock_native() {
   if (native_mutex != nullptr) xSemaphoreTake(native_mutex, portMAX_DELAY);
 }
 
-void unlock_native() {
+void unlock_native(bool storage_unchanged = false) {
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+  native_status_cache.publish(native_module_manager, storage_unchanged);
+#endif
   if (native_mutex != nullptr) xSemaphoreGive(native_mutex);
 }
 
@@ -475,7 +488,7 @@ void display_task(void*) {
               native_frame_index,
               startup_frame, ticket.output.rgb_bytes(), &native_result);
           base_changed = rendered && native_result.changed;
-          unlock_native();
+          unlock_native(true);
         } else
 #endif
         {
@@ -792,12 +805,12 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
   unlock_profile();
 #endif
 #if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
-  lock_native();
-  status.native_module = native_module_manager.status();
+  status.native_module = native_status_cache.snapshot();
+  // The latch and operation tracker are SPI-task-owned. The cached telemetry
+  // contains the last completed render/operation, never partial manager state.
   native_operation_result_latch.apply(
       status.operation_sequence, status.last_processed_command,
       &status.native_module);
-  unlock_native();
 #endif
   status.logical_receiver_id = logical_receiver_id.load(std::memory_order_relaxed);
   status.stagger_phases =
@@ -906,6 +919,12 @@ bool process_command(
     const auto result = installation_profile_manager.process(data, length);
     current_active = installation_profile_manager.ledger().active;
     unlock_profile();
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+    // The stores share SPIFFS. Refresh capacity after profile writes as well,
+    // without nesting the profile and native locks.
+    lock_native();
+    unlock_native();
+#endif
     const bool active_binding_changed =
         result == ledgrid::InstallationProfileResult::Ok &&
         ledgrid::installation_profile_command_may_change_active_binding(command) &&
@@ -1295,6 +1314,7 @@ extern "C" void app_main() {
   const bool native_persistence_ready = native_module_persistence.begin();
   native_module_manager.set_watchdog(&native_module_watchdog);
   const bool native_manager_ready = native_module_manager.begin();
+  native_status_cache.publish(native_module_manager);
   const bool modules_ready = native_store_ready && native_persistence_ready &&
                              native_manager_ready;
   native_module_ready.store(modules_ready, std::memory_order_release);
@@ -1426,10 +1446,8 @@ extern "C" void app_main() {
           // Rendering runs on the display task and may update live failure
           // telemetry while the SPI queue drains. Preserve the exact result of
           // this operation alongside the sequence/command acknowledgement.
-          lock_native();
           native_operation_result_latch.record(
               operation_sequence, command[0], native_result);
-          unlock_native();
         }
 #endif
         request_v4 = status_query && accepted &&

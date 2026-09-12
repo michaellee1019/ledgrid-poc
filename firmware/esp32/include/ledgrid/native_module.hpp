@@ -358,7 +358,10 @@ class NativeModuleManager {
               std::uint8_t* rgb_output, std::size_t rgb_output_size,
               NativeModuleRenderResult* result);
   void host_takeover();
-  NativeModuleStatusV1 status() const;
+  // A completed render can reuse the last storage metrics: it changes native
+  // telemetry and NVS recovery state, but does not mutate the SPIFFS cache.
+  NativeModuleStatusV1 status(
+      const NativeModuleStatusV1* prior_storage_status = nullptr) const;
   const NativeModuleLedger& ledger() const { return ledger_; }
   bool active() const { return executing_; }
 
