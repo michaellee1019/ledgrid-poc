@@ -9,13 +9,11 @@ real time.
 import base64
 from copy import deepcopy
 import hashlib
-import inspect
 import json
 import math
 import os
 import re
 import tempfile
-import threading
 import time
 import uuid
 from datetime import datetime
@@ -290,7 +288,6 @@ class AnimationWebInterface:
             if maintenance_enabled is not None
             else os.environ.get('LEDGRID_COMPOSER_MAINTENANCE_ENABLED') == '1'
         ) and self.activation_enabled
-        self._scene_preview_lock = threading.RLock()
         self.project_root = (
             Path(project_root)
             if project_root is not None
@@ -2460,12 +2457,6 @@ class AnimationWebInterface:
             return dict(getter())
         return {'state': self._canonical_vibe_state('neutral')}
 
-    def _preview_vibe(self, requested: Any = None) -> Dict[str, Any]:
-        """Resolve preview vibe explicitly without mutating the live manager."""
-        if requested is not None:
-            return self._canonical_vibe_state(requested)
-        selected = self._selected_vibe_status()
-        return self._canonical_vibe_state(selected.get('state', selected))
 
     @staticmethod
     def _vibe_profile_catalog() -> List[Dict[str, Any]]:
@@ -4132,57 +4123,6 @@ class AnimationWebInterface:
             result['params'] = overlay['component']['parameter_overrides']
         return result
 
-    def _scene_preview(
-        self, scene: Dict[str, Any], vibe: Dict[str, Any],
-        plant_modifiers: Dict[str, Any], elapsed: Any,
-    ) -> Dict[str, Any]:
-        try:
-            elapsed_value = float(elapsed)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise SceneValidationError('preview elapsed must be numeric') from exc
-        if not math.isfinite(elapsed_value) or elapsed_value < 0:
-            raise SceneValidationError('preview elapsed must be finite and non-negative')
-        renderer = self.preview_manager.get_scene_preview
-        parameters = inspect.signature(renderer).parameters
-        first = next(iter(parameters), '')
-        if first in {'scene', 'scene_payload', 'scene_state'}:
-            kwargs: Dict[str, Any] = {'vibe': vibe, 'elapsed': elapsed_value}
-            if 'plant_modifiers' in parameters:
-                kwargs['plant_modifiers'] = plant_modifiers
-            return renderer(scene, **kwargs)
-
-        background = scene['background']
-        overlays = scene['overlays']
-        with self._scene_preview_lock:
-            previous = getattr(self.preview_manager, 'plant_modifier_state', None)
-            previous_payload = previous.to_dict() if hasattr(previous, 'to_dict') else None
-            setter = getattr(self.preview_manager, 'set_plant_modifiers', None)
-            if callable(setter):
-                setter(plant_modifiers)
-            try:
-                if not overlays:
-                    return self.preview_manager.get_animation_preview_with_params(
-                        background['plugin_id'],
-                        {**background['resolved_parameters'], **background['parameter_overrides']},
-                        vibe=vibe,
-                    )
-                overlay = overlays[0]
-                placement = overlay['placement']
-                return renderer(
-                    background['plugin_id'],
-                    {**background['resolved_parameters'], **background['parameter_overrides']},
-                    overlay['component']['plugin_id'],
-                    {
-                        **overlay['component']['resolved_parameters'],
-                        **overlay['component']['parameter_overrides'],
-                    },
-                    overlay['opacity'],
-                    placement['strip_translation'], placement['led_translation'],
-                    vibe=vibe, elapsed=elapsed_value,
-                )
-            finally:
-                if callable(setter) and previous_payload is not None:
-                    setter(previous_payload)
 
     def _scene_preset_path(self, preset_id: str) -> Optional[Path]:
         safe_id = self._sanitize_preset_id(preset_id)
@@ -4262,25 +4202,6 @@ class AnimationWebInterface:
             raise ValueError('Invalid scene preset id')
         self._atomic_write_json(path, payload)
 
-    @staticmethod
-    def _preset_emoji(preset: Dict[str, Any], fallback: str) -> str:
-        """Choose a discoverable icon from curated preset language."""
-        text = ' '.join([
-            str(preset.get('name', '')),
-            str(preset.get('category', '')),
-            ' '.join(map(str, preset.get('tags') or [])),
-        ]).lower()
-        choices = (
-            (('ice', 'crystal', 'frost'), '❄️'),
-            (('fire', 'ember', 'solar', 'gold'), '🔥'),
-            (('ocean', 'tide', 'water'), '🌊'),
-            (('space', 'star', 'galaxy'), '🌌'),
-            (('earth', 'garden', 'orchard'), '🌍'),
-            (('neon', 'synthwave', 'arcade'), '🎆'),
-            (('quiet', 'calm'), '🌙'),
-            (('chaos', 'storm', 'finale'), '⚡'),
-        )
-        return next((emoji for terms, emoji in choices if any(term in text for term in terms)), fallback)
 
     @staticmethod
     def _preset_swatches(preset: Dict[str, Any]) -> List[str]:
@@ -4755,14 +4676,6 @@ class AnimationWebInterface:
             return 'built_in'
         return 'unknown'
 
-    @staticmethod
-    def _animation_preset_selection(payload: Dict[str, Any]) -> Dict[str, str]:
-        """Return the identity stored with the active animation runtime state."""
-        return {
-            'preset_id': str(payload.get('preset_id') or ''),
-            'name': str(payload.get('name') or ''),
-            'animation': str(payload.get('animation') or ''),
-        }
 
     @staticmethod
     def _validated_interaction_payload(

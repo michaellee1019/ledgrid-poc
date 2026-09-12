@@ -503,7 +503,6 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         self.assertIn("async function flushPublication()", script)
         self.assertIn("renderStatus(result.status || result);", script)
         self.assertIn("refreshInFlight", script)
-        self.assertIn("recoveryMatchesStatus", script)
 
     def test_browser_defaults_live_and_coalesces_to_the_newest_valid_scene(self) -> None:
         html = Path("web/templates/composer.html").read_text(encoding="utf-8")

@@ -79,7 +79,6 @@
     {id: 'hue_shift', label: 'Hue shift', enabled: '#plantHueShiftEnabled', strength: '#plantHueShiftStrength', value: '#plantHueShiftValue'},
   ]);
   const plantOpticIds = new Set(plantOptics.map(({id}) => id));
-  const recoveryMatchesStatus = (body) => Boolean(body.recovery?.authoritative && body.status?.current && body.recovery?.basis?.digest === body.status.current.digest && body.recovery?.basis?.revision === body.status.current.revision);
   const clockParameters = (existing = {}) => ({...existing, format_24h: $('#clockFormat').value === '24', show_seconds: $('#clockSeconds').checked, clock_offset_minutes: Math.trunc(number('#clockTimeOffset'))});
   const emojiParameters = () => ({text: $('#emojiText').value, x_offset: Math.trunc(number('#emojiXOffset')), y_offset: Math.trunc(number('#emojiYOffset')), char_spacing: Math.trunc(number('#emojiCharSpacing')), line_spacing: Math.trunc(number('#emojiLineSpacing')), scroll_speed: number('#emojiScrollSpeed'), pulse_speed: number('#emojiPulseSpeed')});
   const fireflyParameters = (existing = {}) => ({...existing, population: Math.trunc(number('#fireflyPopulation')), synchrony: number('#fireflySynchrony'), wandering: number('#fireflyWandering'), pulse_softness: number('#fireflyPulseSoftness'), meadow_glow: number('#fireflyMeadowGlow')});
@@ -948,7 +947,6 @@
     onFrame: (body) => { drawFrame(body.frame); $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Installed final runtime frame.'; placementWarning(body.widget_placements || {}); },
     onError: (error) => { $('#previewStatus').textContent = error.message || 'Preview could not render.'; if (error.previewUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); },
   });
-  const vibeForPalette = Object.freeze({mist: 'quiet', neutral: 'neutral', spectrum: 'vivid', ember: 'cozy'});
   const paletteForVibe = Object.freeze({quiet: 'mist', neutral: 'neutral', vivid: 'spectrum', celebration: 'spectrum', cozy: 'ember'});
   function managedWallComponent(componentId, role = 'background', provider = null) {
     return state.wall.bootstrap?.components?.find((component) => (
