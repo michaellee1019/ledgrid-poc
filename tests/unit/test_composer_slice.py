@@ -432,7 +432,7 @@ assert.equal(context.editCurrentAfterStop, false);
         self.assertIn("if (!intentIsCurrent(intentToken)) return;\n      state.selection = item;", script)
         self.assertIn("if (intentIsCurrent(intentToken) && error.status !== 409)", script)
         self.assertIn("beginIntent();\n    if (!state.scene) return Promise.resolve();", script)
-        self.assertIn("await submit(state.scene, {intentToken: state.intent})", script)
+        self.assertIn("await submit(state.scene, {intentToken: state.intent, automatic: true})", script)
 
         in_flight_javascript = """
 const assert = require('node:assert/strict');
