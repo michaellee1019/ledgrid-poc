@@ -26,7 +26,7 @@
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
-      adoptedLook: null, adoptedVibeId: null, activationError: null,
+      adoptedLook: null, adoptedVibeId: null, activationError: null, retryBlocked: false,
     } };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const beginIntent = () => ++state.intent;
@@ -1042,7 +1042,15 @@
     $('#liveAction').disabled = !live || state.wall.activating;
     const activationFailure = $('#wallActivationFailure');
     activationFailure.hidden = !state.wall.activationError;
-    activationFailure.textContent = state.wall.activationError || '';
+    activationFailure.replaceChildren();
+    if (state.wall.activationError) {
+      activationFailure.append(document.createTextNode(`${state.wall.activationError} `));
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.className = 'button text'; retry.textContent = 'Retry once';
+      retry.disabled = state.wall.activating || Boolean(state.publication.queued || state.publication.afterStop || state.publication.inFlight);
+      retry.addEventListener('click', retryWallActivation);
+      activationFailure.append(retry);
+    }
     $('#operationMessage').textContent = state.authoredValidationError || state.wall.activationError || status.last_error || (live
       ? (status.current ? (state.wall.dirty ? 'Publishing the newest valid edit.' : 'Live · every valid edit applies automatically.') : 'Live · choose or edit a scene to begin output.')
       : 'Output stopped · change any control or choose a scene to resume automatically.');
@@ -1079,8 +1087,13 @@
       catch (wallError) {
         // The authored scene remains current and recoverable. A later edit
         // retries from a fresh controller revision without rolling the UI back.
-        state.wall.activationError = wallError.message;
-        renderStatus(wallStatus());
+        if (intentIsCurrent(entry.intent)) {
+          state.wall.activationError = wallError.message;
+          // A transport outage may recover without another edit. Terminal
+          // acknowledgement failures require a new edit or an explicit retry.
+          state.wall.retryBlocked = wallError.code !== 'offline';
+          renderStatus(wallStatus());
+        }
       } finally {
         state.wall.activating = false;
         renderStatus(state.status || wallStatus());
@@ -1103,9 +1116,10 @@
       }
     }
   }
-  function submit(scene, {builtin = false, endpoint = null, requestBody = null, intentToken = null, rememberEdit = false, previous = null} = {}) {
+  function submit(scene, {builtin = false, endpoint = null, requestBody = null, intentToken = null, rememberEdit = false, previous = null, automatic = false} = {}) {
     if (intentToken != null && !intentIsCurrent(intentToken)) return Promise.resolve({coalesced: true});
-    if (intentToken == null) beginIntent();
+    const publicationIntent = intentToken == null ? beginIntent() : intentToken;
+    if (!automatic) state.wall.retryBlocked = false;
     if (rememberEdit) remember(previous || structuredClone(state.scene || defaultScene()));
     state.scene = scene; state.wall.dirty = true; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
     const sceneSnapshot = structuredClone(scene);
@@ -1113,7 +1127,7 @@
     const requestEndpoint = endpoint || (builtin ? '/built-ins/open' : '/scene');
     const body = requestBody || (builtin ? {scene: sceneSnapshot, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence} : {origin: 'composer', scene: sceneSnapshot, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence});
     return new Promise((resolve, reject) => {
-      const entry = {kind: 'publish', endpoint: requestEndpoint, body, scene: sceneSnapshot, targetFps, resolve, reject};
+      const entry = {kind: 'publish', endpoint: requestEndpoint, body, scene: sceneSnapshot, targetFps, intent: publicationIntent, resolve, reject};
       const stopping = state.publication.queued?.kind === 'stop' || state.publication.inFlight?.kind === 'stop';
       const replacement = stopping ? state.publication.afterStop : state.publication.queued;
       if (stopping) state.publication.afterStop = entry;
@@ -1127,6 +1141,10 @@
         queueMicrotask(flushPublication);
       }
     });
+  }
+  function retryWallActivation() {
+    if (!state.scene || state.wall.activating || state.publication.queued || state.publication.afterStop || state.publication.inFlight) return Promise.resolve({coalesced: true});
+    return submit(structuredClone(state.scene)).catch((error) => { $('#operationMessage').textContent = error.message; });
   }
   async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true, previous}); } catch (error) { if (!state.publication.queued && !state.publication.inFlight) { state.scene = previous; applyScene(previous); } $('#operationMessage').textContent = error.message; } }
   async function loadFireworksPresets() {
@@ -1379,7 +1397,7 @@
       syncFrameRateObservation(observation);
       renderStatus(status);
       if (status.undo_invalidated) await acknowledgeUndo(status.undo_invalidation_revision);
-      if (status.connected && state.wall.dirty && state.scene && !state.publication.queued && !state.publication.afterStop && !state.publication.inFlight) await submit(state.scene, {intentToken: state.intent});
+      if (status.connected && state.wall.dirty && state.scene && !state.wall.retryBlocked && !state.publication.queued && !state.publication.afterStop && !state.publication.inFlight) await submit(state.scene, {intentToken: state.intent, automatic: true});
     } catch (error) { renderStatus({...state.status, last_error: error.message}); }
     finally { state.refreshInFlight = false; }
   }

@@ -406,6 +406,8 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         self.assertIn("globalSettingsForWall(scene, power, targetFps)", script)
         self.assertIn("if (state.wall.dirty || state.publication.queued || state.publication.afterStop || state.publication.inFlight) return;", script)
         self.assertIn("if (status.connected && state.wall.dirty && state.scene", script)
+        self.assertIn("!state.wall.retryBlocked", script)
+        self.assertIn("automatic: true", script)
         self.assertIn("state.publication.afterStop", script)
         self.assertIn("{kind: 'stop', scene: structuredClone(state.scene), resolve, reject}", script)
 
@@ -477,6 +479,129 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
         ]
         self.assertNotIn("authoredValidationError =", refresh)
 
+    def test_terminal_wall_failure_requires_fresh_intent_while_offline_recovery_remains_automatic(self) -> None:
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        publication = script[
+            script.index("async function flushPublication") : script.index("async function edit")
+        ]
+        refresh = script[
+            script.index("async function refreshStatus") : script.index(
+                "document.addEventListener('visibilitychange'"
+            )
+        ]
+        javascript = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const source = process.argv[1];
+const draft = {revision: 1, animation: {component_id: 'pinball'}};
+const state = {
+  status: {connected: true, running: true, armed: true}, scene: null,
+  sequence: 0, intent: 0, submitting: false, refreshInFlight: false,
+  authoredValidationError: null,
+  publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
+  wall: {activating: false, dirty: false, activationError: null, retryBlocked: false, observation: null},
+};
+const stats = {publicationPosts: 0, activationAttempts: 0};
+const control = {mode: 'terminal'};
+let releaseQueuedActivation;
+let queuedActivationEntered;
+const queuedActivationGate = new Promise((resolve) => { releaseQueuedActivation = resolve; });
+const queuedActivationStarted = new Promise((resolve) => { queuedActivationEntered = resolve; });
+async function fetch(_url, options = {}) {
+  if (options.method === 'POST') stats.publicationPosts += 1;
+  return {ok: true, json: async () => ({status: {connected: true, running: true, armed: true}})};
+}
+async function guardedWallActivation() {
+  stats.activationAttempts += 1;
+  const attemptMode = control.mode;
+  if (attemptMode === 'queued-terminal') {
+    queuedActivationEntered();
+    await queuedActivationGate;
+  }
+  if (attemptMode === 'terminal' || attemptMode === 'queued-terminal') {
+    const error = new Error('Activation rolled back.'); error.code = 'activation_terminal'; throw error;
+  }
+  if (attemptMode === 'offline') {
+    const error = new Error('Wall server unavailable.'); error.code = 'offline'; throw error;
+  }
+  state.wall.activationError = null;
+  state.wall.retryBlocked = false;
+  state.wall.dirty = Boolean(state.publication.queued || state.publication.afterStop);
+}
+async function requestJson(url) {
+  if (url.includes('/settings/observed')) return {target_fps: 150};
+  return {connected: true, running: true, armed: true};
+}
+const nodes = {'#targetFps': {value: '150'}, '#liveAction': {disabled: false}, '#operationMessage': {textContent: ''}};
+const context = {
+  assert, state, draft, fetch, guardedWallActivation, requestJson, queueMicrotask,
+  structuredClone, api: '/api/composer', clientId: 'phone', stats, control,
+  queuedActivationStarted, releaseQueuedActivation,
+  $: (selector) => nodes[selector],
+  boundedTargetFps: (value) => Number(value), newUuid: () => `id-${stats.publicationPosts + 1}`,
+  beginIntent: () => ++state.intent, intentIsCurrent: (intent) => intent === state.intent,
+  remember() {}, syncComponentPresetUI() {}, schedulePreview() {}, renderStatus(payload) { state.status = payload.status || payload; },
+  wallStatus: () => state.status, stopOutputNow: async () => {}, syncFrameRateObservation() {}, acknowledgeUndo: async () => {},
+};
+const run = vm.runInNewContext(source + `
+  ;(async () => {
+    await submit(draft);
+    assert.equal(stats.publicationPosts, 1);
+    assert.equal(stats.activationAttempts, 1);
+    assert.equal(state.wall.retryBlocked, true);
+    assert.equal(state.wall.dirty, true);
+    assert.deepEqual(state.scene, draft);
+    for (let poll = 0; poll < 3; poll += 1) await refreshStatus();
+    assert.equal(stats.publicationPosts, 1, 'terminal failure must stay single-shot across polls');
+    assert.equal(stats.activationAttempts, 1);
+
+    await retryWallActivation();
+    assert.equal(stats.publicationPosts, 2, 'explicit retry sends exactly once');
+    assert.equal(stats.activationAttempts, 2);
+    assert.equal(state.wall.retryBlocked, true);
+
+    const newer = {revision: 2, animation: {component_id: 'aurora_curtains'}};
+    await submit(newer);
+    assert.equal(stats.publicationPosts, 3, 'newer edit sends exactly once');
+    assert.deepEqual(state.scene, newer);
+    assert.equal(state.wall.retryBlocked, true);
+
+    control.mode = 'offline';
+    const offlineDraft = {revision: 3, animation: {component_id: 'cellular_tapestry'}};
+    await submit(offlineDraft);
+    assert.equal(state.wall.retryBlocked, false, 'transport outage remains recoverable');
+    control.mode = 'success';
+    await refreshStatus();
+    await refreshStatus();
+    assert.equal(stats.publicationPosts, 5, 'reconnect poll retries once, then clean state stays idle');
+    assert.equal(state.wall.dirty, false);
+    assert.deepEqual(state.scene, offlineDraft);
+
+    control.mode = 'queued-terminal';
+    const olderPromise = submit({revision: 4, animation: {component_id: 'pinball'}});
+    await queuedActivationStarted;
+    const newest = {revision: 5, animation: {component_id: 'frostwork'}};
+    const newestPromise = submit(newest);
+    control.mode = 'success';
+    releaseQueuedActivation();
+    await Promise.all([olderPromise, newestPromise]);
+    assert.equal(stats.publicationPosts, 7);
+    assert.equal(state.wall.retryBlocked, false, 'superseded failure cannot block newer intent');
+    assert.equal(state.wall.activationError, null);
+    assert.equal(state.wall.dirty, false);
+    assert.deepEqual(state.scene, newest);
+  })()
+`, context);
+Promise.resolve(run).catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+        completed = subprocess.run(
+            ["node", "-e", javascript, publication + refresh],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_wall_activation_failure_stays_visible_until_an_exact_acknowledgement(self) -> None:
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
         adapter = script[
@@ -496,16 +621,28 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const source = process.argv[1];
+class Node {
+  constructor() { this.textContent = ''; this.hidden = true; this.disabled = false; this.children = []; }
+  replaceChildren() { this.children = []; this.textContent = ''; }
+  append(child) { this.children.push(child); }
+  addEventListener(type, listener) { this.listener = listener; }
+}
 const nodes = Object.fromEntries([
   '#connectionState', '#observedIdentity', '#diagnosticObserved', '#desiredIdentity',
   '#sceneRevision', '#sceneIdentity', '#saveState', '#liveAction',
   '#wallActivationFailure', '#operationMessage',
-].map((selector) => [selector, {textContent: '', hidden: true, disabled: false}]));
+].map((selector) => [selector, new Node()]));
 const prior = {revision: 7, digest: 'a'.repeat(64)};
 const context = {
   assert, nodes, prior, JSON, Number, Boolean, Math, Object, Set, structuredClone,
+  document: {
+    createTextNode(text) { return {textContent: text}; },
+    createElement() { return new Node(); },
+  },
+  retryWallActivation() {},
   state: {
     status: {}, revision: 0, dirty: false, selection: null, authoredValidationError: null,
+    publication: {queued: null, afterStop: null, inFlight: null},
     wall: {
       bootstrap: {components: [
         ['receiver_native', 'native_aurora', 'background'],
@@ -542,12 +679,16 @@ vm.runInNewContext(source + `
   assert.equal(scene.components[1].parameters.seed, 23);
   renderStatus({connected: true, running: true, armed: true, current: {revision: 8, digest: 'b'.repeat(64)}, desired: {revision: 8, digest: 'b'.repeat(64)}, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
   assert.equal(nodes['#wallActivationFailure'].hidden, false);
-  assert.equal(nodes['#wallActivationFailure'].textContent, 'Activation rejected by mocked wall.');
+  assert.equal(nodes['#wallActivationFailure'].children[0].textContent, 'Activation rejected by mocked wall. ');
+  assert.equal(nodes['#wallActivationFailure'].children[1].textContent, 'Retry once');
+  assert.equal(nodes['#wallActivationFailure'].children[1].disabled, false);
+  assert.equal(nodes['#liveAction'].disabled, false);
   assert.equal(nodes['#observedIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
   assert.equal(nodes['#desiredIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
   state.wall.activationError = null;
   renderStatus({connected: true, running: true, armed: true, current: {revision: 8, digest: 'b'.repeat(64)}, desired: {revision: 8, digest: 'b'.repeat(64)}, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
   assert.equal(nodes['#wallActivationFailure'].hidden, true);
+  assert.equal(nodes['#wallActivationFailure'].children.length, 0);
   assert.equal(nodes['#observedIdentity'].textContent, 'r8 · ' + 'b'.repeat(64));
 `, context);
 """
