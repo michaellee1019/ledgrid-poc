@@ -67,6 +67,21 @@ for label, params in cases:
         palette_frames.append(runtime.frame_bytes)
         assert not runtime.render(22, 4, wall_time=1787774401.0)["changed"], label
     assert len(set(palette_frames)) == 4, label
+
+# Injected browser time must retain the Clock's authored offset. Compare with
+# the same clock rendered at an independently shifted timestamp.
+def clock_frame(minutes, timestamp):
+    runtime = BrowserPreviewRuntime()
+    runtime.bind_installation_profile_path(str(profile), digest)
+    runtime.initialize("clock_overlay", "ClockOverlayAnimation", {"width": 33, "height": 138},
+                       {"format_24h": True, "clock_offset_minutes": minutes},
+                       installation_profile_digest=digest)
+    runtime.render(0, 0, wall_time=timestamp)
+    return runtime.frame_bytes
+
+now = 1787774400.0
+assert clock_frame(360, now) != clock_frame(0, now)
+assert clock_frame(360, now) == clock_frame(0, now + 360 * 60)
 assert "animation.core.scene_runtime" not in sys.modules
 assert "ipc.control_channel" not in sys.modules
 print(json.dumps([label for label, _ in cases]))

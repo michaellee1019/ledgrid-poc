@@ -432,7 +432,7 @@ class InstalledFinalSceneRuntime:
             # The component deliberately owns wall-clock cadence.  The source is
             # injected at this preview boundary so deterministic requests neither
             # read the host clock nor alter the shared clock implementation.
-            clock._clock_now = lambda: self._wall_time  # type: ignore[method-assign]
+            clock._clock_now = lambda: clock._apply_clock_offset(self._wall_time)  # type: ignore[method-assign]
             return clock
         if descriptor.component_id == EmojiArrangerAnimation.COMPONENT_ID:
             return EmojiArrangerAnimation(controller, parameters)

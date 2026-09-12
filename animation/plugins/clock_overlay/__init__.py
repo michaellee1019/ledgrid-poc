@@ -119,7 +119,11 @@ class ClockOverlayAnimation(AnimationBase):
 
     def _clock_now(self) -> datetime:
         """Isolated wall-time source so tests and callers can provide fixed time."""
-        return datetime.now().astimezone() + timedelta(minutes=int(self.params["clock_offset_minutes"]))
+        return self._apply_clock_offset(datetime.now().astimezone())
+
+    def _apply_clock_offset(self, wall_time: datetime) -> datetime:
+        """Apply the same authored offset to local and injected preview time."""
+        return wall_time + timedelta(minutes=int(self.params["clock_offset_minutes"]))
 
     def set_presentation_context(
         self, context: AnimationRuntimeContext | ResolvedScene,

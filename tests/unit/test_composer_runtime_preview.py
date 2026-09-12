@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import unittest
 
 import numpy as np
@@ -118,6 +118,29 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
             "width": 33, "height": 138, "encoding": "rgb_u8_base64", "orientation": "strip_major_led_zero_bottom",
         })
         self.assertEqual(body["wall_mutations"], 0)
+        self.assertEqual(self.wall.commands, [])
+        self.assertEqual(self.interface.composer_control.commands, [])
+
+    def test_clock_offset_changes_preview_time_without_advancing_the_scene(self) -> None:
+        for format_24h, seconds, offset in ((True, True, 360), (False, False, 360),
+                                            (True, False, -720), (False, True, 840)):
+            with self.subTest(format_24h=format_24h, seconds=seconds, offset=offset):
+                def render(minutes: int, wall_time: datetime) -> np.ndarray:
+                    widget = _clock("clock", [255, 224, 128])
+                    widget["component"]["parameters"].update(
+                        format_24h=format_24h, show_seconds=seconds,
+                        clock_offset_minutes=minutes,
+                    )
+                    payload = _request(_scene(widgets=[widget]))
+                    payload["preview"]["wall_time"] = wall_time.isoformat()
+                    return self._pixels(self.client.post("/api/composer/preview", json=payload))
+
+                now = datetime.fromisoformat("2026-09-12T15:47:14+00:00")
+                baseline = render(0, now)
+                shifted = render(offset, now)
+                expected = render(0, now + timedelta(minutes=offset))
+                self.assertFalse(np.array_equal(baseline, shifted))
+                np.testing.assert_array_equal(shifted, expected)
         self.assertEqual(self.wall.commands, [])
         self.assertEqual(self.interface.composer_control.commands, [])
 
