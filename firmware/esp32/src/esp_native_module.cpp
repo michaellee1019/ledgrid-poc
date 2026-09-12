@@ -3,6 +3,8 @@
 
 #if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
 
+#include "ledgrid/native_trig.hpp"
+
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -203,14 +205,11 @@ void helper_hsv(std::uint16_t hue, std::uint8_t saturation,
 }
 
 std::int16_t helper_sin(std::uint16_t phase) {
-  constexpr double kTau = 6.283185307179586476925286766559;
-  return static_cast<std::int16_t>(
-      std::nearbyint(std::sin(static_cast<double>(phase) * kTau / 65536.0) *
-                     32767.0));
+  return native_sin_q15(phase);
 }
 
 std::int16_t helper_cos(std::uint16_t phase) {
-  return helper_sin(static_cast<std::uint16_t>(phase + 16384U));
+  return native_cos_q15(phase);
 }
 
 const ledgrid_native_helpers_v2 kHelpers = {
