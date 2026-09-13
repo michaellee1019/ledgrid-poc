@@ -957,8 +957,11 @@ class ControllerActivationCoordinator:
         )
         with self._lock:
             self._records[command["activation_id"]] = record
+            # Stage the terminal receipt before eviction considers it. If the
+            # sink fails, its pending publication owns retention until recovery.
+            published = self._publish(record, required=False)
             self._trim_records()
-        return self._publish(record, required=False)
+            return published
 
     def pending_publication_ids(self) -> tuple[str, ...]:
         """Return bounded in-memory receipts needing another durability attempt.
@@ -1178,8 +1181,11 @@ class ControllerActivationCoordinator:
         )
         with self._lock:
             self._records[command["activation_id"]] = record
+            # Stage the terminal receipt before eviction considers it. If the
+            # sink fails, its pending publication owns retention until recovery.
+            published = self._publish(record, required=False)
             self._trim_records()
-        return self._publish(record, required=False)
+            return published
 
     def cancel(self, activation_id: str) -> dict[str, Any]:
         with self._lock:

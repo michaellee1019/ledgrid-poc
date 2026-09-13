@@ -218,3 +218,27 @@ def test_pending_receipt_survives_more_than_64_later_activations(setup):
     assert len(coordinator._records) <= coordinator.max_records
     assert channel.read_activation_status(first['activation_id'])['rollback']['available'] is False
     assert len(channel.list_activation_commands()) == 71
+
+
+@pytest.mark.parametrize('phase', ['queued', 'applying'])
+def test_restart_terminal_publications_survive_all_pending_cache_pressure(setup, phase):
+    fixture, channel, manager, prior = setup
+    template = fixture.command(prior)
+    ids = []
+    for index in range(65):
+        command = deepcopy(template)
+        command['activation_id'] = str(uuid.UUID(int=index+1))
+        ids.append(command['activation_id'])
+        channel.enqueue_activation(command)
+        status = prior._new_status(command)
+        status['phase'] = phase
+        channel.write_activation_status(status)
+    restarted = ControllerActivationCoordinator(manager, status_sink=channel.write_activation_status)
+    with patch.object(channel, '_atomic_write', side_effect=OSError('status unavailable')):
+        assert process_activation_commands(channel, restarted) == 0
+        assert set(restarted.pending_publication_ids()) == set(ids)
+    settle(channel, restarted)
+    assert not restarted.pending_publication_ids()
+    assert len(restarted._records) <= restarted.max_records
+    assert all(channel.read_activation_status(activation_id)['phase'] == 'failed' for activation_id in ids)
+    assert manager.mutation_count == 0
