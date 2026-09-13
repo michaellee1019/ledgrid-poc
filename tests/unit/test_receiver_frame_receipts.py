@@ -251,19 +251,21 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
     def test_single_receiver_boundary_rejects_a_stale_status(self):
         controller = LEDController.__new__(LEDController)
         controller.logical_device_id = 3
-        controller.get_stats = mock.Mock(return_value={
+        before = {
             "receiver_status_responses": 7,
             "receiver_frames_accepted": 12,
             "receiver_last_accepted_sequence": 0x1234,
-        })
+        }
         controller.set_all_pixels = mock.Mock()
-        controller.query_fresh_receiver_status = mock.Mock(return_value={
+        after = {
             "receiver_status_responses": 7,
             "receiver_frames_accepted": 12,
             "receiver_status_version": 3,
             "receiver_logical_device": 3,
             "receiver_last_accepted_sequence": 0x1235,
-        })
+        }
+        before.update(receiver_status_version=3, receiver_logical_device=3)
+        controller.query_causal_receiver_status = mock.Mock(side_effect=[before, after])
         with self.assertRaisesRegex(RuntimeError, "stale"):
             controller.present_complete_frame(
                 [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
@@ -272,19 +274,21 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
     def test_single_receiver_boundary_rejects_sequence_zero_without_acceptance_advance(self):
         controller = LEDController.__new__(LEDController)
         controller.logical_device_id = 3
-        controller.get_stats = mock.Mock(return_value={
+        before = {
             "receiver_status_responses": 7,
             "receiver_frames_accepted": 0,
             "receiver_last_accepted_sequence": 0,
-        })
+        }
         controller.set_all_pixels = mock.Mock()
-        controller.query_fresh_receiver_status = mock.Mock(return_value={
+        after = {
             "receiver_status_responses": 8,
             "receiver_frames_accepted": 0,
             "receiver_last_accepted_sequence": 0,
             "receiver_status_version": 3,
             "receiver_logical_device": 3,
-        })
+        }
+        before.update(receiver_status_version=3, receiver_logical_device=3)
+        controller.query_causal_receiver_status = mock.Mock(side_effect=[before, after])
         with self.assertRaisesRegex(RuntimeError, "accepted-frame counter"):
             controller.present_complete_frame(
                 [(0, 0, 0)], wall_frame_sequence=0, frame_digest="b" * 64
@@ -293,19 +297,21 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
     def test_single_receiver_boundary_accepts_independent_nonzero_receiver_sequence(self):
         controller = LEDController.__new__(LEDController)
         controller.logical_device_id = 3
-        controller.get_stats = mock.Mock(return_value={
+        before = {
             "receiver_status_responses": 7,
             "receiver_frames_accepted": 12,
             "receiver_last_accepted_sequence": 0x1000,
-        })
+        }
         controller.set_all_pixels = mock.Mock()
-        controller.query_fresh_receiver_status = mock.Mock(return_value={
+        after = {
             "receiver_status_responses": 8,
             "receiver_frames_accepted": 13,
             "receiver_status_version": 3,
             "receiver_logical_device": 3,
             "receiver_last_accepted_sequence": 0x1001,
-        })
+        }
+        before.update(receiver_status_version=3, receiver_logical_device=3)
+        controller.query_causal_receiver_status = mock.Mock(side_effect=[before, after])
         receipt = controller.present_complete_frame(
             [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
         )
@@ -321,19 +327,21 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
             with self.subTest(after_sequence=after_sequence):
                 controller = LEDController.__new__(LEDController)
                 controller.logical_device_id = 3
-                controller.get_stats = mock.Mock(return_value={
+                before = {
                     "receiver_status_responses": 7,
                     "receiver_frames_accepted": 12,
                     "receiver_last_accepted_sequence": 0x1000,
-                })
+                }
                 controller.set_all_pixels = mock.Mock()
-                controller.query_fresh_receiver_status = mock.Mock(return_value={
+                after = {
                     "receiver_status_responses": 8,
                     "receiver_frames_accepted": 13,
                     "receiver_status_version": 3,
                     "receiver_logical_device": 3,
                     "receiver_last_accepted_sequence": after_sequence,
-                })
+                }
+                before.update(receiver_status_version=3, receiver_logical_device=3)
+                controller.query_causal_receiver_status = mock.Mock(side_effect=[before, after])
                 with self.assertRaisesRegex(RuntimeError, expected):
                     controller.present_complete_frame(
                         [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
@@ -342,23 +350,99 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
     def test_single_receiver_boundary_accepts_uint32_receiver_sequence_wrap(self):
         controller = LEDController.__new__(LEDController)
         controller.logical_device_id = 3
-        controller.get_stats = mock.Mock(return_value={
+        before = {
             "receiver_status_responses": 7,
             "receiver_frames_accepted": 0xFFFFFFFF,
             "receiver_last_accepted_sequence": 0xFFFFFFFF,
-        })
+        }
         controller.set_all_pixels = mock.Mock()
-        controller.query_fresh_receiver_status = mock.Mock(return_value={
+        after = {
             "receiver_status_responses": 8,
             "receiver_frames_accepted": 0,
             "receiver_status_version": 3,
             "receiver_logical_device": 3,
             "receiver_last_accepted_sequence": 0,
-        })
+        }
+        before.update(receiver_status_version=3, receiver_logical_device=3)
+        controller.query_causal_receiver_status = mock.Mock(side_effect=[before, after])
         receipt = controller.present_complete_frame(
             [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
         )
         self.assertEqual(receipt["receiver_accepted_sequence"], 0)
+
+
+    def test_single_receiver_uses_live_baseline_when_streaming_cache_lags(self):
+        for accepts_write in (True, False):
+            with self.subTest(accepts_write=accepts_write):
+                controller = LEDController.__new__(LEDController)
+                controller.logical_device_id = 3
+                controller._transport_lock = threading.RLock()
+                cached = {
+                    "receiver_status_responses": 7,
+                    "receiver_frames_accepted": 12,
+                    "receiver_last_accepted_sequence": 0x1000,
+                    "receiver_status_version": 3,
+                    "receiver_logical_device": 3,
+                }
+                live = dict(cached, receiver_frames_accepted=13,
+                            receiver_last_accepted_sequence=0x1001)
+                events = []
+                controller.get_stats = lambda: dict(cached)
+
+                def query(*, required_status_version):
+                    self.assertEqual(required_status_version, 3)
+                    self.assertTrue(controller._transport_lock._is_owned())
+                    events.append("query")
+                    live["receiver_status_responses"] += 3
+                    cached.update(live)
+                    return dict(cached)
+
+                def write(*args, **kwargs):
+                    self.assertTrue(controller._transport_lock._is_owned())
+                    events.append("write")
+                    if accepts_write:
+                        live["receiver_frames_accepted"] += 1
+                        live["receiver_last_accepted_sequence"] += 1
+
+                controller.query_causal_receiver_status = query
+                controller.query_fresh_receiver_status = lambda: query(required_status_version=3)
+                controller.set_all_pixels = write
+                if accepts_write:
+                    receipt = controller.present_complete_frame(
+                        [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
+                    )
+                    self.assertEqual(receipt["receiver_accepted_sequence"], 0x1002)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "accepted-frame counter"):
+                        controller.present_complete_frame(
+                            [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
+                        )
+                self.assertEqual(events, ["query", "write", "query"])
+
+    def test_single_receiver_refuses_write_without_valid_causal_baseline(self):
+        good = {
+            "receiver_status_responses": 7,
+            "receiver_frames_accepted": 12,
+            "receiver_last_accepted_sequence": 0x1000,
+            "receiver_status_version": 3,
+            "receiver_logical_device": 3,
+        }
+        for baseline in (
+            RuntimeError("causal status timeout"),
+            dict(good, receiver_status_version=2),
+            dict(good, receiver_logical_device=4),
+            dict(good, receiver_frames_accepted=-1),
+        ):
+            with self.subTest(baseline=baseline):
+                controller = LEDController.__new__(LEDController)
+                controller.logical_device_id = 3
+                controller.query_causal_receiver_status = mock.Mock(side_effect=[baseline])
+                controller.set_all_pixels = mock.Mock()
+                with self.assertRaises(RuntimeError):
+                    controller.present_complete_frame(
+                        [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
+                    )
+                controller.set_all_pixels.assert_not_called()
 
     def test_startup_refuses_authority_route_drift_before_controller_construction(self):
         authority = SimpleNamespace(identities=_identities(), authority_digest=AUTHORITY_DIGEST)

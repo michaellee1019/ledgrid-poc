@@ -3682,7 +3682,9 @@ class LEDController:
         if transport_lock is None:
             transport_lock = self._transport_lock = threading.RLock()
         with transport_lock:
-            before = self.get_stats()
+            # Streaming intentionally samples status sparsely. A cached baseline
+            # can attribute an earlier frame to this write, even if it fails.
+            before = self.query_causal_receiver_status(required_status_version=3)
             before_responses = before.get("receiver_status_responses")
             before_accepted = before.get("receiver_frames_accepted")
             before_sequence = before.get("receiver_last_accepted_sequence")
@@ -3697,8 +3699,12 @@ class LEDController:
                 or not 0 <= before_sequence <= 0xFFFFFFFF
             ):
                 raise RuntimeError("complete-frame acknowledgement has invalid baseline counters")
+            if int(before.get("receiver_status_version", 0) or 0) < 3:
+                raise RuntimeError("complete-frame acknowledgement requires receiver status v3")
+            if before.get("receiver_logical_device") != self.logical_device_id:
+                raise RuntimeError("complete-frame acknowledgement has the wrong receiver")
             self.set_all_pixels(colors, wall_frame_sequence=wall_frame_sequence)
-            status = self.query_fresh_receiver_status()
+            status = self.query_causal_receiver_status(required_status_version=3)
             after = status.get("receiver_status_responses")
             accepted = status.get("receiver_frames_accepted")
             receiver_sequence = status.get("receiver_last_accepted_sequence")
