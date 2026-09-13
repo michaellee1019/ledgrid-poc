@@ -3377,7 +3377,12 @@ class LEDController:
         if isinstance(lane_mask, bool) or not isinstance(lane_mask, int):
             raise ValueError("lane_mask must be an integer")
         self._refresh_configuration()
-        return self._command_status(bytes((CMD_SET_LANE_MASK, lane_mask & 0xFF)))
+        # A dropped command must not reuse an older SetLaneMask acknowledgement.
+        # Reuse the causal baseline and fresh-response deadline of guarded
+        # storage commands; ordinary configuration remains fire-and-forget.
+        return self._command_status(
+            bytes((CMD_SET_LANE_MASK, lane_mask & 0xFF)), storage_operation=True
+        )
 
     def set_stagger_phases(self, phases):
         """Spread the lanes' WS2812 rising edges over this many samples.

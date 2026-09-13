@@ -2113,10 +2113,10 @@ class MultiDeviceLEDController:
         before = device.get_stats().get("receiver_status_responses")
         if isinstance(before, bool) or not isinstance(before, int):
             raise RuntimeError("receiver lane-mask acknowledgement has invalid baseline")
-        fresh_query = getattr(device, "query_fresh_receiver_status", None)
+        fresh_query = getattr(device, "query_causal_receiver_status", None)
         if not callable(fresh_query):
             raise RuntimeError("receiver lane-mask acknowledgement requires fresh status")
-        status = fresh_query()
+        status = fresh_query(required_status_version=3)
         after = status.get("receiver_status_responses") if isinstance(status, dict) else None
         if isinstance(after, bool) or not isinstance(after, int) or after <= before:
             raise RuntimeError("receiver lane-mask acknowledgement used a stale status")

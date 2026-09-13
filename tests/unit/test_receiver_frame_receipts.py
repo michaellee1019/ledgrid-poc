@@ -75,6 +75,9 @@ class _ReceiptDevice:
     def get_stats(self):
         return {"receiver_status_responses": self.status_responses}
 
+    def query_causal_receiver_status(self, *, required_status_version=3):
+        return self.query_fresh_receiver_status()
+
     def query_fresh_receiver_status(self):
         self.status_responses += 1
         if self.pending_lane_mask is not None:
@@ -192,6 +195,96 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
         self.assertEqual(controller.devices[4].lane_masks, [0x08, 0xFF])
         self.assertTrue(all(not device.lane_masks for device in controller.devices[:4]))
         self.assertEqual(controller.receiver_lane_masks, (0xFF,) * 5)
+
+    def test_lane_capture_rejects_old_snapshot_followed_by_invalid_reads(self):
+        device = LEDController.__new__(LEDController)
+        device._transport_lock = threading.RLock()
+        # The receiver now applies 0x04, but its response queue holds 0xff.
+        cached = {
+            "receiver_status_responses": 7,
+            "receiver_status_version": 3,
+            "receiver_logical_device": 0,
+            "receiver_lane_mask": 0xff,
+            "receiver_packets": 100,
+        }
+        reads = []
+        device.get_stats = lambda: dict(cached)
+
+        def clock_snapshot():
+            reads.append(True)
+            device._last_transfer_status_sampled = len(reads) == 1
+            if device._last_transfer_status_sampled:
+                cached["receiver_status_responses"] += 1
+                cached["receiver_packets"] += 1
+
+        def query():
+            clock_snapshot()
+            return dict(cached)
+
+        device._clock_receiver_status_snapshot = clock_snapshot
+        device.query_receiver_status = query
+        wall = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
+        wall.devices = [device]
+        with mock.patch("drivers.spi_controller.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS", 0.02):
+            with self.assertRaisesRegex(RuntimeError, "causal fresh status"):
+                wall._trusted_receiver_lane_status(0)
+        self.assertGreater(len(reads), 1)
+
+    def test_lane_ack_cannot_reuse_a_prior_identical_command(self):
+        from drivers import spi_controller as protocol
+        from tests.unit.test_firmware_host_phase3a_protocol import controller as spi_controller
+
+        class DelayedLaneSpi:
+            max_speed_hz = 20_000_000
+            mode = 0
+
+            def __init__(self, accepts_write):
+                self.accepts_write = accepts_write
+                self.calls = []
+                self.now = 0.0
+                self.live_sequence = 11  # Prior SetLaneMask already processed.
+
+            def sleep(self, duration):
+                self.now += duration
+
+            def status(self, sequence, packets):
+                status = bytearray(protocol.RECEIVER_STATUS_BYTES_V3)
+                status[:5] = b"LGS3\x03"
+                status[7] = 8
+                status[12:16] = packets.to_bytes(4, "big")
+                status[62:64] = (1).to_bytes(2, "big")
+                status[64:68] = (15).to_bytes(4, "big")
+                status[72] = 1
+                status[312] = 4
+                status[313] = protocol.CMD_SET_LANE_MASK
+                status[316:320] = sequence.to_bytes(4, "big")
+                return status
+
+            def xfer2(self, packet):
+                self.calls.append(packet[0])
+                n = len(self.calls)
+                if packet[0] == protocol.CMD_SET_LANE_MASK and self.accepts_write:
+                    self.live_sequence += 1
+                # One queued old operation, then invalid MISO, then live status.
+                response = (self.status(10, 100) if n == 1 else
+                            bytes(len(packet)) if n == 2 else
+                            self.status(self.live_sequence, 100 + n))
+                return response[:len(packet)]
+
+        for accepts_write in (False, True):
+            with self.subTest(accepts_write=accepts_write):
+                spi = DelayedLaneSpi(accepts_write)
+                device = spi_controller(spi)
+                device._refresh_configuration = lambda: None
+                with mock.patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                        mock.patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+                    if accepts_write:
+                        receipt = device.set_lane_mask_acknowledged(8)
+                        self.assertEqual(receipt["receiver_operation_sequence"], 12)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+                            device.set_lane_mask_acknowledged(8)
+                self.assertEqual(spi.calls.count(protocol.CMD_SET_LANE_MASK), 1)
 
     def test_trusted_lane_mask_accepts_delayed_display_application(self):
         controller = _receipt_controller(lane_apply_after=1)
