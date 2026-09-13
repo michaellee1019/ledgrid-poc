@@ -191,3 +191,30 @@ def test_failed_publication_for_older_receipt_is_retried_without_file_change(set
     assert process_activation_commands(channel, coordinator) == 0
     assert not coordinator.pending_publication_ids()
     assert channel.read_activation_status(first['activation_id'])['rollback']['available'] is False
+
+
+
+def test_pending_receipt_survives_more_than_64_later_activations(setup):
+    fixture, channel, manager, coordinator = setup
+    first = fixture.command(coordinator)
+    channel.enqueue_activation(first)
+    assert process_activation_commands(channel, coordinator) == 1
+    settle(channel, coordinator)
+    write = channel._atomic_write
+    def fail_old(path, payload):
+        if path == channel.activation_status_file(first['activation_id']):
+            raise OSError('first receipt unavailable across cache eviction')
+        return write(path, payload)
+    with patch.object(channel, '_atomic_write', fail_old):
+        for _ in range(70):
+            command = fixture.command(coordinator)
+            channel.enqueue_activation(command)
+            assert process_activation_commands(channel, coordinator) == 1
+        assert first['activation_id'] in coordinator.pending_publication_ids()
+    mutations = manager.mutation_count
+    settle(channel, coordinator)
+    assert manager.mutation_count == mutations
+    assert not coordinator.pending_publication_ids()
+    assert len(coordinator._records) <= coordinator.max_records
+    assert channel.read_activation_status(first['activation_id'])['rollback']['available'] is False
+    assert len(channel.list_activation_commands()) == 71

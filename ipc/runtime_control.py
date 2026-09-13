@@ -777,10 +777,12 @@ class ControllerActivationCoordinator:
             removable_id = next((
                 activation_id
                 for activation_id, record in self._records.items()
-                if record.historical
-                or record.status["phase"] in {
-                    "rolled_back", "failed", "timed_out",
-                }
+                if not record.pending_publications and (
+                    record.historical
+                    or record.status["phase"] in {
+                        "rolled_back", "failed", "timed_out",
+                    }
+                )
             ), None)
             if removable_id is None:
                 # A current active receipt and an in-flight replacement may
@@ -983,6 +985,10 @@ class ControllerActivationCoordinator:
             # Use that natural retry point to drain any phase receipts retained
             # during a transient filesystem failure.
             self._flush_publications(record, required=False)
+            # Retention may temporarily exceed the target while writes fail.
+            # Once durable, historical receipts may safely leave memory. Keep
+            # the local reference even when trimming removes this very record.
+            self._trim_records()
             return _copy_json(record.status)
 
     def reconcile_durable_active(
