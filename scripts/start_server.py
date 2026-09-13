@@ -30,6 +30,7 @@ from animation.core.installation_profile_topology import (
     InstallationProfileTopology,
 )
 from ipc.control_channel import FileControlChannel
+from ipc.playlist_runtime import PlaylistRunner, normalize_playlist_command
 from ipc.runtime_control import (
     ControllerActivationConflictError,
     ControllerActivationError,
@@ -856,6 +857,13 @@ def run_controller_mode(args):
             state_path=Path(args.saved_state_file),
         )
     ))
+    playlist_runner = PlaylistRunner(
+        manager, activation_coordinator,
+        status_sink=channel.write_playlist_current_status,
+    )
+    # Execution state is process-local. A restart publishes idle immediately
+    # and old queued starts fail their controller-session guard.
+    channel.write_playlist_current_status(playlist_runner.status())
     maintenance_authority_digest = getattr(
         controller, "receiver_identity_authority_digest", None
     )
@@ -914,6 +922,9 @@ def run_controller_mode(args):
                     except Exception as exc:
                         print(f"⚠️ Failed to save restart state: {exc}")
 
+            process_playlist_commands(channel, playlist_runner)
+            playlist_runner.advance()
+
             now = time.time()
             if now - last_status_time >= args.status_interval:
                 status_payload = controller_status_payload(
@@ -936,6 +947,30 @@ def run_controller_mode(args):
                 controller.close()
             except Exception:
                 pass
+
+
+def process_playlist_commands(channel, runner: PlaylistRunner) -> int:
+    """Execute immutable playlist intents once for the current controller."""
+    completed = 0
+    for raw in channel.poll_playlist_commands(runner.coordinator.session_id):
+        request_id = raw.get("request_id")
+        try:
+            command = normalize_playlist_command(raw)
+            status = runner.start(command) if command["action"] == "start" else runner.stop(command)
+        except (TypeError, ValueError, RuntimeError) as exc:
+            status = {
+                "schema": "ledgrid.playlist-status", "schema_version": 1,
+                "phase": "rejected", "controller_session_id": runner.coordinator.session_id,
+                "updated_at": time.time(), "run_id": raw.get("run_id"),
+                "request_id": request_id, "playlist_id": raw.get("playlist_id"),
+                "playlist_name": raw.get("playlist_name"), "current_index": None,
+                "entry_count": 0, "current_entry": None, "entry_started_at": None,
+                "entry_deadline_at": None, "remaining_seconds": None, "error": str(exc),
+            }
+        channel.write_playlist_request_status(status)
+        channel.acknowledge_playlist_poll(request_id)
+        completed += 1
+    return completed
 
 
 _TERMINAL_ACTIVATION_PHASES = frozenset({

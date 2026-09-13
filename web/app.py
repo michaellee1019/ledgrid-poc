@@ -150,6 +150,7 @@ from animation.core.scene_runtime import CanonicalSceneRuntimeError
 from web.composer_component_editor import editor_catalog
 from web.live_scene_state import LiveSceneStale, LiveSceneState
 from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
+from web.composer_playlist_store import ComposerPlaylistStore, ComposerPlaylistStoreError
 from web.composer_component_presets import ComponentPresetCatalog
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
@@ -157,7 +158,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v18"
+COMPOSER_SHELL_VERSION = "composer-shell-v19"
 CANONICAL_BROWSER_SCENE_SCHEMA = "ledgrid.browser-scene-v2"
 
 # The Gallery stays projected from the Scene v2 packet, while this small map
@@ -385,6 +386,9 @@ class AnimationWebInterface:
         )
         self.composer_looks = SceneLookStore(self.project_root / "run_state" / "composer_looks.json")
         self.composer_library = ComposerLibraryState(self.project_root / "run_state" / "composer_library.json")
+        self.composer_playlists = ComposerPlaylistStore(
+            self.project_root / "run_state" / "composer_playlists.json"
+        )
         self.working_draft = WorkingDraftStore(self.project_root / 'run_state' / 'composer_draft.json')
         # A saved look is editable only while it remains the opened user look.
         # Built-ins have no id here, which makes Save require Save As.
@@ -469,6 +473,15 @@ class AnimationWebInterface:
     def _register_routes(self):
         """Register Flask routes"""
 
+        def validated_playlist_definition(value: Any) -> Any:
+            if isinstance(value, dict) and isinstance(value.get("entries"), list):
+                for entry in value["entries"]:
+                    if isinstance(entry, dict) and "scene" in entry:
+                        # Store the immutable browser document, but accept it
+                        # only if the current runtime can resolve its host Scene.
+                        self._validated_browser_activation_scene(entry["scene"])
+            return value
+
         @self.app.route('/')
         def index():
             """Render the sole local Composer product."""
@@ -493,6 +506,119 @@ class AnimationWebInterface:
         def api_composer_status():
             """Read current desired/observed Scene v2 publication state."""
             return jsonify(self._composer_status_payload(request.args.get('client_id')))
+
+        @self.app.route('/api/composer/playlists')
+        def api_composer_playlists():
+            try:
+                return jsonify({"playlists": self.composer_playlists.list()})
+            except ComposerPlaylistStoreError as exc:
+                return jsonify({"error": str(exc)}), 400
+
+        @self.app.route('/api/composer/playlists', methods=['POST'])
+        def api_composer_create_playlist():
+            try:
+                return jsonify({"playlist": self.composer_playlists.save(
+                    validated_playlist_definition(request.get_json(silent=True))
+                )})
+            except (ComposerPlaylistStoreError, SceneValidationError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({"error": str(exc)}), 400
+
+        @self.app.route('/api/composer/playlists/<playlist_id>')
+        def api_composer_playlist(playlist_id: str):
+            try:
+                return jsonify({"playlist": self.composer_playlists.get(playlist_id)})
+            except ComposerPlaylistStoreError as exc:
+                return jsonify({"error": str(exc)}), 404
+
+        @self.app.route('/api/composer/playlists/<playlist_id>', methods=['PUT', 'DELETE'])
+        def api_composer_change_playlist(playlist_id: str):
+            try:
+                if request.method == 'DELETE':
+                    self.composer_playlists.delete(playlist_id)
+                    return jsonify({"deleted": True})
+                return jsonify({"playlist": self.composer_playlists.save(
+                    validated_playlist_definition(request.get_json(silent=True)),
+                    playlist_id=playlist_id,
+                )})
+            except (ComposerPlaylistStoreError, SceneValidationError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({"error": str(exc)}), 400
+
+        @self.app.route('/api/composer/playlists/run', methods=['POST'])
+        def api_composer_run_playlist():
+            try:
+                payload = request.get_json(silent=True) or {}
+                if set(payload) != {"playlist_id"}:
+                    raise ComposerPlaylistStoreError("Choose one saved playlist to start.")
+                definition = self.composer_playlists.get(payload["playlist_id"])
+                status = dict(self.control_channel.read_status() or {})
+                session_id = status.get("controller_session_id")
+                revision = status.get("controller_state_revision")
+                if not isinstance(session_id, str) or type(revision) is not int:
+                    raise ComposerPlaylistStoreError("Controller ownership is unavailable; refresh and try again.")
+                entries = []
+                for entry in definition["entries"]:
+                    _document, host_scene = self._validated_browser_activation_scene(entry["scene"])
+                    entries.append({**entry, "scene": host_scene})
+                request_id = request.headers.get("Idempotency-Key") or str(uuid.uuid4())
+                try:
+                    request_id = str(uuid.UUID(request_id))
+                except (ValueError, AttributeError) as exc:
+                    raise ComposerPlaylistStoreError("Playlist request identity is invalid.") from exc
+                existing = self.control_channel.read_playlist_request_status(request_id)
+                if existing is not None:
+                    return jsonify({"accepted": existing})
+                command_reader = getattr(self.control_channel, "read_playlist_command", None)
+                existing_command = command_reader(request_id) if callable(command_reader) else None
+                if existing_command is not None:
+                    if existing_command.get("playlist_id") != definition["id"]:
+                        return jsonify({"error": "Playlist request identity already names another playlist."}), 409
+                    return jsonify({"accepted": {
+                        "phase": "queued", "request_id": request_id,
+                        "run_id": existing_command.get("run_id"),
+                        "playlist_id": definition["id"],
+                    }}), 202
+                command = {
+                    "schema": "ledgrid.playlist-command", "schema_version": 1,
+                    "request_id": request_id, "run_id": str(uuid.uuid4()), "action": "start",
+                    "requested_at": time.time(), "playlist_id": definition["id"],
+                    "playlist_name": definition["name"],
+                    "expected_controller_session_id": session_id,
+                    "expected_controller_state_revision": revision,
+                    "entries": entries,
+                }
+                self.control_channel.enqueue_playlist_command(command)
+                return jsonify({"accepted": {"phase": "queued", "request_id": request_id,
+                                               "run_id": command["run_id"],
+                                               "playlist_id": definition["id"]}}), 202
+            except (ComposerPlaylistStoreError, SceneValidationError, SceneContractError, TypeError, ValueError, FileExistsError) as exc:
+                return jsonify({"error": str(exc)}), 400
+
+        @self.app.route('/api/composer/playlists/stop', methods=['POST'])
+        def api_composer_stop_playlist():
+            try:
+                current = self.control_channel.read_playlist_current_status() or {}
+                request_id = str(uuid.uuid4())
+                command = {"schema": "ledgrid.playlist-command", "schema_version": 1,
+                           "request_id": request_id, "action": "stop",
+                           "requested_at": time.time(), "run_id": current.get("run_id")}
+                self.control_channel.enqueue_playlist_command(command)
+                return jsonify({"accepted": {"phase": "queued", "request_id": request_id,
+                                               "run_id": current.get("run_id")}}), 202
+            except (TypeError, ValueError, FileExistsError) as exc:
+                return jsonify({"error": str(exc)}), 400
+
+        @self.app.route('/api/composer/playlists/status')
+        def api_composer_playlist_status():
+            try:
+                current = self.control_channel.read_playlist_current_status()
+                request_id = request.args.get("request_id")
+                request_status = (self.control_channel.read_playlist_request_status(request_id)
+                                  if request_id else None)
+                response = jsonify({"current": current, "request": request_status})
+                response.headers['Cache-Control'] = 'no-store'
+                return response
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
 
         @self.app.route('/api/composer/components')
         def api_composer_components():
@@ -929,6 +1055,7 @@ class AnimationWebInterface:
                     'check_scene': self.activation_enabled,
                     'activate_scene': self.activation_enabled,
                     'activation_status': self.activation_enabled,
+                    'playlists': True,
                 },
                 'activation_mode': self.activation_mode,
                 'catalog_digest': self._bundled_composer_catalog_digest(),
@@ -3500,6 +3627,10 @@ class AnimationWebInterface:
                     'validate_import_url': '/api/v1/composer/presets/validate',
                     'save_component_preset_url': '/api/v1/composer/presets',
                     'save_scene_preset_url': '/api/v1/scene-presets',
+                    'playlists_url': '/api/composer/playlists',
+                    'playlist_run_url': '/api/composer/playlists/run',
+                    'playlist_stop_url': '/api/composer/playlists/stop',
+                    'playlist_status_url': '/api/composer/playlists/status',
                     'live_edit_component_url_template': (
                         '/api/v1/scene/components/{target}'
                     ),

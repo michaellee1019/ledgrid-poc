@@ -27,7 +27,9 @@
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
       adoptedLook: null, adoptedVibeId: null, activationError: null, retryBlocked: false,
-    } };
+    },
+    playlist: {id: null, entries: [], saved: [], requestId: null, runId: null}
+  };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const beginIntent = () => ++state.intent;
   const intentIsCurrent = (intent) => intent === state.intent;
@@ -1460,6 +1462,101 @@
     search.scrollIntoView({behavior: 'smooth', block: 'center'});
     search.focus({preventScroll: true});
   }
+  function formatPlaylistDuration(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    const minutes = Math.floor(total / 60);
+    return `${minutes}:${String(total % 60).padStart(2, '0')}`;
+  }
+  function playlistDefinition() {
+    return {name: $('#playlistName').value.trim(), entries: state.playlist.entries.map((entry) => structuredClone(entry))};
+  }
+  function renderPlaylist() {
+    const list = $('#playlistEntries'); list.replaceChildren();
+    const total = state.playlist.entries.reduce((sum, entry) => sum + Number(entry.duration_seconds || 0), 0);
+    $('#playlistTotal').textContent = formatPlaylistDuration(total);
+    $('#playlistEmpty').hidden = state.playlist.entries.length > 0;
+    state.playlist.entries.forEach((entry, index) => {
+      const item = document.createElement('li'); item.className = 'playlist-entry';
+      const title = document.createElement('strong'); title.textContent = entry.label;
+      const durationLabel = document.createElement('label'); durationLabel.append('Seconds ');
+      const duration = document.createElement('input'); duration.type = 'number'; duration.min = '1'; duration.max = '86400'; duration.step = '1'; duration.value = String(entry.duration_seconds);
+      duration.setAttribute('aria-label', `${entry.label} duration in seconds`);
+      duration.addEventListener('change', () => { entry.duration_seconds = Math.max(1, Math.min(86400, Math.round(Number(duration.value) || 60))); renderPlaylist(); });
+      durationLabel.append(duration);
+      const actions = document.createElement('div'); actions.className = 'playlist-entry-actions';
+      [['↑', -1, 'Move up'], ['↓', 1, 'Move down']].forEach(([text, offset, label]) => {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'button text'; button.textContent = text; button.title = label; button.setAttribute('aria-label', `${label} ${entry.label}`); button.disabled = index + offset < 0 || index + offset >= state.playlist.entries.length;
+        button.addEventListener('click', () => { const [moved] = state.playlist.entries.splice(index, 1); state.playlist.entries.splice(index + offset, 0, moved); renderPlaylist(); }); actions.append(button);
+      });
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button text'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', `Remove ${entry.label}`); remove.addEventListener('click', () => { state.playlist.entries.splice(index, 1); renderPlaylist(); }); actions.append(remove);
+      item.append(title, durationLabel, actions); list.append(item);
+    });
+    $('#playlistStart').disabled = state.playlist.entries.length === 0;
+  }
+  async function loadPlaylists() {
+    const body = await requestJson(`${api}/playlists`); state.playlist.saved = body.playlists || [];
+    const choice = $('#playlistChoice'); const selected = state.playlist.id || '';
+    choice.replaceChildren(new Option('New playlist', ''));
+    state.playlist.saved.forEach((item) => choice.append(new Option(`${item.name} · ${formatPlaylistDuration(item.total_duration_seconds)}`, item.id)));
+    choice.value = state.playlist.saved.some((item) => item.id === selected) ? selected : '';
+  }
+  async function openPlaylist(playlistId) {
+    if (!playlistId) { state.playlist.id = null; state.playlist.entries = []; $('#playlistName').value = ''; renderPlaylist(); return; }
+    const body = await requestJson(`${api}/playlists/${encodeURIComponent(playlistId)}`);
+    state.playlist.id = body.playlist.id; state.playlist.entries = body.playlist.entries.map((entry) => structuredClone(entry)); $('#playlistName').value = body.playlist.name; renderPlaylist();
+  }
+  async function savePlaylist() {
+    const definition = playlistDefinition();
+    const body = await requestJson(state.playlist.id ? `${api}/playlists/${encodeURIComponent(state.playlist.id)}` : `${api}/playlists`, {
+      method: state.playlist.id ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(definition),
+    });
+    state.playlist.id = body.playlist.id; state.playlist.entries = body.playlist.entries.map((entry) => structuredClone(entry));
+    await loadPlaylists(); renderPlaylist(); $('#playlistStatus').textContent = `Saved ${body.playlist.name}.`; $('#playlistStatus').dataset.state = 'saved'; return body.playlist;
+  }
+  function currentPlaylistEntryLabel() {
+    const selected = state.library.items?.find((item) => item.kind === state.selection?.kind && item.id === state.selection?.id);
+    if (selected?.name) return selected.name;
+    const named = $('#sceneName').value.trim(); if (named) return named;
+    return $('#animationChoice').selectedOptions[0]?.textContent || 'Current Scene';
+  }
+  function addCurrentSceneToPlaylist() {
+    try {
+      state.playlist.entries.push({entry_id: newUuid(), label: currentPlaylistEntryLabel(), duration_seconds: 60, scene: browserSceneForWall(sceneFromControls())});
+      renderPlaylist(); $('#playlistStatus').textContent = 'Added the current Scene.'; delete $('#playlistStatus').dataset.state;
+    } catch (error) { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }
+  }
+  async function startPlaylist() {
+    try {
+      const playlist = await savePlaylist(); const requestId = newUuid();
+      const body = await requestJson(`${api}/playlists/run`, {method: 'POST', headers: {'Content-Type': 'application/json', 'Idempotency-Key': requestId}, body: JSON.stringify({playlist_id: playlist.id})});
+      state.playlist.requestId = body.accepted.request_id; state.playlist.runId = body.accepted.run_id;
+      $('#playlistStatus').textContent = 'Starting playlist…'; $('#playlistStatus').dataset.state = 'running';
+      await refreshPlaylistStatus();
+    } catch (error) { $('#playlistStatus').textContent = error.message || 'Playlist could not start.'; $('#playlistStatus').dataset.state = 'error'; }
+  }
+  async function stopPlaylist() {
+    try {
+      const body = await requestJson(`${api}/playlists/stop`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+      state.playlist.requestId = body.accepted.request_id; await refreshPlaylistStatus();
+    } catch (error) { $('#playlistStatus').textContent = error.message || 'Playlist could not stop.'; $('#playlistStatus').dataset.state = 'error'; }
+  }
+  async function refreshPlaylistStatus() {
+    try {
+      const query = state.playlist.requestId ? `?request_id=${encodeURIComponent(state.playlist.requestId)}` : '';
+      const body = await requestJson(`${api}/playlists/status${query}`);
+      const requestStatus = body.request; const current = body.current;
+      const status = requestStatus && ['rejected', 'failed'].includes(requestStatus.phase) ? requestStatus : current;
+      if (!status || status.phase === 'idle') { $('#playlistStatus').textContent = 'No playlist running.'; delete $('#playlistStatus').dataset.state; return; }
+      if (status.phase === 'running') {
+        const remaining = Math.max(0, Math.ceil(Number(status.remaining_seconds) || 0));
+        $('#playlistStatus').textContent = `Item ${Number(status.current_index) + 1}/${status.entry_count} · ${status.current_entry?.label || 'Scene'} · ${remaining}s remaining`;
+        $('#playlistStatus').dataset.state = 'running'; state.playlist.runId = status.run_id; return;
+      }
+      const messages = {completed: 'Playlist complete. Starting Scene restored.', stopped: 'Playlist stopped.', overridden: 'Playlist stopped by a manual change.', rejected: status.error || 'Playlist start was rejected.', failed: status.error || 'Playlist failed.'};
+      $('#playlistStatus').textContent = messages[status.phase] || `Playlist ${status.phase}.`; $('#playlistStatus').dataset.state = ['rejected','failed'].includes(status.phase) ? 'error' : status.phase;
+    } catch (error) { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }
+  }
+
   function wire() {
     ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiLineSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
     [...pixelChaseSelectors, ...plantGlowSelectors, ...Object.values(mediaControls).flat()].forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
@@ -1483,6 +1580,11 @@
     $('#gallerySearch').addEventListener('input', (event) => { state.gallery.query = event.target.value; renderGallery(); });
     document.querySelectorAll('[data-gallery-filter]').forEach((button) => button.addEventListener('click', () => { state.gallery.filter = button.dataset.galleryFilter; document.querySelectorAll('[data-gallery-filter]').forEach((candidate) => candidate.classList.toggle('active', candidate.dataset.galleryFilter === state.gallery.filter)); renderGallery(); }));
     $('#openScene').addEventListener('click', browseScenes); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', stopOutput); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
+    $('#playlistChoice').addEventListener('change', (event) => { void openPlaylist(event.target.value).catch((error) => { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }); });
+    $('#playlistAdd').addEventListener('click', addCurrentSceneToPlaylist);
+    $('#playlistSave').addEventListener('click', () => { void savePlaylist().catch((error) => { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }); });
+    $('#playlistStart').addEventListener('click', () => { void startPlaylist(); });
+    $('#playlistStop').addEventListener('click', () => { void stopPlaylist(); });
     document.addEventListener('keydown', handleSceneHistoryShortcut);
   }
   installPixelChaseControls(); installPlantGlowControls(); installMediaControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); updateHistoryActions(); applyScene(defaultScene());
@@ -1535,5 +1637,6 @@
     // scene does not restart it; the next real edit does that automatically.
     if (!body.status?.current) await submit(state.scene);
   }
-  hydrateCurrentScene().then(() => Promise.all([loadLibrary(), loadGallery()])).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'pixel_chase', 'plant_glow', ...mediaIds, 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) refreshStatus(); }, 2500); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
+  renderPlaylist();
+  hydrateCurrentScene().then(() => Promise.all([loadLibrary(), loadGallery(), loadPlaylists(), refreshPlaylistStatus()])).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'pixel_chase', 'plant_glow', ...mediaIds, 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) { refreshStatus(); refreshPlaylistStatus(); } }, 1000); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();

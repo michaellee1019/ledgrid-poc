@@ -501,6 +501,27 @@ class ControllerActivationCoordinator:
             scene = self._current_scene(self._manager_status())
             return None if scene is None else _copy_json(scene)
 
+    def capture_display_snapshot(self) -> ControllerStateSnapshot:
+        """Capture exact restorable state inside an existing mutation guard."""
+        with self._lock:
+            return self._snapshot()
+
+    def restore_display_snapshot(
+        self, snapshot: ControllerStateSnapshot, *, operation_id: str
+    ) -> None:
+        """Restore a process-local snapshot inside an existing mutation guard."""
+        if not isinstance(snapshot, ControllerStateSnapshot):
+            raise TypeError("display snapshot is invalid")
+        self._apply_state(
+            snapshot.scene,
+            snapshot.global_settings,
+            snapshot.installation_profile_digest,
+            activation_id=operation_id,
+            inject_faults=False,
+            receiver_profile_noop=snapshot.receiver_profile_noop,
+        )
+        self._restore_receiver_profile_snapshot(snapshot)
+
     def set_status_sink(
         self, status_sink: Callable[[dict[str, Any]], None] | None
     ) -> None:

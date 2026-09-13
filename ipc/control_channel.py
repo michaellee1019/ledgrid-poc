@@ -32,6 +32,9 @@ MAINTENANCE_PHASES = frozenset(
     {"queued", "running", "restored", "safe_idle", "rejected", "failed"}
 )
 MAINTENANCE_TERMINAL_PHASES = frozenset({"restored", "safe_idle", "rejected", "failed"})
+PLAYLIST_COMMAND_SCHEMA = "ledgrid.playlist-command"
+PLAYLIST_STATUS_SCHEMA = "ledgrid.playlist-status"
+PLAYLIST_CHANNEL_VERSION = 1
 
 
 class FileControlChannel:
@@ -62,6 +65,14 @@ class FileControlChannel:
         self._activation_poll_files = {}
         self._activation_poll_commands = {}
         self._activation_poll_pending = set()
+        self.playlist_root = self.control_path.parent / "playlists"
+        self.playlist_queue_path = self.playlist_root / "queue"
+        self.playlist_status_path = self.playlist_root / "status"
+        self.playlist_current_path = self.playlist_root / "current.json"
+        self._playlist_poll_session = None
+        self._playlist_poll_directory = None
+        self._playlist_poll_files = {}
+        self._playlist_poll_pending = set()
         self.maintenance_root = self.control_path.parent / "maintenance"
         self.maintenance_queue_path = self.maintenance_root / "queue"
         self.maintenance_status_path = self.maintenance_root / "status"
@@ -205,6 +216,101 @@ class FileControlChannel:
         payload.setdefault("schema_version", CONTROL_CHANNEL_VERSION)
         payload.setdefault("written_at", time.time())
         self._atomic_write(self.status_path, payload)
+
+    @staticmethod
+    def _playlist_request_id(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("playlist request_id must be a lowercase UUID")
+        try:
+            canonical = str(uuid.UUID(value))
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("playlist request_id must be a lowercase UUID") from exc
+        if canonical != value:
+            raise ValueError("playlist request_id must be a lowercase UUID")
+        return value
+
+    def playlist_command_path(self, request_id: str) -> Path:
+        return self.playlist_queue_path / f"{self._playlist_request_id(request_id)}.json"
+
+    def playlist_status_file(self, request_id: str) -> Path:
+        return self.playlist_status_path / f"{self._playlist_request_id(request_id)}.json"
+
+    def enqueue_playlist_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        from ipc.playlist_runtime import normalize_playlist_command
+        payload = normalize_playlist_command(command)
+        path = self.playlist_command_path(payload["request_id"])
+        if self._atomic_create(path, payload):
+            return payload
+        existing = self._strict_json(path, "playlist command")
+        if existing != payload:
+            raise FileExistsError("playlist request ID already names a different command")
+        return existing
+
+    def read_playlist_command(self, request_id: str) -> Optional[Dict[str, Any]]:
+        return self._strict_json(self.playlist_command_path(request_id), "playlist command")
+
+    def read_playlist_request_status(self, request_id: str) -> Optional[Dict[str, Any]]:
+        return self._strict_json(self.playlist_status_file(request_id), "playlist status")
+
+    def write_playlist_request_status(self, status: Dict[str, Any]) -> Dict[str, Any]:
+        request_id = self._playlist_request_id(status.get("request_id"))
+        payload = dict(status)
+        payload.setdefault("schema", PLAYLIST_STATUS_SCHEMA)
+        payload.setdefault("schema_version", PLAYLIST_CHANNEL_VERSION)
+        self._atomic_write(self.playlist_status_file(request_id), payload)
+        return payload
+
+    def write_playlist_current_status(self, status: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(status)
+        payload.setdefault("schema", PLAYLIST_STATUS_SCHEMA)
+        payload.setdefault("schema_version", PLAYLIST_CHANNEL_VERSION)
+        self._atomic_write(self.playlist_current_path, payload)
+        return payload
+
+    def read_playlist_current_status(self) -> Optional[Dict[str, Any]]:
+        payload = self._strict_json(self.playlist_current_path, "playlist current status")
+        if payload is not None and payload.get("phase") == "running":
+            deadline = payload.get("entry_deadline_at")
+            if isinstance(deadline, (int, float)):
+                payload["remaining_seconds"] = max(0.0, float(deadline) - time.time())
+        return payload
+
+    def poll_playlist_commands(self, session_id: str) -> list[Dict[str, Any]]:
+        """Discover new immutable requests without rescanning history while idle."""
+        if session_id != self._playlist_poll_session:
+            self._playlist_poll_session = session_id
+            self._playlist_poll_directory = None
+            self._playlist_poll_files = {}
+            self._playlist_poll_pending = set()
+        signature = self._activation_poll_fingerprint(self.playlist_queue_path)
+        if signature != self._playlist_poll_directory:
+            current = {}
+            if signature is not None:
+                for path in self.playlist_queue_path.glob("*.json"):
+                    fingerprint = self._activation_poll_fingerprint(path)
+                    if fingerprint is not None:
+                        current[path.stem] = fingerprint
+            for request_id, fingerprint in current.items():
+                if self._playlist_poll_files.get(request_id) != fingerprint:
+                    self._playlist_poll_pending.add(request_id)
+            self._playlist_poll_files = current
+            self._playlist_poll_directory = signature
+        commands = []
+        for request_id in sorted(self._playlist_poll_pending):
+            if request_id not in self._playlist_poll_files:
+                self._playlist_poll_pending.discard(request_id)
+                continue
+            if self.read_playlist_request_status(request_id) is not None:
+                self._playlist_poll_pending.discard(request_id)
+                continue
+            command = self.read_playlist_command(request_id)
+            if command is not None:
+                commands.append(command)
+        commands.sort(key=lambda item: (item.get("requested_at", 0), item.get("request_id", "")))
+        return commands
+
+    def acknowledge_playlist_poll(self, request_id: str) -> None:
+        self._playlist_poll_pending.discard(request_id)
 
     @staticmethod
     def _activation_id(value: Any) -> str:

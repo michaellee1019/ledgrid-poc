@@ -26,6 +26,16 @@
         <p id="galleryEmpty" class="empty" hidden>No animations match this search.</p>
         <section id="galleryDetail" class="gallery-detail" aria-live="polite" hidden></section>
       </section>
+    <section class="playlist-pane inspector" aria-labelledby="playlist-title" data-panel-id="playlists">
+      <div class="pane-heading"><div><p class="eyebrow">Playback</p><h2 id="playlist-title">Playlist</h2></div><output id="playlistTotal" class="playlist-total">0:00</output></div>
+      <label>Saved playlist <select id="playlistChoice"><option value="">New playlist</option></select></label>
+      <label>Name <input id="playlistName" maxlength="80" placeholder="Evening rotation"></label>
+      <ol id="playlistEntries" class="playlist-entries" aria-live="polite"></ol>
+      <p id="playlistEmpty" class="empty">Add the current Scene to begin.</p>
+      <div class="operation-row"><button id="playlistAdd" class="button secondary" type="button">Add current Scene</button><button id="playlistSave" class="button secondary" type="button">Save</button></div>
+      <div class="operation-row"><button id="playlistStart" class="button primary" type="button">Start</button><button id="playlistStop" class="button text" type="button">Stop</button></div>
+      <p id="playlistStatus" class="status-line playlist-status" role="status" aria-live="polite">No playlist running.</p>
+    </section>
     <section class="preview-pane" aria-labelledby="preview-title" data-panel-id="preview">
       <div class="pane-heading"><div><p class="eyebrow">Installed final</p><h2 id="preview-title">Preview</h2></div></div>
       <div class="preview-stage"><canvas id="scenePreview" class="preview-canvas" width="33" height="138" tabindex="0" aria-label="Installed final Scene preview"></canvas></div>

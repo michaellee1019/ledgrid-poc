@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import time
+import threading
 from typing import Any, Dict
 import uuid
 
 from animation.core.manager import AnimationManager
+from ipc.playlist_runtime import PlaylistRunner, normalize_playlist_command
 from ipc.runtime_control import (
     ControllerActivationError,
     controller_activation_coordinator,
@@ -28,6 +30,10 @@ class LocalControlChannel:
         self._activation_rollback_results: Dict[str, Dict[str, Any]] = {}
         self.last_command_id: Any = 0
         self.last_applied_command_id: Any = 0
+        self._playlist_request_statuses: Dict[str, Dict[str, Any]] = {}
+        self.playlist_runner = PlaylistRunner(manager, self.activation_coordinator)
+        self._playlist_wake = threading.Event()
+        self._playlist_thread: threading.Thread | None = None
 
     def read_status(self) -> Dict[str, Any]:
         payload = self.manager.get_current_frame()
@@ -207,6 +213,46 @@ class LocalControlChannel:
             "error": error,
             "completed_at": time.time(),
         }
+
+    def _ensure_playlist_scheduler(self) -> None:
+        if self._playlist_thread is not None:
+            return
+        self._playlist_thread = threading.Thread(
+            target=self._run_playlist_scheduler,
+            name="ledgrid-local-playlist",
+            daemon=True,
+        )
+        self._playlist_thread.start()
+
+    def _run_playlist_scheduler(self) -> None:
+        while True:
+            self._playlist_wake.wait(0.05)
+            self._playlist_wake.clear()
+            self.playlist_runner.advance()
+
+    def enqueue_playlist_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        payload = normalize_playlist_command(command)
+        self._ensure_playlist_scheduler()
+        existing = self._playlist_request_statuses.get(payload["request_id"])
+        if existing is not None:
+            return dict(payload)
+        status = (
+            self.playlist_runner.start(payload)
+            if payload["action"] == "start"
+            else self.playlist_runner.stop(payload)
+        )
+        self._playlist_request_statuses[payload["request_id"]] = dict(status)
+        self._playlist_wake.set()
+        return dict(payload)
+
+    def read_playlist_request_status(self, request_id: str):
+        status = self._playlist_request_statuses.get(request_id)
+        if status is not None and status.get("run_id") == self.playlist_runner.status().get("run_id"):
+            status = self.playlist_runner.status()
+        return dict(status) if status is not None else None
+
+    def read_playlist_current_status(self) -> Dict[str, Any]:
+        return self.playlist_runner.status()
 
     def send_command(self, action: str, **data: Any) -> Dict[str, Any]:
         if action in {"activate_scene", "cancel_activation"}:
