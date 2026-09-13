@@ -400,6 +400,13 @@ def _status_activation_identity_or_none(value: Any) -> dict[str, Any] | None:
         return None
 
 
+@dataclass
+class ControllerMutationLease:
+    """Post-mutation controller revision captured before execution unlocks."""
+
+    resulting_state_revision: int | None = None
+
+
 @dataclass(frozen=True)
 class ControllerStateSnapshot:
     """Complete controller-owned state required for verified compensation."""
@@ -2291,6 +2298,7 @@ class ControllerActivationCoordinator:
         """Serialize legacy writes and invalidate checked bases on any change."""
 
         with self._execution_lock:
+            lease = ControllerMutationLease()
             if command_guard is not None:
                 guard = normalize_controller_command_guard(command_guard)
                 assert guard is not None
@@ -2312,7 +2320,7 @@ class ControllerActivationCoordinator:
             before = self._derive_active_identity()
             completed = False
             try:
-                yield
+                yield lease
                 completed = True
             finally:
                 after_status = self._manager_status()
@@ -2327,6 +2335,8 @@ class ControllerActivationCoordinator:
                 after = self._derive_active_identity()
                 if completed or after != before:
                     self.note_legacy_mutation()
+                with self._lock:
+                    lease.resulting_state_revision = self._state_revision
 
 
 def controller_activation_coordinator(
@@ -2354,6 +2364,12 @@ def controller_activation_coordinator(
     if commit_callback is not None:
         coordinator.set_commit_callback(commit_callback)
     return coordinator
+
+
+def normalize_managed_scene(manager: Any, value: Any) -> dict[str, Any]:
+    """Normalize either current canonical Scene v2 or supported host Scene data."""
+
+    return _normalize_managed_scene(manager, value)
 
 
 def manager_scene_provider_policy(manager: Any) -> SceneProviderPolicy:

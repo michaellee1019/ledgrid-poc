@@ -15,6 +15,7 @@
     ['scenes', document.querySelector('.library-pane')],
     ['gallery', document.querySelector('.gallery')],
     ['preview', document.querySelector('.preview-pane')],
+    ['playlists', document.querySelector('.playlist-pane')],
     ['global-scene', document.querySelector('.global-scene-controls')],
     ['background', document.querySelector('[aria-labelledby="background-title"]')],
     ['animation', document.querySelector('[aria-labelledby="animation-title"]')],

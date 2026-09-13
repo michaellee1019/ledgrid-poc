@@ -13,7 +13,9 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
+import uuid
 from unittest.mock import patch
 
 from animation.core.activation_qualification import canonical_json_sha256
@@ -22,6 +24,7 @@ from animation.core.manager import AnimationManager
 from animation.core.native_background_library import NativeBackgroundLibrary
 from animation.core.installation_profile_library import InstallationProfileLibrary
 from animation.core.installation_profile_transaction import FakeInstallationProfileWall, InstallationProfileTransaction
+from ipc.playlist_runtime import PlaylistRunner
 from ipc.runtime_control import restore_display_state
 from tests.unit.test_receiver_native_product_manager import _Controller
 from tests.unit.test_scene_activation_api import _global_settings, RELEASE_ID
@@ -171,6 +174,25 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertIn(accepted.status_code,(200,202),accepted.get_json())
         receipt = self.channel.read_activation_status(accepted.get_json()['activation_id'])
         return body, accepted, receipt
+
+    def test_playlist_runner_accepts_current_production_canonical_scene(self):
+        coordinator = self.channel.activation_coordinator
+        runner = PlaylistRunner(self.manager, coordinator)
+        request = {
+            "schema": "ledgrid.playlist-command", "schema_version": 1,
+            "request_id": str(uuid.uuid4()), "run_id": str(uuid.uuid4()),
+            "action": "start", "requested_at": time.time(),
+            "playlist_id": str(uuid.uuid4()), "playlist_name": "Aurora",
+            "expected_controller_session_id": coordinator.session_id,
+            "expected_controller_state_revision": coordinator.state_revision,
+            "entries": [{
+                "entry_id": str(uuid.uuid4()), "label": "Aurora",
+                "duration_seconds": 60, "scene": deepcopy(self.scene),
+            }],
+        }
+        status = runner.start(request)
+        self.assertEqual(status["phase"], "running", status)
+        self.assertEqual(self.manager.get_scene_state()["schema"], "ledgrid.scene.v2")
 
     def test_missing_or_stale_managed_profile_is_rejected_without_mutation(self):
         for digest in ('0'*64, 'f'*64):

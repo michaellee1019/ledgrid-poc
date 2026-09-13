@@ -158,7 +158,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v19"
+COMPOSER_SHELL_VERSION = "composer-shell-v20"
 CANONICAL_BROWSER_SCENE_SCHEMA = "ledgrid.browser-scene-v2"
 
 # The Gallery stays projected from the Scene v2 packet, while this small map
@@ -596,14 +596,22 @@ class AnimationWebInterface:
         @self.app.route('/api/composer/playlists/stop', methods=['POST'])
         def api_composer_stop_playlist():
             try:
-                current = self.control_channel.read_playlist_current_status() or {}
+                payload = request.get_json(silent=True) or {}
+                if set(payload) != {"run_id"}:
+                    raise ValueError("Choose the pending or running playlist to stop.")
+                try:
+                    run_id = str(uuid.UUID(payload["run_id"]))
+                except (TypeError, ValueError, AttributeError) as exc:
+                    raise ValueError("Playlist run identity is invalid.") from exc
+                if run_id != payload["run_id"]:
+                    raise ValueError("Playlist run identity is invalid.")
                 request_id = str(uuid.uuid4())
                 command = {"schema": "ledgrid.playlist-command", "schema_version": 1,
                            "request_id": request_id, "action": "stop",
-                           "requested_at": time.time(), "run_id": current.get("run_id")}
+                           "requested_at": time.time(), "run_id": run_id}
                 self.control_channel.enqueue_playlist_command(command)
                 return jsonify({"accepted": {"phase": "queued", "request_id": request_id,
-                                               "run_id": current.get("run_id")}}), 202
+                                               "run_id": run_id}}), 202
             except (TypeError, ValueError, FileExistsError) as exc:
                 return jsonify({"error": str(exc)}), 400
 

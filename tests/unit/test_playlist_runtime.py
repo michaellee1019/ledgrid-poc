@@ -277,3 +277,214 @@ def test_file_controller_path_transitions_and_completes_without_web_status_reads
         clock.advance(1)
         assert runner.advance()["phase"] == "completed"
         assert manager.scene == initial
+
+
+def test_manual_mutation_immediately_after_start_guard_is_not_adopted_as_playlist_ownership():
+    import contextlib
+
+    manager, coordinator, initial = fixture()
+    clock = Clock()
+    scene = deepcopy(initial)
+    scene["background"]["parameter_overrides"]["speed"] = .87
+    original_guard = coordinator.legacy_mutation_guard
+    inject = True
+
+    @contextlib.contextmanager
+    def injecting_guard(*args, **kwargs):
+        nonlocal inject
+        with original_guard(*args, **kwargs) as mutation:
+            yield mutation
+        if inject:
+            inject = False
+            with original_guard():
+                manager.set_output_brightness(17)
+
+    coordinator.legacy_mutation_guard = injecting_guard
+    runner = PlaylistRunner(manager, coordinator, clock=clock, wall_clock=clock)
+    assert runner.start(command(coordinator, [scene], [60]))["phase"] == "running"
+    clock.advance(60)
+    status = runner.advance()
+    assert status["phase"] == "overridden"
+    assert manager.brightness == 17
+
+
+def test_playlist_definition_transactions_serialize_between_store_instances():
+    import threading
+
+    from web.composer_playlist_store import ComposerPlaylistStore
+
+    _manager, _coordinator, scene = fixture()
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "definitions.json"
+        active = 0
+        maximum = 0
+        counter_lock = threading.Lock()
+        start = threading.Barrier(2)
+
+        class SlowReadStore(ComposerPlaylistStore):
+            def _records(self):
+                nonlocal active, maximum
+                with counter_lock:
+                    active += 1
+                    maximum = max(maximum, active)
+                time.sleep(.05)
+                try:
+                    return super()._records()
+                finally:
+                    with counter_lock:
+                        active -= 1
+
+        stores = [SlowReadStore(path), SlowReadStore(path)]
+        errors = []
+
+        def save(index):
+            try:
+                start.wait()
+                stores[index].save({"name": f"Playlist {index}", "entries": [{
+                    "entry_id": str(uuid.uuid4()), "label": "Aurora",
+                    "duration_seconds": 60, "scene": deepcopy(scene),
+                }]})
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=save, args=(index,)) for index in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+        assert not errors
+        assert not any(thread.is_alive() for thread in threads)
+        assert maximum == 1
+        assert {item["name"] for item in ComposerPlaylistStore(path).list()} == {
+            "Playlist 0", "Playlist 1",
+        }
+
+
+def test_file_request_status_retry_reuses_successful_start_result_without_replay():
+    manager, coordinator, initial = fixture()
+    with tempfile.TemporaryDirectory() as directory:
+        channel = FileControlChannel(str(Path(directory) / "control.json"),
+                                     str(Path(directory) / "status.json"))
+        queued = command(coordinator, [initial], [60])
+        channel.enqueue_playlist_command(queued)
+        runner = PlaylistRunner(manager, coordinator,
+                                status_sink=channel.write_playlist_current_status)
+        original_write = channel.write_playlist_request_status
+        attempts = 0
+
+        def fail_first(status):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("injected status publication failure")
+            return original_write(status)
+
+        channel.write_playlist_request_status = fail_first
+        try:
+            process_playlist_commands(channel, runner)
+        except OSError:
+            pass
+        else:
+            raise AssertionError("injected request status failure did not escape")
+        assert runner.status()["phase"] == "running"
+        assert process_playlist_commands(channel, runner) == 1
+        status = channel.read_playlist_request_status(queued["request_id"])
+        assert status["phase"] == "running"
+        assert status["run_id"] == queued["run_id"]
+
+
+def test_terminal_current_status_publication_retries_after_sink_recovers():
+    manager, coordinator, initial = fixture()
+    clock = Clock()
+    published = []
+    failing = False
+
+    def sink(status):
+        if failing:
+            raise OSError("injected current publication failure")
+        published.append(deepcopy(status))
+
+    runner = PlaylistRunner(manager, coordinator, clock=clock, wall_clock=clock,
+                            status_sink=sink)
+    assert runner.start(command(coordinator, [initial], [1]))["phase"] == "running"
+    failing = True
+    clock.advance(1)
+    assert runner.advance()["phase"] == "completed"
+    assert published[-1]["phase"] == "running"
+    failing = False
+    assert runner.advance()["phase"] == "completed"
+    assert published[-1]["phase"] == "completed"
+
+
+def test_composer_stop_targets_the_just_accepted_run_instead_of_completed_status():
+    from tests.unit.test_composer_slice import _PreviewManager
+    from web.app import AnimationWebInterface
+    from web.composer_playlist_store import ComposerPlaylistStore
+
+    completed_run = str(uuid.uuid4())
+
+    class Channel:
+        def __init__(self):
+            self.commands = []
+        def send_command(self, action, **data):
+            return {"action": action, "data": data}
+        def read_status(self):
+            return {"controller_session_id": "c" * 32,
+                    "controller_state_revision": 4}
+        def enqueue_playlist_command(self, value):
+            self.commands.append(deepcopy(value)); return value
+        def read_playlist_request_status(self, request_id):
+            return None
+        def read_playlist_current_status(self):
+            return {"phase": "completed", "run_id": completed_run}
+
+    channel = Channel()
+    with tempfile.TemporaryDirectory() as directory:
+        interface = AnimationWebInterface(channel, _PreviewManager(), local_mode=True)
+        interface.composer_playlists = ComposerPlaylistStore(Path(directory) / "playlists.json")
+        interface._validated_browser_activation_scene = lambda scene: ({"document": True}, deepcopy(scene))
+        client = interface.app.test_client()
+        saved = client.post("/api/composer/playlists", json={"name": "Next", "entries": [{
+            "entry_id": str(uuid.uuid4()), "label": "Aurora", "duration_seconds": 60,
+            "scene": {"schema": "fixture"},
+        }]}).get_json()["playlist"]
+        accepted = client.post("/api/composer/playlists/run", json={"playlist_id": saved["id"]}).get_json()["accepted"]
+        response = client.post("/api/composer/playlists/stop", json={"run_id": accepted["run_id"]})
+        assert response.status_code == 202
+        assert channel.commands[-1]["action"] == "stop"
+        assert channel.commands[-1]["run_id"] == accepted["run_id"]
+        assert channel.commands[-1]["run_id"] != completed_run
+
+
+def test_manual_mutation_immediately_after_transition_guard_stops_playlist_before_next_restore():
+    import contextlib
+
+    manager, coordinator, initial = fixture()
+    clock = Clock()
+    first = deepcopy(initial)
+    first["background"]["parameter_overrides"]["speed"] = .83
+    second = deepcopy(initial)
+    second["background"]["parameter_overrides"]["speed"] = .93
+    runner = PlaylistRunner(manager, coordinator, clock=clock, wall_clock=clock)
+    assert runner.start(command(coordinator, [first, second], [1, 1]))["phase"] == "running"
+    original_guard = coordinator.legacy_mutation_guard
+    inject = True
+
+    @contextlib.contextmanager
+    def injecting_guard(*args, **kwargs):
+        nonlocal inject
+        with original_guard(*args, **kwargs) as mutation:
+            yield mutation
+        if inject:
+            inject = False
+            with original_guard():
+                manager.set_output_brightness(17)
+
+    coordinator.legacy_mutation_guard = injecting_guard
+    clock.advance(1)
+    assert runner.advance()["phase"] == "running"
+    clock.advance(1)
+    status = runner.advance()
+    assert status["phase"] == "overridden"
+    assert manager.brightness == 17
+    assert manager.scene == second

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
+import fcntl
 import json
 import os
+import threading
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Mapping
@@ -15,11 +18,34 @@ class ComposerPlaylistStoreError(ValueError):
     pass
 
 
+_STORE_LOCKS_GUARD = threading.Lock()
+_STORE_LOCKS: dict[str, threading.RLock] = {}
+
+
+def _thread_lock(path: Path) -> threading.RLock:
+    key = str(path.resolve())
+    with _STORE_LOCKS_GUARD:
+        return _STORE_LOCKS.setdefault(key, threading.RLock())
+
+
 class ComposerPlaylistStore:
     _SCHEMA = "ledgrid.composer.playlists.v1"
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        self.lock_path = self.path.with_name(f".{self.path.name}.lock")
+        self._thread_lock = _thread_lock(self.lock_path)
+
+    @contextmanager
+    def _transaction(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._thread_lock:
+            with self.lock_path.open("a+b") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def list(self) -> list[dict[str, Any]]:
         return [self._summary(item) for item in self._records()]
@@ -29,24 +55,26 @@ class ComposerPlaylistStore:
 
     def save(self, value: Any, *, playlist_id: str | None = None) -> dict[str, Any]:
         record = self._definition(value, playlist_id=playlist_id)
-        records = self._records()
-        if playlist_id is None:
-            if any(item["name"].casefold() == record["name"].casefold() for item in records):
-                raise ComposerPlaylistStoreError("A playlist already has that name.")
-            records.insert(0, record)
-        else:
-            prior = self._find(playlist_id, records)
-            if any(item["id"] != playlist_id and item["name"].casefold() == record["name"].casefold() for item in records):
-                raise ComposerPlaylistStoreError("A playlist already has that name.")
-            record["id"] = prior["id"]
-            records = [record if item["id"] == playlist_id else item for item in records]
-        self._write(records)
+        with self._transaction():
+            records = self._records()
+            if playlist_id is None:
+                if any(item["name"].casefold() == record["name"].casefold() for item in records):
+                    raise ComposerPlaylistStoreError("A playlist already has that name.")
+                records.insert(0, record)
+            else:
+                prior = self._find(playlist_id, records)
+                if any(item["id"] != playlist_id and item["name"].casefold() == record["name"].casefold() for item in records):
+                    raise ComposerPlaylistStoreError("A playlist already has that name.")
+                record["id"] = prior["id"]
+                records = [record if item["id"] == playlist_id else item for item in records]
+            self._write(records)
         return deepcopy(record)
 
     def delete(self, playlist_id: str) -> None:
-        records = self._records()
-        self._find(playlist_id, records)
-        self._write([item for item in records if item["id"] != playlist_id])
+        with self._transaction():
+            records = self._records()
+            self._find(playlist_id, records)
+            self._write([item for item in records if item["id"] != playlist_id])
 
     def _records(self) -> list[dict[str, Any]]:
         if not self.path.exists():

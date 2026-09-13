@@ -1536,7 +1536,8 @@
   }
   async function stopPlaylist() {
     try {
-      const body = await requestJson(`${api}/playlists/stop`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+      if (!state.playlist.runId) throw new Error('No pending or running playlist to stop.');
+      const body = await requestJson(`${api}/playlists/stop`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({run_id: state.playlist.runId})});
       state.playlist.requestId = body.accepted.request_id; await refreshPlaylistStatus();
     } catch (error) { $('#playlistStatus').textContent = error.message || 'Playlist could not stop.'; $('#playlistStatus').dataset.state = 'error'; }
   }
@@ -1545,6 +1546,9 @@
       const query = state.playlist.requestId ? `?request_id=${encodeURIComponent(state.playlist.requestId)}` : '';
       const body = await requestJson(`${api}/playlists/status${query}`);
       const requestStatus = body.request; const current = body.current;
+      if (state.playlist.requestId && !requestStatus && state.playlist.runId && current?.run_id !== state.playlist.runId) {
+        $('#playlistStatus').textContent = 'Playlist request pending…'; $('#playlistStatus').dataset.state = 'running'; return;
+      }
       const status = requestStatus && ['rejected', 'failed'].includes(requestStatus.phase) ? requestStatus : current;
       if (!status || status.phase === 'idle') { $('#playlistStatus').textContent = 'No playlist running.'; delete $('#playlistStatus').dataset.state; return; }
       if (status.phase === 'running') {
@@ -1554,6 +1558,7 @@
       }
       const messages = {completed: 'Playlist complete. Starting Scene restored.', stopped: 'Playlist stopped.', overridden: 'Playlist stopped by a manual change.', rejected: status.error || 'Playlist start was rejected.', failed: status.error || 'Playlist failed.'};
       $('#playlistStatus').textContent = messages[status.phase] || `Playlist ${status.phase}.`; $('#playlistStatus').dataset.state = ['rejected','failed'].includes(status.phase) ? 'error' : status.phase;
+      if (['completed','stopped','overridden','rejected','failed'].includes(status.phase) && status.run_id === state.playlist.runId) state.playlist.runId = null;
     } catch (error) { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }
   }
 

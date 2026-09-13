@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from copy import deepcopy
 import threading
 import time
@@ -10,11 +11,9 @@ from typing import Any, Callable, Mapping
 from ipc.runtime_control import (
     ControllerCommandConflictError,
     controller_activation_coordinator,
-    manager_component_catalog,
-    manager_scene_provider_policy,
+    normalize_managed_scene,
     start_scene,
 )
-from ipc.scene_contract import normalize_scene_payload
 
 PLAYLIST_COMMAND_SCHEMA = "ledgrid.playlist-command"
 PLAYLIST_STATUS_SCHEMA = "ledgrid.playlist-status"
@@ -103,6 +102,8 @@ class PlaylistRunner:
         self._lock = threading.RLock()
         self._active: dict[str, Any] | None = None
         self._status = self._inactive_status()
+        self._pending_publication: dict[str, Any] | None = None
+        self._request_results: OrderedDict[str, tuple[dict[str, Any], dict[str, Any]]] = OrderedDict()
 
     def _inactive_status(self) -> dict[str, Any]:
         return {"schema": PLAYLIST_STATUS_SCHEMA, "schema_version": PLAYLIST_VERSION,
@@ -112,11 +113,27 @@ class PlaylistRunner:
                 "entry_count": 0, "current_entry": None, "entry_started_at": None,
                 "entry_deadline_at": None, "remaining_seconds": None, "error": None}
 
+    def _flush_pending_publication(self) -> bool:
+        pending = self._pending_publication
+        if pending is None:
+            return True
+        if self._status_sink is None:
+            self._pending_publication = None
+            return True
+        try:
+            self._status_sink(deepcopy(pending))
+        except Exception:
+            # The controller state already changed. Keep the latest snapshot so
+            # its durable projection can catch up without replaying a mutation.
+            return False
+        self._pending_publication = None
+        return True
+
     def _publish(self, **updates: Any) -> dict[str, Any]:
         self._status = {**self._status, **updates, "updated_at": self._wall_clock()}
         payload = deepcopy(self._status)
-        if self._status_sink is not None:
-            self._status_sink(payload)
+        self._pending_publication = deepcopy(payload)
+        self._flush_pending_publication()
         return payload
 
     def status(self) -> dict[str, Any]:
@@ -132,10 +149,28 @@ class PlaylistRunner:
                 "expires_at": time.time() + 10.0}
 
     def _validate_scene(self, scene: Mapping[str, Any]) -> dict[str, Any]:
-        return normalize_scene_payload(
-            scene, catalog=manager_component_catalog(self.manager) or None,
-            provider_policy=manager_scene_provider_policy(self.manager),
-        )
+        return normalize_managed_scene(self.manager, scene)
+
+    def dispatch(self, raw_command: Any) -> dict[str, Any]:
+        """Execute one immutable request once and replay its exact result."""
+        command = normalize_playlist_command(raw_command)
+        request_id = command["request_id"]
+        with self._lock:
+            cached = self._request_results.get(request_id)
+            if cached is not None:
+                cached_command, cached_result = cached
+                if cached_command != command:
+                    return self._request_result(
+                        command, "rejected",
+                        "playlist request identity already names another command",
+                    )
+                self._request_results.move_to_end(request_id)
+                return deepcopy(cached_result)
+            result = self.start(command) if command["action"] == "start" else self.stop(command)
+            self._request_results[request_id] = (deepcopy(command), deepcopy(result))
+            while len(self._request_results) > 512:
+                self._request_results.popitem(last=False)
+            return deepcopy(result)
 
     def start(self, raw_command: Any) -> dict[str, Any]:
         command = normalize_playlist_command(raw_command)
@@ -150,13 +185,17 @@ class PlaylistRunner:
                 return self._request_result(command, "rejected", "controller state revision is stale")
             try:
                 entries = [{**entry, "scene": self._validate_scene(entry["scene"])} for entry in command["entries"]]
-                with self.coordinator.legacy_mutation_guard(self._guard(command["expected_controller_state_revision"])):
-                    # Snapshot capture and first presentation share the same
-                    # controller mutation lock; no manual write can split them.
+                with self.coordinator.legacy_mutation_guard(
+                    self._guard(command["expected_controller_state_revision"])
+                ) as mutation:
+                    # Snapshot capture, first presentation, and ownership revision
+                    # all belong to the same serialized controller mutation.
                     snapshot = self.coordinator.capture_display_snapshot()
                     if not start_scene(self.manager, entries[0]["scene"]):
                         raise PlaylistError("controller rejected playlist entry 1")
-                owned_revision = self.coordinator.state_revision
+                owned_revision = mutation.resulting_state_revision
+                if owned_revision is None:
+                    raise PlaylistError("controller did not report playlist ownership")
             except (ControllerCommandConflictError, PlaylistError, TypeError, ValueError, RuntimeError) as exc:
                 return self._request_result(command, "rejected", str(exc))
             now = self._clock()
@@ -190,6 +229,7 @@ class PlaylistRunner:
 
     def advance(self) -> dict[str, Any]:
         with self._lock:
+            self._flush_pending_publication()
             active = self._active
             if active is None:
                 return self.status()
@@ -214,11 +254,15 @@ class PlaylistRunner:
                                          current_entry=None, remaining_seconds=0.0,
                                          entry_deadline_at=None, error=None)
                 entry = active["entries"][next_index]
-                with self.coordinator.legacy_mutation_guard(self._guard(active["owned_revision"])):
+                with self.coordinator.legacy_mutation_guard(
+                    self._guard(active["owned_revision"])
+                ) as mutation:
                     if not start_scene(self.manager, entry["scene"]):
                         raise PlaylistError(f"controller rejected playlist entry {next_index + 1}")
+                if mutation.resulting_state_revision is None:
+                    raise PlaylistError("controller did not report playlist ownership")
                 active["index"] = next_index
-                active["owned_revision"] = self.coordinator.state_revision
+                active["owned_revision"] = mutation.resulting_state_revision
                 # Preserve elapsed overshoot for deterministic scheduling.
                 active["deadline"] += entry["duration_seconds"]
                 active["deadline"] = max(active["deadline"], now)

@@ -236,11 +236,7 @@ class LocalControlChannel:
         existing = self._playlist_request_statuses.get(payload["request_id"])
         if existing is not None:
             return dict(payload)
-        status = (
-            self.playlist_runner.start(payload)
-            if payload["action"] == "start"
-            else self.playlist_runner.stop(payload)
-        )
+        status = self.playlist_runner.dispatch(payload)
         self._playlist_request_statuses[payload["request_id"]] = dict(status)
         self._playlist_wake.set()
         return dict(payload)

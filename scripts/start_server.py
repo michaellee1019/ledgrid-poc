@@ -956,7 +956,7 @@ def process_playlist_commands(channel, runner: PlaylistRunner) -> int:
         request_id = raw.get("request_id")
         try:
             command = normalize_playlist_command(raw)
-            status = runner.start(command) if command["action"] == "start" else runner.stop(command)
+            status = runner.dispatch(command)
         except (TypeError, ValueError, RuntimeError) as exc:
             status = {
                 "schema": "ledgrid.playlist-status", "schema_version": 1,
