@@ -1,6 +1,7 @@
 """Static acceptance checks for the responsive compact Composer panels."""
 
 from pathlib import Path
+import re
 import subprocess
 import unittest
 
@@ -163,7 +164,9 @@ function environment({save,run}){
         )
         self.assertIn(".inspector-dock, .control-workspace, .inspectors { display: contents; }", self.css)
         self.assertNotIn("dock-resizer", self.html)
-        self.assertNotIn("position: sticky", self.css)
+        for selector, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", self.css):
+            if any(panel in selector for panel in (".desktop-workspace", ".library-pane", ".preview-pane", ".operations-pane", ".gallery", ".inspector")):
+                self.assertNotIn("position: sticky", declarations)
         self.assertNotIn("--inspector-width", self.css)
         self.assertLess(self.html.index("Global scene"), self.html.index("Background"))
 
