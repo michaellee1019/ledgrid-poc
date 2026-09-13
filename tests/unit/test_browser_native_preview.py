@@ -294,6 +294,33 @@ process.stdout.write(JSON.stringify(frames));
         )
         return tuple(base64.b64decode(value) for value in json.loads(completed.stdout))
 
+    def test_sub_q8_gain_matches_zero_in_actual_host_and_wasm(self) -> None:
+        manifest = json.loads((ROOT / "animation/plugins/native_aurora/manifest.json").read_text())
+        with tempfile.TemporaryDirectory(prefix="native-aurora-tiny-gain-") as name:
+            directory = Path(name)
+            wasm = build_native_aurora(directory / "tiny.wasm")
+            library = self._compile_host(directory)
+            baseline = None
+            # float32 subnormal/normal, former oversized shifts, signed zero,
+            # and the largest representable float32 below the Q8 floor.
+            gains = (0.0, -0.0, 2.0**-149, 2.0**-126, 1e-10, 1e-8, (1.0-2.0**-24)/256)
+            for gain in gains:
+                with self.subTest(gain=gain):
+                    parameters = {"gain": gain, "seed": 8012, "source_fps": 30.0}
+                    host = render_host_frames(library, manifest, parameters=parameters,
+                        frame_count=2, duration_ms=200, repo_root=ROOT,
+                        vibe_palette=tuple(canonical_palette_roles("neutral").values()))
+                    browser = self._render_wasm(wasm, [0, 200_000], parameters, 0)
+                    self.assertEqual(browser, host.frames)
+                    if baseline is None:
+                        baseline = host.frames
+                    self.assertTrue(host.frames == baseline, "sub-Q8 gain must match zero byte-for-byte")
+            parameters = {"gain": 1.0/256, "seed": 8012, "source_fps": 30.0}
+            host = render_host_frames(library, manifest, parameters=parameters,
+                frame_count=2, duration_ms=200, repo_root=ROOT,
+                vibe_palette=tuple(canonical_palette_roles("neutral").values()))
+            self.assertEqual(self._render_wasm(wasm, [0, 200_000], parameters, 0), host.frames)
+
     def test_actual_native_source_is_deterministic_and_matches_all_scene_palettes(self) -> None:
         manifest = json.loads(
             (ROOT / "animation/plugins/native_aurora/manifest.json").read_text(

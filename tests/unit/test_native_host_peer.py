@@ -22,7 +22,7 @@ from tools.deployment.deploy_manifest import manifest_plan
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_ID = "native_aurora"
-DIGEST = "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce"
+DIGEST = "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4"
 
 
 @unittest.skipUnless(shutil.which("c++"), "host C++ compiler unavailable")

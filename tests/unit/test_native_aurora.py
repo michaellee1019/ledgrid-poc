@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import shutil
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -100,6 +101,35 @@ class NativeAuroraContractTests(unittest.TestCase):
                 authored,
             )
 
+    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler unavailable")
+    def test_accepted_q8_conversion_has_no_undefined_shifts(self) -> None:
+        source = r"""
+#include <cassert>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include "animation/plugins/native_aurora/native/background.cpp"
+int main() {
+  for (uint32_t exponent = 0; exponent <= 132; ++exponent) {
+    for (uint32_t fraction : {0U, 1U, 0x7fffffU}) {
+      uint32_t bits = (exponent << 23U) | fraction;
+      float value;
+      std::memcpy(&value, &bits, sizeof(value));
+      assert(positive_float_to_q8(bits) == static_cast<uint16_t>(value * 256.0f));
+    }
+  }
+}
+"""
+        with tempfile.TemporaryDirectory(prefix="native-aurora-q8-") as name:
+            directory = Path(name)
+            probe = directory / "q8.cpp"
+            probe.write_text("#include <initializer_list>\n" + source)
+            binary = directory / "q8"
+            subprocess.run([shutil.which("c++"), "-std=c++17", "-DLG_HOST_PREVIEW=1", "-fsanitize=undefined", "-fno-sanitize-recover=all",
+                "-I", str(ROOT), "-I", str(ROOT / "firmware/esp32/include"), str(probe), "-o", str(binary)],
+                check=True, capture_output=True, text=True, timeout=30)
+            subprocess.run([str(binary)], check=True, capture_output=True, text=True, timeout=10)
+
     def test_missing_managed_build_fails_closed(self) -> None:
         with self.assertRaisesRegex(NativePreviewError, "build is unavailable"):
             ManagedNativeHostPreview(ROOT, PLUGIN_ID, "0" * 64)
@@ -160,7 +190,10 @@ class NativeAuroraArtifactTests(unittest.TestCase):
             if component["plugin_id"] == PLUGIN_ID
         )
         capability = native["browser_capabilities"]
-        self.assertFalse(capability["previewable"])
+        # The bundled WASM remains previewable; unpublished target identity
+        # must keep physical activation unavailable.
+        self.assertTrue(capability["previewable"])
+        self.assertFalse(capability["activation_ready"])
         self.assertIsNone(capability["managed_identity"]["bundle_digest"])
         self.assertIsNone(capability["managed_identity"]["expected_payload_digest"])
 

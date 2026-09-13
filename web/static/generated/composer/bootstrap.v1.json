@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "4f5ba58e6096cc334e6e97e1528d8865314a4b4c4b7bd45c64895c43fa93e1a3",
+    "catalog_digest": "a3cfbd32ab374c17aa73e75317e45980c6ce5080f4fb82e3c74410d3f8270e04",
     "kind": "bundled",
     "version": 1
   },
@@ -44,6 +44,10 @@
       "operations_status_url": "/api/v1/composer/operations/status",
       "operator_speed_url": "/api/config/animation-speed",
       "plant_modifiers_url": "/api/config/plant-modifiers",
+      "playlist_run_url": "/api/composer/playlists/run",
+      "playlist_status_url": "/api/composer/playlists/status",
+      "playlist_stop_url": "/api/composer/playlists/stop",
+      "playlists_url": "/api/composer/playlists",
       "save_component_preset_url": "/api/v1/composer/presets",
       "save_scene_preset_url": "/api/v1/scene-presets",
       "status_url": "/api/v1/composer/settings/observed",
@@ -1115,9 +1119,9 @@
     },
     {
       "availability": {
-        "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+        "bundle_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
         "framebuffer_readback": false,
-        "payload_digest": "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37",
+        "payload_digest": "f754487c5040e1320f2d1f926ca128e80677f05f79ce78eb5378e5d31d84849d",
         "preview_kind": "build_time_bundle",
         "published_at": "1970-01-01T00:00:00Z",
         "state": "ready"
@@ -1143,13 +1147,13 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
-          "component_digest": "ea97c4cbf081a08e9599ef10691bbf138a13efff58fe51819f8774ee4613b1e5",
+          "bundle_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
+          "component_digest": "54f1d206bdcc9ea8e21779e548aba42bbe663334e61eb15d6f71172393e982f8",
           "component_id": "native_aurora",
-          "expected_payload_digest": "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37",
+          "expected_payload_digest": "f754487c5040e1320f2d1f926ca128e80677f05f79ce78eb5378e5d31d84849d",
           "parameter_schema_version": 1,
           "provider": "receiver_native",
-          "runtime_digest": "856ae4a147b9dfdaf472e519005507b9707d159ca16c7dc61bb43199abcee017"
+          "runtime_digest": "3078ab05c686daf35abf4d9cefe3354b898173993375ea71862979d3e17989c9"
         },
         "previewable": true,
         "reason": null,
@@ -1157,7 +1161,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/native_aurora.wasm",
-        "digest": "856ae4a147b9dfdaf472e519005507b9707d159ca16c7dc61bb43199abcee017",
+        "digest": "3078ab05c686daf35abf4d9cefe3354b898173993375ea71862979d3e17989c9",
         "engine": "receiver-native-cpp-wasm",
         "kind": "native",
         "supported": true,
@@ -1167,11 +1171,11 @@
         "abi_schema": "ledgrid.native-background-abi",
         "abi_version": 2,
         "artifact_kind": "receiver_native_module",
-        "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+        "bundle_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
         "bundle_schema": "ledgrid.native-background-bundle",
         "bundle_version": 1,
-        "contract_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
-        "expected_payload_digest": "f3fa66249f42a4e8751279d19a4f3613d3bdffdb9d39043680742940c84f5c37",
+        "contract_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
+        "expected_payload_digest": "f754487c5040e1320f2d1f926ca128e80677f05f79ce78eb5378e5d31d84849d",
         "identity_authority": "managed_library",
         "source": "native/background.cpp",
         "target": "esp32-s3"
@@ -1186,9 +1190,9 @@
         "legacy_manifest": false,
         "parameter_metadata": "manifest"
       },
-      "component_digest": "ea97c4cbf081a08e9599ef10691bbf138a13efff58fe51819f8774ee4613b1e5",
+      "component_digest": "54f1d206bdcc9ea8e21779e548aba42bbe663334e61eb15d6f71172393e982f8",
       "defaults": {
-        "bundle_digest": "024522f7ab0a2bad9eb9aaaa34ae47b11c41f05cab16bc4d434a58f41d39e8ce",
+        "bundle_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
         "gain": 0.72,
         "seed": 8012,
         "source_fps": 30.0

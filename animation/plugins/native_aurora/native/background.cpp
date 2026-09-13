@@ -73,7 +73,9 @@ uint32_t float_bits(float value) {
 
 uint16_t positive_float_to_q8(uint32_t bits) {
   const uint32_t exponent = (bits >> 23U) & 0xffU;
-  if (exponent == 0U) return 0U;
+  // Values below 1/256 truncate to zero in Q8, including subnormals.
+  // Bound the shift before evaluating it (C++ shifts >=32 are undefined).
+  if (exponent < 119U) return 0U;
   const uint32_t significand = (bits & 0x7fffffU) | 0x800000U;
   const int shift = static_cast<int>(exponent) - 142;
   const uint32_t converted = shift >= 0
@@ -151,7 +153,9 @@ int update_context(void* opaque, const ledgrid_native_context_v2* context) {
   for (uint8_t index = 0; index < 3U; ++index) {
     if (parameters[index].reserved_zero != 0U) return LEDGRID_NATIVE_BACKGROUND_ERROR;
   }
-  const uint32_t gain_bits = float_bits(parameters[0].value.real);
+  const uint32_t raw_gain_bits = float_bits(parameters[0].value.real);
+  // The public nonnegative gain range accepts either signed zero.
+  const uint32_t gain_bits = raw_gain_bits == 0x80000000U ? 0U : raw_gain_bits;
   const int32_t seed = parameters[1].value.integer;
   const uint32_t fps_bits = float_bits(parameters[2].value.real);
   if (gain_bits > 0x3f800000U || seed < 0 ||
