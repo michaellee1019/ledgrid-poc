@@ -28,7 +28,8 @@
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
       adoptedLook: null, adoptedVibeId: null, activationError: null, retryBlocked: false,
     },
-    playlist: {id: null, entries: [], saved: [], requestId: null, runId: null}
+    playlist: {id: null, entries: [], saved: [], requestId: null, runId: null,
+      saving: false, startIntent: null, statusIntent: 0, statusPoll: 0}
   };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const beginIntent = () => ++state.intent;
@@ -1479,19 +1480,22 @@
       const item = document.createElement('li'); item.className = 'playlist-entry';
       const title = document.createElement('strong'); title.textContent = entry.label;
       const durationLabel = document.createElement('label'); durationLabel.append('Seconds ');
-      const duration = document.createElement('input'); duration.type = 'number'; duration.min = '1'; duration.max = '86400'; duration.step = '1'; duration.value = String(entry.duration_seconds);
+      const duration = document.createElement('input'); duration.type = 'number'; duration.min = '1'; duration.max = '86400'; duration.step = '1'; duration.value = String(entry.duration_seconds); duration.disabled = state.playlist.saving;
       duration.setAttribute('aria-label', `${entry.label} duration in seconds`);
       duration.addEventListener('change', () => { entry.duration_seconds = Math.max(1, Math.min(86400, Math.round(Number(duration.value) || 60))); renderPlaylist(); });
       durationLabel.append(duration);
       const actions = document.createElement('div'); actions.className = 'playlist-entry-actions';
       [['↑', -1, 'Move up'], ['↓', 1, 'Move down']].forEach(([text, offset, label]) => {
-        const button = document.createElement('button'); button.type = 'button'; button.className = 'button text'; button.textContent = text; button.title = label; button.setAttribute('aria-label', `${label} ${entry.label}`); button.disabled = index + offset < 0 || index + offset >= state.playlist.entries.length;
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'button text'; button.textContent = text; button.title = label; button.setAttribute('aria-label', `${label} ${entry.label}`); button.disabled = state.playlist.saving || index + offset < 0 || index + offset >= state.playlist.entries.length;
         button.addEventListener('click', () => { const [moved] = state.playlist.entries.splice(index, 1); state.playlist.entries.splice(index + offset, 0, moved); renderPlaylist(); }); actions.append(button);
       });
-      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button text'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', `Remove ${entry.label}`); remove.addEventListener('click', () => { state.playlist.entries.splice(index, 1); renderPlaylist(); }); actions.append(remove);
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button text'; remove.textContent = 'Remove'; remove.disabled = state.playlist.saving; remove.setAttribute('aria-label', `Remove ${entry.label}`); remove.addEventListener('click', () => { state.playlist.entries.splice(index, 1); renderPlaylist(); }); actions.append(remove);
       item.append(title, durationLabel, actions); list.append(item);
     });
-    $('#playlistStart').disabled = state.playlist.entries.length === 0;
+    $('#playlistChoice').disabled = state.playlist.saving;
+    $('#playlistAdd').disabled = state.playlist.saving;
+    $('#playlistSave').disabled = state.playlist.saving;
+    $('#playlistStart').disabled = state.playlist.saving || Boolean(state.playlist.startIntent) || state.playlist.entries.length === 0;
   }
   async function loadPlaylists() {
     const body = await requestJson(`${api}/playlists`); state.playlist.saved = body.playlists || [];
@@ -1506,12 +1510,18 @@
     state.playlist.id = body.playlist.id; state.playlist.entries = body.playlist.entries.map((entry) => structuredClone(entry)); $('#playlistName').value = body.playlist.name; renderPlaylist();
   }
   async function savePlaylist() {
-    const definition = playlistDefinition();
-    const body = await requestJson(state.playlist.id ? `${api}/playlists/${encodeURIComponent(state.playlist.id)}` : `${api}/playlists`, {
-      method: state.playlist.id ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(definition),
-    });
-    state.playlist.id = body.playlist.id; state.playlist.entries = body.playlist.entries.map((entry) => structuredClone(entry));
-    await loadPlaylists(); renderPlaylist(); $('#playlistStatus').textContent = `Saved ${body.playlist.name}.`; $('#playlistStatus').dataset.state = 'saved'; return body.playlist;
+    if (state.playlist.saving) throw new Error('Playlist save is already in progress.');
+    state.playlist.saving = true; renderPlaylist();
+    try {
+      const definition = playlistDefinition();
+      const body = await requestJson(state.playlist.id ? `${api}/playlists/${encodeURIComponent(state.playlist.id)}` : `${api}/playlists`, {
+        method: state.playlist.id ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(definition),
+      });
+      state.playlist.id = body.playlist.id; state.playlist.entries = body.playlist.entries.map((entry) => structuredClone(entry));
+      await loadPlaylists(); $('#playlistStatus').textContent = `Saved ${body.playlist.name}.`; $('#playlistStatus').dataset.state = 'saved'; return body.playlist;
+    } finally {
+      state.playlist.saving = false; renderPlaylist();
+    }
   }
   function currentPlaylistEntryLabel() {
     const selected = state.library.items?.find((item) => item.kind === state.selection?.kind && item.id === state.selection?.id);
@@ -1519,34 +1529,79 @@
     const named = $('#sceneName').value.trim(); if (named) return named;
     return $('#animationChoice').selectedOptions[0]?.textContent || 'Current Scene';
   }
-  function addCurrentSceneToPlaylist() {
+  async function addCurrentSceneToPlaylist() {
+    const button = $('#playlistAdd');
     try {
+      if (state.playlist.saving) throw new Error('Wait for the playlist save to finish before editing.');
+      button.disabled = true; $('#playlistStatus').textContent = 'Loading the current wall Scene…'; $('#playlistStatus').dataset.state = 'running';
+      if (!state.wall.bootstrap || !state.wall.observation) await refreshWallStatus({preserveAuthored: true});
       state.playlist.entries.push({entry_id: newUuid(), label: currentPlaylistEntryLabel(), duration_seconds: 60, scene: browserSceneForWall(sceneFromControls())});
       renderPlaylist(); $('#playlistStatus').textContent = 'Added the current Scene.'; delete $('#playlistStatus').dataset.state;
     } catch (error) { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }
+    finally { button.disabled = state.playlist.saving; }
+  }
+  function newPlaylistStartIntent() {
+    let settle;
+    const done = new Promise((resolve) => { settle = resolve; });
+    return {cancelled: false, dispatched: false, accepted: null, stopPromise: null, done, settle};
+  }
+  async function sendPlaylistStop(runId) {
+    const body = await requestJson(`${api}/playlists/stop`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({run_id: runId})});
+    state.playlist.requestId = body.accepted.request_id; state.playlist.runId = body.accepted.run_id; state.playlist.statusIntent += 1;
+    await refreshPlaylistStatus();
+  }
+  function stopAcceptedPlaylist(intent) {
+    if (!intent.stopPromise) intent.stopPromise = sendPlaylistStop(intent.accepted.run_id);
+    return intent.stopPromise;
   }
   async function startPlaylist() {
+    if (state.playlist.startIntent) { $('#playlistStatus').textContent = 'Playlist start is already in progress.'; $('#playlistStatus').dataset.state = 'error'; return; }
+    const intent = newPlaylistStartIntent();
+    state.playlist.startIntent = intent; state.playlist.statusIntent += 1; renderPlaylist();
     try {
-      const playlist = await savePlaylist(); const requestId = newUuid();
+      const playlist = await savePlaylist();
+      if (intent.cancelled) { $('#playlistStatus').textContent = 'Playlist start cancelled.'; $('#playlistStatus').dataset.state = 'stopped'; return; }
+      const requestId = newUuid(); intent.dispatched = true;
       const body = await requestJson(`${api}/playlists/run`, {method: 'POST', headers: {'Content-Type': 'application/json', 'Idempotency-Key': requestId}, body: JSON.stringify({playlist_id: playlist.id})});
-      state.playlist.requestId = body.accepted.request_id; state.playlist.runId = body.accepted.run_id;
+      intent.accepted = body.accepted; state.playlist.requestId = body.accepted.request_id; state.playlist.runId = body.accepted.run_id; state.playlist.statusIntent += 1;
+      if (intent.cancelled) {
+        $('#playlistStatus').textContent = 'Stopping playlist…'; $('#playlistStatus').dataset.state = 'running';
+        try { await stopAcceptedPlaylist(intent); }
+        catch (error) { $('#playlistStatus').textContent = error.message || 'Playlist could not stop.'; $('#playlistStatus').dataset.state = 'error'; }
+        return;
+      }
       $('#playlistStatus').textContent = 'Starting playlist…'; $('#playlistStatus').dataset.state = 'running';
       await refreshPlaylistStatus();
     } catch (error) { $('#playlistStatus').textContent = error.message || 'Playlist could not start.'; $('#playlistStatus').dataset.state = 'error'; }
+    finally {
+      if (state.playlist.startIntent === intent) state.playlist.startIntent = null;
+      intent.settle(); renderPlaylist();
+    }
   }
   async function stopPlaylist() {
     try {
+      const intent = state.playlist.startIntent;
+      if (intent) {
+        intent.cancelled = true; state.playlist.statusIntent += 1;
+        if (!intent.dispatched) { $('#playlistStatus').textContent = 'Playlist start cancelled.'; $('#playlistStatus').dataset.state = 'stopped'; return; }
+        if (!intent.accepted) { $('#playlistStatus').textContent = 'Stopping when playlist starts…'; $('#playlistStatus').dataset.state = 'running'; await intent.done; return; }
+        await stopAcceptedPlaylist(intent); return;
+      }
       if (!state.playlist.runId) throw new Error('No pending or running playlist to stop.');
-      const body = await requestJson(`${api}/playlists/stop`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({run_id: state.playlist.runId})});
-      state.playlist.requestId = body.accepted.request_id; await refreshPlaylistStatus();
+      await sendPlaylistStop(state.playlist.runId);
     } catch (error) { $('#playlistStatus').textContent = error.message || 'Playlist could not stop.'; $('#playlistStatus').dataset.state = 'error'; }
   }
   async function refreshPlaylistStatus() {
+    const requestId = state.playlist.requestId;
+    const runId = state.playlist.runId;
+    const statusIntent = state.playlist.statusIntent;
+    const statusPoll = ++state.playlist.statusPoll;
     try {
-      const query = state.playlist.requestId ? `?request_id=${encodeURIComponent(state.playlist.requestId)}` : '';
+      const query = requestId ? `?request_id=${encodeURIComponent(requestId)}` : '';
       const body = await requestJson(`${api}/playlists/status${query}`);
+      if (statusPoll !== state.playlist.statusPoll || statusIntent !== state.playlist.statusIntent || requestId !== state.playlist.requestId || runId !== state.playlist.runId) return;
       const requestStatus = body.request; const current = body.current;
-      if (state.playlist.requestId && !requestStatus && state.playlist.runId && current?.run_id !== state.playlist.runId) {
+      if (requestId && !requestStatus && runId && current?.run_id !== runId) {
         $('#playlistStatus').textContent = 'Playlist request pending…'; $('#playlistStatus').dataset.state = 'running'; return;
       }
       const status = requestStatus && ['rejected', 'failed'].includes(requestStatus.phase) ? requestStatus : current;
@@ -1559,7 +1614,11 @@
       const messages = {completed: 'Playlist complete. Starting Scene restored.', stopped: 'Playlist stopped.', overridden: 'Playlist stopped by a manual change.', rejected: status.error || 'Playlist start was rejected.', failed: status.error || 'Playlist failed.'};
       $('#playlistStatus').textContent = messages[status.phase] || `Playlist ${status.phase}.`; $('#playlistStatus').dataset.state = ['rejected','failed'].includes(status.phase) ? 'error' : status.phase;
       if (['completed','stopped','overridden','rejected','failed'].includes(status.phase) && status.run_id === state.playlist.runId) state.playlist.runId = null;
-    } catch (error) { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }
+    } catch (error) {
+      if (statusPoll === state.playlist.statusPoll && statusIntent === state.playlist.statusIntent && requestId === state.playlist.requestId && runId === state.playlist.runId) {
+        $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error';
+      }
+    }
   }
 
   function wire() {

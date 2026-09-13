@@ -57,6 +57,104 @@ for (const mode of ['collapsed', 'expanded', 'denied']) {
         self.assertIn("$('#openScene').addEventListener('click', browseScenes);", self.script)
         self.assertIn('type="button">Browse scenes</button>', self.html)
 
+    def test_playlist_add_waits_for_read_only_wall_bootstrap_and_preserves_click(self) -> None:
+        source = self.script[
+            self.script.index('function currentPlaylistEntryLabel'):
+            self.script.index('async function startPlaylist()')
+        ]
+        runner = r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+let release;
+const status={textContent:'',dataset:{}}, button={disabled:false};
+const state={wall:{bootstrap:null,observation:null},playlist:{entries:[],saving:false},library:{},selection:null};
+const context={state,newUuid:()=> 'entry-1',
+  sceneFromControls:()=>({schema:'ledgrid.scene.v2'}),
+  browserSceneForWall:(scene)=>{assert(state.wall.bootstrap);assert(state.wall.observation);return {scene};},
+  renderPlaylist:()=>{},
+  refreshWallStatus:()=>new Promise(resolve=>{release=()=>{state.wall.bootstrap={ready:true};state.wall.observation={ready:true};resolve();};}),
+  $:(selector)=>selector==='#playlistAdd'?button:selector==='#playlistStatus'?status:{value:'',selectedOptions:[{textContent:'Aurora'}]},
+};
+vm.runInNewContext(process.argv[1]+';this.add=addCurrentSceneToPlaylist;',context);
+(async()=>{
+  const adding=context.add();
+  await Promise.resolve();
+  assert.equal(button.disabled,true);
+  assert.equal(state.playlist.entries.length,0);
+  release(); await adding;
+  assert.equal(state.playlist.entries.length,1);
+  assert.equal(state.playlist.entries[0].duration_seconds,60);
+  assert.equal(button.disabled,false);
+  state.playlist.saving=true;
+  await context.add();
+  assert.equal(state.playlist.entries.length,1,'editing is blocked while save response can replace the snapshot');
+  assert.match(status.textContent,/save to finish/);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+        result = subprocess.run(['node', '-e', runner, source], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_playlist_start_stop_and_status_responses_follow_latest_intent(self) -> None:
+        source = self.script[
+            self.script.index('function newPlaylistStartIntent()'):
+            self.script.index('\n\n  function wire()')
+        ]
+        runner = r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+function deferred(){let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};}
+function environment({save,run}){
+  const status={textContent:'unchanged',dataset:{}};
+  const state={playlist:{requestId:null,runId:null,startIntent:null,statusIntent:0,statusPoll:0}};
+  let requestCounter=0,runCalls=0,stopCalls=0,statusResponse=null;
+  const context={state,api:'/api',newUuid:()=>`request-${++requestCounter}`,$:()=>status,renderPlaylist:()=>{},
+    savePlaylist:save,
+    requestJson:async(url,options)=>{
+      if(url.endsWith('/run')){runCalls++;return run();}
+      if(url.endsWith('/stop')){stopCalls++;return {accepted:{request_id:'stop-b',run_id:JSON.parse(options.body).run_id}};}
+      if(url.includes('/status'))return statusResponse;
+      throw new Error(`unexpected ${url}`);
+    },
+  };
+  vm.runInNewContext(process.argv[1]+';this.start=startPlaylist;this.stop=stopPlaylist;this.refresh=refreshPlaylistStatus;',context);
+  return {context,state,status,setStatus:value=>{statusResponse=value;},counts:()=>({runCalls,stopCalls})};
+}
+(async()=>{
+  {
+    const saved=deferred();
+    const env=environment({save:()=>saved.promise,run:async()=>({accepted:{request_id:'start-b',run_id:'run-b'}})});
+    const starting=env.context.start(); await Promise.resolve();
+    await env.context.stop();
+    saved.resolve({id:'playlist-b'}); await starting;
+    assert.deepEqual(env.counts(),{runCalls:0,stopCalls:0},'Stop during save cancels before dispatch');
+  }
+  {
+    const accepted=deferred();
+    const env=environment({save:async()=>({id:'playlist-b'}),run:()=>accepted.promise});
+    const starting=env.context.start();
+    while(env.counts().runCalls===0)await Promise.resolve();
+    const stopping=env.context.stop(); await Promise.resolve();
+    accepted.resolve({accepted:{request_id:'start-b',run_id:'run-b'}});
+    await Promise.all([starting,stopping]);
+    assert.deepEqual(env.counts(),{runCalls:1,stopCalls:1},'Stop during dispatch targets accepted run');
+  }
+  {
+    const response=deferred();
+    const env=environment({save:async()=>({id:'unused'}),run:async()=>({})});
+    env.state.playlist.requestId='request-a';env.state.playlist.runId='run-a';
+    env.context.requestJson=()=>response.promise;
+    const polling=env.context.refresh(); await Promise.resolve();
+    env.state.playlist.requestId='request-b';env.state.playlist.runId='run-b';env.state.playlist.statusIntent++;
+    response.resolve({request:{phase:'running',request_id:'request-a',run_id:'run-a'},current:{phase:'running',run_id:'run-a',current_index:0,entry_count:1,current_entry:{label:'Old'},remaining_seconds:50}});
+    await polling;
+    assert.equal(env.state.playlist.runId,'run-b');
+    assert.equal(env.status.textContent,'unchanged');
+  }
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+        result = subprocess.run(['node', '-e', runner, source], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_workspace_is_a_wrapping_panel_grid(self) -> None:
         self.assertIn('data-layout="responsive-panels"', self.html)
         self.assertIn(

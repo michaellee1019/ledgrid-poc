@@ -51,8 +51,10 @@ class ComposerResponsiveWorkspaceTests(unittest.TestCase):
         self.assertIn("['gallery', document.querySelector('.gallery')]", self.layout)
         self.assertIn("['preview', document.querySelector('.preview-pane')]", self.layout)
         self.assertIn("['playlists', document.querySelector('.playlist-pane')]", self.layout)
-        self.assertIn("current?.run_id !== state.playlist.runId", self.script)
+        self.assertIn("current?.run_id !== runId", self.script)
         self.assertIn("status.run_id === state.playlist.runId", self.script)
+        self.assertIn(".playlist-entry label { display: grid; gap: .12rem; min-width: 4.5rem", self.css)
+        self.assertIn(".playlist-entry input { width: 100%; min-width: 4.5rem", self.css)
         self.assertIn(".preview-stage { display: flex; align-items: center; justify-content: center; min-height: min(70vh, 640px)", self.css)
         self.assertIn('width="33" height="138"', self.html)
 

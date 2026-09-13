@@ -154,16 +154,16 @@ dialog li { margin: .5rem 0; }
 .playlist-pane { border-color: #587f75; }
 .playlist-total { color: #b9e9dc; font-variant-numeric: tabular-nums; }
 .playlist-entries { display: grid; gap: .3rem; margin: .35rem 0; padding: 0; list-style: none; }
-.playlist-entry { display: grid; grid-template-columns: minmax(0,1fr) 5.2rem auto; gap: .3rem; align-items: center; padding: .35rem; border: 1px solid #39565c; border-radius: 3px; background: #0d181c; }
+.playlist-entry { display: grid; grid-template-columns: minmax(0,1fr) 4.5rem auto; gap: .3rem; align-items: center; padding: .35rem; border: 1px solid #39565c; border-radius: 3px; background: #0d181c; }
 .playlist-entry strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.playlist-entry label { display: flex; align-items: center; gap: .2rem; }
-.playlist-entry input { width: 3.8rem; }
+.playlist-entry label { display: grid; gap: .12rem; min-width: 4.5rem; line-height: 1.1; }
+.playlist-entry input { width: 100%; min-width: 4.5rem; font-variant-numeric: tabular-nums; }
 .playlist-entry-actions { display: flex; gap: .12rem; }
 .playlist-entry-actions .button { min-width: 1.8rem; padding-inline: .28rem; }
 .playlist-status[data-state="running"] { color: #b9f3d2; }
 .playlist-status[data-state="error"] { color: #ffd3b8; }
 @media (max-width: 760px) {
-  .playlist-entry { grid-template-columns: minmax(0,1fr) 5.5rem; }
+  .playlist-entry { grid-template-columns: minmax(0,1fr) 4.5rem; }
   .playlist-entry-actions { grid-column: 1 / -1; }
   .playlist-entry-actions .button { min-width: 44px; min-height: 44px; }
 }
