@@ -27,7 +27,7 @@ class BrowserComposerProfileRuntimeTests(unittest.TestCase):
                 "rainbow",
                 "RainbowAnimation",
                 {"width": 33, "height": 138},
-                {"brightness": 0.5},
+                {},
                 installation_profile_digest=self.digest,
             )
 
@@ -46,7 +46,7 @@ class BrowserComposerProfileRuntimeTests(unittest.TestCase):
             "rainbow",
             "RainbowAnimation",
             {"width": 33, "height": 138},
-            {"brightness": 0.5},
+            {},
             installation_profile_digest=self.digest,
         )
         self.assertEqual(ready["installationProfileDigest"], self.digest)

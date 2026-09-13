@@ -517,6 +517,39 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
         self.assertIs(zero.foliage, base.foliage)
         self.assertIs(wide.distance, base.distance)
 
+    def test_current_rainbow_scene_uses_selected_profile_and_scene_owned_optics(self) -> None:
+        from datetime import datetime
+        from animation.core.scene_runtime import ScenePresentationContext
+        from ipc.scene_contract import normalize_composer_scene, SceneContractError
+        from tests.unit.test_composer_runtime_preview import _scene
+        from web.composer_final_preview import InstalledFinalSceneRuntime, current_component_catalog
+
+        catalog = current_component_catalog()
+        scene = _scene(palette="ember", pace=1.25, brightness=0.5)
+        scene["animation"].update(component_id="rainbow", parameters={})
+        shifted = deepcopy(scene)
+        shifted["plants"]["effects"] = {
+            "version": 1, "active": ["hue_shift"], "strengths": {"hue_shift": 1.0},
+        }
+        view = self.selected_view()
+        runtimes = [InstalledFinalSceneRuntime(catalog, ROOT) for _ in range(2)]
+        for runtime in runtimes:
+            runtime.set_installation_profile(view)
+        for elapsed in (0.0, 0.2):
+            frames = []
+            for runtime, authored in zip(runtimes, (scene, shifted)):
+                canonical = normalize_composer_scene({"origin": "composer", "scene": authored}, catalog)
+                context = ScenePresentationContext(canonical, elapsed, datetime.fromisoformat("2026-09-13T12:00:00+00:00"))
+                frames.append(runtime.render(context).pixels.copy())
+            changed = np.any(frames[0] != frames[1], axis=1)
+            self.assertEqual(frames[0].shape, (33 * 138, 3))
+            self.assertTrue(np.any(changed & view.plant_masks.foliage_flat))
+            self.assertFalse(np.any(changed & ~view.plant_masks.foliage_flat))
+        invalid = deepcopy(scene)
+        invalid["animation"]["parameters"]["brightness"] = 0.5
+        with self.assertRaises(SceneContractError):
+            normalize_composer_scene({"origin": "composer", "scene": invalid}, catalog)
+
     def test_managed_hue_shift_targets_selected_profile_geometry(self) -> None:
         animation = _RuntimeAnimation(
             {
@@ -532,7 +565,12 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
             }
         )
         view = self.selected_view()
-        animation.set_presentation_context(_context(view))
+        animation.set_presentation_context(replace(
+            _context(view), plant_modifiers={
+                "version": 1, "active": ["hue_shift"],
+                "strengths": {"hue_shift": 1.0},
+            },
+        ))
         source = np.tile(np.asarray((240, 30, 10), dtype=np.uint8), (33 * 138, 1))
         shifted = animation.apply_framework_plant_modifiers(source)
         changed = np.any(shifted != source, axis=1)
