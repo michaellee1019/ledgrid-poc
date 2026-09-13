@@ -40,7 +40,7 @@ class ComposerOfflineShellTests(unittest.TestCase):
     def test_worker_precaches_only_versioned_shell_assets_and_never_api_state(self) -> None:
         self.assertEqual(set(re.findall(r'composer-shell-v\d+', self.worker + self.shell)), {COMPOSER_SHELL_VERSION})
         self.assertIn(f"const CACHE_NAME = '{COMPOSER_SHELL_VERSION}'", self.worker)
-        for asset in ('composer_preview_scheduler.js', 'composer_slice.js', 'composer_palette_layout.js', 'composer_shell.js', 'manifest.webmanifest', 'icon.svg', 'offline.html'):
+        for asset in ('composer_preview_scheduler.js', 'composer_slice.js', 'composer_palette_layout.js', 'composer_shell.js', 'manifest.webmanifest', 'icon.svg', 'composer-180.png', 'offline.html'):
             self.assertIn(asset, self.worker)
         self.assertIn("url.pathname.startsWith('/api/')", self.worker)
         self.assertIn("'Cache-Control':'no-store'", self.worker)
@@ -51,7 +51,7 @@ class ComposerOfflineShellTests(unittest.TestCase):
         self.assertNotIn('/api/composer', self.worker)
 
     def test_offline_shell_disables_mutations_and_requires_fresh_reconnect(self) -> None:
-        for selector in ('#saveScene', '#saveAsScene', '#liveAction', '#checkScene', '#libraryList button', '#scenePreview'):
+        for selector in ('.composer button', '.composer input', '.composer select', '#scenePreview'):
             self.assertIn(selector, self.shell)
         self.assertIn("['click', 'pointerdown', 'keydown', 'input', 'change']", self.shell)
         self.assertIn("window.__composerShellUnavailable=true", self.shell)

@@ -14,21 +14,8 @@ from tools import render_browser_composer_contact_sheet as contact_sheet
 
 
 ROOT = Path(__file__).resolve().parents[2]
-STATIC = ROOT / "web" / "static"
-CONFIG = STATIC / "generated" / "composer" / "service_worker_config.v1.js"
-
-
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
-
-
-def _service_worker_shell_assets(source: str) -> set[str]:
-    del source
-    prefix = "self.LEDGRID_COMPOSER_ASSET_CONFIG = Object.freeze("
-    payload = CONFIG.read_text(encoding="utf-8")
-    if not payload.startswith("'use strict';\n" + prefix):
-        raise AssertionError("service worker has no generated asset configuration")
-    return set(json.loads(payload[len("'use strict';\n" + prefix):-3])["shellAssets"])
 
 
 class _ComposerHTMLAudit(HTMLParser):
@@ -54,192 +41,68 @@ class _ComposerHTMLAudit(HTMLParser):
 
 
 class BrowserComposerPWATests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.html = _read("web/templates/composer.html")
-        cls.css = _read("web/static/css/composer.css")
-        cls.javascript = _read("web/static/js/composer.js")
-        cls.worker = _read("web/static/js/composer_service_worker.js")
-        cls.manifest = json.loads(_read("web/static/composer.webmanifest"))
-        cls.audit = _ComposerHTMLAudit()
-        cls.audit.feed(cls.html)
+    """Check the served current shell, not the retired browser compositor."""
+
+    def setUp(self) -> None:
+        from tests.unit.test_composer_looks import _PreviewManager, _WallChannel
+        from web.app import AnimationWebInterface
+        self.client = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True).app.test_client()
+        self.audit = _ComposerHTMLAudit()
+        self.audit.feed(self.client.get('/').get_data(as_text=True))
 
     def test_manifest_and_apple_metadata_are_installable(self) -> None:
-        self.assertEqual(self.manifest["id"], "/composer")
-        self.assertEqual(self.manifest["start_url"], "/composer")
-        self.assertEqual(self.manifest["display"], "standalone")
-        self.assertEqual(self.manifest["scope"], "/")
-        self.assertTrue(self.manifest["name"])
-        self.assertTrue(self.manifest["short_name"])
-        self.assertRegex(self.manifest["theme_color"], r"^#[0-9a-fA-F]{6}$")
-        self.assertRegex(self.manifest["background_color"], r"^#[0-9a-fA-F]{6}$")
+        links = {item.get('rel'): item for item in self.audit.links}
+        manifest = self.client.get(links['manifest']['href'])
+        self.addCleanup(manifest.close)
+        value = json.loads(manifest.data)
+        self.assertEqual(value['start_url'], '/')
+        self.assertEqual(value['scope'], '/')
+        self.assertEqual(value['display'], 'standalone')
+        for icon in value['icons']:
+            response = self.client.get(icon['src'])
+            self.addCleanup(response.close)
+            self.assertEqual(response.status_code, 200)
+        apple = links['apple-touch-icon']
+        self.assertEqual(apple['sizes'], '180x180')
+        response = self.client.get(apple['href'])
+        self.addCleanup(response.close)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, 'image/png')
+        from io import BytesIO
+        from PIL import Image
+        with Image.open(BytesIO(response.data)) as image:
+            self.assertEqual(image.size, (180, 180))
+        metas = {item.get('name'): item.get('content') for item in self.audit.metas}
+        self.assertEqual(metas['apple-mobile-web-app-capable'], 'yes')
 
-        icons = self.manifest["icons"]
-        self.assertTrue(any("512x512" in icon["sizes"] for icon in icons))
-        self.assertTrue(any("any" in icon.get("purpose", "") for icon in icons))
-        self.assertTrue(any("maskable" in icon.get("purpose", "") for icon in icons))
-        for icon in icons:
-            self.assertTrue((STATIC / icon["src"].removeprefix("/static/")).is_file())
+    def test_current_preview_and_offline_shell_are_loaded(self) -> None:
+        sources = [item.get('src', '') for item in self.audit.scripts]
+        scripts = {}
+        for source in sources:
+            response = self.client.get(source)
+            self.addCleanup(response.close)
+            self.assertEqual(response.status_code, 200, source)
+            scripts[source.split('?')[0]] = response.get_data(as_text=True)
+        self.assertIn('/static/js/composer_preview_scheduler.js', scripts)
+        self.assertIn('/static/js/composer_shell.js', scripts)
+        self.assertIn('fetch(`${api}/preview`', scripts['/static/js/composer_slice.js'])
+        self.assertNotIn('/static/js/composer_compositor.js', scripts)
+        # The server composes final preview; the browser schedules and paints it.
+        self.assertIn('ComposerPreviewScheduler', scripts['/static/js/composer_slice.js'])
+        ids = {attrs.get('id') for _, attrs in self.audit.elements}
+        for identity in ('composerShell', 'composerShellMessage', 'composerShellRetry', 'composerShellUpdate', 'scenePreview'):
+            self.assertIn(identity, ids)
 
-        links_by_rel = {link.get("rel"): link for link in self.audit.links}
-        self.assertIn("manifest", links_by_rel)
-        self.assertIn("apple-touch-icon", links_by_rel)
-        apple_icon = links_by_rel["apple-touch-icon"]
-        self.assertEqual(apple_icon.get("sizes"), "180x180")
-        self.assertTrue((STATIC / "icons" / "composer-180.png").is_file())
-        apple_meta = {
-            item.get("name"): item.get("content") for item in self.audit.metas
-        }
-        self.assertEqual(apple_meta.get("apple-mobile-web-app-capable"), "yes")
-
-    def test_precache_contains_the_complete_versioned_local_shell(self) -> None:
-        assets = _service_worker_shell_assets(self.worker)
-        expected = {
-            "/composer",
-            "/composer-service-worker.js",
-            "/static/css/composer.css",
-            "/static/js/composer_compositor.js",
-            "/static/js/composer_interactions.js",
-            "/static/js/composer-operations.js",
-            "/static/js/composer-maintenance.js",
-            "/static/js/composer_state.js",
-            "/static/js/composer_runtime.js",
-            "/static/js/composer_sha256.js",
-            "/composer-app.js",
-            "/static/js/composer_native_worker.js",
-            "/static/js/composer_python_worker.js",
-            "/static/generated/composer/aurora_curtains_native.wasm",
-            "/static/generated/composer/compiled_rainbow.wasm",
-            "/static/generated/composer/bootstrap.v1.json",
-            (
-                "/static/generated/composer/installation_profile_"
-                "ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
-            ),
-            "/static/generated/composer/ledgrid_python_runtime.zip",
-            "/static/generated/composer/offline_assets.json",
-            "/static/generated/composer/service_worker_config.v1.js",
-            "/static/composer.webmanifest",
-            "/static/icons/composer-180.png",
-            "/static/icons/composer-512.png",
-            "/static/icons/composer.svg",
-        }
-        self.assertEqual(assets, expected)
-        route_backed = {"/composer", "/composer-service-worker.js", "/composer-app.js"}
-        for asset in sorted(assets - route_backed):
-            self.assertTrue(
-                (STATIC / asset.removeprefix("/static/")).is_file(),
-                f"precache asset does not exist: {asset}",
-            )
-        self.assertIn("importScripts('/static/generated/composer/service_worker_config.v1.js')", self.worker)
-        self.assertIn("const CACHE_VERSION = ASSET_CONFIG.cacheVersion", self.worker)
-        self.assertIn(
-            "CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`",
-            self.worker,
-        )
-        self.assertIn("installVersionedShell", self.worker)
-        self.assertIn("Offline asset digest mismatch", self.worker)
-        self.assertIn("name.startsWith(CACHE_PREFIX)", self.worker)
-        self.assertIn("name !== RUNTIME_CACHE_NAME", self.worker)
-        self.assertIn("self.clients.claim()", self.worker)
-        self.assertNotIn("client.navigate('/composer')", self.worker)
-        self.assertNotIn("includeUncontrolled: true", self.worker)
-
-    def test_navigation_and_static_bootstrap_have_explicit_offline_fallbacks(self) -> None:
-        self.assertIn("event.request.mode === 'navigate'", self.worker)
-        self.assertIn("url.pathname === '/' || url.pathname === '/composer'", self.worker)
-        self.assertIn("networkFirst(event.request, '/composer')", self.worker)
-        self.assertIn("const BUNDLED_BOOTSTRAP_URL", self.worker)
-        self.assertIn("shell.match(BUNDLED_BOOTSTRAP_URL)", self.worker)
-        self.assertNotIn("networkFirst(event.request, BOOTSTRAP_URL)", self.worker)
-        self.assertIn("const cached = await caches.match(fallbackKey)", self.worker)
-        self.assertIn("if (cached) return cached", self.worker)
-
-    def test_ready_offline_requires_verified_catalog_and_python_runtime(self) -> None:
-        self.assertIn("type: 'OFFLINE_STATUS'", self.worker)
-        self.assertIn("'PYTHON_RUNTIME_READY'", self.worker)
-        self.assertIn("bootstrapPayload?.artifact?.kind !== 'bundled'", self.worker)
-        self.assertIn("activeProfile", self.worker)
-        self.assertIn("Python runtime asset changed", self.worker)
-        self.assertIn("readyOffline: true", self.worker)
-        self.assertIn("readyOffline: false", self.worker)
-
-    def test_selected_profile_artifact_is_verified_and_available_offline(self) -> None:
-        self.assertIn("PROFILE_ARTIFACT_PATH", self.worker)
-        self.assertIn("BUNDLED_PROFILE_PATH", self.worker)
-        self.assertIn("verifiedProfileArtifact", self.worker)
-        self.assertIn("canonical.fill(0, 68, 100)", self.worker)
-        self.assertIn("cacheImmutableProfileArtifact", self.worker)
-        self.assertIn("profileArtifactDigest", self.worker)
-        self.assertIn("profileArtifacts", self.worker)
-        self.assertIn("INSTALLATION_PROFILE_ARTIFACT", self.worker)
-        self.assertIn("deliverInstallationProfileArtifact", self.worker)
-
-    def test_connectivity_and_mutating_actions_are_never_cached(self) -> None:
-        assets = _service_worker_shell_assets(self.worker)
-        forbidden = {
-            "/api/v1/composer/connectivity",
-            "/api/v1/composer/presets/validate",
-            "/api/v1/composer/presets",
-            "/api/v1/scene-presets",
-            "/api/v1/scene/validate",
-            "/api/v1/scene/checks",
-            "/api/v1/scene/activations/example",
-            "/api/v1/scene",
-        }
-        self.assertTrue(assets.isdisjoint(forbidden))
-        self.assertIn("if (event.request.method !== 'GET') return", self.worker)
-        self.assertIn("if (url.pathname.startsWith('/api/')) return", self.worker)
-        self.assertEqual(
-            set(re.findall(r"/api/[A-Za-z0-9_./:-]+", self.worker)),
-            set(),
-        )
-
-    def test_compositor_is_loaded_as_part_of_the_document_shell(self) -> None:
-        local_script_sources = {
-            script.get("src", "") for script in self.audit.scripts
-        }
-        self.assertTrue(
-            any("composer_compositor.js" in source for source in local_script_sources),
-            "the cached compositor must also be loaded by the document",
-        )
-        self.assertIn(
-            "/static/js/composer_compositor.js",
-            _service_worker_shell_assets(self.worker),
-        )
-
-    def test_iphone_safe_areas_touch_and_accessibility_basics_are_preserved(self) -> None:
-        viewport = next(
-            item.get("content", "")
-            for item in self.audit.metas
-            if item.get("name") == "viewport"
-        )
-        self.assertIn("viewport-fit=cover", viewport)
-        self.assertIn("env(safe-area-inset-top)", self.css)
-        self.assertIn("env(safe-area-inset-bottom)", self.css)
-        self.assertIn("100dvh", self.css)
-        self.assertRegex(self.css, r"button\s*\{[^}]*touch-action:\s*manipulation")
-        self.assertIn("@media (max-width: 760px)", self.css)
-        self.assertIn("@media (prefers-reduced-motion: reduce)", self.css)
-
-        self.assertTrue(self.audit.buttons)
-        by_id = {
-            attrs.get("id"): (tag, attrs)
-            for tag, attrs in self.audit.elements
-            if attrs.get("id")
-        }
-        skip_link = next(
-            attrs for tag, attrs in self.audit.elements
-            if tag == "a" and "skip-link" in attrs.get("class", "").split()
-        )
-        self.assertEqual(skip_link.get("href"), "#composerWorkspace")
-        self.assertEqual(by_id["composerWorkspace"][1].get("tabindex"), "-1")
-        self.assertTrue(by_id["previewCanvas"][1].get("aria-label"))
-        self.assertEqual(by_id["saveState"][1].get("role"), "status")
-        self.assertEqual(by_id["toastRegion"][1].get("aria-live"), "polite")
-        self.assertIn("setAttribute('aria-selected'", self.javascript)
-        self.assertIn("setAttribute('aria-pressed'", self.javascript)
-        self.assertIn("setAttribute('aria-invalid'", self.javascript)
-        self.assertIn("document.addEventListener('keydown'", self.javascript)
+    def test_safe_areas_survive_phone_layout_override(self) -> None:
+        viewport = next(item['content'] for item in self.audit.metas if item.get('name') == 'viewport')
+        self.assertIn('viewport-fit=cover', viewport)
+        css = _read('web/static/css/composer_slice.css')
+        for edge in ('top', 'right', 'bottom', 'left'):
+            self.assertIn(f'env(safe-area-inset-{edge})', css)
+        phone = css.split('@media (max-width: 760px)', 1)[1]
+        rule = re.search(r'\.composer\s*\{([^}]+)\}', phone).group(1)
+        self.assertNotIn('padding:', rule)
+        self.assertIn('100dvh', css)
 
 
 class BrowserComposerContactSheetUnitTests(unittest.TestCase):

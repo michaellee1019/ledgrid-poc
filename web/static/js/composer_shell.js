@@ -5,7 +5,7 @@
   const retry = document.querySelector('#composerShellRetry');
   const update = document.querySelector('#composerShellUpdate');
   const root = document.querySelector('.composer');
-  const controls = () => [...document.querySelectorAll('.inspectors input, .inspectors select, #saveScene, #saveAsScene, #openScene, #liveAction, #checkScene, #undoScene, #redoScene, #libraryList button')];
+  const controls = () => [...document.querySelectorAll('.composer button, .composer input, .composer select')];
   const priorDisabled = new Map();
   let offline = false;
   let waiting = null;
@@ -24,14 +24,14 @@
   function guard(event) {
     if (!offline) return;
     const target = event.target;
-    if (target.closest('.inspectors, #liveAction, #checkScene, #scenePreview')) { event.preventDefault(); event.stopImmediatePropagation(); }
+    if (target.closest('.composer')) { event.preventDefault(); event.stopImmediatePropagation(); }
   }
   function reloadFresh() { window.location.reload(); }
   function updateReady(worker) { waiting = worker; show('A Composer shell update is ready. Reload when this scene is safe.', 'update'); }
   function applyUpdate() { if (!waiting) return; if (hasProtectedScene()) return show('Save the current scene before reloading this shell update.', 'update'); activatingUpdate=true; waiting.postMessage({type:'composer-shell-activate'}); }
   function register() {
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v21', {scope:'/'}).then((registration) => {
+    navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v22', {scope:'/'}).then((registration) => {
       if (registration.waiting) updateReady(registration.waiting);
       registration.addEventListener('updatefound', () => { const worker=registration.installing; if (!worker) return; worker.addEventListener('statechange', () => { if (worker.state === 'installed' && navigator.serviceWorker.controller) updateReady(worker); }); });
     });
