@@ -1100,9 +1100,18 @@ def process_activation_commands(channel, activation_coordinator) -> int:
     """Process each durable activation once, including safe restart replay."""
 
     mutations = 0
-    for activation_command in channel.list_activation_commands():
+    poll = getattr(channel, "poll_activation_commands", None)
+    commands = (poll(activation_coordinator.session_id,
+                     retry_ids=activation_coordinator.pending_publication_ids()) if callable(poll)
+                else channel.list_activation_commands())
+    acknowledge = getattr(channel, "acknowledge_activation_poll", None)
+    for activation_command in commands:
         activation_id = activation_command.get("activation_id")
+        processed = False
         try:
+            # Exceptions keep this record pending, including request-result I/O
+            # failures that propagate to the controller's outer boundary.
+            processed = True
             activation_status = activation_coordinator.get(activation_id)
             if activation_status is None:
                 durable_status = channel.read_activation_status(activation_id)
@@ -1271,7 +1280,22 @@ def process_activation_commands(channel, activation_coordinator) -> int:
                             ),
                         )
         except (ControllerActivationError, KeyError, TypeError, ValueError) as exc:
+            processed = False
             print(f"⚠️ Activation {activation_id!r} rejected: {exc}")
+        except BaseException:
+            processed = False
+            raise
+        finally:
+            if processed and callable(acknowledge):
+                # get() retries staged status publication. Never suppress its
+                # next retry merely because the in-memory phase is terminal.
+                latest = activation_coordinator.get(activation_id)
+                if latest is None:
+                    latest = channel.read_activation_status(activation_id)
+                if (isinstance(latest, dict)
+                        and latest.get("phase") in _TERMINAL_ACTIVATION_PHASES
+                        and not activation_coordinator.has_pending_publications(activation_id)):
+                    acknowledge(activation_id)
     return mutations
 
 

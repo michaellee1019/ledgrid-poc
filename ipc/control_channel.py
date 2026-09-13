@@ -3,6 +3,7 @@
 File-backed control and status channel for decoupling controller and web UI.
 """
 
+from copy import deepcopy
 import json
 import os
 import tempfile
@@ -56,6 +57,11 @@ class FileControlChannel:
         self.activation_rollback_path = self.activation_root / "rollback"
         self.activation_cancel_result_path = self.activation_root / "cancel-result"
         self.activation_rollback_result_path = self.activation_root / "rollback-result"
+        self._activation_poll_session = None
+        self._activation_poll_directories = {}
+        self._activation_poll_files = {}
+        self._activation_poll_commands = {}
+        self._activation_poll_pending = set()
         self.maintenance_root = self.control_path.parent / "maintenance"
         self.maintenance_queue_path = self.maintenance_root / "queue"
         self.maintenance_status_path = self.maintenance_root / "status"
@@ -282,6 +288,83 @@ class FileControlChannel:
             if payload is not None:
                 commands.append(payload)
         return commands
+
+    @staticmethod
+    def _activation_poll_fingerprint(path: Path):
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_dev, stat.st_ino, stat.st_mtime_ns,
+                stat.st_ctime_ns, stat.st_size)
+
+    def poll_activation_commands(
+        self, session_id: str, *, retry_ids=()
+    ) -> list[Dict[str, Any]]:
+        """Discover work without reparsing unchanged durable terminal history.
+
+        All channel writers publish by atomic create/replace. Directory metadata
+        therefore discovers their changes, including other processes, without an
+        idle per-record scan. In-place edits outside that protocol require a new
+        session/full scan. History remains durable and the public list API still
+        returns every record. This polling view has one controller consumer.
+        """
+        if session_id != self._activation_poll_session:
+            self._activation_poll_session = session_id
+            self._activation_poll_directories.clear()
+            self._activation_poll_files.clear()
+            self._activation_poll_commands.clear()
+            self._activation_poll_pending.clear()
+        self._activation_poll_pending.update(retry_ids)
+        directories = (
+            self.activation_queue_path, self.activation_status_path,
+            self.activation_cancel_path, self.activation_rollback_path,
+            self.activation_cancel_result_path, self.activation_rollback_result_path,
+        )
+        for directory in directories:
+            # Save the signature from BEFORE enumeration. A publication during
+            # the scan must make the next poll revisit this directory.
+            signature = self._activation_poll_fingerprint(directory)
+            if (directory in self._activation_poll_directories
+                    and signature == self._activation_poll_directories[directory]):
+                continue
+            previous = self._activation_poll_files.get(directory, {})
+            current = {}
+            if signature is not None:
+                for path in directory.glob('*.json'):
+                    fingerprint = self._activation_poll_fingerprint(path)
+                    if fingerprint is not None:
+                        current[path.stem] = fingerprint
+            for activation_id in previous.keys() | current.keys():
+                if previous.get(activation_id) != current.get(activation_id):
+                    self._activation_poll_pending.add(activation_id)
+                    if directory == self.activation_queue_path:
+                        self._activation_poll_commands.pop(activation_id, None)
+            self._activation_poll_files[directory] = current
+            self._activation_poll_directories[directory] = signature
+        commands = []
+        queued = self._activation_poll_files.get(self.activation_queue_path, {})
+        for activation_id in sorted(self._activation_poll_pending):
+            if activation_id not in queued:
+                # A web receipt may precede its command; atomic enqueue will
+                # rediscover it. A removed command must never replay from cache.
+                self._activation_poll_commands.pop(activation_id, None)
+                self._activation_poll_pending.discard(activation_id)
+                continue
+            command = self._activation_poll_commands.get(activation_id)
+            if command is None:
+                command = self.read_activation_command(activation_id)
+                if command is None:
+                    continue
+                if command.get('activation_id') != activation_id:
+                    raise ValueError('activation command identity does not match its file')
+                self._activation_poll_commands[activation_id] = command
+            commands.append(deepcopy(command))
+        return commands
+
+    def acknowledge_activation_poll(self, activation_id: str) -> None:
+        """Retire successful terminal work; later atomic writes rediscover it."""
+        self._activation_poll_pending.discard(activation_id)
 
     def write_activation_status(self, status: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(status, dict):

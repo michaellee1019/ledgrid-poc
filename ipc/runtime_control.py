@@ -958,6 +958,22 @@ class ControllerActivationCoordinator:
             self._trim_records()
         return self._publish(record, required=False)
 
+    def pending_publication_ids(self) -> tuple[str, ...]:
+        """Return bounded in-memory receipts needing another durability attempt.
+
+        A new activation may invalidate an older receipt's rollback authority.
+        Failed publication of that older receipt has no file change to discover.
+        """
+        with self._lock:
+            return tuple(activation_id for activation_id, record in self._records.items()
+                         if record.pending_publications)
+
+    def has_pending_publications(self, activation_id: str) -> bool:
+        """Keep polling a receipt until all staged status writes are durable."""
+        with self._lock:
+            record = self._records.get(activation_id)
+            return bool(record is not None and record.pending_publications)
+
     def get(self, activation_id: str) -> dict[str, Any] | None:
         with self._lock:
             record = self._records.get(activation_id)
