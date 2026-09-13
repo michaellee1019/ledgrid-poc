@@ -49,6 +49,8 @@ explicit as-built gaps.
 The root `presets/animations/` tree is a runtime/user-writable overlay. Curated
 presets belong to the plugin that owns them.
 
+Run `just test-composer-current` for the bounded local Composer journey, including explicit native fixtures. See [current Composer validation](docs/CURRENT_COMPOSER_VALIDATION.md) for scope.
+
 ## Hardware deployment
 
 ```bash

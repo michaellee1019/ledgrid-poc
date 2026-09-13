@@ -226,6 +226,23 @@ test-demo:
 		tests/unit/test_deploy_plugin_startup_precheck.py \
 		tests/unit/test_deploy_startup.py
 
+# Local-only current Composer journey.  It builds the ignored managed native
+# fixture first so this gate also works from a clean supported checkout; it does
+# not contact receivers and is not an additional deployment prerequisite.
+test-composer-current:
+	uv run --frozen --group firmware python tools/deployment/native_background_entrypoint.py build native_aurora
+	just test-demo
+	{{python_env}} pytest -q \
+		tests/unit/test_composer_slice.py \
+		tests/unit/test_composer_offline_shell.py \
+		tests/unit/test_browser_composer_profile_runtime.py \
+		tests/unit/test_composer_runtime_preview.py \
+		tests/unit/test_installation_profile_authoring.py::InstallationProfileAuthoringTests::test_update_is_restart_safe_and_stale_update_has_zero_mutation \
+		tests/unit/test_installation_profile_authoring_api.py::InstallationProfileAuthoringApiTests::test_get_and_put_require_etag_and_stale_put_has_zero_mutation \
+		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_every_current_catalog_animation_reaches_real_controller_activation \
+		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_full_current_catalog_matrix_uses_browser_requests_preview_and_exact_receipts \
+		tests/unit/test_deploy_startup.py
+
 # Required gate before a normal wall deployment.  This uses only the in-memory
 # preview controller, so it cannot contact receivers or mutate wall state.
 deploy-precheck:
