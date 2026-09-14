@@ -190,6 +190,7 @@ class ManagedNativeHostPreview:
             return BaseFrame(self._pixels, changed=False, dirty_ranges=())
 
         unscaled_us = round(float(unscaled_scene_time) * 1_000_000)
+        cadence_fps = float(self.manifest["cadence"]["preferred_fps"])
         request = {
             "host_library": str(self.host_library_path),
             "manifest": self.manifest,
@@ -197,8 +198,8 @@ class ManagedNativeHostPreview:
             "frame_count": 1,
             "scene_times_us": [unscaled_us],
             "scaled_scene_times_us": [scaled_us],
-            "cadence_period_us": math.ceil(1_000_000 / source_fps),
-            "render_budget_ms": 1000 / source_fps,
+            "cadence_period_us": math.ceil(1_000_000 / cadence_fps),
+            "render_budget_ms": 1000 / cadence_fps,
             "vibe": {"luminance_q8_8": 256, "palette": palette_value},
         }
         try:

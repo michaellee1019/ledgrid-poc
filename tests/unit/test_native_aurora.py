@@ -4,6 +4,7 @@ import math
 import shutil
 import subprocess
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -12,9 +13,15 @@ import numpy as np
 
 from animation.native.aurora import canonical_palette_roles
 from animation.native.builder import build_plugin
-from animation.native.constants import TARGET_COMPILER_NAME, TARGET_TOOLCHAIN_PACKAGE
+from animation.native.constants import (
+    HOST_IDENTITY_FLAGS,
+    HOST_LINK_FLAGS,
+    TARGET_COMPILER_NAME,
+    TARGET_TOOLCHAIN_PACKAGE,
+)
 from animation.native.errors import NativePreviewError
 from animation.native.managed_preview import ManagedNativeHostPreview
+from animation.native.preview import render_host_frames
 import tools.build_browser_composer_bootstrap as browser_bootstrap
 from web.composer_final_preview import (
     NATIVE_AURORA_BUNDLE_DIGEST,
@@ -39,6 +46,32 @@ def toolchain_available() -> bool:
 
 def _trunc_div(value: int, divisor: int) -> int:
     return value // divisor if value >= 0 else -((-value) // divisor)
+
+
+def _compile_host_source(source: str, directory: Path) -> Path:
+    source_path = directory / "background.cpp"
+    source_path.write_text(source, encoding="utf-8")
+    library = directory / "host-preview.so"
+    compiler = shutil.which("c++")
+    if compiler is None:
+        raise unittest.SkipTest("host C++ compiler unavailable")
+    platform = "darwin" if sys.platform == "darwin" else "linux"
+    subprocess.run(
+        (
+            compiler,
+            *HOST_IDENTITY_FLAGS,
+            *HOST_LINK_FLAGS[platform],
+            "-o",
+            str(library),
+            str(source_path),
+        ),
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return library
 
 
 def _reference_frame(
@@ -221,6 +254,66 @@ class NativeAuroraArtifactTests(unittest.TestCase):
         )
         self.assertFalse(same_tick.changed)
         np.testing.assert_array_equal(same_tick.pixels, frame.pixels)
+
+    def test_source_cadence_preserves_receiver_callback_deadline_contract(self) -> None:
+        assert self.build.host_library_path is not None
+        parameters = {"gain": 0.34, "source_fps": 24.0, "seed": 4201}
+        run = render_host_frames(
+            self.build.host_library_path,
+            self.build.manifest,
+            parameters=parameters,
+            frame_count=4,
+            duration_ms=34,
+            vibe_palette=tuple(canonical_palette_roles("mist").values()),
+        )
+        # The 30 Hz receiver callback cadence includes one cached callback
+        # before the 24 Hz visual source advances.
+        self.assertEqual(run.changed_frames, 3)
+        self.assertEqual(run.frames[0], run.frames[1])
+        self.assertNotEqual(run.frames[1], run.frames[2])
+
+        source = (
+            ROOT / "animation/plugins/native_aurora/native/background.cpp"
+        ).read_text(encoding="utf-8")
+        legacy = source.replace(
+            "constexpr uint32_t kCadencePeriodUs = 33334U;",
+            "constexpr uint32_t kCadencePeriodUs = 41667U;",
+        )
+        self.assertNotEqual(legacy, source)
+        with tempfile.TemporaryDirectory(prefix="native-aurora-legacy-cadence-") as name:
+            legacy_library = _compile_host_source(legacy, Path(name))
+            with self.assertRaisesRegex(
+                NativePreviewError, "deadline exceeds its fixed-FPS period"
+            ):
+                render_host_frames(
+                    legacy_library,
+                    self.build.manifest,
+                    parameters=parameters,
+                    frame_count=1,
+                    duration_ms=34,
+                    vibe_palette=tuple(canonical_palette_roles("mist").values()),
+                )
+
+    def test_managed_preview_validates_deadlines_at_manifest_cadence(self) -> None:
+        parameters = {"gain": 0.34, "source_fps": 24.0, "seed": 4201}
+        captured: dict[str, object] = {}
+
+        def run(request):
+            captured.update(request)
+            size = 33 * 138 * 3
+            return ({"frame_count": 1, "changed_frames": 1}, bytes(size))
+
+        with mock.patch("animation.native.managed_preview.run_host_preview", side_effect=run):
+            frame = self.preview.render(
+                parameters=parameters,
+                palette=tuple(canonical_palette_roles("mist").values()),
+                scaled_scene_time=0.2,
+                unscaled_scene_time=0.5,
+                frame_index=0,
+            )
+        self.assertTrue(frame.changed)
+        self.assertEqual(captured["cadence_period_us"], 33334)
+        self.assertAlmostEqual(captured["render_budget_ms"], 1000 / 30)
 
     def test_palette_gain_seed_and_scaled_time_are_native_visual_inputs(self) -> None:
         def render(palette: str, gain: float, seed: int, elapsed: float) -> bytes:

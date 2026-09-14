@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "a3cfbd32ab374c17aa73e75317e45980c6ce5080f4fb82e3c74410d3f8270e04",
+    "catalog_digest": "6eb4c24336b9b3639963221c68f84612d1204f4da8e9ce974b4d267b203964a5",
     "kind": "bundled",
     "version": 1
   },
@@ -1119,9 +1119,9 @@
     },
     {
       "availability": {
-        "bundle_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
+        "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
         "framebuffer_readback": false,
-        "payload_digest": "f754487c5040e1320f2d1f926ca128e80677f05f79ce78eb5378e5d31d84849d",
+        "payload_digest": "4dad42e167e6ce5dd34816c0365453c3cf9dd08c94e36b69e88bec384f615554",
         "preview_kind": "build_time_bundle",
         "published_at": "1970-01-01T00:00:00Z",
         "state": "ready"
@@ -1147,13 +1147,13 @@
           "schema_version": 1
         },
         "managed_identity": {
-          "bundle_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
-          "component_digest": "54f1d206bdcc9ea8e21779e548aba42bbe663334e61eb15d6f71172393e982f8",
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_digest": "56e49803a3647317c8a307b1d6e66cc01e5484e0f09939210f41a1d2ae564a3c",
           "component_id": "native_aurora",
-          "expected_payload_digest": "f754487c5040e1320f2d1f926ca128e80677f05f79ce78eb5378e5d31d84849d",
+          "expected_payload_digest": "4dad42e167e6ce5dd34816c0365453c3cf9dd08c94e36b69e88bec384f615554",
           "parameter_schema_version": 1,
           "provider": "receiver_native",
-          "runtime_digest": "3078ab05c686daf35abf4d9cefe3354b898173993375ea71862979d3e17989c9"
+          "runtime_digest": "844e39d7f5f27a4b3894a1998ea1058c3e6ee4a9024bca4ae6f85a806e8221b8"
         },
         "previewable": true,
         "reason": null,
@@ -1161,7 +1161,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/native_aurora.wasm",
-        "digest": "3078ab05c686daf35abf4d9cefe3354b898173993375ea71862979d3e17989c9",
+        "digest": "844e39d7f5f27a4b3894a1998ea1058c3e6ee4a9024bca4ae6f85a806e8221b8",
         "engine": "receiver-native-cpp-wasm",
         "kind": "native",
         "supported": true,
@@ -1171,11 +1171,11 @@
         "abi_schema": "ledgrid.native-background-abi",
         "abi_version": 2,
         "artifact_kind": "receiver_native_module",
-        "bundle_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
+        "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
         "bundle_schema": "ledgrid.native-background-bundle",
         "bundle_version": 1,
-        "contract_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
-        "expected_payload_digest": "f754487c5040e1320f2d1f926ca128e80677f05f79ce78eb5378e5d31d84849d",
+        "contract_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+        "expected_payload_digest": "4dad42e167e6ce5dd34816c0365453c3cf9dd08c94e36b69e88bec384f615554",
         "identity_authority": "managed_library",
         "source": "native/background.cpp",
         "target": "esp32-s3"
@@ -1190,9 +1190,9 @@
         "legacy_manifest": false,
         "parameter_metadata": "manifest"
       },
-      "component_digest": "54f1d206bdcc9ea8e21779e548aba42bbe663334e61eb15d6f71172393e982f8",
+      "component_digest": "56e49803a3647317c8a307b1d6e66cc01e5484e0f09939210f41a1d2ae564a3c",
       "defaults": {
-        "bundle_digest": "89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4",
+        "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
         "gain": 0.72,
         "seed": 8012,
         "source_fps": 30.0

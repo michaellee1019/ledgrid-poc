@@ -9,6 +9,7 @@ namespace {
 constexpr uint16_t kGlobalStrips = 33;
 constexpr uint16_t kMaxLocalStrips = 8;
 constexpr uint16_t kLedsPerStrip = 138;
+constexpr uint32_t kCadencePeriodUs = 33334U;
 
 struct alignas(8) AuroraState {
   const ledgrid_native_helpers_v2* helpers;
@@ -189,8 +190,6 @@ int render(void* opaque, const ledgrid_native_render_request_v2* request,
   }
   const uint64_t source_tick = divide_u64_u32(
       request->scaled_scene_time_us * state->source_fps_q8, 256000000U);
-  const uint32_t period_us =
-      (256000000U + state->source_fps_q8 - 1U) / state->source_fps_q8;
   if (state->context_dirty == 0U && source_tick == state->last_source_tick) {
     result->status = LEDGRID_NATIVE_BACKGROUND_OK;
     result->changed = 0U;
@@ -236,9 +235,13 @@ int render(void* opaque, const ledgrid_native_render_request_v2* request,
     result->changed = 1U;
   }
   for (uint8_t index = 0; index < 7U; ++index) result->reserved_zero[index] = 0U;
-  const uint32_t remainder = modulo_u64(request->unscaled_scene_time_us, period_us);
+  // The receiver calls this module at the fixed cadence declared by the
+  // component manifest. source_fps only quantizes visual changes; it must not
+  // relax the ABI deadline that NativeModuleManager enforces.
+  const uint32_t remainder =
+      modulo_u64(request->unscaled_scene_time_us, kCadencePeriodUs);
   result->next_deadline_scene_time_us =
-      request->unscaled_scene_time_us + period_us - remainder;
+      request->unscaled_scene_time_us + kCadencePeriodUs - remainder;
   return LEDGRID_NATIVE_BACKGROUND_OK;
 }
 

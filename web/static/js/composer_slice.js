@@ -3,7 +3,7 @@
   const root = document.querySelector('.composer');
   const api = root.dataset.apiRoot;
   const $ = (selector) => document.querySelector(selector);
-  const nativeDigest = '89b5ae10d2897f0977713b2a575e32b348398a4b86512372d25edd13581b07e4';
+  const nativeDigest = 'cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2';
   const DEFAULT_SCENE_PACE = .7;
   function newUuid() {
     const browserCrypto = typeof globalThis.crypto === 'object' ? globalThis.crypto : null;
