@@ -47,6 +47,7 @@ class _Transport(_Controller):
         super().__init__()
         self.reject_next = False
         self.reject_sparse_next = False
+        self.sparse_failure_evidence = None
         self.corrupt_next = None
         self.foreground = None
         self.sparse_status = {}
@@ -86,6 +87,8 @@ class _Transport(_Controller):
                 ),
                 'cleanup_errors': [],
             }
+            if self.sparse_failure_evidence is not None:
+                self.sparse_status['foreground_publish_evidence'] = deepcopy(self.sparse_failure_evidence)
             return False
         return super().publish_sparse_overlay(pixels, **fields)
 
@@ -451,6 +454,73 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertIn('sequence 1712, expected 1713', receipt['error'])
         self.assertEqual(receipt['observed_identity'], prior['observed_identity'])
         self.assertEqual(self.manager.get_scene_state(), self.scene)
+
+    def test_large_sparse_proof_uses_file_receipt_summary_and_survives_rollback(self):
+        from ipc.control_channel import FileControlChannel
+        from ipc.legacy_scene_contract import SceneValidationError, normalize_scene_activation_status
+        from scripts.start_server import controller_status_payload, process_activation_commands
+
+        _, _, prior = self.activate(self.scene)
+        keys = (
+            'receiver_status_version', 'receiver_packets', 'receiver_operation_sequence',
+            'receiver_last_processed_command', 'receiver_overlay_committed_generation',
+            'receiver_overlay_staged_generation', 'receiver_foreground_scene_revision',
+            'receiver_foreground_scene_epoch', 'receiver_foreground_base_revision',
+            'receiver_foreground_present_at_scene_time_us', 'receiver_overlay_lease_ms',
+            'receiver_overlay_lease_remaining_ms', 'receiver_overlay_commits',
+            'receiver_overlay_expirations', 'receiver_overlay_composite_frames',
+            'receiver_crc_errors', 'receiver_spi_queue_errors', 'receiver_display_errors',
+        )
+        rows = [{'logical_device': index, 'status': {key: index + 1 for key in keys}}
+                for index in range(5)]
+        evidence = {'generation': 2, 'commit_acknowledgements': deepcopy(rows),
+                    'post_commit_statuses': deepcopy(rows)}
+        self.assertGreater(len(json.dumps(evidence).encode()), 4096)
+        with self.assertRaisesRegex(SceneValidationError, '4096-byte limit'):
+            normalize_scene_activation_status({
+                **prior, 'phase': 'rolling_back', 'error': repr(evidence),
+            })
+
+        channel = FileControlChannel(str(self.directory/'large-proof-control.json'),
+                                     str(self.directory/'large-proof-status.json'),
+                                     str(self.directory/'large-proof-activations'))
+        coordinator = self.channel.activation_coordinator
+        coordinator._status_sink = channel.write_activation_status
+        channel.write_status(self.channel.read_status())
+        self.interface.control_channel = channel
+        candidate = deepcopy(self.scene)
+        candidate['look']['pace'] = .91
+        request, checked = self.check(candidate)
+        self.controller.reject_sparse_next = True
+        self.controller.sparse_failure_evidence = evidence
+        body = {**request, 'check_token': checked['check_token'],
+                'expected_controller_session_id': checked['basis']['controller']['session_id'],
+                'expected_controller_state_revision': checked['basis']['controller']['state_revision']}
+        response = self.client.put('/api/v1/scene', json=body,
+                                   headers={'Idempotency-Key': checked['basis_digest']})
+        self.assertEqual(response.status_code, 202, response.get_json())
+        activation_id = response.get_json()['activation_id']
+        self.assertEqual(process_activation_commands(channel, coordinator), 1)
+        receipt = channel.read_activation_status(activation_id)
+        self.assertEqual(receipt['phase'], 'rolled_back', receipt)
+        self.assertEqual(receipt['rollback']['result'], 'succeeded', receipt)
+        self.assertLess(len(receipt['error'].encode()), 4096)
+        self.assertIn('sequence 1712, expected 1713', receipt['error'])
+        self.assertEqual(receipt['observed_identity'], prior['observed_identity'])
+        self.assertEqual(self.manager.get_scene_state(), self.scene)
+
+        # The normal status file carries detached historical proof, separately
+        # from both current health and the bounded terminal receipt.
+        channel.write_status(controller_status_payload(
+            self.manager, release_id=RELEASE_ID, last_command_id=None, updated_at=time.time(),
+        ))
+        failure = channel.read_status()['receiver_last_failure']
+        self.assertEqual(failure['scene_digest'], canonical_json_sha256(candidate))
+        self.assertEqual(failure['publisher']['driver_status']['foreground_publish_evidence'], evidence)
+        self.controller.sparse_failure_evidence['generation'] = 99
+        self.assertEqual(self.manager.get_current_status()['receiver_last_failure']
+                         ['publisher']['driver_status']['foreground_publish_evidence']['generation'], 2)
+        self.assertEqual(process_activation_commands(channel, coordinator), 0)
 
     def test_saved_canonical_scene_roundtrip_and_stale_native_identity_preserve_bytes(self):
         _,_,receipt=self.activate(self.scene)

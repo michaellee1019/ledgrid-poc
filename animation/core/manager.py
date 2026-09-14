@@ -349,6 +349,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         self._receiver_plant_revision = 0
         self._receiver_foreground_presentation_state = self._empty_presentation_state()
         self._receiver_last_status: Optional[Dict[str, Any]] = None
+        self._receiver_last_failure: Optional[Dict[str, Any]] = None
         self._receiver_hybrid_error: Optional[str] = None
         self._receiver_fallback_active = False
         self._native_background_library = native_background_library
@@ -2266,14 +2267,27 @@ class AnimationManager(CanonicalReceiverSceneMixin):
             if not self._publish_receiver_foreground(
                 foreground, scene_time_us=0, now=self.start_time
             ):
-                # The publisher captured the aggregate driver operation before
-                # compensation and host takeover replace live controller
-                # status.  Preserve that exact failed command and receiver
-                # evidence in the guarded activation receipt.
+                # Keep detailed proof separate from the receipt's bounded
+                # human-readable error. Rollback can replace current receiver
+                # status, so retain this detached, explicitly historical record.
                 sparse_status = publisher.get_status()
+                self._receiver_last_failure = {
+                    "operation": "initial_sparse_snapshot",
+                    "observed_at": time.time(),
+                    "scene_revision": scene.revision,
+                    "scene_digest": getattr(getattr(
+                        getattr(self, "_canonical_receiver_scene", None), "identity", None
+                    ), "digest", None),
+                    "background": scene.background.plugin_id,
+                    "context_revision": self._receiver_context_revision,
+                    "publisher": copy.deepcopy(sparse_status),
+                }
+                operation = sparse_status.get("driver_status", {}).get(
+                    "operation", "foreground_publish_failed"
+                )
+                cause = sparse_status.get("last_error") or "receiver rejected initial foreground"
                 raise RuntimeError(
-                    "initial sparse foreground snapshot was not acknowledged: "
-                    + repr(sparse_status)
+                    f"initial sparse foreground snapshot was not acknowledged ({operation}): {cause}"
                 )
             with self._presentation_state_guard():
                 resolved = self._resolved_vibe
@@ -3526,6 +3540,9 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         receiver_status = self._receiver_hybrid_status_snapshot()
         if receiver_status is not None:
             status['receiver_hybrid'] = receiver_status
+        last_receiver_failure = getattr(self, '_receiver_last_failure', None)
+        if last_receiver_failure is not None:
+            status['receiver_last_failure'] = copy.deepcopy(last_receiver_failure)
 
         performance = self._get_perf_summary()
         if performance:
