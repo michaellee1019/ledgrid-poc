@@ -186,6 +186,119 @@ def transparent_wall(strip_count=32):
 
 
 class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
+    def test_foreground_proofs_qualify_legacy_safe_status_after_v7_ack(self):
+        class LegacySafeDevice(Device):
+            def _status(self, operation=None):
+                status = super()._status(operation)
+                status["receiver_status_version"] = 7
+                return status
+
+            def query_receiver_status(self):
+                status = super().query_receiver_status()
+                status.update(
+                    receiver_status_version=3,
+                    receiver_overlay_committed_generation=0,
+                    receiver_overlay_staged_generation=0,
+                    receiver_overlay_session_id=None,
+                )
+                return status
+
+            def query_causal_receiver_status(self, *, required_status_version):
+                self.calls.append(("causal_status", required_status_version))
+                return self._status()
+
+        devices = [LegacySafeDevice(i) for i in range(5)]
+        item = controller(devices)
+        for generation in (1, 2):
+            self.assertTrue(item.publish_sparse_overlay(
+                transparent_wall(33), controller_session_id=SESSION,
+                generation=generation, prior_generation=generation - 1,
+                scene_revision=7, scene_epoch=11, base_revision=13,
+                lease_ms=3000, present_at_scene_time_us=17,
+                full_snapshot=generation == 1, dirty_ranges=((0, 1),),
+            ))
+        self.assertTrue(item.renew_sparse_overlay(
+            controller_session_id=SESSION, generation=2, lease_ms=3000,
+        ))
+        self.assertTrue(item.clear_sparse_overlay(
+            controller_session_id=SESSION, generation=3, scene_revision=7,
+        ))
+        for device in devices:
+            self.assertEqual([call for call in device.calls if call[0] == "causal_status"],
+                             [("causal_status", 4)] * 6)
+            self.assertEqual(len([call for call in device.calls if call[0] == "commit"]), 2)
+            self.assertEqual(device.committed_generation, 3)
+
+    def test_qualified_status_with_genuinely_missing_generation_still_fails(self):
+        class MissingGenerationDevice(Device):
+            def query_receiver_status(self):
+                status = super().query_receiver_status()
+                if self.committed_generation:
+                    status.update(receiver_status_version=3,
+                                  receiver_overlay_committed_generation=0)
+                return status
+
+            def query_causal_receiver_status(self, *, required_status_version):
+                self.calls.append(("causal_status", required_status_version))
+                status = self._status()
+                status.update(receiver_status_version=7,
+                              receiver_overlay_committed_generation=0)
+                return status
+
+        devices = [MissingGenerationDevice(0)] + [Device(i) for i in range(1, 5)]
+        item = controller(devices)
+        self.assertFalse(item.publish_sparse_overlay(
+            transparent_wall(33), controller_session_id=SESSION,
+            generation=1, prior_generation=0, scene_revision=7,
+            scene_epoch=11, base_revision=13, lease_ms=3000,
+            present_at_scene_time_us=17, full_snapshot=True,
+        ))
+        self.assertIn("retained neither committed nor staged", item._local_background_status["error"])
+        evidence = item._local_background_status["foreground_publish_evidence"]
+        self.assertEqual([entry["status"]["receiver_status_version"]
+                          for entry in evidence["post_commit_statuses"][:2]], [3, 7])
+        self.assertEqual(len([call for call in devices[0].calls if call[0] == "causal_status"]), 1)
+
+    def test_unavailable_qualified_status_fails_without_foreground_mutation(self):
+        class UnqualifiedDevice(Device):
+            def query_receiver_status(self):
+                status = super().query_receiver_status()
+                status["receiver_status_version"] = 3
+                return status
+
+            def query_causal_receiver_status(self, *, required_status_version):
+                self.calls.append(("causal_status", required_status_version))
+                raise RuntimeError("receiver did not provide causal fresh status v4")
+
+        devices = [UnqualifiedDevice(0)] + [Device(i) for i in range(1, 5)]
+        item = controller(devices)
+        self.assertFalse(item.publish_sparse_overlay(
+            transparent_wall(33), controller_session_id=SESSION,
+            generation=1, prior_generation=0, scene_revision=7,
+            scene_epoch=11, base_revision=13, lease_ms=3000,
+            present_at_scene_time_us=17, full_snapshot=True,
+        ))
+        self.assertIn("causal fresh status v4", item._local_background_status["error"])
+        self.assertEqual(devices[0].calls, [("status",), ("causal_status", 4)])
+        self.assertFalse(any(device.calls for device in devices[1:]))
+
+    def test_cached_extended_status_is_not_accepted_as_new_foreground_proof(self):
+        class CachedStatusDevice(Device):
+            def query_receiver_status(self):
+                self._last_transfer_status_sampled = False
+                return super().query_receiver_status()
+
+            def query_causal_receiver_status(self, *, required_status_version):
+                self.calls.append(("causal_status", required_status_version))
+                self._last_transfer_status_sampled = True
+                return self._status()
+
+        device = CachedStatusDevice(0)
+        item = controller([device])
+        status = item._receiver_statuses(required_status_version=4)
+        self.assertEqual(status[0]["receiver_status_version"], 4)
+        self.assertEqual(device.calls, [("status",), ("causal_status", 4)])
+
     def test_failed_post_commit_proof_survives_compensation(self):
         class LostGenerationDevice(Device):
             def query_receiver_status(self):

@@ -2539,6 +2539,7 @@ class MultiDeviceLEDController:
         require_capability=False,
         require_identity=True,
         required_capabilities=None,
+        required_status_version=3,
         status_evidence=None,
     ):
         statuses = []
@@ -2548,6 +2549,27 @@ class MultiDeviceLEDController:
                 status_evidence.append(self._foreground_status_evidence(index, status))
             if not isinstance(status, dict):
                 raise RuntimeError(f"receiver {index} returned no status")
+            if (required_status_version > 3 and (
+                    int(status.get("receiver_status_version", 0) or 0) < required_status_version
+                    or not getattr(device, "_last_transfer_status_sampled", True))):
+                # A legacy-safe v3 packet can follow an exact v7 command ACK.
+                # Its absent foreground extension is not evidence of an empty
+                # generation. Drain read-only for an actual qualified snapshot.
+                query = getattr(device, "query_causal_receiver_status", None)
+                if not callable(query):
+                    raise RuntimeError(
+                        f"receiver {index} cannot obtain fresh status v{required_status_version}"
+                    )
+                status = query(required_status_version=required_status_version)
+                if status_evidence is not None:
+                    status_evidence.append(self._foreground_status_evidence(index, status))
+                if not isinstance(status, dict):
+                    raise RuntimeError(f"receiver {index} returned no status")
+                if (int(status.get("receiver_status_version", 0) or 0) < required_status_version
+                        or not getattr(device, "_last_transfer_status_sampled", True)):
+                    raise RuntimeError(
+                        f"receiver {index} did not provide fresh status v{required_status_version}"
+                    )
             if (require_capability
                     and int(status.get("receiver_status_version", 0) or 0) < 3):
                 raise RuntimeError(f"receiver {index} does not expose status v3")
@@ -2794,6 +2816,7 @@ class MultiDeviceLEDController:
                 statuses = self._receiver_statuses(
                     require_capability=True,
                     required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
+                    required_status_version=4,
                 )
                 if any(int(status.get("receiver_base_mode", -1)) != 1 for status in statuses):
                     raise RuntimeError("sparse foreground requires local background ownership")
@@ -2891,6 +2914,7 @@ class MultiDeviceLEDController:
                 committed = self._receiver_statuses(
                     require_capability=True,
                     required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
+                    required_status_version=4,
                     status_evidence=publish_evidence["post_commit_statuses"],
                 )
                 receiver_states = []
@@ -3017,6 +3041,7 @@ class MultiDeviceLEDController:
                 statuses = self._receiver_statuses(
                     require_capability=True,
                     required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
+                    required_status_version=4,
                 )
                 revisions = {
                     int(status.get("receiver_foreground_scene_revision", -1))
@@ -3120,6 +3145,7 @@ class MultiDeviceLEDController:
                     statuses = self._receiver_statuses(
                         require_capability=True,
                         required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
+                        required_status_version=4,
                     )
                     for index, status in enumerate(statuses):
                         if int(status.get("receiver_foreground_state", -1)) != 0:
