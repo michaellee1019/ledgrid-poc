@@ -892,6 +892,7 @@ class LEDController:
         self._receiver_status_integrity_fresh_count = 0
         self._receiver_status_integrity_last_packets = None
         self._receiver_status_integrity_errors = 0
+        self._receiver_status_integrity_last_failure = None
         self._receiver_status_unprotected_rejections = 0
         self._full_frame_sequence = 0
         self._presentation_commit_context_cache = {}
@@ -1146,7 +1147,8 @@ class LEDController:
                 response = self.spi.xfer2(wire)
                 record_successful_fec_transfer()
                 status_sampled = bool(self._update_receiver_status(
-                    response, full_status_expected=len(wire) >= RECEIVER_STATUS_BYTES_V8
+                    response, full_status_expected=len(wire) >= RECEIVER_STATUS_BYTES_V8,
+                    transfer_bytes=len(wire),
                 ))
                 self._last_transfer_captured_response = True
                 self._last_transfer_status_sampled = status_sampled
@@ -1398,7 +1400,30 @@ class LEDController:
             cls._bounded_uint("common_seed", common_seed, 0xFFFFFFFF),
         )
 
-    def _update_receiver_status(self, response, *, full_status_expected=False):
+    def _record_status_integrity_failure(self, response, reason, *, transfer_bytes=None,
+                                         computed_crc32=None):
+        """Retain one diagnostic only; rejected wire fields never become authority."""
+        size = len(response) if response is not None else 0
+        self._receiver_status_integrity_errors = getattr(
+            self, "_receiver_status_integrity_errors", 0
+        ) + 1
+        self._receiver_status_integrity_last_failure = {
+            "reason": reason,
+            "transfer_index": getattr(self, "_spi_transfers", 0),
+            "transfer_bytes": transfer_bytes,
+            "received_bytes": size,
+            "required_snapshot_bytes": RECEIVER_STATUS_BYTES_V8,
+            "all_zero": not any(response) if response is not None else True,
+            "untrusted_header_hex": bytes(response[:5]).hex() if size else "",
+            "untrusted_claimed_crc32": self._response_u32(response, 1248) if size >= 1252 else None,
+            "computed_crc32": computed_crc32,
+            "untrusted_packets": self._response_u32(response, 12) if size >= 16 else None,
+            "untrusted_command": int(response[313]) if size >= 314 else None,
+            "untrusted_operation_sequence": self._response_u32(response, 316) if size >= 320 else None,
+        }
+
+    def _update_receiver_status(self, response, *, full_status_expected=False,
+                                transfer_bytes=None):
         """Parse the ESP32 status snapshot returned alongside an SPI write."""
         protected = bool(getattr(self, "_receiver_status_integrity_required", False))
         magic = tuple(response[:4]) if response is not None else ()
@@ -1411,9 +1436,9 @@ class LEDController:
                     self._receiver_status_integrity_required = True
                     self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
                 if full_status_expected:
-                    self._receiver_status_integrity_errors = getattr(
-                        self, "_receiver_status_integrity_errors", 0
-                    ) + 1
+                    self._record_status_integrity_failure(
+                        response, "truncated_snapshot", transfer_bytes=transfer_bytes
+                    )
                 return False
             if magic != RECEIVER_STATUS_MAGIC_V8:
                 legacy = magic in (
@@ -1430,16 +1455,18 @@ class LEDController:
                 # Unknown headers, or a downgrade after the causal bootstrap,
                 # are integrity failures and remain visible to strict health.
                 if not legacy or getattr(self, "_receiver_status_integrity_established", False):
-                    self._receiver_status_integrity_errors = getattr(
-                        self, "_receiver_status_integrity_errors", 0
-                    ) + 1
+                    self._record_status_integrity_failure(
+                        response, "legacy_after_bootstrap" if legacy else "invalid_header",
+                        transfer_bytes=transfer_bytes,
+                    )
                 return False
             checksum = binascii.crc32(bytes(response[:RECEIVER_STATUS_BYTES_V7])) & 0xFFFFFFFF
             if (int(response[4]) != 8
                     or self._response_u32(response, RECEIVER_STATUS_BYTES_V7) != checksum):
-                self._receiver_status_integrity_errors = getattr(
-                    self, "_receiver_status_integrity_errors", 0
-                ) + 1
+                self._record_status_integrity_failure(
+                    response, "invalid_version" if int(response[4]) != 8 else "crc32_mismatch",
+                    transfer_bytes=transfer_bytes, computed_crc32=checksum,
+                )
                 return False
             # Nothing authoritative, including negotiation state, changes
             # until the complete snapshot and header pass the checksum.
@@ -3401,7 +3428,7 @@ class LEDController:
             file=sys.stderr,
         )
 
-    def _refresh_configuration(self, force=False):
+    def _refresh_configuration(self, force=False, *, acknowledged=False):
         now = time.time()
         
         # Only send config if it's actually different or forced
@@ -3443,11 +3470,19 @@ class LEDController:
                     global_strip_offset is not None
                 ):
                     cfg.extend(struct.pack(">H", global_strip_offset))
-            self._xfer(cfg)
+            status = None
+            if acknowledged:
+                status = self._command_status(cfg, storage_operation=True)
+                result = int(status.get("receiver_last_result", 0) or 0)
+                if result != 1:
+                    raise RuntimeError(f"receiver rejected configuration (result={result})")
+            else:
+                self._xfer(cfg)
             self._last_config_refresh = now
             self._last_sent_config = current_config
             if self.debug:
                 print(f"✓ Configuration refresh (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
+            return status
 
         # Disabled periodic brightness refresh to reduce SPI corruption opportunities
         # Brightness commands will only be sent when explicitly set via set_brightness()
@@ -3592,7 +3627,11 @@ class LEDController:
                 self._last_frame_duration = duration
                 self._total_frame_duration += duration
 
-    def configure(self):
+    def configure_acknowledged(self):
+        """Provision topology once behind the established causal ACK boundary."""
+        return self.configure(acknowledged=True)
+
+    def configure(self, *, acknowledged=False):
         self.total_leds = self.strip_count * self.leds_per_strip
         fec_semantic_size = 1 + self.total_leds * 3
         if (
@@ -3617,9 +3656,10 @@ class LEDController:
                 self._fec_frame_packet = bytearray(expected_fec_size)
         else:
             self._fec_frame_packet = None
-        self._refresh_configuration(force=True)
+        status = self._refresh_configuration(force=True, acknowledged=acknowledged)
         if self.debug:
             print(f"✓ Configuration sent (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
+        return status
 
     def set_all_pixels(self, colors, *, wall_frame_sequence=None):
         """Send all pixels in one SPI transaction.
@@ -4008,6 +4048,10 @@ class LEDController:
             'receiver_status_integrity_verified': getattr(self, '_receiver_status_integrity_verified', False),
             'receiver_status_integrity_established': getattr(self, '_receiver_status_integrity_established', False),
             'receiver_status_integrity_errors': getattr(self, '_receiver_status_integrity_errors', 0),
+            'receiver_status_integrity_last_failure': (
+                dict(self._receiver_status_integrity_last_failure)
+                if getattr(self, '_receiver_status_integrity_last_failure', None) is not None else None
+            ),
             'receiver_status_unprotected_rejections': getattr(self, '_receiver_status_unprotected_rejections', 0),
             'receiver_status_max_version_seen': getattr(
                 self, '_receiver_status_max_version_seen', 0

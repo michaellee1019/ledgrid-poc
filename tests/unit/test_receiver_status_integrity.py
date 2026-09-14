@@ -18,7 +18,8 @@ def authority(item):
     return copy.deepcopy({key: value for key, value in vars(item).items()
                           if key != 'spi' and not key.endswith('_lock')
                           and key not in ('_receiver_status_integrity_errors',
-                                          '_receiver_status_unprotected_rejections')})
+                                          '_receiver_status_unprotected_rejections',
+                                          '_receiver_status_integrity_last_failure')})
 
 
 class StatusIntegrityTests(unittest.TestCase):
@@ -54,6 +55,35 @@ class StatusIntegrityTests(unittest.TestCase):
         stats = item.get_stats()
         self.assertEqual(stats['receiver_status_integrity_errors'] +
                          stats['receiver_status_unprotected_rejections'], 1252)
+
+    def test_last_integrity_failure_is_detached_untrusted_and_never_authority(self):
+        item = controller()
+        good = status_v8(sequence=191895, command=0x35)
+        item._update_receiver_status(good)
+        before = authority(item)
+        bad = bytearray(good)
+        bad[316:320] = (383790).to_bytes(4, 'big')
+        self.assertFalse(item._update_receiver_status(
+            bad, full_status_expected=True, transfer_bytes=1260))
+        self.assertEqual(authority(item), before)
+        failure = item.get_stats()['receiver_status_integrity_last_failure']
+        self.assertEqual(failure['reason'], 'crc32_mismatch')
+        self.assertFalse(failure['all_zero'])
+        self.assertEqual(failure['untrusted_operation_sequence'], 383790)
+        self.assertEqual(failure['untrusted_command'], 0x35)
+        self.assertNotEqual(failure['computed_crc32'], failure['untrusted_claimed_crc32'])
+        self.assertEqual(item.get_stats()['receiver_operation_sequence'], 191895)
+        failure['reason'] = 'caller mutation'
+        self.assertEqual(item.get_stats()['receiver_status_integrity_last_failure']['reason'],
+                         'crc32_mismatch')
+        self.assertFalse(item._update_receiver_status(
+            bytes(1260), full_status_expected=True, transfer_bytes=1260))
+        self.assertEqual(authority(item), before)
+        latest = item.get_stats()['receiver_status_integrity_last_failure']
+        self.assertEqual(latest['reason'], 'invalid_header')
+        self.assertTrue(latest['all_zero'])
+        self.assertEqual(latest['received_bytes'], 1260)
+        self.assertEqual(item.get_stats()['receiver_status_integrity_errors'], 2)
 
     def test_invalid_first_complete_packet_cannot_negotiate_transport_or_ownership(self):
         item = controller()

@@ -663,28 +663,42 @@ class MultiDeviceLEDController:
         """Best-effort topology provisioning without blocking legacy streaming."""
         for index, device in enumerate(self.devices):
             try:
-                # The ESP32 slave keeps a two-deep response queue: a query
-                # clocks out one older response before its new snapshot can be
-                # observed. Drain depth+1 before deciding whether CONFIG may
-                # use the explicit identity/topology form.
-                # Two identical boot-time queue entries may precede the first
-                # receiver-owned packet-counter advance. Drain enough samples
-                # to prove three fresh capability observations before CONFIG.
-                for _ in range(
-                    SPI_RESPONSE_QUEUE_DEPTH
-                    + TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
-                ):
-                    device.query_receiver_status()
-                device.logical_device_id = index
-                device.configure()
-                device.set_lane_mask(self.receiver_lane_masks[index])
-                if int(device.get_stats().get("receiver_status_version", 0) or 0) >= 3:
-                    status = None
-                    # CONFIG and SET_LANE_MASK each enqueue status behind
-                    # earlier replies. Require a causally post-command sample
-                    # before accepting the installed topology.
-                    for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
+                # Discovery and topology setup run before streaming can supply
+                # status. Pace the two-slot queue, then establish protected
+                # framing before any acknowledged provisioning mutation.
+                fresh_query = getattr(device, "query_fresh_receiver_status", None)
+                causal_query = getattr(device, "query_causal_receiver_status", None)
+                if callable(fresh_query):
+                    status = fresh_query()
+                    required = 8 if status.get("receiver_status_integrity_required") else 3
+                    if callable(causal_query) and (
+                        required == 8 or int(status.get("receiver_status_version", 0) or 0) >= 3
+                    ):
+                        status = causal_query(required_status_version=required)
+                else:
+                    # Legacy/dry-run facades retain their original interface.
+                    for _ in range(
+                        SPI_RESPONSE_QUEUE_DEPTH + TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
+                    ):
                         status = device.query_receiver_status()
+                device.logical_device_id = index
+                config_ack = getattr(device, "configure_acknowledged", None)
+                lane_ack = getattr(device, "set_lane_mask_acknowledged", None)
+                if (int(status.get("receiver_status_version", 0) or 0) >= 3
+                        and callable(config_ack) and callable(lane_ack)):
+                    self._require_ack(config_ack(), "topology configuration", index)
+                    self._require_ack(
+                        lane_ack(self.receiver_lane_masks[index]), "lane-mask configuration", index
+                    )
+                else:
+                    device.configure()
+                    device.set_lane_mask(self.receiver_lane_masks[index])
+                if int(device.get_stats().get("receiver_status_version", 0) or 0) >= 3:
+                    if callable(causal_query):
+                        status = causal_query(required_status_version=3)
+                    else:
+                        for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
+                            status = device.query_receiver_status()
                     expected_topology = {
                         "receiver_logical_device": index,
                         "receiver_active_strips": self.receiver_strip_counts[index],
