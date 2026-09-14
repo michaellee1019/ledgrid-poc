@@ -229,8 +229,12 @@ packet freshness checks remain mandatory; a valid CRC is not itself an ACK.
 Short ordinary MISO transfers remain unsampled. Invalid full snapshots are
 unsampled and counted in `receiver_status_integrity_errors`; initial queued
 legacy replies use the separate `receiver_status_unprotected_rejections`
-counter. A legacy reply after verified protection is also an integrity error.
-Deployment requires current verified v8 status and zero integrity errors.
+counter. During reconnect, a legacy reply can be queued behind an old v8 reply.
+A separate bootstrap barrier requires more than two distinct increasing verified
+v8 observations (a non-increasing packet counter resets this count). A legacy
+reply after that barrier is also an integrity error. Deployment and native
+readiness require the barrier, current verified v8 status and the existing strict
+health checks; deployment additionally requires zero status integrity errors.
 
 ## Receiver status v3
 

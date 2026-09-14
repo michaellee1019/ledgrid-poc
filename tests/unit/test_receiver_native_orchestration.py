@@ -95,6 +95,7 @@ class _Receiver:
         status = {
             "receiver_status_version": 8,
             "receiver_status_integrity_verified": True,
+            "receiver_status_integrity_established": True,
             "receiver_capabilities": NATIVE_BACKGROUND_REQUIRED_CAPABILITIES,
             "receiver_logical_device": self.receiver_id,
             "receiver_native_result": 1,
@@ -302,6 +303,7 @@ class ReceiverNativeOrchestrationTests(unittest.TestCase):
         wall = _wall([receiver])
         for changes in ({"receiver_status_version": 7},
                         {"receiver_status_integrity_verified": False},
+                        {"receiver_status_integrity_established": False},
                         {"receiver_capabilities": NATIVE_BACKGROUND_REQUIRED_CAPABILITIES & ~(1 << 21)}):
             with self.subTest(changes=changes):
                 status = receiver._status() | changes

@@ -883,6 +883,7 @@ class MultiDeviceLEDController:
         if (
             int(status.get("receiver_status_version", 0) or 0) < 8
             or status.get("receiver_status_integrity_verified") is not True
+            or status.get("receiver_status_integrity_established") is not True
             or capabilities & CAPABILITY_STATUS_CRC32_V8 != CAPABILITY_STATUS_CRC32_V8
             or capabilities & CAPABILITY_STATUS_V6 != CAPABILITY_STATUS_V6
         ):
@@ -934,7 +935,8 @@ class MultiDeviceLEDController:
         if not isinstance(status, dict):
             raise RuntimeError(f"receiver {receiver_id} returned no {operation} status")
         if (int(status.get("receiver_status_version", 0) or 0) < 8
-                or status.get("receiver_status_integrity_verified") is not True):
+                or status.get("receiver_status_integrity_verified") is not True
+                or status.get("receiver_status_integrity_established") is not True):
             raise RuntimeError(
                 f"receiver {receiver_id} returned unprotected {operation} status"
             )

@@ -706,6 +706,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 "receiver_status_max_version_seen": version,
                 "receiver_status_integrity_required": version >= 8,
                 "receiver_status_integrity_verified": version >= 8,
+                "receiver_status_integrity_established": version >= 8,
                 "receiver_status_integrity_errors": 0,
                 "receiver_capabilities": capabilities,
                 "transport_envelope_enabled": True,
@@ -1704,6 +1705,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
 
         cases = []
         for field, value in (("receiver_status_integrity_verified", False),
+                             ("receiver_status_integrity_established", False),
                              ("receiver_status_integrity_required", False),
                              ("receiver_status_integrity_errors", 1),
                              ("receiver_status_integrity_errors", None)):

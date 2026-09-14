@@ -3116,6 +3116,7 @@ def _receiver_health_rejection(
         if minimum_version >= 8 and (
             status.get("receiver_status_integrity_required") is not True
             or status.get("receiver_status_integrity_verified") is not True
+            or status.get("receiver_status_integrity_established") is not True
             or type(status.get("receiver_status_integrity_errors")) is not int
             or status["receiver_status_integrity_errors"] != 0
         ):

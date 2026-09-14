@@ -92,6 +92,84 @@ class StatusIntegrityTests(unittest.TestCase):
                 self.assertFalse(stats['receiver_status_integrity_verified'])
                 self.assertEqual(item._receiver_status_query_bytes, 1252)
 
+    def test_real_two_slot_sticky_reconnect_drains_interleaved_legacy_without_false_error(self):
+        class ReceiverQueue:
+            def __init__(self):
+                self.counter = 2
+                self.sticky_v8 = True
+                self.lengths = []
+                self.queued = [self.snapshot(8, 1), self.snapshot(8, 2)]
+
+            @staticmethod
+            def snapshot(version, counter):
+                packet = status_v8(sequence=191895)
+                packet[12:16] = counter.to_bytes(4, 'big')
+                if version == 3:
+                    packet = packet[:320]
+                    packet[:5] = b'LGS3\x03'
+                else:
+                    checksum_status(packet)
+                return packet + bytes(4096 - len(packet))
+
+            def xfer2(self, packet):
+                wire = bytes(packet)
+                if wire[0] == protocol.CMD_ALIGNED_ENVELOPE:
+                    size = int.from_bytes(wire[2:4], 'big')
+                    semantic = wire[4:4 + size]
+                else:
+                    semantic = wire[:-2]
+                self.lengths.append(len(semantic))
+                result = self.queued.pop(0)[:len(wire)]
+                self.assert_query(semantic)
+                self.counter += 1
+                self.sticky_v8 = len(semantic) == 1252
+                self.queued.append(self.snapshot(8 if self.sticky_v8 else 3, self.counter))
+                return result
+
+            @staticmethod
+            def assert_query(semantic):
+                assert semantic[0] == protocol.CMD_STATUS_QUERY
+                assert not any(semantic[1:])
+
+        spi = ReceiverQueue()
+        item = controller(spi)
+        item.query_receiver_status()  # Q320 reads old v8A prefix, queues legacy C.
+        self.assertTrue(item.get_stats()['receiver_status_integrity_required'])
+        self.assertFalse(item.get_stats()['receiver_status_integrity_verified'])
+        item.query_receiver_status()  # Q1252 reads old complete v8B.
+        self.assertTrue(item.get_stats()['receiver_status_integrity_verified'])
+        self.assertFalse(item.get_stats()['receiver_status_integrity_established'])
+        before = authority(item)
+        item.query_receiver_status()  # Q1252 reads legitimate queued legacy C.
+        self.assertEqual(item.get_stats()['receiver_status_integrity_errors'], 0)
+        self.assertEqual(item.get_stats()['receiver_status_unprotected_rejections'], 1)
+        self.assertEqual(item.get_stats()['receiver_operation_sequence'], 191895)
+        self.assertEqual(item.get_stats()['receiver_status_version'], 8)
+        # Transport byte counters may advance; authoritative status cannot.
+        self.assertEqual(item._receiver_packets, before['_receiver_packets'])
+        with patch.object(protocol.time, 'sleep'):
+            result = item.query_causal_receiver_status(required_status_version=8)
+        self.assertTrue(result['receiver_status_integrity_established'])
+        self.assertEqual(result['receiver_status_integrity_errors'], 0)
+        self.assertEqual(spi.lengths[0], 320)
+        self.assertEqual(set(spi.lengths[1:]), {1252})
+        spi.queued[0] = spi.snapshot(3, spi.counter + 1)
+        item.query_receiver_status()
+        self.assertEqual(item.get_stats()['receiver_status_integrity_errors'], 1)
+        self.assertEqual(item._receiver_status_query_bytes, 1252)
+        self.assertTrue(item.get_stats()['receiver_status_integrity_established'])
+
+    def test_bootstrap_requires_three_distinct_advancing_checked_snapshots(self):
+        item = controller()
+        for packets in (50, 51, 51, 0, 1):
+            packet = status_v8()
+            packet[12:16] = packets.to_bytes(4, 'big')
+            item._update_receiver_status(checksum_status(packet))
+            self.assertFalse(item.get_stats()['receiver_status_integrity_established'])
+        packet[12:16] = (2).to_bytes(4, 'big')
+        item._update_receiver_status(checksum_status(packet))
+        self.assertTrue(item.get_stats()['receiver_status_integrity_established'])
+
     def test_short_ordinary_transfers_are_unsampled_but_full_truncation_is_counted(self):
         item = controller()
         item._update_receiver_status(status_v8())

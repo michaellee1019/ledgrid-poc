@@ -888,6 +888,9 @@ class LEDController:
         self._last_transfer_status_sampled = False
         self._receiver_status_integrity_required = False
         self._receiver_status_integrity_verified = False
+        self._receiver_status_integrity_established = False
+        self._receiver_status_integrity_fresh_count = 0
+        self._receiver_status_integrity_last_packets = None
         self._receiver_status_integrity_errors = 0
         self._receiver_status_unprotected_rejections = 0
         self._full_frame_sequence = 0
@@ -1424,9 +1427,9 @@ class LEDController:
                         self, "_receiver_status_unprotected_rejections", 0
                     ) + 1
                 # Initial queued legacy replies are expected discovery drains.
-                # Unknown headers, or a downgrade after verified protection,
+                # Unknown headers, or a downgrade after the causal bootstrap,
                 # are integrity failures and remain visible to strict health.
-                if not legacy or getattr(self, "_receiver_status_integrity_verified", False):
+                if not legacy or getattr(self, "_receiver_status_integrity_established", False):
                     self._receiver_status_integrity_errors = getattr(
                         self, "_receiver_status_integrity_errors", 0
                     ) + 1
@@ -1443,7 +1446,22 @@ class LEDController:
             self._receiver_status_integrity_required = True
             self._receiver_status_integrity_verified = True
             self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
-            return bool(self._update_receiver_status_v7(response))
+            fresh = bool(self._update_receiver_status_v7(response))
+            if not getattr(self, "_receiver_status_integrity_established", False):
+                packets = self._receiver_packets
+                previous = getattr(self, "_receiver_status_integrity_last_packets", None)
+                count = getattr(self, "_receiver_status_integrity_fresh_count", 0)
+                if previous is not None and packets <= previous:
+                    count = 0
+                if fresh:
+                    count += 1
+                self._receiver_status_integrity_last_packets = packets
+                self._receiver_status_integrity_fresh_count = count
+                # A legacy query from a reconnecting host may have queued one
+                # legacy reply behind a previously queued v8 reply. Only after
+                # this causal barrier is any further legacy reply a downgrade.
+                self._receiver_status_integrity_established = count > SPI_RESPONSE_QUEUE_DEPTH
+            return fresh
         if (response is not None and len(response) >= RECEIVER_STATUS_BYTES_V3
                 and magic in (RECEIVER_STATUS_MAGIC_V3, RECEIVER_STATUS_MAGIC_V4,
                               RECEIVER_STATUS_MAGIC_V5, RECEIVER_STATUS_MAGIC_V6,
@@ -2253,6 +2271,7 @@ class LEDController:
                         if (
                             fresh_count > SPI_RESPONSE_QUEUE_DEPTH
                             and int(status.get("receiver_status_version", 0) or 0) >= required
+                            and (required < 8 or status.get("receiver_status_integrity_established") is True)
                         ):
                             return status
                 remaining = deadline - time.monotonic()
@@ -3987,6 +4006,7 @@ class LEDController:
             'receiver_status_version': self._receiver_status_version,
             'receiver_status_integrity_required': getattr(self, '_receiver_status_integrity_required', False),
             'receiver_status_integrity_verified': getattr(self, '_receiver_status_integrity_verified', False),
+            'receiver_status_integrity_established': getattr(self, '_receiver_status_integrity_established', False),
             'receiver_status_integrity_errors': getattr(self, '_receiver_status_integrity_errors', 0),
             'receiver_status_unprotected_rejections': getattr(self, '_receiver_status_unprotected_rejections', 0),
             'receiver_status_max_version_seen': getattr(
