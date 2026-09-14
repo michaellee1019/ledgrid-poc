@@ -106,7 +106,7 @@ def _controller(*, requested):
     item._last_frame_duration = 0.0
     item._total_frame_duration = 0.0
     item._refresh_configuration = lambda: None
-    item._update_receiver_status = lambda _response: False
+    item._update_receiver_status = lambda _response, **_kwargs: False
     return item
 
 
@@ -361,7 +361,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         item._transport_envelope_enabled = True
         item._fec_transport_enabled = True
         item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V7
-        item._update_receiver_status = lambda _response: True
+        item._update_receiver_status = lambda _response, **_kwargs: True
         colors = np.zeros((8 * 138, 3), dtype=np.uint8)
 
         with mock.patch.object(protocol.time, "sleep") as sleep:
@@ -399,7 +399,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         item = _controller(requested=True)
         item._transport_envelope_enabled = True
         item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V7
-        item._update_receiver_status = lambda _response: True
+        item._update_receiver_status = lambda _response, **_kwargs: True
         colors = np.zeros((8 * 138, 3), dtype=np.uint8)
 
         with mock.patch.object(protocol.time, "sleep") as sleep:

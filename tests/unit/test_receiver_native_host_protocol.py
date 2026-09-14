@@ -84,6 +84,20 @@ def status_v6(*, command=0, sequence=0, result=1, flags=0xFF,
     return response
 
 
+def checksum_status(response):
+    if response[:5] == b"LGS8\x08":
+        response[1248:1252] = (binascii.crc32(response[:1248]) & 0xFFFFFFFF).to_bytes(4, "big")
+    return response
+
+
+def status_v8(**kwargs):
+    response = status_v6(**kwargs) + bytearray(36)
+    response[:5] = b"LGS8\x08"
+    capabilities = int.from_bytes(response[64:68], "big")
+    response[64:68] = (capabilities | protocol.CAPABILITY_STATUS_CRC32_V8).to_bytes(4, "big")
+    return checksum_status(response)
+
+
 class _QueuedNativeSpi:
     def __init__(self, *, result=1):
         self.max_speed_hz = 20_000_000
@@ -92,20 +106,21 @@ class _QueuedNativeSpi:
         self.sequence = 0
         self.result = result
         self.packets = []
-        self.queued = [status_v6(), status_v6()]
+        self.queued = [status_v8(), status_v8()]
 
     def xfer2(self, packet):
         wire = bytes(packet)
         self.packets.append(wire)
         response = self.queued.pop(0)[:len(wire)]
-        if wire[0] != protocol.CMD_STATUS_QUERY:
-            self.command = wire[0]
+        command = wire[4] if wire[0] == protocol.CMD_ALIGNED_ENVELOPE else wire[0]
+        if command != protocol.CMD_STATUS_QUERY:
+            self.command = command
             self.sequence += 1
-        snapshot = status_v6(
+        snapshot = status_v8(
             command=self.command, sequence=self.sequence, result=self.result,
         )
         snapshot[12:16] = len(self.packets).to_bytes(4, "big")
-        self.queued.append(snapshot)
+        self.queued.append(checksum_status(snapshot))
         return response
 
 
@@ -114,8 +129,9 @@ class _DelayedRefillNativeSpi:
 
     def __init__(
         self, *, acknowledge=True, command_delay=0.003, ack_command=None,
-        ack_increment=1, frozen_counter=False,
+        ack_increment=1, frozen_counter=False, integrity=True,
     ):
+        self.integrity = integrity
         self.now = 0.0
         self.command = protocol.CMD_SET_ALL
         self.sequence = 4412
@@ -132,7 +148,8 @@ class _DelayedRefillNativeSpi:
         self.ready = [self.status(6), self.status(6)]
 
     def status(self, version):
-        result = status_v6(command=self.command, sequence=self.sequence)
+        result = (status_v8 if self.integrity else status_v6)(
+            command=self.command, sequence=self.sequence)
         packets = 0 if self.frozen_counter else self.received
         result[12:16] = packets.to_bytes(4, "big")
         result[314] = 1
@@ -140,10 +157,10 @@ class _DelayedRefillNativeSpi:
         result[64:68] = (
             capabilities | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
         ).to_bytes(4, "big")
-        if version == 3:
+        if version == 3 and not self.integrity:
             result = result[:protocol.RECEIVER_STATUS_BYTES_V3]
             result[:5] = b"LGS3\x03"
-        return result
+        return checksum_status(result)
 
     def sleep(self, seconds):
         self.now += seconds
@@ -184,9 +201,9 @@ class _DelayedRefillLocalSpi(_DelayedRefillNativeSpi):
     def status(self, version):
         result = super().status(version)
         result[68] = 1  # LocalBackground, also used by receiver-native modules.
-        if version >= 4:
+        if len(result) >= protocol.RECEIVER_STATUS_BYTES_V4:
             result[320] = 1  # Sparse operation accepted.
-        return result
+        return checksum_status(result)
 
 
 def local_sparse_workload_timing():
@@ -241,12 +258,13 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
 
         for legacy_fast_path in (True, False):
             with self.subTest(legacy_fast_path=legacy_fast_path):
-                spi = _DelayedRefillLocalSpi()
+                spi = _DelayedRefillLocalSpi(integrity=not legacy_fast_path)
                 spi.command = protocol.CMD_NATIVE_ACTIVATE
                 spi.ready = [spi.status(6), spi.status(6)]
                 item = controller(spi)
                 item._transport_envelope_enabled = True
-                item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+                item._receiver_status_query_bytes = (protocol.RECEIVER_STATUS_BYTES_V6
+                    if legacy_fast_path else protocol.RECEIVER_STATUS_BYTES_V8)
                 item._receiver_base_mode = 0 if legacy_fast_path else 1
                 arguments = dict(
                     controller_session_id=bytes(range(16)),
@@ -519,7 +537,7 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
         item._transport_envelope_enabled = True
         cached = spi.status(6)
         cached[16:20] = (17).to_bytes(4, "big")
-        item._update_receiver_status(cached)
+        item._update_receiver_status(checksum_status(cached))
         serialized = []
 
         def serialize():
@@ -567,8 +585,9 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
                 result[312] = 0
                 result[64:68] = (
                     NATIVE_BACKGROUND_REQUIRED_CAPABILITIES | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
+                    | protocol.CAPABILITY_STATUS_CRC32_V8
                 ).to_bytes(4, "big")
-                return result
+                return checksum_status(result)
 
         spi = SnapshotSpi()
         spi.ready = []

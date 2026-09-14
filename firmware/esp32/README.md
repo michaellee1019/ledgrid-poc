@@ -95,8 +95,9 @@ semantic size is therefore at most 4,090 bytes. Nonzero padding, an unknown
 version, an inconsistent size, a bad CRC, or an unaligned envelope fails closed.
 
 For rolling compatibility, firmware still decodes the legacy
-`semantic || CRC-16` packet. A new host sends only legacy discovery traffic
-until three consecutive valid status-v3+ snapshots advertise aligned-envelope
+`semantic || CRC-16` packet. A new host initially uses legacy discovery traffic,
+then requests protected status v8 using an aligned read-only query. Ordinary
+command framing changes only after three valid snapshots advertise aligned-envelope
 capability `1<<14` with a strictly advancing receiver-owned `receiver_packets`
 counter. Repeated stale, malformed, truncated, or bad-magic snapshots reset the
 pending streak without changing the active framing state; a counter rollback
@@ -205,6 +206,32 @@ physical lane. The installed mask is `0xff` because the assembled connector lane
 was not recorded; input and status geometry remain exactly one strip and 138
 pixels rather than an eight-strip padded frame.
 
+## Checksummed receiver status v8
+
+Every current image advertises `status_crc32_v8 = 1<<21`. Status v8 is 1,252
+bytes: `LGS8`, version byte 8, unchanged v7 field offsets 5–1247, and a big-endian
+IEEE CRC32 trailer at 1248–1251. The CRC covers all bytes 0–1247, including the
+magic and version (reflected polynomial `0xEDB88320`, initial/final XOR
+`0xFFFFFFFF`). It protects MISO status separately from MOSI command CRC/FEC.
+
+Boot defaults to legacy discovery. An accepted 1,252-byte status query selects
+v8 for subsequent queued replies, including replies accompanying short ordinary
+commands. Only an explicit accepted legacy-length status query restores legacy
+format for an old host reconnect; the two already queued snapshots are retained.
+A new host treats a legacy capability hint or a truncated `LGS8` prefix only as
+permission to request protected status. Pending protection rejects legacy
+snapshots before the first valid v8 packet. Complete CRC validation precedes all
+status, capability, FEC, ownership and acknowledgement parsing. Protection never
+downgrades; a receiver reboot must re-establish fresh protected status.
+
+Native playback requires v8. Exact command/next-operation-sequence and causal
+packet freshness checks remain mandatory; a valid CRC is not itself an ACK.
+Short ordinary MISO transfers remain unsampled. Invalid full snapshots are
+unsampled and counted in `receiver_status_integrity_errors`; initial queued
+legacy replies use the separate `receiver_status_unprotected_rejections`
+counter. A legacy reply after verified protection is also an integrity error.
+Deployment requires current verified v8 status and zero integrity errors.
+
 ## Receiver status v3
 
 The ESP32 returns a 320-byte `LGS3` snapshot over MISO. Bytes 5–63 preserve the
@@ -226,8 +253,8 @@ uses `last_processed_command` plus `operation_sequence` to bind later status to
 the exact CRC-valid operation. Status queries do not advance that sequence.
 
 Aligned-envelope capability bit `1<<14` is present in every current firmware
-environment. A 320/416/768/1,216/1,248-byte semantic status query clocks
-328/424/776/1,224/1,256 bytes respectively after wrapping, leaving room for the full
+environment. A 320/416/768/1,216/1,248/1,252-byte semantic status query clocks
+328/424/776/1,224/1,256/1,260 bytes respectively after wrapping, leaving room for the full
 MISO snapshot while satisfying the DMA transaction-length rule.
 
 When status-v3 advertises sparse-overlay capability bit `1<<4`, a new host may

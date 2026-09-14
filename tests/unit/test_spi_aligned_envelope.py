@@ -62,7 +62,7 @@ def _controller(*, envelope):
     item._aligned_frame_packet = bytearray(
         protocol._aligned_envelope_wire_size(1 + 8 * 138 * 3)
     )
-    item._update_receiver_status = lambda _response: True
+    item._update_receiver_status = lambda _response, **_kwargs: True
     item.strip_count = 8
     item.leds_per_strip = 138
     item.total_leds = 8 * 138

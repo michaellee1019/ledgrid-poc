@@ -23,6 +23,7 @@ from drivers.spi_controller import (
     CAPABILITY_SPARSE_OVERLAY_V1,
     CAPABILITY_SPARSE_OVERLAY_BATCH_V1,
     CAPABILITY_STATUS_V6,
+    CAPABILITY_STATUS_CRC32_V8,
     CAPABILITY_NATIVE_MODULE_V2,
     CAPABILITY_NATIVE_CACHE_V1,
     CAPABILITY_NATIVE_TYPED_PARAMETERS_V1,
@@ -70,6 +71,7 @@ SPARSE_OVERLAY_REQUIRED_CAPABILITIES = (
 NATIVE_BACKGROUND_REQUIRED_CAPABILITIES = (
     CAPABILITY_ALIGNED_ENVELOPE_V1
     | CAPABILITY_STATUS_V6
+    | CAPABILITY_STATUS_CRC32_V8
     | CAPABILITY_NATIVE_MODULE_V2
     | CAPABILITY_NATIVE_CACHE_V1
     | CAPABILITY_NATIVE_TYPED_PARAMETERS_V1
@@ -866,9 +868,9 @@ class MultiDeviceLEDController:
         device = self.devices[receiver_id]
         status = None
         try:
-            # Even diagnostic reads require coherent v6; require_capabilities
+            # Even diagnostic reads require protected v8; require_capabilities
             # only relaxes module/readiness gates below, never snapshot format.
-            status = device.query_causal_receiver_status(required_status_version=6)
+            status = device.query_causal_receiver_status(required_status_version=8)
         except Exception as exc:
             raise NativeBackgroundOperationError(
                 f"receiver {receiver_id} native status refresh failed: {exc}"
@@ -879,11 +881,13 @@ class MultiDeviceLEDController:
             )
         capabilities = int(status.get("receiver_capabilities", 0) or 0)
         if (
-            int(status.get("receiver_status_version", 0) or 0) < 6
+            int(status.get("receiver_status_version", 0) or 0) < 8
+            or status.get("receiver_status_integrity_verified") is not True
+            or capabilities & CAPABILITY_STATUS_CRC32_V8 != CAPABILITY_STATUS_CRC32_V8
             or capabilities & CAPABILITY_STATUS_V6 != CAPABILITY_STATUS_V6
         ):
             raise NativeBackgroundOperationError(
-                f"receiver {receiver_id} returned no coherent native status-v6"
+                f"receiver {receiver_id} returned no protected native status-v8"
             )
         if require_capabilities and (
             capabilities & NATIVE_BACKGROUND_REQUIRED_CAPABILITIES
@@ -929,9 +933,10 @@ class MultiDeviceLEDController:
     def _require_native_ack(status, operation, receiver_id):
         if not isinstance(status, dict):
             raise RuntimeError(f"receiver {receiver_id} returned no {operation} status")
-        if int(status.get("receiver_status_version", 0) or 0) < 6:
+        if (int(status.get("receiver_status_version", 0) or 0) < 8
+                or status.get("receiver_status_integrity_verified") is not True):
             raise RuntimeError(
-                f"receiver {receiver_id} returned pre-v6 {operation} status"
+                f"receiver {receiver_id} returned unprotected {operation} status"
             )
         result = int(status.get("receiver_native_result", 0) or 0)
         if result != 1:

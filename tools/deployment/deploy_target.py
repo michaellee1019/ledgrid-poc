@@ -3100,18 +3100,26 @@ def _receiver_health_rejection(
             return f"receiver {logical_id} has no fresh status response"
         if type(responses) is not int or responses <= 0:
             return f"receiver {logical_id} status response evidence is not fresh"
+        minimum_latest_version = 8 if minimum_version >= 8 else 3
         if (
             type(version) is not int
             or type(max_version_seen) is not int
-            or version < 3
+            or version < minimum_latest_version
             or max_version_seen < minimum_version
             or version > max_version_seen
         ):
             return (
                 f"receiver {logical_id} status observation is insufficient: "
                 f"latest=v{version!r}, max_seen=v{max_version_seen!r}, "
-                f"required latest>=v3 and observed>=v{minimum_version}"
+                f"required latest>=v{minimum_latest_version} and observed>=v{minimum_version}"
             )
+        if minimum_version >= 8 and (
+            status.get("receiver_status_integrity_required") is not True
+            or status.get("receiver_status_integrity_verified") is not True
+            or type(status.get("receiver_status_integrity_errors")) is not int
+            or status["receiver_status_integrity_errors"] != 0
+        ):
+            return f"receiver {logical_id} status integrity is not verified and clean"
         if (
             type(capabilities) is not int
             or capabilities & required_capabilities != required_capabilities

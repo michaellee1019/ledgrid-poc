@@ -64,6 +64,7 @@ RECEIVER_STATUS_MAGIC_V4 = (ord('L'), ord('G'), ord('S'), ord('4'))
 RECEIVER_STATUS_MAGIC_V5 = (ord('L'), ord('G'), ord('S'), ord('5'))
 RECEIVER_STATUS_MAGIC_V6 = (ord('L'), ord('G'), ord('S'), ord('6'))
 RECEIVER_STATUS_MAGIC_V7 = (ord('L'), ord('G'), ord('S'), ord('7'))
+RECEIVER_STATUS_MAGIC_V8 = (ord('L'), ord('G'), ord('S'), ord('8'))
 RECEIVER_STATUS_BYTES = 29
 RECEIVER_STATUS_BYTES_V2 = 68
 RECEIVER_STATUS_BYTES_V3 = 320
@@ -71,6 +72,7 @@ RECEIVER_STATUS_BYTES_V4 = 416
 RECEIVER_STATUS_BYTES_V5 = 768
 RECEIVER_STATUS_BYTES_V6 = 1216
 RECEIVER_STATUS_BYTES_V7 = 1248
+RECEIVER_STATUS_BYTES_V8 = 1252
 # The ESP32 slave keeps two response buffers queued. A command's result is
 # therefore observable after two complete status-query transfers.
 SPI_RESPONSE_QUEUE_DEPTH = 2
@@ -641,6 +643,7 @@ CAPABILITY_FEC_ENVELOPE_V4 = 1 << 17
 CAPABILITY_FEC_ENVELOPE_V5 = 1 << 18
 CAPABILITY_FEC_ENVELOPE_V6 = 1 << 19
 CAPABILITY_FEC_ENVELOPE_V7 = 1 << 20
+CAPABILITY_STATUS_CRC32_V8 = 1 << 21
 
 ALL_LANES_MASK = 0xFF
 STAGGER_OFF = 1
@@ -883,6 +886,10 @@ class LEDController:
         self._writebytes2_supported = None
         self._last_transfer_captured_response = False
         self._last_transfer_status_sampled = False
+        self._receiver_status_integrity_required = False
+        self._receiver_status_integrity_verified = False
+        self._receiver_status_integrity_errors = 0
+        self._receiver_status_unprotected_rejections = 0
         self._full_frame_sequence = 0
         self._presentation_commit_context_cache = {}
         self._monotonic_ns = time.monotonic_ns
@@ -985,6 +992,10 @@ class LEDController:
         with transport_lock:
             envelope_enabled = bool(
                 getattr(self, "_transport_envelope_enabled", False)
+                # A protected-status query defines aligned framing itself;
+                # bootstrap need not trust legacy capability observations.
+                or (payload_length == RECEIVER_STATUS_BYTES_V8
+                    and buf[0] == CMD_STATUS_QUERY)
             )
             fec_enabled = bool(
                 envelope_enabled
@@ -1131,7 +1142,9 @@ class LEDController:
                         self._writebytes2_supported = False
                 response = self.spi.xfer2(wire)
                 record_successful_fec_transfer()
-                status_sampled = bool(self._update_receiver_status(response))
+                status_sampled = bool(self._update_receiver_status(
+                    response, full_status_expected=len(wire) >= RECEIVER_STATUS_BYTES_V8
+                ))
                 self._last_transfer_captured_response = True
                 self._last_transfer_status_sampled = status_sampled
                 return response
@@ -1382,8 +1395,64 @@ class LEDController:
             cls._bounded_uint("common_seed", common_seed, 0xFFFFFFFF),
         )
 
-    def _update_receiver_status(self, response):
+    def _update_receiver_status(self, response, *, full_status_expected=False):
         """Parse the ESP32 status snapshot returned alongside an SPI write."""
+        protected = bool(getattr(self, "_receiver_status_integrity_required", False))
+        magic = tuple(response[:4]) if response is not None else ()
+        if magic == RECEIVER_STATUS_MAGIC_V8 or protected:
+            if response is None or len(response) < RECEIVER_STATUS_BYTES_V8:
+                if (not protected and magic == RECEIVER_STATUS_MAGIC_V8
+                        and len(response) >= 5 and int(response[4]) == 8):
+                    # Reconnecting to a sticky-v8 receiver may clock only its
+                    # prefix. Treat that header as discovery, never authority.
+                    self._receiver_status_integrity_required = True
+                    self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
+                if full_status_expected:
+                    self._receiver_status_integrity_errors = getattr(
+                        self, "_receiver_status_integrity_errors", 0
+                    ) + 1
+                return False
+            if magic != RECEIVER_STATUS_MAGIC_V8:
+                legacy = magic in (
+                    RECEIVER_STATUS_MAGIC, RECEIVER_STATUS_MAGIC_V2,
+                    RECEIVER_STATUS_MAGIC_V3, RECEIVER_STATUS_MAGIC_V4,
+                    RECEIVER_STATUS_MAGIC_V5, RECEIVER_STATUS_MAGIC_V6,
+                    RECEIVER_STATUS_MAGIC_V7,
+                )
+                if legacy:
+                    self._receiver_status_unprotected_rejections = getattr(
+                        self, "_receiver_status_unprotected_rejections", 0
+                    ) + 1
+                # Initial queued legacy replies are expected discovery drains.
+                # Unknown headers, or a downgrade after verified protection,
+                # are integrity failures and remain visible to strict health.
+                if not legacy or getattr(self, "_receiver_status_integrity_verified", False):
+                    self._receiver_status_integrity_errors = getattr(
+                        self, "_receiver_status_integrity_errors", 0
+                    ) + 1
+                return False
+            checksum = binascii.crc32(bytes(response[:RECEIVER_STATUS_BYTES_V7])) & 0xFFFFFFFF
+            if (int(response[4]) != 8
+                    or self._response_u32(response, RECEIVER_STATUS_BYTES_V7) != checksum):
+                self._receiver_status_integrity_errors = getattr(
+                    self, "_receiver_status_integrity_errors", 0
+                ) + 1
+                return False
+            # Nothing authoritative, including negotiation state, changes
+            # until the complete snapshot and header pass the checksum.
+            self._receiver_status_integrity_required = True
+            self._receiver_status_integrity_verified = True
+            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
+            return bool(self._update_receiver_status_v7(response))
+        if (response is not None and len(response) >= RECEIVER_STATUS_BYTES_V3
+                and magic in (RECEIVER_STATUS_MAGIC_V3, RECEIVER_STATUS_MAGIC_V4,
+                              RECEIVER_STATUS_MAGIC_V5, RECEIVER_STATUS_MAGIC_V6,
+                              RECEIVER_STATUS_MAGIC_V7)
+                and self._response_u32(response, 64) & CAPABILITY_STATUS_CRC32_V8):
+            # Legacy bytes advertise discovery only, never protected authority.
+            self._receiver_status_integrity_required = True
+            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
+            return False
         # SPI is full duplex, so the response can only be as long as the
         # command. Short control/configuration transfers cannot carry either
         # status structure and therefore are not telemetry misses.
@@ -1661,8 +1730,8 @@ class LEDController:
         fec_terminal_telemetry_available = bool(
             len(response) >= RECEIVER_STATUS_BYTES_V7
             and tuple(int(response[index]) for index in range(4))
-            == RECEIVER_STATUS_MAGIC_V7
-            and int(response[4]) == 7
+            in (RECEIVER_STATUS_MAGIC_V7, RECEIVER_STATUS_MAGIC_V8)
+            and int(response[4]) in (7, 8)
         )
         defer_fec_observation = (
             getattr(self, "_fec_transport_requested", False)
@@ -1729,7 +1798,9 @@ class LEDController:
             self._receiver_stagger_phases == LEGACY_SNAPSHOT_SENTINEL
         )
         self._receiver_operation_sequence = self._response_u32(response, 316)
-        if self._receiver_capabilities & (
+        if getattr(self, "_receiver_status_integrity_required", False):
+            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
+        elif self._receiver_capabilities & (
             CAPABILITY_FEC_ENVELOPE_V2
             | CAPABILITY_FEC_ENVELOPE_V3
             | CAPABILITY_FEC_ENVELOPE_V4
@@ -2109,11 +2180,15 @@ class LEDController:
 
     def _clock_receiver_status_snapshot(self):
         """Transfer one status-length query and parse its returned snapshot."""
-        payload = bytearray(
-            getattr(self, "_receiver_status_query_bytes", RECEIVER_STATUS_BYTES_V3)
-        )
-        payload[0] = CMD_STATUS_QUERY
-        self._xfer(payload)
+        transport_lock = getattr(self, "_transport_lock", None)
+        if transport_lock is None:
+            transport_lock = self._transport_lock = threading.RLock()
+        with transport_lock:
+            payload = bytearray(
+                getattr(self, "_receiver_status_query_bytes", RECEIVER_STATUS_BYTES_V3)
+            )
+            payload[0] = CMD_STATUS_QUERY
+            self._xfer(payload)
 
     def query_receiver_status(self):
         """Clock out the newest discovered status snapshot without changing ownership."""
@@ -2143,13 +2218,19 @@ class LEDController:
 
     def query_causal_receiver_status(self, *, required_status_version=3):
         """Drain pending commands before returning a negotiated status baseline."""
-        required = self._bounded_uint("required_status_version", required_status_version, 7)
+        required = self._bounded_uint("required_status_version", required_status_version, 8)
         if required < 3:
-            raise ValueError("causal receiver status requires version 3 through 7")
+            raise ValueError("causal receiver status requires version 3 through 8")
         transport_lock = getattr(self, "_transport_lock", None)
         if transport_lock is None:
             transport_lock = self._transport_lock = threading.RLock()
         with transport_lock:
+            if required == 8:
+                # Reject downgraded headers before the first protected baseline.
+                self._receiver_status_integrity_required = True
+                self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
+            if getattr(self, "_receiver_status_integrity_required", False):
+                required = 8
             deadline = time.monotonic() + STORAGE_COMMAND_ACK_TIMEOUT_SECONDS
             fresh_count = 0
             last_packets = None
@@ -2182,7 +2263,9 @@ class LEDController:
                 f"fresh snapshots {fresh_count}, last status "
                 f"v{int((status or {}).get('receiver_status_version', 0) or 0)}, "
                 f"packets {int((status or {}).get('receiver_packets', -1))}, "
-                f"CRC errors {int((status or {}).get('receiver_crc_errors', 0) or 0)}"
+                f"CRC errors {int((status or {}).get('receiver_crc_errors', 0) or 0)}, "
+                f"status integrity errors {getattr(self, '_receiver_status_integrity_errors', 0)}, "
+                f"unprotected statuses {getattr(self, '_receiver_status_unprotected_rejections', 0)}"
             )
 
     def _command_status(
@@ -2205,8 +2288,15 @@ class LEDController:
             # query cadence; draining both and immediately sending a mutation
             # can lose that single command. Native activation's exact ACK
             # establishes this ownership before sparse/context commands start.
-            causal_readiness = storage_operation or (
-                int(getattr(self, "_receiver_base_mode", 0)) == 1
+            required_version = self._bounded_uint(
+                "required_status_version", required_status_version, 8
+            )
+            if required_version < 3:
+                raise ValueError("required_status_version must be 3 through 8")
+            causal_readiness = (
+                storage_operation or required_version == 8
+                or getattr(self, "_receiver_status_integrity_required", False)
+                or int(getattr(self, "_receiver_base_mode", 0)) == 1
             )
             prior = None
             if causal_readiness:
@@ -2218,6 +2308,11 @@ class LEDController:
                     if query_index:
                         time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
                     prior = self.query_receiver_status()
+                if getattr(self, "_receiver_status_integrity_required", False):
+                    # Discovery may enter protected mode during the fast drain.
+                    # Establish its causal baseline before any mutation.
+                    causal_readiness = True
+                    prior = self.query_causal_receiver_status(required_status_version=8)
             if int(prior.get("receiver_status_version", 0) or 0) < 3:
                 raise RuntimeError("receiver status v3 is required for command acknowledgement")
             prior_sequence = int(prior.get("receiver_operation_sequence", 0) or 0)
@@ -2232,11 +2327,8 @@ class LEDController:
                 if not payload or int(payload[0]) != command:
                     raise ValueError("deferred serializer returned the wrong command")
             self._xfer(payload)
-            required_version = self._bounded_uint(
-                "required_status_version", required_status_version, 0xFF
-            )
-            if required_version < 3 or required_version > 6:
-                raise ValueError("required_status_version must be 3, 4, 5, or 6")
+            if getattr(self, "_receiver_status_integrity_required", False):
+                required_version = 8
             # The slave has to queue a response before it knows the length of
             # the master's next transfer. A sparse command therefore leaves
             # one legacy-safe v3 snapshot in the two-deep queue; clock one
@@ -2325,7 +2417,9 @@ class LEDController:
                 "SPI queue errors "
                 f"{int((status or {}).get('receiver_spi_queue_errors', 0) or 0)}, "
                 "display errors "
-                f"{int((status or {}).get('receiver_display_errors', 0) or 0)}"
+                f"{int((status or {}).get('receiver_display_errors', 0) or 0)}, "
+                f"status integrity errors {getattr(self, '_receiver_status_integrity_errors', 0)}, "
+                f"unprotected statuses {getattr(self, '_receiver_status_unprotected_rejections', 0)}"
             )
 
     @classmethod
@@ -2795,11 +2889,10 @@ class LEDController:
         )
 
     def _native_command_status(self, payload):
-        # Status-v6 is appended without changing the exact queued-operation
-        # acknowledgement contract. Keep this method fail-closed until that
-        # negotiated extension is available.
+        # Native playback requires a checksummed causal baseline and exact
+        # acknowledgement; capability discovery alone cannot authorize it.
         status = self._command_status(
-            payload, required_status_version=6, storage_operation=True
+            payload, required_status_version=8, storage_operation=True
         )
         result = int(status.get("receiver_native_result", 0) or 0)
         if result != 1:
@@ -3892,6 +3985,10 @@ class LEDController:
             'errors': self._errors,
             'receiver_status_seen': self._receiver_status_seen,
             'receiver_status_version': self._receiver_status_version,
+            'receiver_status_integrity_required': getattr(self, '_receiver_status_integrity_required', False),
+            'receiver_status_integrity_verified': getattr(self, '_receiver_status_integrity_verified', False),
+            'receiver_status_integrity_errors': getattr(self, '_receiver_status_integrity_errors', 0),
+            'receiver_status_unprotected_rejections': getattr(self, '_receiver_status_unprotected_rejections', 0),
             'receiver_status_max_version_seen': getattr(
                 self, '_receiver_status_max_version_seen', 0
             ),

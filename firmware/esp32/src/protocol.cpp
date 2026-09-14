@@ -8,6 +8,19 @@
 namespace ledgrid {
 namespace {
 
+constexpr std::array<std::uint32_t, 256> status_crc32_table() {
+  std::array<std::uint32_t, 256> table{};
+  for (std::size_t i = 0; i < table.size(); ++i) {
+    std::uint32_t value = static_cast<std::uint32_t>(i);
+    for (unsigned bit = 0; bit < 8; ++bit) {
+      value = (value >> 1U) ^ ((value & 1U) ? 0xEDB88320U : 0U);
+    }
+    table[i] = value;
+  }
+  return table;
+}
+constexpr auto kStatusCrc32Table = status_crc32_table();
+
 void write_u16(std::uint8_t* output, std::uint16_t value) {
   output[0] = static_cast<std::uint8_t>(value >> 8);
   output[1] = static_cast<std::uint8_t>(value);
@@ -489,6 +502,30 @@ bool encode_receiver_status_v7(
   return true;
 }
 
+bool encode_receiver_status_v8(
+    const ReceiverStatusV7& status, std::uint8_t* output,
+    std::size_t output_size) {
+  if (output == nullptr || output_size < kStatusBytesV8) return false;
+  if (!encode_receiver_status_v7(status, output, output_size)) return false;
+  std::memcpy(output, "LGS8", 4);
+  output[4] = kStatusProtocolVersionV8;
+  std::uint32_t checksum = 0xFFFFFFFFU;
+  for (std::size_t i = 0; i < kStatusBytesV7; ++i) {
+    checksum = (checksum >> 8U) ^ kStatusCrc32Table[(checksum ^ output[i]) & 0xFFU];
+  }
+  write_u32(output + kStatusBytesV7, checksum ^ 0xFFFFFFFFU);
+  return true;
+}
+
+bool status_v8_after_dispatch(bool current, bool accepted,
+                              const std::uint8_t* command, std::size_t size) {
+  if (!accepted || command == nullptr || size == 0 ||
+      command[0] != static_cast<std::uint8_t>(ReceiverCommand::StatusQuery)) {
+    return current;
+  }
+  return size == kStatusBytesV8;
+}
+
 bool command_may_claim_base(ReceiverCommand command) {
   return command == ReceiverCommand::SetAll ||
          command == ReceiverCommand::LocalBackgroundStart;
@@ -557,7 +594,7 @@ ReceiverDispatchDecision classify_receiver_dispatch(
                                       ReceiverOperationResult::None, false,
                                       false};
     case ReceiverCommand::StatusQuery:
-      if (size == kStatusBytesV3 || size == kStatusBytesV7 ||
+      if (size == kStatusBytesV3 || size == kStatusBytesV7 || size == kStatusBytesV8 ||
           (local_background_enabled && size == kStatusBytesV4) ||
           (installation_profiles_enabled && size == kStatusBytesV5) ||
           (receiver_native_modules_enabled && size == kStatusBytesV6)) {
@@ -1959,7 +1996,7 @@ bool valid_status_query(
     bool installation_profiles_enabled,
     bool receiver_native_modules_enabled) {
   if (command == nullptr ||
-      (size != kStatusBytesV3 && size != kStatusBytesV7 &&
+      (size != kStatusBytesV3 && size != kStatusBytesV7 && size != kStatusBytesV8 &&
        !(sparse_overlay_enabled && size == kStatusBytesV4) &&
        !(installation_profiles_enabled && size == kStatusBytesV5) &&
        !(receiver_native_modules_enabled && size == kStatusBytesV6)) ||

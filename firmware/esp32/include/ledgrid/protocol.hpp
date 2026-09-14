@@ -23,6 +23,8 @@ constexpr std::uint8_t kStatusProtocolVersionV6 = 6;
 constexpr std::size_t kStatusBytesV6 = 1216;
 constexpr std::uint8_t kStatusProtocolVersionV7 = 7;
 constexpr std::size_t kStatusBytesV7 = 1248;
+constexpr std::uint8_t kStatusProtocolVersionV8 = 8;
+constexpr std::size_t kStatusBytesV8 = kStatusBytesV7 + 4;
 // ESP32-S3 SPI slave DMA requires every Host write to be a multiple of one
 // 32-bit word.  The transport envelope carries an exact semantic length and
 // CRC-covered zero padding so command parsers never mistake DMA padding for
@@ -200,6 +202,7 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityFecEnvelopeV5 = 1U << 18U,
   kCapabilityFecEnvelopeV6 = 1U << 19U,
   kCapabilityFecEnvelopeV7 = 1U << 20U,
+  kCapabilityStatusCrc32V8 = 1U << 21U,
 };
 
 struct ReceiverPacketPayload {
@@ -490,6 +493,17 @@ bool encode_receiver_status_v7(
     const ReceiverStatusV7& status,
     std::uint8_t* output,
     std::size_t output_size);
+// IEEE CRC32 covers all 1248 preceding bytes, including LGS8/version 8.
+// The four-byte checksum trailer is big-endian.
+bool encode_receiver_status_v8(
+    const ReceiverStatusV7& status,
+    std::uint8_t* output,
+    std::size_t output_size);
+
+// Call only after dispatch validation. Only an accepted explicit status query
+// changes the response format; ordinary/failed commands retain its selection.
+bool status_v8_after_dispatch(bool current, bool accepted,
+                              const std::uint8_t* command, std::size_t size);
 
 bool command_may_claim_base(ReceiverCommand command);
 ReceiverDispatchDecision classify_receiver_dispatch(

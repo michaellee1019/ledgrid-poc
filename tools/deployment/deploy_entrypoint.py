@@ -120,11 +120,11 @@ DEFAULT_SSH_OPTIONS = (
 
 RECEIVER_FIRMWARE_HEALTH_CAPABILITIES = {
     # Every current firmware image advertises the complete aligned-envelope v7
-    # FEC decoder stack and status-v7 accounting extension. Environment-specific
+    # FEC decoder stack and checksummed status-v8 extension. Environment-specific
     # features remain additive below that common deployment floor.
-    PRODUCTION_FIRMWARE_ENVIRONMENT: (7, 0x1FC00C),
-    DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (7, 0xC0FF),
-    NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (7, 0xFFFF),
+    PRODUCTION_FIRMWARE_ENVIRONMENT: (8, 0x3FC00C),
+    DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (8, 0x20C0FF),
+    NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (8, 0x20FFFF),
 }
 FINALIZED_FEC_RECEIVER_IDS = (3,)
 FINALIZED_RECEIVER_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))

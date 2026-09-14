@@ -93,7 +93,8 @@ class _Receiver:
         if self.quarantine is not None:
             flags |= 0x40
         status = {
-            "receiver_status_version": 6,
+            "receiver_status_version": 8,
+            "receiver_status_integrity_verified": True,
             "receiver_capabilities": NATIVE_BACKGROUND_REQUIRED_CAPABILITIES,
             "receiver_logical_device": self.receiver_id,
             "receiver_native_result": 1,
@@ -296,6 +297,22 @@ def _context():
 
 
 class ReceiverNativeOrchestrationTests(unittest.TestCase):
+    def test_native_diagnostic_read_and_ack_require_protected_v8(self):
+        receiver = _Receiver(0)
+        wall = _wall([receiver])
+        for changes in ({"receiver_status_version": 7},
+                        {"receiver_status_integrity_verified": False},
+                        {"receiver_capabilities": NATIVE_BACKGROUND_REQUIRED_CAPABILITIES & ~(1 << 21)}):
+            with self.subTest(changes=changes):
+                status = receiver._status() | changes
+                with mock.patch.object(receiver, "query_causal_receiver_status", return_value=status) as read:
+                    with self.assertRaisesRegex(Exception, "protected native status-v8"):
+                        wall._fresh_native_status(0, require_capabilities=False)
+                read.assert_called_once_with(required_status_version=8)
+        for changes in ({"receiver_status_version": 7}, {"receiver_status_integrity_verified": False}):
+            with self.subTest(ack=changes), self.assertRaisesRegex(RuntimeError, "unprotected"):
+                wall._require_native_ack(receiver._status() | changes, "activate", 0)
+
     def test_probe_cache_miss_is_a_successful_negative_result_on_exact_roster(self):
         receivers = [_Receiver(index) for index in range(5)]
         wall = _wall(receivers)

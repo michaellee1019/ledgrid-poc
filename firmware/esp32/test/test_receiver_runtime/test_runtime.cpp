@@ -2001,6 +2001,52 @@ void test_status_v4_negotiates_after_exact_v3_prefix() {
       query.data(), query.size(), true));
 }
 
+void test_status_v8_crc_vector_and_sticky_negotiation() {
+  ledgrid::ReceiverStatusV7 status{};
+  status.capabilities = ledgrid::kCapabilityStatusCrc32V8;
+  status.operation_sequence = 191895;
+  status.last_processed_command = 0x35;
+  status.packets = 123456;
+  std::array<std::uint8_t, ledgrid::kStatusBytesV8> bytes{};
+  TEST_ASSERT_EQUAL_UINT32(1252, bytes.size());
+  TEST_ASSERT_FALSE(ledgrid::encode_receiver_status_v8(status, nullptr, bytes.size()));
+  TEST_ASSERT_FALSE(ledgrid::encode_receiver_status_v8(status, bytes.data(), bytes.size() - 1));
+  TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v8(status, bytes.data(), bytes.size()));
+  // Shared with Python's independent binascii IEEE CRC32 vector.
+  const std::uint8_t expected_crc[] = {0xBC, 0x94, 0x92, 0x9E};
+  TEST_ASSERT_EQUAL_MEMORY("LGS8\x08", bytes.data(), 5);
+  TEST_ASSERT_EQUAL_MEMORY(expected_crc, bytes.data() + 1248, 4);
+  std::uint8_t digest[32]{};
+  ledgrid::sha256(bytes.data(), bytes.size(), digest);
+  const auto expected_digest = from_hex(
+      "ce560fc7c4d9ea7a3d82063352d023337378f89ce007173b89b9a79836457cd4");
+  TEST_ASSERT_EQUAL_MEMORY(expected_digest.data(), digest, 32);
+
+  std::array<std::uint8_t, ledgrid::kStatusBytesV8> query{};
+  query[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::StatusQuery);
+  // Available in every image, independently of optional native/profile flags.
+  TEST_ASSERT_TRUE(ledgrid::valid_status_query(query.data(), query.size(), false, false, false));
+  auto dispatch = ledgrid::classify_receiver_dispatch(
+      query.data(), query.size(), 3312, ledgrid::BaseMode::HostFullScene,
+      false, false, false);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ledgrid::ReceiverDispatchRoute::StatusQuery),
+                         static_cast<std::uint8_t>(dispatch.route));
+  bool selected = false;  // boot retains legacy discovery
+  selected = ledgrid::status_v8_after_dispatch(selected, true, query.data(), query.size());
+  TEST_ASSERT_TRUE(selected);
+  const std::uint8_t short_command[] = {0x35};
+  TEST_ASSERT_TRUE(ledgrid::status_v8_after_dispatch(selected, true, short_command, 1));
+  TEST_ASSERT_TRUE(ledgrid::status_v8_after_dispatch(selected, false, query.data(), 320));
+  query.back() = 1;
+  TEST_ASSERT_FALSE(ledgrid::valid_status_query(query.data(), query.size(), true, true, true));
+  TEST_ASSERT_TRUE(ledgrid::status_v8_after_dispatch(selected, false, query.data(), query.size()));
+  query.back() = 0;
+  // An old host's explicit accepted query restores legacy replies. Two queued
+  // snapshots remain untouched; selection applies to subsequent refills.
+  TEST_ASSERT_TRUE(ledgrid::valid_status_query(query.data(), 320));
+  TEST_ASSERT_FALSE(ledgrid::status_v8_after_dispatch(selected, true, query.data(), 320));
+}
+
 }  // namespace
 
 void setUp() {}
@@ -2008,6 +2054,7 @@ void tearDown() {}
 
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_status_v8_crc_vector_and_sticky_negotiation);
   RUN_TEST(test_command_ids_ownership_and_disabled_behavior_are_explicit);
   RUN_TEST(test_fifth_receiver_startup_to_first_host_frame_contract_is_exact);
   RUN_TEST(test_start_parameter_stop_takeover_restart_and_failure_transitions);

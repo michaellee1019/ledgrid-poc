@@ -704,6 +704,9 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 "receiver_status_responses": responses,
                 "receiver_status_version": version,
                 "receiver_status_max_version_seen": version,
+                "receiver_status_integrity_required": version >= 8,
+                "receiver_status_integrity_verified": version >= 8,
+                "receiver_status_integrity_errors": 0,
                 "receiver_capabilities": capabilities,
                 "transport_envelope_enabled": True,
                 "transport_envelope_negotiation_candidate": None,
@@ -857,7 +860,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         receiver_aggregate: Mapping[str, object] | None = None,
     ) -> deploy_target.TargetHealthSample:
         observed = statuses or self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=responses,
+            version=8, capabilities=0x3FC00C, responses=responses,
         )
         return deploy_target.TargetHealthSample(
             sampled_at=100.0 + responses / 10,
@@ -1241,9 +1244,9 @@ class TargetHealthIntegrationTests(unittest.TestCase):
 
     def test_firmware_health_contracts_accept_exact_environment_capabilities(self) -> None:
         cases = (
-            (PRODUCTION_FIRMWARE_ENVIRONMENT, 7, 0x1FC00C),
-            (DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT, 7, 0xC0FF),
-            (NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT, 7, 0xFFFF),
+            (PRODUCTION_FIRMWARE_ENVIRONMENT, 8, 0x3FC00C),
+            (DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT, 8, 0x20C0FF),
+            (NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT, 8, 0x20FFFF),
         )
         for environment, version, capabilities in cases:
             with self.subTest(environment=environment):
@@ -1351,10 +1354,10 @@ class TargetHealthIntegrationTests(unittest.TestCase):
     def test_demo_health_accepts_live_receivers_without_transport_delta_proof(self) -> None:
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
         before_statuses = self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=2,
+            version=8, capabilities=0x3FC00C, responses=2,
         )
         after_statuses = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         after_statuses[0]["full_frame_status_samples"] = before_statuses[0][
             "full_frame_status_samples"
@@ -1409,7 +1412,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
 
         def degraded_statuses(responses: int) -> tuple[Mapping[str, object], ...]:
             statuses = [dict(item) for item in self._receiver_statuses(
-                version=7, capabilities=0x1FC00C, responses=responses,
+                version=8, capabilities=0x3FC00C, responses=responses,
             )]
             receiver_3 = statuses[3]
             # The hardware's receiver counter is lifetime-scoped, while the
@@ -1530,8 +1533,8 @@ class TargetHealthIntegrationTests(unittest.TestCase):
     def test_receiver_health_contract_v2_requires_explicit_receiver_3_fec_policy(self) -> None:
         contract = dict(self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT))
         self.assertEqual(contract["schema_version"], 2)
-        self.assertEqual(contract["minimum_status_version"], 7)
-        self.assertEqual(contract["required_capabilities"], 0x1FC00C)
+        self.assertEqual(contract["minimum_status_version"], 8)
+        self.assertEqual(contract["required_capabilities"], 0x3FC00C)
         self.assertEqual(contract["fec_receiver_ids"], [3])
         validated = deploy_target._validate_receiver_health_contract(
             contract, receivers=5
@@ -1576,16 +1579,16 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 expected_devices=tuple(contract["devices"]),
             )
 
-        valid = self._receiver_statuses(version=7, capabilities=0x1FC00C)
+        valid = self._receiver_statuses(version=8, capabilities=0x3FC00C)
         self.assertIsNone(rejection(valid))
 
         raced = [dict(item) for item in valid]
         for item in raced:
             item["receiver_status_version"] = 3
             item["receiver_status_max_version_seen"] = 7
-        self.assertIsNone(rejection(tuple(raced)))
+        self.assertIn("required latest>=v8", rejection(tuple(raced)))
 
-        downgraded = [dict(item) for item in raced]
+        downgraded = [dict(item) for item in valid]
         downgraded[0]["receiver_capabilities"] = 0x400C
         self.assertIn(
             "lacks required firmware capabilities",
@@ -1700,6 +1703,13 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         )
 
         cases = []
+        for field, value in (("receiver_status_integrity_verified", False),
+                             ("receiver_status_integrity_required", False),
+                             ("receiver_status_integrity_errors", 1),
+                             ("receiver_status_integrity_errors", None)):
+            invalid_integrity = [dict(item) for item in valid]
+            invalid_integrity[0][field] = value
+            cases.append((invalid_integrity, "status integrity is not verified and clean"))
         missing_capability = [dict(item) for item in valid]
         missing_capability[0]["receiver_capabilities"] = 0x400C
         cases.append((missing_capability, "lacks required firmware capabilities"))
@@ -1707,7 +1717,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         old_status = [dict(item) for item in valid]
         old_status[0]["receiver_status_version"] = 6
         old_status[0]["receiver_status_max_version_seen"] = 6
-        cases.append((old_status, "required latest>=v3 and observed>=v7"))
+        cases.append((old_status, "required latest>=v8 and observed>=v8"))
 
         no_extended_observation = [dict(item) for item in valid]
         no_extended_observation[0]["receiver_status_version"] = 3
@@ -1753,7 +1763,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
 
         before = self._health_sample(responses=2)
         bad_wire_statuses = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         bad_wire_statuses[3]["full_frame_wire_bytes_sent"] -= 1
         bad_wire = self._health_sample(
@@ -1779,7 +1789,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             )
 
         valid = self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )
         self.assertIsNone(
             deploy_target._transport_accounting_delta_rejection(
@@ -1830,7 +1840,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
 
         def historical_statuses(responses: int):
             statuses = [dict(item) for item in self._receiver_statuses(
-                version=7, capabilities=0x1FC00C, responses=responses,
+                version=8, capabilities=0x3FC00C, responses=responses,
             )]
             statuses[3]["receiver_fec_packets_received"] += 4
             for field, value in (
@@ -1932,7 +1942,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             (0, 1, 2, 3, 4),
             receiver_device_map=self._receiver_device_map(),
             receiver_statuses=self._receiver_statuses(
-                version=7, capabilities=0x000C,
+                version=8, capabilities=0x000C,
             ),
             transport_envelope_devices=5,
         )
@@ -1950,7 +1960,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
     def test_production_health_requires_host_envelope_on_all_five_receivers(self) -> None:
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
         statuses = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C,
+            version=8, capabilities=0x3FC00C,
         )]
         statuses[3]["transport_envelope_enabled"] = False
         base = dict(
@@ -1979,7 +1989,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         reason = deploy_target._receiver_health_rejection(
             deploy_target.TargetHealthSample(
                 **{**base, "receiver_statuses": self._receiver_statuses(
-                    version=7, capabilities=0x1FC00C,
+                    version=8, capabilities=0x3FC00C,
                 )},
                 transport_envelope_devices=4,
             ),
@@ -2015,7 +2025,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         ):
             with self.subTest(label=label):
                 statuses = [dict(item) for item in self._receiver_statuses(
-                    version=7, capabilities=0x1FC00C,
+                    version=8, capabilities=0x3FC00C,
                 )]
                 mutate(statuses[0])
                 reason = deploy_target._receiver_health_rejection(
@@ -2031,7 +2041,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
         expected_devices = tuple(contract["devices"])
         complete_statuses = self._receiver_statuses(
-            version=7, capabilities=0x1FC00C,
+            version=8, capabilities=0x3FC00C,
         )
         missing_statuses = [dict(item) for item in complete_statuses]
         missing_statuses[0].pop("semantic_bytes_sent")
@@ -2049,7 +2059,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
 
         before = self._health_sample(responses=2)
         stalled_statuses = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         transport_fields = (
             "spi_transfers", "bytes_sent", "semantic_bytes_sent",
@@ -2067,7 +2077,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         )
 
         drift_statuses = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         drift_statuses[0]["bytes_sent"] += 1
         drifted = self._health_sample(
@@ -2159,7 +2169,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
     ) -> None:
         before = self._health_sample(responses=2)
         after_statuses = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         full_frame_fields = (
             "full_frame_transfers",
@@ -2237,7 +2247,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
     def test_production_health_rejects_invalid_full_frame_sampling_and_fast_path(self) -> None:
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
         expected_devices = tuple(contract["devices"])
-        complete = self._receiver_statuses(version=7, capabilities=0x1FC00C)
+        complete = self._receiver_statuses(version=8, capabilities=0x3FC00C)
 
         missing = [dict(item) for item in complete]
         missing[0].pop("full_frame_status_samples")
@@ -2289,14 +2299,14 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         before = self._health_sample(responses=2)
 
         miss = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         miss[0]["full_frame_status_sample_misses"] += 1
         miss[0]["full_frame_status_transfers"] += 1
         miss[0]["full_frame_write_only_transfers"] -= 1
 
         stalled = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         stalled[0]["full_frame_status_samples"] = before.receiver_statuses[0][
             "full_frame_status_samples"
@@ -2310,14 +2320,14 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         )
 
         unclassified_delta = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         unclassified_delta[0]["full_frame_status_samples"] = (
             before.receiver_statuses[0]["full_frame_status_samples"]
         )
 
         reset = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         reset[0]["full_frame_status_samples"] = (
             before.receiver_statuses[0]["full_frame_status_samples"] - 1
@@ -2332,7 +2342,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         )
 
         reset_gap = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         for item in reset_gap:
             item["full_frame_max_status_sample_gap"] = 8
@@ -2391,7 +2401,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                     (0, 1, 2, 3, 4),
                     receiver_device_map=tuple(device_map),
                     receiver_statuses=self._receiver_statuses(
-                        version=7, capabilities=0x1FC00C,
+                        version=8, capabilities=0x3FC00C,
                     ),
                     transport_envelope_devices=5,
                 )
@@ -2427,7 +2437,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
     def test_receiver_contract_rejects_one_stale_receiver_response_counter(self) -> None:
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
         advanced = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C, responses=3,
+            version=8, capabilities=0x3FC00C, responses=3,
         )]
         advanced[4]["receiver_status_responses"] = 2
         samples = (
@@ -2441,12 +2451,12 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 (0, 1, 2, 3, 4),
                 receiver_device_map=self._receiver_device_map(),
                 receiver_statuses=self._receiver_statuses(
-                    version=7, capabilities=0x1FC00C, responses=2,
+                    version=8, capabilities=0x3FC00C, responses=2,
                 ),
                 transport_envelope_devices=5,
                 receiver_aggregate=self._receiver_aggregate(
                     self._receiver_statuses(
-                        version=7, capabilities=0x1FC00C, responses=2,
+                        version=8, capabilities=0x3FC00C, responses=2,
                     )
                 ),
             ),
@@ -2497,9 +2507,9 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
         cases = []
         legacy = list(self._receiver_statuses(version=2, capabilities=0))
-        cases.append((tuple(legacy), "required latest>=v3 and observed>=v7"))
+        cases.append((tuple(legacy), "required latest>=v8 and observed>=v8"))
         wrong_fifth = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C
+            version=8, capabilities=0x3FC00C
         )]
         wrong_fifth[4].update({
             "receiver_active_strips": 8,
@@ -2507,7 +2517,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         })
         cases.append((tuple(wrong_fifth), "receiver_active_strips=8"))
         missing_identity = [dict(item) for item in self._receiver_statuses(
-            version=7, capabilities=0x1FC00C
+            version=8, capabilities=0x3FC00C
         )]
         missing_identity[4]["receiver_logical_device"] = None
         cases.append((tuple(missing_identity), "logical identities"))

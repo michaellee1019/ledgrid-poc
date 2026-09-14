@@ -159,6 +159,8 @@ std::atomic<std::uint16_t> fec_max_decode_us{0};
 std::atomic<std::uint32_t> spi_queue_errors{0};
 std::atomic<std::uint32_t> display_errors{0};
 std::atomic<std::uint16_t> queued_transactions{0};
+// SPI-task owned. Explicit legacy queries allow an older host to reconnect.
+bool status_v8_negotiated = false;
 std::atomic<std::uint16_t> last_crc_us{0};
 std::atomic<std::uint16_t> last_copy_us{0};
 std::atomic<std::uint32_t> last_accepted_sequence{0};
@@ -703,7 +705,8 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
                         ledgrid::kCapabilityFecEnvelopeV3 |
                         ledgrid::kCapabilityFecEnvelopeV4 |
                         ledgrid::kCapabilityFecEnvelopeV5 |
-                        ledgrid::kCapabilityFecEnvelopeV6;
+                        ledgrid::kCapabilityFecEnvelopeV6 |
+                        ledgrid::kCapabilityStatusCrc32V8;
   const std::size_t active_semantic_bytes =
       1U + static_cast<std::size_t>(output.strip_count) *
                output.leds_per_strip * 3U;
@@ -840,7 +843,10 @@ bool queue_spi_transaction(
     std::size_t index, bool status_v4 = false, bool status_v5 = false,
     bool status_v6 = false, bool status_v7 = false) {
   const auto status = status_snapshot();
-  if (status_v7) {
+  if (status_v8_negotiated) {
+    ledgrid::encode_receiver_status_v8(
+        status, spi_tx_buffers[index], kSpiBufferSize);
+  } else if (status_v7) {
     ledgrid::encode_receiver_status_v7(
         status, spi_tx_buffers[index], kSpiBufferSize);
   } else if (status_v6 && LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES != 0) {
@@ -1450,6 +1456,8 @@ extern "C" void app_main() {
               operation_sequence, command[0], native_result);
         }
 #endif
+        status_v8_negotiated = ledgrid::status_v8_after_dispatch(
+            status_v8_negotiated, accepted, command, payload_bytes);
         request_v4 = status_query && accepted &&
             payload_bytes == ledgrid::kStatusBytesV4;
         request_v5 = status_query && accepted &&
