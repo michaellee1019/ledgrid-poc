@@ -59,6 +59,7 @@ class MemoryStore final : public ledgrid::InstallationProfileStore {
   std::uint32_t reserve_bytes() const override { return reserve; }
   std::uint64_t mutation_generation() const override { return generation; }
   bool probe(const std::uint8_t digest[32], std::uint32_t* size) const override {
+    if (!allow_probe) return false;
     for (const auto& entry : entries) {
       if (same(digest, entry.digest.data())) {
         if (size != nullptr) *size = entry.bytes.size();
@@ -143,6 +144,7 @@ class MemoryStore final : public ledgrid::InstallationProfileStore {
   bool read_committed(
       const std::uint8_t digest[32], std::uint32_t offset,
       std::uint8_t* data, std::size_t size) const override {
+    if (!allow_read) return false;
     for (const auto& entry : entries) {
       if (same(digest, entry.digest.data()) && offset <= entry.bytes.size() &&
           size <= entry.bytes.size() - offset) {
@@ -172,6 +174,8 @@ class MemoryStore final : public ledgrid::InstallationProfileStore {
   }
 
   bool available = true;
+  bool allow_probe = true;
+  bool allow_read = true;
   bool allow_writes = true;
   bool allow_commit = true;
   std::uint32_t capacity = 128U * 1024U;
@@ -716,6 +720,8 @@ void test_persisted_views_wait_for_explicit_installed_topology_config() {
     persistence.ledger.active.present = true;
     std::memset(persistence.ledger.active.global_id, 0xA0 + logical_id, 32);
     std::memcpy(persistence.ledger.active.payload_digest, digest.data(), 32);
+    persistence.ledger.staged = persistence.ledger.active;
+    persistence.ledger.rollback = persistence.ledger.active;
     std::array<std::uint8_t,
                2 * ledgrid::kInstallationProfileReceiverBytesV1> scratch{};
     ledgrid::InstallationProfileManager manager(
@@ -726,6 +732,8 @@ void test_persisted_views_wait_for_explicit_installed_topology_config() {
     preflight[0] = 0x40;
     TEST_ASSERT_EQUAL_UINT8(4, static_cast<std::uint8_t>(
         manager.process(preflight.data(), preflight.size())));
+    const auto store_generation = store.mutation_generation();
+    const auto access = store.entries[0].access;
     manager.configure_identity(
         static_cast<std::uint8_t>(logical_id), fixture.reversed_strip_order,
         fixture.global_strip_count,
@@ -737,6 +745,70 @@ void test_persisted_views_wait_for_explicit_installed_topology_config() {
     TEST_ASSERT_EQUAL(fixture.reversed_strip_order,
                       manager.active_view().reversed_strip_order);
     TEST_ASSERT_TRUE(manager.ledger().active.present);
+    const auto first_view = manager.active_view();
+    // Replayed CONFIG still validates every pin, without cache metadata writes.
+    manager.configure_identity(
+        static_cast<std::uint8_t>(logical_id), fixture.reversed_strip_order,
+        fixture.global_strip_count,
+        static_cast<std::uint8_t>(fixture.strip_count), fixture.leds_per_strip,
+        fixture.strip_origin);
+    TEST_ASSERT_EQUAL_UINT64(store_generation, store.mutation_generation());
+    TEST_ASSERT_EQUAL_UINT32(access, store.entries[0].access);
+    TEST_ASSERT_EQUAL_INT(0, persistence.saves);
+    TEST_ASSERT_EQUAL_UINT64(7, manager.ledger().generation);
+    TEST_ASSERT_TRUE(manager.ledger().staged.present);
+    TEST_ASSERT_TRUE(manager.ledger().rollback.present);
+    TEST_ASSERT_EQUAL_PTR(first_view.encoded, manager.active_view().encoded);
+    TEST_ASSERT_EQUAL_MEMORY(payload.data(), manager.active_view().encoded,
+                             payload.size());
+  }
+}
+
+void test_config_rechecks_corruption_reads_and_changed_identity_without_touch() {
+  const auto& fixture =
+      ledgrid::installation_profile_fixture::kInstalledReceivers[0];
+  for (unsigned failure = 0; failure < 4; ++failure) {
+    std::vector<std::uint8_t> payload(fixture.bytes, fixture.bytes + fixture.size);
+    std::array<std::uint8_t, 32> digest{};
+    ledgrid::sha256(payload.data(), payload.size(), digest.data());
+    MemoryStore store;
+    store.seed(digest.data(), payload, 1);
+    MemoryPersistence persistence;
+    persistence.ledger.generation = 7;
+    persistence.ledger.active.present = true;
+    std::memset(persistence.ledger.active.global_id, 0xA5, 32);
+    std::memcpy(persistence.ledger.active.payload_digest, digest.data(), 32);
+    std::array<std::uint8_t,
+               2 * ledgrid::kInstallationProfileReceiverBytesV1> scratch{};
+    ledgrid::InstallationProfileManager manager(
+        &store, &persistence, scratch.data(), scratch.size(), true);
+    TEST_ASSERT_TRUE(manager.begin());
+    auto configure = [&](bool reverse) {
+      manager.configure_identity(
+          0, reverse, fixture.global_strip_count,
+          static_cast<std::uint8_t>(fixture.strip_count), fixture.leds_per_strip,
+          fixture.strip_origin);
+    };
+    configure(fixture.reversed_strip_order);
+    TEST_ASSERT_NOT_NULL(manager.active_view().encoded);
+    if (failure == 0) {
+      // Corrupt the backing bytes after a valid configuration. No memoized
+      // identity or store-generation shortcut may conceal the changed bytes.
+      store.entries[0].bytes[100] ^= 1;
+    } else if (failure == 1) {
+      store.allow_read = false;
+    } else if (failure == 2) {
+      store.allow_probe = false;
+    }
+    const auto generation = store.mutation_generation();
+    configure(failure == 3 ? !fixture.reversed_strip_order
+                           : fixture.reversed_strip_order);
+    TEST_ASSERT_FALSE(manager.ledger().active.present);
+    TEST_ASSERT_NULL(manager.active_view().encoded);
+    TEST_ASSERT_EQUAL_UINT64(generation, store.mutation_generation());
+    TEST_ASSERT_EQUAL_UINT64(8, manager.ledger().generation);
+    TEST_ASSERT_EQUAL_INT(1, persistence.saves);
+    TEST_ASSERT_EQUAL_UINT8(16, static_cast<std::uint8_t>(manager.status().result));
   }
 }
 
@@ -794,6 +866,7 @@ int main(int, char**) {
   RUN_TEST(test_status_v5_offsets_and_profile_dispatch_never_claim_display);
   RUN_TEST(test_disabled_manager_and_bad_boot_storage_fail_closed);
   RUN_TEST(test_persisted_views_wait_for_explicit_installed_topology_config);
+  RUN_TEST(test_config_rechecks_corruption_reads_and_changed_identity_without_touch);
   RUN_TEST(test_cache_preflight_and_lru_eviction_protect_all_three_pins);
   return UNITY_END();
 }

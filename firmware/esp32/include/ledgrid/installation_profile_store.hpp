@@ -100,10 +100,13 @@ class InstallationProfileManager {
   bool binding_valid(
       const InstallationProfileBinding& binding,
       InstallationProfileViewV1* view = nullptr,
-      InstallationProfileError* error = nullptr) const;
-  bool bindings_valid(const InstallationProfileLedger& ledger) const;
+      InstallationProfileError* error = nullptr,
+      bool update_access = true) const;
+  bool bindings_valid(const InstallationProfileLedger& ledger,
+                      bool update_access = true) const;
   bool save_ledger(const InstallationProfileLedger& candidate);
-  bool refresh_active_view(const InstallationProfileLedger& candidate);
+  bool refresh_active_view(const InstallationProfileLedger& candidate,
+                           bool update_access = true);
   std::uint64_t calculate_preflight_token() const;
 
   InstallationProfileStore* store_ = nullptr;

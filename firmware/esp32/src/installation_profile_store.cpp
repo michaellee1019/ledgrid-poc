@@ -124,9 +124,12 @@ void InstallationProfileManager::configure_identity(
     return;
   }
   bool repaired = false;
+  // CONFIG validates pinned bindings; it is not a cache access transaction.
+  // Preserve all reads, hashes and decoding without synchronously rewriting
+  // LRU metadata while the SPI completion task must replenish its reply slots.
   for (InstallationProfileBinding* binding :
        {&ledger_.active, &ledger_.staged, &ledger_.rollback}) {
-    if (binding->present && !binding_valid(*binding)) {
+    if (binding->present && !binding_valid(*binding, nullptr, nullptr, false)) {
       *binding = {};
       repaired = true;
     }
@@ -141,7 +144,7 @@ void InstallationProfileManager::configure_identity(
       return;
     }
   }
-  if (!refresh_active_view(ledger_)) {
+  if (!refresh_active_view(ledger_, false)) {
     active_view_ = {};
     cache_integrity_ok_ = false;
     result_ = InstallationProfileResult::IntegrityError;
@@ -150,7 +153,7 @@ void InstallationProfileManager::configure_identity(
   // Integrity reports the current fail-closed ledger/cache relationship. Keep
   // the result/decoder fields as history, but permit a cleared bad binding to
   // be repaired by a subsequent authenticated install.
-  cache_integrity_ok_ = bindings_valid(ledger_);
+  cache_integrity_ok_ = bindings_valid(ledger_, false);
 }
 
 InstallationProfileResult InstallationProfileManager::finish(
@@ -386,7 +389,8 @@ InstallationProfileResult InstallationProfileManager::finalize(
 bool InstallationProfileManager::binding_valid(
     const InstallationProfileBinding& binding,
     InstallationProfileViewV1* output,
-    InstallationProfileError* error) const {
+    InstallationProfileError* error,
+    bool update_access) const {
   if (!binding.present) {
     if (output != nullptr) *output = {};
     if (error != nullptr) *error = InstallationProfileError::None;
@@ -408,15 +412,16 @@ bool InstallationProfileManager::binding_valid(
   InstallationProfileViewV1 view{};
   if (!decode_installation_profile_receiver_v1(
           work, size, expectation, &view, error)) return false;
-  if (!store_->touch(binding.payload_digest)) return false;
+  if (update_access && !store_->touch(binding.payload_digest)) return false;
   if (output != nullptr) *output = view;
   return true;
 }
 
 bool InstallationProfileManager::bindings_valid(
-    const InstallationProfileLedger& ledger) const {
-  return binding_valid(ledger.active) && binding_valid(ledger.staged) &&
-         binding_valid(ledger.rollback);
+    const InstallationProfileLedger& ledger, bool update_access) const {
+  return binding_valid(ledger.active, nullptr, nullptr, update_access) &&
+         binding_valid(ledger.staged, nullptr, nullptr, update_access) &&
+         binding_valid(ledger.rollback, nullptr, nullptr, update_access);
 }
 
 InstallationProfileResult InstallationProfileManager::verify(
@@ -439,7 +444,7 @@ InstallationProfileResult InstallationProfileManager::verify(
 }
 
 bool InstallationProfileManager::refresh_active_view(
-    const InstallationProfileLedger& candidate) {
+    const InstallationProfileLedger& candidate, bool update_access) {
   active_view_ = {};
   if (!candidate.active.present) return true;
   std::uint32_t size = 0;
@@ -459,7 +464,7 @@ bool InstallationProfileManager::refresh_active_view(
           scratch_, size, expectation, &active_view_, &decoder_error_)) {
     return false;
   }
-  return store_->touch(candidate.active.payload_digest);
+  return !update_access || store_->touch(candidate.active.payload_digest);
 }
 
 bool InstallationProfileManager::save_ledger(
