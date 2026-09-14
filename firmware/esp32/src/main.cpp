@@ -11,6 +11,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "ledgrid/frame_mailbox.hpp"
+#include "ledgrid/receiver_command_queue.hpp"
 #include "ledgrid/esp_installation_profile_store.hpp"
 #include "ledgrid/esp_native_module.hpp"
 #include "ledgrid/native_status_cache.hpp"
@@ -54,6 +55,19 @@ constexpr std::size_t kSpiFrameBytes = 1 + kMaxRgbBytes + kCrcBytes;
 constexpr std::size_t kSpiBufferSize =
     ledgrid::kAnimationPipelineMaxTransactionBytes;
 constexpr std::size_t kSpiQueueDepth = 2;
+// Four owned mutations cover normal bounded host bursts. Storage commands are
+// host-serialized; exceeding this bound is a counted fail-stop, never a drop.
+using CommandQueue = ledgrid::ReceiverCommandQueue<4, kSpiBufferSize>;
+CommandQueue command_queue;
+portMUX_TYPE command_mux = portMUX_INITIALIZER_UNLOCKED;
+TaskHandle_t command_task_handle = nullptr;
+TaskHandle_t spi_task_handle = nullptr;
+struct EncodedStatus {
+  std::uint8_t versions[6][ledgrid::kStatusBytesV8]{};
+};
+EncodedStatus status_buffers[2];
+unsigned published_status = 0;
+std::uint64_t published_frontier = UINT64_MAX;
 static_assert(configNUMBER_OF_CORES > ledgrid::kReceiverDisplayTaskCore,
               "receiver firmware requires the ESP32-S3 dual-core scheduler");
 static_assert(kSpiBufferSize == 4096, "transport contract changed");
@@ -139,7 +153,7 @@ ledgrid::NativeModuleStatusCache<NativeStatusCriticalSection> native_status_cach
 std::atomic<bool> native_module_ready{false};
 #endif
 
-// One SPI-task-owned record, used only for CONFIG and printed after requeue.
+// Optional CONFIG timing hooks remain dormant in the production transport.
 struct ConfigTiming {
   std::uint64_t started_us = 0;
   std::uint64_t dispatch_us = 0;
@@ -865,39 +879,24 @@ ledgrid::ReceiverStatusV7 status_snapshot(ConfigTiming* timing = nullptr) {
   return status;
 }
 
-bool queue_spi_transaction(
-    std::size_t index, bool status_v4 = false, bool status_v5 = false,
-    bool status_v6 = false, bool status_v7 = false,
-    ConfigTiming* timing = nullptr) {
-  auto started = timing ? config_clock_us() : 0;
-  const auto status = status_snapshot(timing);
-  if (timing) {
-    timing->snapshot_us = config_clock_us() - started;
-    started = config_clock_us();
-  }
-  if (status_v8_negotiated) {
-    ledgrid::encode_receiver_status_v8(
-        status, spi_tx_buffers[index], kSpiBufferSize);
-  } else if (status_v7) {
-    ledgrid::encode_receiver_status_v7(
-        status, spi_tx_buffers[index], kSpiBufferSize);
-  } else if (status_v6 && LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES != 0) {
-    ledgrid::encode_receiver_status_v6(
-        status, spi_tx_buffers[index], kSpiBufferSize);
-  } else if (status_v5 && LEDGRID_ENABLE_INSTALLATION_PROFILES != 0) {
-    ledgrid::encode_receiver_status_v5(
-        status, spi_tx_buffers[index], kSpiBufferSize);
-  } else if (status_v4 && receiver_runtime.local_background_enabled()) {
-    ledgrid::encode_receiver_status_v4(
-        status, spi_tx_buffers[index], kSpiBufferSize);
-  } else {
-    ledgrid::encode_receiver_status_v3(
-        status, spi_tx_buffers[index], kSpiBufferSize);
-  }
-  if (timing) {
-    timing->encode_us = config_clock_us() - started;
-    started = config_clock_us();
-  }
+// Only the executor captures/encodes status. The DMA service copies one already
+// encoded immutable version under the publication lock and never takes a
+// runtime, native, profile, display or filesystem lock.
+void encode_status(const ledgrid::ReceiverStatusV7& status, EncodedStatus* encoded) {
+  ledgrid::encode_receiver_status_v3(status, encoded->versions[0], ledgrid::kStatusBytesV8);
+  ledgrid::encode_receiver_status_v4(status, encoded->versions[1], ledgrid::kStatusBytesV8);
+  ledgrid::encode_receiver_status_v5(status, encoded->versions[2], ledgrid::kStatusBytesV8);
+  ledgrid::encode_receiver_status_v6(status, encoded->versions[3], ledgrid::kStatusBytesV8);
+  ledgrid::encode_receiver_status_v7(status, encoded->versions[4], ledgrid::kStatusBytesV8);
+  ledgrid::encode_receiver_status_v8(status, encoded->versions[5], ledgrid::kStatusBytesV8);
+}
+
+bool queue_spi_transaction(std::size_t index, unsigned version = 3) {
+  portENTER_CRITICAL(&command_mux);
+  std::memcpy(spi_tx_buffers[index],
+              status_buffers[published_status].versions[version - 3],
+              ledgrid::kStatusBytesV8);
+  portEXIT_CRITICAL(&command_mux);
   auto& transaction = spi_transactions[index];
   transaction = {};
   transaction.length = kSpiBufferSize * 8U;
@@ -906,7 +905,6 @@ bool queue_spi_transaction(
   transaction.user = reinterpret_cast<void*>(index);
   const esp_err_t result =
       spi_slave_queue_trans(SPI2_HOST, &transaction, pdMS_TO_TICKS(10));
-  if (timing) timing->requeue_us = config_clock_us() - started;
   if (result != ESP_OK) {
     ++spi_queue_errors;
     return false;
@@ -1281,6 +1279,184 @@ bool process_command(
   }
 }
 
+// Called before the driver reports completion to the service task. A packet
+// received while a status candidate is being built invalidates that candidate.
+void IRAM_ATTR spi_transaction_completed(spi_slave_transaction_t*) {
+  portENTER_CRITICAL_ISR(&command_mux);
+  command_queue.received();
+  portEXIT_CRITICAL_ISR(&command_mux);
+}
+
+void execute_command(const CommandQueue::Command& command) {
+  const auto id = command.bytes[0];
+  lock_runtime();
+  const bool allowed = operation_tracker.begin(id);
+  const auto sequence = operation_tracker.sequence();
+  unlock_runtime();
+  auto native_result = ledgrid::NativeModuleResult::InvalidState;
+  const bool accepted = allowed && !command.rejected &&
+      process_command(command.bytes, command.size, &native_result);
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+  if (allowed && is_native_module_command(id)) {
+    native_operation_result_latch.record(sequence, id, native_result);
+  }
+#endif
+  lock_runtime();
+  if (command.rejected || !allowed) {
+    receiver_runtime.set_last_result(ledgrid::ReceiverOperationResult::InvalidState);
+  } else if (id < 0x10 || id == 0xFF) {
+    receiver_runtime.set_last_result(
+        accepted ? ledgrid::ReceiverOperationResult::Ok
+                 : ledgrid::ReceiverOperationResult::InvalidCommand);
+  }
+  unlock_runtime();
+}
+
+void command_executor() {
+  // Executor-owned payload survives every DMA/FEC buffer reuse while storage
+  // blocks. The queue counts this executing slot against its fixed capacity.
+  static CommandQueue::Command command;
+  while (true) {
+    portENTER_CRITICAL(&command_mux);
+    const bool available = command_queue.take(&command);
+    portEXIT_CRITICAL(&command_mux);
+    if (available) {
+      execute_command(command);
+      portENTER_CRITICAL(&command_mux);
+      command_queue.complete();
+      portEXIT_CRITICAL(&command_mux);
+      continue;
+    }
+    std::uint64_t ticket = 0;
+    portENTER_CRITICAL(&command_mux);
+    const bool capture = command_queue.publication_ticket(&ticket) &&
+                         ticket != published_frontier;
+    const unsigned candidate = 1U - published_status;
+    portEXIT_CRITICAL(&command_mux);
+    if (capture) {
+      // Potentially blocking locks and CRC encoding stay outside the short
+      // admission lock. A received mutation/query invalidates this candidate.
+      encode_status(status_snapshot(), &status_buffers[candidate]);
+      portENTER_CRITICAL(&command_mux);
+      if (command_queue.can_publish(ticket)) {
+        published_status = candidate;
+        published_frontier = ticket;
+      }
+      portEXIT_CRITICAL(&command_mux);
+    }
+    // Notifications coalesce queries; they never occupy a mutation FIFO slot.
+    // A receive during capture leaves a pending notification, so no wake is lost.
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  }
+}
+
+void spi_service(void*) {
+  while (true) {
+    spi_slave_transaction_t* completed = nullptr;
+    const esp_err_t result = spi_slave_get_trans_result(
+        SPI2_HOST, &completed, pdMS_TO_TICKS(100));
+    if (result == ESP_ERR_TIMEOUT) continue;
+    if (result != ESP_OK || completed == nullptr) {
+      ++spi_queue_errors;
+      continue;
+    }
+
+    if (queued_transactions > 0) --queued_transactions;
+    ++packets_received;
+    const std::size_t index = reinterpret_cast<std::size_t>(completed->user);
+    const std::size_t bytes = completed->trans_len / 8U;
+    const std::uint8_t* packet = spi_rx_buffers[index];
+    unsigned response_version = status_v8_negotiated ? 8 : 3;
+
+    if (bytes < 1U + kCrcBytes) {
+      ++crc_errors;
+    } else {
+      const std::uint32_t decode_started =
+          static_cast<std::uint32_t>(esp_timer_get_time());
+      ledgrid::ReceiverPacketPayload decoded{};
+      ledgrid::ReceiverPacketDecodeReport decode_report{};
+      const bool decoded_ok = ledgrid::decode_receiver_packet_payload(
+          packet, bytes, &decoded, &decode_report, fec_semantic_buffer,
+          sizeof(fec_semantic_buffer));
+      const auto fec_outcome = ledgrid::receiver_fec_packet_outcome(
+          decoded_ok, decode_report);
+      const bool fec_shaped =
+          fec_outcome != ledgrid::ReceiverFecPacketOutcome::NotFec;
+      if (fec_shaped) ++fec_packets_received;
+      const std::uint16_t decode_us = duration_u16(
+          static_cast<std::uint32_t>(esp_timer_get_time()) - decode_started);
+      last_crc_us = decode_us;
+      if (fec_shaped) {
+        fec_last_decode_us = decode_us;
+        std::uint16_t prior_max =
+            fec_max_decode_us.load(std::memory_order_relaxed);
+        while (decode_us > prior_max &&
+               !fec_max_decode_us.compare_exchange_weak(
+                   prior_max, decode_us, std::memory_order_relaxed)) {}
+      }
+      if (!decoded_ok) {
+        ++crc_errors;
+        if (fec_shaped) {
+          switch (fec_outcome) {
+            case ledgrid::ReceiverFecPacketOutcome::Uncorrectable:
+              ++fec_uncorrectable_packets;
+              break;
+            case ledgrid::ReceiverFecPacketOutcome::SemanticCrcError:
+              ++fec_semantic_crc_errors;
+              break;
+            default:
+              ++fec_framing_errors;
+              break;
+          }
+        }
+      } else {
+        ++crc_ok_packets;
+        if (fec_shaped) {
+          ++fec_packets_accepted;
+          if (decode_report.corrected_codewords != 0U) {
+            ++fec_corrected_packets;
+            fec_corrected_codewords.fetch_add(
+                decode_report.corrected_codewords,
+                std::memory_order_relaxed);
+          }
+        }
+        const std::uint8_t* command = decoded.data;
+        const std::size_t payload_bytes = decoded.size;
+        const bool status_query = command[0] == static_cast<std::uint8_t>(
+            ledgrid::ReceiverCommand::StatusQuery);
+        if (status_query) {
+          const bool accepted = ledgrid::valid_status_query(
+              command, payload_bytes, LEDGRID_ENABLE_LOCAL_BACKGROUND != 0,
+              installation_profiles_available(), receiver_native_modules_available());
+          status_v8_negotiated = ledgrid::status_v8_after_dispatch(
+              status_v8_negotiated, accepted, command, payload_bytes);
+          response_version = status_v8_negotiated ? 8 : 3;
+          if (status_v8_negotiated) response_version = 8;
+          else if (accepted) {
+            if (payload_bytes == ledgrid::kStatusBytesV7) response_version = 7;
+            else if (payload_bytes == ledgrid::kStatusBytesV6) response_version = 6;
+            else if (payload_bytes == ledgrid::kStatusBytesV5) response_version = 5;
+            else if (payload_bytes == ledgrid::kStatusBytesV4) response_version = 4;
+          }
+        } else {
+          portENTER_CRITICAL(&command_mux);
+          const auto admission = command_queue.admit(command, payload_bytes);
+          portEXIT_CRITICAL(&command_mux);
+          if (admission != CommandQueue::Admission::Accepted) ++spi_queue_errors;
+        }
+      }
+    }
+    // Classification includes counter updates and DMA refill. The executor
+    // cannot publish a snapshot made halfway through either operation.
+    // queue_spi_transaction counts an API failure; commands are never retried.
+    queue_spi_transaction(index, response_version);
+    portENTER_CRITICAL(&command_mux);
+    command_queue.classified();
+    portEXIT_CRITICAL(&command_mux);
+    xTaskNotifyGive(command_task_handle);
+  }
+}
+
 void initialize_spi() {
   gpio_reset_pin(kSpiChipSelect);
   gpio_reset_pin(kSpiClock);
@@ -1306,6 +1482,7 @@ void initialize_spi() {
   slave_config.mode = 0;
   slave_config.spics_io_num = kSpiChipSelect;
   slave_config.queue_size = kSpiQueueDepth;
+  slave_config.post_trans_cb = spi_transaction_completed;
 
   const esp_err_t result = spi_slave_initialize(
       SPI2_HOST, &bus_config, &slave_config, SPI_DMA_CH_AUTO);
@@ -1392,7 +1569,18 @@ extern "C" void app_main() {
   }
 
   ESP_LOGI(kLogTag, "LED Grid ESP32-S3 parallel receiver v3");
+  // Boot/reset starts with empty admission state and a fresh committed image;
+  // no prior DMA descriptors, negotiation or published snapshots survive.
+  encode_status(status_snapshot(), &status_buffers[0]);
+  command_task_handle = xTaskGetCurrentTaskHandle();
   initialize_spi();
+  if (xTaskCreatePinnedToCore(
+          spi_service, "led-spi", 8192, nullptr,
+          ledgrid::kReceiverSpiServiceTaskPriority, &spi_task_handle,
+          ledgrid::kReceiverSpiTaskCore) != pdPASS) {
+    ESP_LOGE(kLogTag, "SPI service task creation failed");
+    while (true) vTaskDelay(pdMS_TO_TICKS(1000));
+  }
   lock_runtime();
   const auto initial_output = receiver_output.configuration();
   unlock_runtime();
@@ -1403,170 +1591,5 @@ extern "C" void app_main() {
       static_cast<unsigned>(kSpiQueueDepth),
       static_cast<unsigned>(
           ledgrid::ws2812_encoded_size(initial_output.leds_per_strip)));
-  ConfigTiming config_timing{};
-  while (true) {
-    spi_slave_transaction_t* completed = nullptr;
-    const esp_err_t result = spi_slave_get_trans_result(
-        SPI2_HOST, &completed, pdMS_TO_TICKS(100));
-    if (result == ESP_ERR_TIMEOUT) continue;
-    if (result != ESP_OK || completed == nullptr) {
-      ++spi_queue_errors;
-      continue;
-    }
-
-    if (queued_transactions > 0) --queued_transactions;
-    ++packets_received;
-    const std::size_t index = reinterpret_cast<std::size_t>(completed->user);
-    const std::size_t bytes = completed->trans_len / 8U;
-    const std::uint8_t* packet = spi_rx_buffers[index];
-    bool request_v4 = false;
-    bool request_v5 = false;
-    bool request_v6 = false;
-    bool request_v7 = false;
-    ConfigTiming* timing = nullptr;
-
-    if (bytes < 1U + kCrcBytes) {
-      ++crc_errors;
-    } else {
-      const std::uint32_t decode_started =
-          static_cast<std::uint32_t>(esp_timer_get_time());
-      ledgrid::ReceiverPacketPayload decoded{};
-      ledgrid::ReceiverPacketDecodeReport decode_report{};
-      const bool decoded_ok = ledgrid::decode_receiver_packet_payload(
-          packet, bytes, &decoded, &decode_report, fec_semantic_buffer,
-          sizeof(fec_semantic_buffer));
-      const auto fec_outcome = ledgrid::receiver_fec_packet_outcome(
-          decoded_ok, decode_report);
-      const bool fec_shaped =
-          fec_outcome != ledgrid::ReceiverFecPacketOutcome::NotFec;
-      if (fec_shaped) ++fec_packets_received;
-      const std::uint16_t decode_us = duration_u16(
-          static_cast<std::uint32_t>(esp_timer_get_time()) - decode_started);
-      last_crc_us = decode_us;
-      if (fec_shaped) {
-        fec_last_decode_us = decode_us;
-        std::uint16_t prior_max =
-            fec_max_decode_us.load(std::memory_order_relaxed);
-        while (decode_us > prior_max &&
-               !fec_max_decode_us.compare_exchange_weak(
-                   prior_max, decode_us, std::memory_order_relaxed)) {}
-      }
-      if (!decoded_ok) {
-        ++crc_errors;
-        if (fec_shaped) {
-          switch (fec_outcome) {
-            case ledgrid::ReceiverFecPacketOutcome::Uncorrectable:
-              ++fec_uncorrectable_packets;
-              break;
-            case ledgrid::ReceiverFecPacketOutcome::SemanticCrcError:
-              ++fec_semantic_crc_errors;
-              break;
-            default:
-              ++fec_framing_errors;
-              break;
-          }
-        }
-      } else {
-        ++crc_ok_packets;
-        if (fec_shaped) {
-          ++fec_packets_accepted;
-          if (decode_report.corrected_codewords != 0U) {
-            ++fec_corrected_packets;
-            fec_corrected_codewords.fetch_add(
-                decode_report.corrected_codewords,
-                std::memory_order_relaxed);
-          }
-        }
-        const std::uint8_t* command = decoded.data;
-        const std::size_t payload_bytes = decoded.size;
-        if (command[0] == static_cast<std::uint8_t>(ledgrid::ReceiverCommand::Config)) {
-          config_timing = {};
-          timing = &config_timing;
-          timing->started_us = config_clock_us();
-          timing->validation.clock_us = config_clock_us;
-        }
-        const bool status_query =
-            command[0] == static_cast<std::uint8_t>(
-                              ledgrid::ReceiverCommand::StatusQuery);
-        bool dispatch_allowed = true;
-        std::uint32_t operation_sequence = 0;
-        if (!status_query) {
-          config_timed_lock(lock_runtime, timing ? &timing->runtime_wait_us : nullptr);
-          dispatch_allowed = operation_tracker.begin(command[0]);
-          operation_sequence = operation_tracker.sequence();
-          unlock_runtime();
-        }
-        ledgrid::NativeModuleResult native_result =
-            ledgrid::NativeModuleResult::None;
-        const bool accepted = dispatch_allowed &&
-            process_command(command, payload_bytes, &native_result, timing);
-#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
-        if (dispatch_allowed && is_native_module_command(command[0])) {
-          // Rendering runs on the display task and may update live failure
-          // telemetry while the SPI queue drains. Preserve the exact result of
-          // this operation alongside the sequence/command acknowledgement.
-          native_operation_result_latch.record(
-              operation_sequence, command[0], native_result);
-        }
-#endif
-        status_v8_negotiated = ledgrid::status_v8_after_dispatch(
-            status_v8_negotiated, accepted, command, payload_bytes);
-        request_v4 = status_query && accepted &&
-            payload_bytes == ledgrid::kStatusBytesV4;
-        request_v5 = status_query && accepted &&
-            payload_bytes == ledgrid::kStatusBytesV5;
-        request_v6 = status_query && accepted &&
-            payload_bytes == ledgrid::kStatusBytesV6;
-        request_v7 = status_query && accepted &&
-            payload_bytes == ledgrid::kStatusBytesV7;
-        if (!status_query && dispatch_allowed) {
-          config_timed_lock(lock_runtime, timing ? &timing->runtime_wait_us : nullptr);
-          if (command[0] < 0x10 || command[0] == 0xFF) {
-            receiver_runtime.set_last_result(
-                accepted ? ledgrid::ReceiverOperationResult::Ok
-                         : ledgrid::ReceiverOperationResult::InvalidCommand);
-          }
-          unlock_runtime();
-        }
-      }
-    }
-    if (timing) timing->dispatch_us = config_clock_us() - timing->started_us;
-    const bool requeued = queue_spi_transaction(
-        index, request_v4, request_v5, request_v6, request_v7, timing);
-    if (timing) {
-      const auto total_us = config_clock_us() - timing->started_us;
-      const auto& v = timing->validation;
-      // No locks are held and the SPI requeue attempt has completed.
-      // Serial logging can delay the next loop; its latency is excluded from
-      // every reported phase, so post-log traffic is not a throughput test.
-      ESP_LOGI(kLogTag,
-          "CFG us id=%u seq=%lu total=%llu dispatch=%llu "
-          "wait=%llu/%llu/%llu work=%llu/%llu/%llu "
-          "profile=%llu/%llu/%llu/%llu count=%lu/%lu/%lu/%lu "
-          "postwait=%llu snapshot=%llu encode=%llu queue=%llu queued=%u",
-          static_cast<unsigned>(logical_receiver_id.load()),
-          static_cast<unsigned long>(operation_tracker.sequence()),
-          static_cast<unsigned long long>(total_us),
-          static_cast<unsigned long long>(timing->dispatch_us),
-          static_cast<unsigned long long>(timing->runtime_wait_us),
-          static_cast<unsigned long long>(timing->native_wait_us),
-          static_cast<unsigned long long>(timing->profile_wait_us),
-          static_cast<unsigned long long>(timing->runtime_work_us),
-          static_cast<unsigned long long>(timing->native_work_us),
-          static_cast<unsigned long long>(timing->profile_work_us),
-          static_cast<unsigned long long>(v.probe.us),
-          static_cast<unsigned long long>(v.read.us),
-          static_cast<unsigned long long>(v.hash.us),
-          static_cast<unsigned long long>(v.decode.us),
-          static_cast<unsigned long>(v.probe.count),
-          static_cast<unsigned long>(v.read.count),
-          static_cast<unsigned long>(v.hash.count),
-          static_cast<unsigned long>(v.decode.count),
-          static_cast<unsigned long long>(timing->post_wait_us),
-          static_cast<unsigned long long>(timing->snapshot_us),
-          static_cast<unsigned long long>(timing->encode_us),
-          static_cast<unsigned long long>(timing->requeue_us),
-          static_cast<unsigned>(requeued));
-    }
-  }
+  command_executor();
 }

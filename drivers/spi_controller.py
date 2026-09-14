@@ -2361,6 +2361,8 @@ class LEDController:
                     prior = self.query_causal_receiver_status(required_status_version=8)
             if int(prior.get("receiver_status_version", 0) or 0) < 3:
                 raise RuntimeError("receiver status v3 is required for command acknowledgement")
+            if int(prior.get("receiver_spi_queue_errors", 0) or 0):
+                raise RuntimeError("receiver SPI queue fault requires receiver reset before commands")
             prior_sequence = int(prior.get("receiver_operation_sequence", 0) or 0)
             if prior_sequence >= 0xFFFFFFFF:
                 raise RuntimeError("receiver operation sequence is exhausted")
@@ -2430,6 +2432,8 @@ class LEDController:
                         continue
                     if query_index < minimum_post_queries:
                         continue
+                if int(status.get("receiver_spi_queue_errors", 0) or 0):
+                    raise RuntimeError("receiver SPI queue fault while awaiting command acknowledgement")
                 observed_version = int(
                     status.get("receiver_status_version", 0) or 0
                 )
@@ -3429,6 +3433,13 @@ class LEDController:
         )
 
     def _refresh_configuration(self, force=False, *, acknowledged=False):
+        transport_lock = getattr(self, "_transport_lock", None)
+        if transport_lock is None:
+            transport_lock = self._transport_lock = threading.RLock()
+        with transport_lock:
+            return self._refresh_configuration_locked(force, acknowledged=acknowledged)
+
+    def _refresh_configuration_locked(self, force=False, *, acknowledged=False):
         now = time.time()
         
         # Only send config if it's actually different or forced
@@ -3471,7 +3482,7 @@ class LEDController:
                 ):
                     cfg.extend(struct.pack(">H", global_strip_offset))
             status = None
-            if acknowledged:
+            if acknowledged or getattr(self, "_receiver_status_integrity_required", False):
                 status = self._command_status(cfg, storage_operation=True)
                 result = int(status.get("receiver_last_result", 0) or 0)
                 if result != 1:
