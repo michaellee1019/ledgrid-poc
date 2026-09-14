@@ -2053,8 +2053,14 @@ class AnimationManager(CanonicalReceiverSceneMixin):
     ) -> bool:
         diagnostic = str(error)
         if getattr(self, "_canonical_receiver_scene", None) is not None:
+            publisher = self._receiver_sparse_publisher
+            failed_publisher = copy.deepcopy(publisher.get_status()) if publisher is not None else None
             self.stop_animation(clear_leds=False)
-            self._receiver_last_status = {"healthy": False, "telemetry_complete": False, "error": diagnostic, "fallback_active": False}
+            self._receiver_last_status = {
+                "healthy": False, "telemetry_complete": False,
+                "error": diagnostic, "fallback_active": False,
+                "publisher": failed_publisher,
+            }
             return False
         with self.frame_data_lock:
             previous_preview = np.asarray(

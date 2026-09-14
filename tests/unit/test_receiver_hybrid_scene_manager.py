@@ -276,6 +276,35 @@ def _python_fallback_scene(revision=20):
 
 
 class ReceiverHybridSceneManagerTests(unittest.TestCase):
+    def test_canonical_failover_retains_publisher_evidence_after_host_takeover(self):
+        controller, manager = self.make_manager()
+        self.assertTrue(manager.start_scene(_scene()))
+        scene = manager._active_scene_state
+        publisher = manager._receiver_sparse_publisher
+        publisher._driver_status = {
+            "error": "generation proof failed",
+            "foreground_publish_evidence": {
+                "generation": 2,
+                "post_commit_statuses": [{"logical_device": 0, "status": {
+                    "receiver_overlay_committed_generation": 0,
+                    "receiver_packets": 101,
+                }}],
+            },
+        }
+        publisher._set_failure("delta_failed", "generation proof failed")
+        # Exercise the canonical fail-closed branch with the existing manager
+        # fixture; the diagnostic behavior is independent of Scene rendering.
+        manager._canonical_receiver_scene = object()
+        self.assertFalse(manager._activate_known_python_fallback(scene, "generation proof failed"))
+        publisher._driver_status["foreground_publish_evidence"]["generation"] = 99
+        status = manager.get_current_status()["receiver_hybrid"]
+        self.assertEqual(status["error"], "generation proof failed")
+        self.assertFalse(status["healthy"])
+        self.assertFalse(status["fallback_active"])
+        self.assertEqual(status["publisher"]["driver_status"]["foreground_publish_evidence"]["generation"], 2)
+        self.assertIsNone(manager._receiver_sparse_publisher)
+        self.assertIn("set_all", self.operation_names(controller))
+
     def setUp(self):
         _ClockOverlay.instances.clear()
         self.managers: list[AnimationManager] = []

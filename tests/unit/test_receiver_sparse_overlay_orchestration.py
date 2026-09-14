@@ -186,6 +186,55 @@ def transparent_wall(strip_count=32):
 
 
 class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
+    def test_failed_post_commit_proof_survives_compensation(self):
+        class LostGenerationDevice(Device):
+            def query_receiver_status(self):
+                status = super().query_receiver_status()
+                if self.committed_generation:
+                    status.update(
+                        receiver_overlay_committed_generation=0,
+                        receiver_status_version=7, receiver_packets=101,
+                        receiver_operation_sequence=42,
+                        receiver_last_processed_command=0x32,
+                        receiver_crc_errors=9,
+                    )
+                    self.failed_status = status
+                return status
+
+            def clear_overlay(self, **fields):
+                # Simulate cleanup replacing a receiver's live status object.
+                self.failed_status["receiver_overlay_committed_generation"] = 99
+                return super().clear_overlay(**fields)
+
+        for cleanup_fails in (False, True):
+            with self.subTest(cleanup_fails=cleanup_fails):
+                devices = [LostGenerationDevice(0)] + [Device(i) for i in range(1, 5)]
+                if cleanup_fails:
+                    devices[1].fail.add("clear")
+                item = controller(devices)
+                self.assertFalse(item.publish_sparse_overlay(
+                    transparent_wall(33), controller_session_id=SESSION,
+                    generation=1, prior_generation=0, scene_revision=7,
+                    scene_epoch=11, base_revision=13, lease_ms=3000,
+                    present_at_scene_time_us=17, full_snapshot=True,
+                ))
+                failure = item._local_background_status
+                self.assertEqual(failure["error"],
+                                 "receiver 0 retained neither committed nor staged foreground generation 1")
+                evidence = failure["foreground_publish_evidence"]
+                self.assertEqual(len(evidence["commit_acknowledgements"]), 5)
+                self.assertEqual(len(evidence["post_commit_statuses"]), 5)
+                ack = evidence["commit_acknowledgements"][0]["status"]
+                observed = evidence["post_commit_statuses"][0]["status"]
+                self.assertEqual(ack["receiver_overlay_committed_generation"], 1)
+                self.assertEqual(observed["receiver_overlay_committed_generation"], 0)
+                self.assertEqual(observed["receiver_packets"], 101)
+                self.assertEqual(observed["receiver_operation_sequence"], 42)
+                self.assertEqual(observed["receiver_crc_errors"], 9)
+                self.assertEqual(observed["receiver_overlay_session_id"], SESSION.hex())
+                self.assertEqual(devices[0].committed_generation, 2)
+                self.assertEqual(bool(failure["cleanup_errors"]), cleanup_fails)
+
     def test_full_snapshot_is_two_canonical_batch_spans_per_receiver(self):
         devices = [Device(index) for index in range(4)]
         item = controller(devices)

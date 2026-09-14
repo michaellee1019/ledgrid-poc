@@ -2539,10 +2539,13 @@ class MultiDeviceLEDController:
         require_capability=False,
         require_identity=True,
         required_capabilities=None,
+        status_evidence=None,
     ):
         statuses = []
         for index, device in enumerate(self.devices):
             status = device.query_receiver_status()
+            if status_evidence is not None:
+                status_evidence.append(self._foreground_status_evidence(index, status))
             if not isinstance(status, dict):
                 raise RuntimeError(f"receiver {index} returned no status")
             if (require_capability
@@ -2776,6 +2779,17 @@ class MultiDeviceLEDController:
 
         with self._controller_lock():
             touched = False
+            publish_evidence = {
+                "generation": overlay_generation,
+                "controller_session_id": session.hex(),
+                "expected_binding": {
+                    "scene_revision": scene_revision, "scene_epoch": scene_epoch,
+                    "base_revision": base_revision, "lease_ms": lease_ms,
+                    "present_at_scene_time_us": present_at_scene_time_us,
+                },
+                "commit_acknowledgements": [],
+                "post_commit_statuses": [],
+            }
             try:
                 statuses = self._receiver_statuses(
                     require_capability=True,
@@ -2869,11 +2883,15 @@ class MultiDeviceLEDController:
                         base_revision=base_revision,
                         present_at_scene_time_us=present_at_scene_time_us,
                     )
+                    publish_evidence["commit_acknowledgements"].append(
+                        self._foreground_status_evidence(index, status)
+                    )
                     self._require_overlay_ack(status, "foreground commit", index)
 
                 committed = self._receiver_statuses(
                     require_capability=True,
                     required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
+                    status_evidence=publish_evidence["post_commit_statuses"],
                 )
                 receiver_states = []
                 for index, status in enumerate(committed):
@@ -2941,6 +2959,7 @@ class MultiDeviceLEDController:
                     "operation": "foreground_publish_failed",
                     "error": str(exc),
                     "cleanup_errors": cleanup_errors,
+                    "foreground_publish_evidence": publish_evidence,
                 }
                 self._sparse_overlay_session_id = (
                     None if cleanup_errors else session
@@ -3300,6 +3319,30 @@ class MultiDeviceLEDController:
                 f"receiver {logical_device} rejected {operation} "
                 f"(overlay_result={overlay_result!r})"
             )
+
+    @staticmethod
+    def _foreground_status_evidence(logical_device, status):
+        """Detach the exact proof fields before compensation replaces telemetry."""
+        fields = (
+            "receiver_status_version", "receiver_status_responses", "receiver_packets",
+            "receiver_logical_device", "receiver_last_processed_command",
+            "receiver_operation_sequence", "receiver_base_mode", "receiver_foreground_state",
+            "receiver_transition_reason", "receiver_last_result",
+            "receiver_overlay_operation_result", "receiver_overlay_session_id",
+            "receiver_overlay_committed_generation", "receiver_overlay_staged_generation",
+            "receiver_foreground_scene_revision", "receiver_foreground_scene_epoch",
+            "receiver_foreground_base_revision", "receiver_foreground_present_at_scene_time_us",
+            "receiver_overlay_lease_ms", "receiver_overlay_lease_remaining_ms",
+            "receiver_overlay_commits", "receiver_overlay_expirations",
+            "receiver_overlay_composite_frames", "receiver_crc_errors",
+            "receiver_spi_queue_errors", "receiver_display_errors",
+        )
+        return {
+            "logical_device": logical_device,
+            "status": {
+                key: status.get(key) for key in fields
+            } if isinstance(status, dict) else None,
+        }
 
     def _stop_local_background_best_effort(self, operation):
         errors = []
