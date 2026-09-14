@@ -3670,9 +3670,9 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         }
 
     def _scene_status_snapshot(self) -> Optional[Dict[str, Any]]:
-        if not self._scene_mode or not self._scene_background:
-            return None
         with self._scene_lock:
+            if not self._scene_mode or not self._scene_background:
+                return None
             background = self._scene_background
             overlay = self._scene_overlay
             snapshot: Dict[str, Any] = {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import threading
 import unittest
 
 import numpy as np
@@ -23,6 +24,30 @@ _ENABLED = AnimationPipelineFeatureFlags(
     receiver_local_background=True,
     receiver_sparse_overlay=True,
 )
+
+
+class _PauseFirstSceneLock:
+    """Pause one entrant before it acquires the delegated scene lock."""
+
+    def __init__(self, lock):
+        self._lock = lock
+        self._pause_lock = threading.Lock()
+        self.waiting = threading.Event()
+        self.release = threading.Event()
+        self._paused = False
+
+    def __enter__(self):
+        with self._pause_lock:
+            pause = not self._paused
+            self._paused = True
+        if pause:
+            self.waiting.set()
+            if not self.release.wait(timeout=2.0):
+                raise RuntimeError("timed out waiting to release scene status snapshot")
+        return self._lock.__enter__()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return self._lock.__exit__(exc_type, exc_value, traceback)
 
 
 class _ClockOverlay(AnimationBase):
@@ -467,6 +492,32 @@ class ReceiverHybridSceneManagerTests(unittest.TestCase):
         self.assertEqual(overlay.cleanups, 1)
         self.assertEqual(overlay.stops, 1)
         self.assertFalse(manager._scene_mode)
+
+    def test_status_snapshot_waiting_on_concurrent_stop_omits_cleared_scene(self):
+        _controller, manager = self.make_manager()
+        self.assertTrue(manager.start_scene(_scene()))
+        scene_lock = _PauseFirstSceneLock(manager._scene_lock)
+        manager._scene_lock = scene_lock
+        outcome = {}
+
+        def read_status():
+            try:
+                outcome["status"] = manager.get_current_frame()
+            except BaseException as exc:  # Surface failures on the test thread.
+                outcome["error"] = exc
+
+        status_thread = threading.Thread(target=read_status)
+        status_thread.start()
+        self.assertTrue(scene_lock.waiting.wait(timeout=1.0))
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(manager.stop_animation(clear_leds=False))
+        scene_lock.release.set()
+        status_thread.join(timeout=1.0)
+
+        self.assertFalse(status_thread.is_alive())
+        self.assertNotIn("error", outcome)
+        self.assertIsNone(outcome["status"]["scene"])
 
     def test_start_and_initial_snapshot_failures_activate_known_python_fallback(self):
         for behavior in ("start", "snapshot"):
