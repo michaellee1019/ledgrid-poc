@@ -12,6 +12,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 import hashlib
 import json
+import logging
 import math
 import re
 import threading
@@ -29,6 +30,9 @@ from ipc.scene_contract import (
     SceneValidationError,
     normalize_scene_payload,
 )
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 ACTIVATION_COMMAND_SCHEMA = "ledgrid.scene-activation-command"
@@ -2083,6 +2087,10 @@ class ControllerActivationCoordinator:
             )
             record.status["rollback"].update(result="succeeded", error=None)
         except Exception as exc:
+            _LOGGER.exception(
+                "Activation %s rollback state restoration failed",
+                record.command["activation_id"],
+            )
             if "prior_global_revision" in locals():
                 self._global_settings_revision = prior_global_revision
             record.status["rollback"].update(result="failed", error=str(exc))
@@ -2113,6 +2121,10 @@ class ControllerActivationCoordinator:
                 # Keep this barrier ahead of every terminal rollback receipt.
                 self._commit_callback()
             except Exception as exc:
+                _LOGGER.exception(
+                    "Activation %s rollback persistence failed",
+                    record.command["activation_id"],
+                )
                 record.status["rollback"].update(result="failed", error=str(exc))
                 return False
         return True

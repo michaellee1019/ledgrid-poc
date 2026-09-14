@@ -2684,11 +2684,18 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
 
         _manager, coordinator = self.coordinator(fault_injector=inject)
 
-        status = coordinator.activate(self.command(coordinator))
+        command = self.command(coordinator)
+        with self.assertLogs("ipc.runtime_control", level="ERROR") as captured:
+            status = coordinator.activate(command)
 
+        diagnostic = "\n".join(captured.output)
+        self.assertIn(command["activation_id"], diagnostic)
+        self.assertIn("rollback state restoration failed", diagnostic)
+        self.assertIn("Traceback (most recent call last)", diagnostic)
+        self.assertIn("RuntimeError: rollback fault", diagnostic)
         self.assertEqual(status["phase"], "failed")
         self.assertEqual(status["rollback"]["result"], "failed")
-        self.assertIn("rollback fault", status["rollback"]["error"])
+        self.assertEqual("rollback fault", status["rollback"]["error"])
         self.assertEqual(coordinator.state_revision, 1)
         normalize_scene_activation_status(status)
 
