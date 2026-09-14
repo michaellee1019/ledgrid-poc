@@ -13,6 +13,11 @@
 
 namespace {
 
+std::uint64_t validation_clock_calls = 0;
+std::uint64_t validation_clock_us() {
+  return ++validation_clock_calls * 3;
+}
+
 void append_u16(std::vector<std::uint8_t>* output, std::uint16_t value) {
   output->push_back(static_cast<std::uint8_t>(value >> 8U));
   output->push_back(static_cast<std::uint8_t>(value));
@@ -734,11 +739,18 @@ void test_persisted_views_wait_for_explicit_installed_topology_config() {
         manager.process(preflight.data(), preflight.size())));
     const auto store_generation = store.mutation_generation();
     const auto access = store.entries[0].access;
+    ledgrid::InstallationProfileValidationTiming timing{};
+    timing.clock_us = validation_clock_us;
     manager.configure_identity(
         static_cast<std::uint8_t>(logical_id), fixture.reversed_strip_order,
         fixture.global_strip_count,
         static_cast<std::uint8_t>(fixture.strip_count), fixture.leds_per_strip,
-        fixture.strip_origin);
+        fixture.strip_origin, &timing);
+    for (const auto* phase :
+         {&timing.probe, &timing.read, &timing.hash, &timing.decode}) {
+      TEST_ASSERT_EQUAL_UINT32(7, phase->count);
+      TEST_ASSERT_EQUAL_UINT64(21, phase->us);
+    }
     TEST_ASSERT_NOT_NULL(manager.active_view().encoded);
     TEST_ASSERT_EQUAL_UINT16(fixture.strip_origin,
                              manager.active_view().strip_origin);
@@ -746,12 +758,14 @@ void test_persisted_views_wait_for_explicit_installed_topology_config() {
                       manager.active_view().reversed_strip_order);
     TEST_ASSERT_TRUE(manager.ledger().active.present);
     const auto first_view = manager.active_view();
+    const auto measured_calls = validation_clock_calls;
     // Replayed CONFIG still validates every pin, without cache metadata writes.
     manager.configure_identity(
         static_cast<std::uint8_t>(logical_id), fixture.reversed_strip_order,
         fixture.global_strip_count,
         static_cast<std::uint8_t>(fixture.strip_count), fixture.leds_per_strip,
         fixture.strip_origin);
+    TEST_ASSERT_EQUAL_UINT64(measured_calls, validation_clock_calls);
     TEST_ASSERT_EQUAL_UINT64(store_generation, store.mutation_generation());
     TEST_ASSERT_EQUAL_UINT32(access, store.entries[0].access);
     TEST_ASSERT_EQUAL_INT(0, persistence.saves);
@@ -783,11 +797,14 @@ void test_config_rechecks_corruption_reads_and_changed_identity_without_touch() 
     ledgrid::InstallationProfileManager manager(
         &store, &persistence, scratch.data(), scratch.size(), true);
     TEST_ASSERT_TRUE(manager.begin());
+    ledgrid::InstallationProfileValidationTiming timing{};
     auto configure = [&](bool reverse) {
+      timing = {};
+      timing.clock_us = validation_clock_us;
       manager.configure_identity(
           0, reverse, fixture.global_strip_count,
           static_cast<std::uint8_t>(fixture.strip_count), fixture.leds_per_strip,
-          fixture.strip_origin);
+          fixture.strip_origin, &timing);
     };
     configure(fixture.reversed_strip_order);
     TEST_ASSERT_NOT_NULL(manager.active_view().encoded);
@@ -809,6 +826,11 @@ void test_config_rechecks_corruption_reads_and_changed_identity_without_touch() 
     TEST_ASSERT_EQUAL_UINT64(8, manager.ledger().generation);
     TEST_ASSERT_EQUAL_INT(1, persistence.saves);
     TEST_ASSERT_EQUAL_UINT8(16, static_cast<std::uint8_t>(manager.status().result));
+    TEST_ASSERT_EQUAL_UINT32(1, timing.probe.count);
+    TEST_ASSERT_EQUAL_UINT32(failure == 2 ? 0 : 1, timing.read.count);
+    TEST_ASSERT_EQUAL_UINT32(failure == 0 || failure == 3 ? 1 : 0,
+                             timing.hash.count);
+    TEST_ASSERT_EQUAL_UINT32(failure == 3 ? 1 : 0, timing.decode.count);
   }
 }
 

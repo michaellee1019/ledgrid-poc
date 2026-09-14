@@ -139,6 +139,32 @@ ledgrid::NativeModuleStatusCache<NativeStatusCriticalSection> native_status_cach
 std::atomic<bool> native_module_ready{false};
 #endif
 
+// One SPI-task-owned record, used only for CONFIG and printed after requeue.
+struct ConfigTiming {
+  std::uint64_t started_us = 0;
+  std::uint64_t dispatch_us = 0;
+  std::uint64_t runtime_wait_us = 0, runtime_work_us = 0;
+  std::uint64_t native_wait_us = 0, native_work_us = 0;
+  std::uint64_t profile_wait_us = 0, profile_work_us = 0;
+  std::uint64_t post_wait_us = 0, snapshot_us = 0;
+  std::uint64_t encode_us = 0, requeue_us = 0;
+  ledgrid::InstallationProfileValidationTiming validation{};
+};
+
+std::uint64_t config_clock_us() {
+  return static_cast<std::uint64_t>(esp_timer_get_time());
+}
+
+void config_timed_lock(void (*lock)(), std::uint64_t* elapsed) {
+  if (elapsed == nullptr) {
+    lock();
+    return;
+  }
+  const auto started = config_clock_us();
+  lock();
+  *elapsed += config_clock_us() - started;
+}
+
 std::atomic<std::uint32_t> next_sequence{1};
 std::atomic<std::uint8_t> logical_receiver_id{0xFF};
 std::atomic<std::uint16_t> configured_global_strip_offset{0};
@@ -671,7 +697,7 @@ void display_task(void*) {
   }
 }
 
-ledgrid::ReceiverStatusV7 status_snapshot() {
+ledgrid::ReceiverStatusV7 status_snapshot(ConfigTiming* timing = nullptr) {
   const auto counters = mailbox_counters();
   ledgrid::ReceiverStatusV7 status{};
   status.flags = 0x01U | (led_driver.in_flight() ? 0x02U : 0U);
@@ -693,7 +719,7 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
   status.last_displayed_sequence =
       last_displayed_sequence.load(std::memory_order_relaxed);
   status.display_errors = display_errors.load(std::memory_order_relaxed);
-  lock_runtime();
+  config_timed_lock(lock_runtime, timing ? &timing->post_wait_us : nullptr);
   const auto output = receiver_output.configuration();
   status.active_strips = output.strip_count;
   status.lane_mask = applied_lane_mask.load(std::memory_order_relaxed);
@@ -803,7 +829,7 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
   status.overlay_expirations = overlay_stats.expirations;
   unlock_runtime();
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
-  lock_profile();
+  config_timed_lock(lock_profile, timing ? &timing->post_wait_us : nullptr);
   status.installation_profile = installation_profile_manager.status();
   unlock_profile();
 #endif
@@ -841,8 +867,14 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
 
 bool queue_spi_transaction(
     std::size_t index, bool status_v4 = false, bool status_v5 = false,
-    bool status_v6 = false, bool status_v7 = false) {
-  const auto status = status_snapshot();
+    bool status_v6 = false, bool status_v7 = false,
+    ConfigTiming* timing = nullptr) {
+  auto started = timing ? config_clock_us() : 0;
+  const auto status = status_snapshot(timing);
+  if (timing) {
+    timing->snapshot_us = config_clock_us() - started;
+    started = config_clock_us();
+  }
   if (status_v8_negotiated) {
     ledgrid::encode_receiver_status_v8(
         status, spi_tx_buffers[index], kSpiBufferSize);
@@ -862,6 +894,10 @@ bool queue_spi_transaction(
     ledgrid::encode_receiver_status_v3(
         status, spi_tx_buffers[index], kSpiBufferSize);
   }
+  if (timing) {
+    timing->encode_us = config_clock_us() - started;
+    started = config_clock_us();
+  }
   auto& transaction = spi_transactions[index];
   transaction = {};
   transaction.length = kSpiBufferSize * 8U;
@@ -870,6 +906,7 @@ bool queue_spi_transaction(
   transaction.user = reinterpret_cast<void*>(index);
   const esp_err_t result =
       spi_slave_queue_trans(SPI2_HOST, &transaction, pdMS_TO_TICKS(10));
+  if (timing) timing->requeue_us = config_clock_us() - started;
   if (result != ESP_OK) {
     ++spi_queue_errors;
     return false;
@@ -880,7 +917,8 @@ bool queue_spi_transaction(
 
 bool process_command(
     const std::uint8_t* data, std::size_t length,
-    ledgrid::NativeModuleResult* native_result = nullptr) {
+    ledgrid::NativeModuleResult* native_result = nullptr,
+    ConfigTiming* timing = nullptr) {
   if (data == nullptr || length == 0) return false;
   if (native_result != nullptr) {
     *native_result = ledgrid::NativeModuleResult::None;
@@ -888,7 +926,7 @@ bool process_command(
   const auto command = static_cast<ledgrid::ReceiverCommand>(data[0]);
   ledgrid::ReceiverOutputConfiguration output{};
   ledgrid::BaseMode current_mode = ledgrid::BaseMode::StartupFallback;
-  lock_runtime();
+  config_timed_lock(lock_runtime, timing ? &timing->runtime_wait_us : nullptr);
   output = receiver_output.configuration();
   current_mode = receiver_runtime.base_mode();
   unlock_runtime();
@@ -1170,7 +1208,8 @@ bool process_command(
             new_strips > kInstalledGlobalStrips - new_global_offset))) {
         return false;
       }
-      lock_runtime();
+      config_timed_lock(lock_runtime, timing ? &timing->runtime_wait_us : nullptr);
+      auto work_started = timing ? config_clock_us() : 0;
       const auto prior_output = receiver_output.configuration();
       const bool configured = receiver_output.configure(new_strips, new_leds);
       if (configured &&
@@ -1187,6 +1226,7 @@ bool process_command(
       const bool effective_reverse_local_strip_order =
           receiver_runtime.local_parameters().reverse_local_strip_order;
       unlock_runtime();
+      if (timing) timing->runtime_work_us += config_clock_us() - work_started;
       if (!configured) return false;
       logical_receiver_id.store(new_logical_id, std::memory_order_release);
       if (has_explicit_topology) {
@@ -1207,24 +1247,29 @@ bool process_command(
       native_topology.global_strip_offset = new_global_offset;
       native_topology.reverse_local_strip_order =
           effective_reverse_local_strip_order;
-      lock_native();
+      config_timed_lock(lock_native, timing ? &timing->native_wait_us : nullptr);
+      work_started = timing ? config_clock_us() : 0;
       native_module_manager.configure_topology(native_topology);
       unlock_native();
+      if (timing) timing->native_work_us += config_clock_us() - work_started;
 #endif
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
       if (has_installed_direction) {
         const bool topology_is_configured =
             has_explicit_topology ||
             explicit_receiver_topology.load(std::memory_order_acquire);
-        lock_profile();
+        config_timed_lock(lock_profile, timing ? &timing->profile_wait_us : nullptr);
+        work_started = timing ? config_clock_us() : 0;
         installation_profile_manager.configure_identity(
             new_logical_id, effective_reverse_local_strip_order,
             topology_is_configured
                 ? kInstalledGlobalStrips
                 : ledgrid::kInstallationProfileGlobalStripsV1,
             new_strips, new_leds,
-            topology_is_configured ? new_global_offset : UINT16_MAX);
+            topology_is_configured ? new_global_offset : UINT16_MAX,
+            timing ? &timing->validation : nullptr);
         unlock_profile();
+        if (timing) timing->profile_work_us += config_clock_us() - work_started;
       }
 #endif
       if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
@@ -1358,6 +1403,7 @@ extern "C" void app_main() {
       static_cast<unsigned>(kSpiQueueDepth),
       static_cast<unsigned>(
           ledgrid::ws2812_encoded_size(initial_output.leds_per_strip)));
+  ConfigTiming config_timing{};
   while (true) {
     spi_slave_transaction_t* completed = nullptr;
     const esp_err_t result = spi_slave_get_trans_result(
@@ -1377,6 +1423,7 @@ extern "C" void app_main() {
     bool request_v5 = false;
     bool request_v6 = false;
     bool request_v7 = false;
+    ConfigTiming* timing = nullptr;
 
     if (bytes < 1U + kCrcBytes) {
       ++crc_errors;
@@ -1432,13 +1479,19 @@ extern "C" void app_main() {
         }
         const std::uint8_t* command = decoded.data;
         const std::size_t payload_bytes = decoded.size;
+        if (command[0] == static_cast<std::uint8_t>(ledgrid::ReceiverCommand::Config)) {
+          config_timing = {};
+          timing = &config_timing;
+          timing->started_us = config_clock_us();
+          timing->validation.clock_us = config_clock_us;
+        }
         const bool status_query =
             command[0] == static_cast<std::uint8_t>(
                               ledgrid::ReceiverCommand::StatusQuery);
         bool dispatch_allowed = true;
         std::uint32_t operation_sequence = 0;
         if (!status_query) {
-          lock_runtime();
+          config_timed_lock(lock_runtime, timing ? &timing->runtime_wait_us : nullptr);
           dispatch_allowed = operation_tracker.begin(command[0]);
           operation_sequence = operation_tracker.sequence();
           unlock_runtime();
@@ -1446,7 +1499,7 @@ extern "C" void app_main() {
         ledgrid::NativeModuleResult native_result =
             ledgrid::NativeModuleResult::None;
         const bool accepted = dispatch_allowed &&
-            process_command(command, payload_bytes, &native_result);
+            process_command(command, payload_bytes, &native_result, timing);
 #if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
         if (dispatch_allowed && is_native_module_command(command[0])) {
           // Rendering runs on the display task and may update live failure
@@ -1467,7 +1520,7 @@ extern "C" void app_main() {
         request_v7 = status_query && accepted &&
             payload_bytes == ledgrid::kStatusBytesV7;
         if (!status_query && dispatch_allowed) {
-          lock_runtime();
+          config_timed_lock(lock_runtime, timing ? &timing->runtime_wait_us : nullptr);
           if (command[0] < 0x10 || command[0] == 0xFF) {
             receiver_runtime.set_last_result(
                 accepted ? ledgrid::ReceiverOperationResult::Ok
@@ -1477,7 +1530,43 @@ extern "C" void app_main() {
         }
       }
     }
-    queue_spi_transaction(
-        index, request_v4, request_v5, request_v6, request_v7);
+    if (timing) timing->dispatch_us = config_clock_us() - timing->started_us;
+    const bool requeued = queue_spi_transaction(
+        index, request_v4, request_v5, request_v6, request_v7, timing);
+    if (timing) {
+      const auto total_us = config_clock_us() - timing->started_us;
+      const auto& v = timing->validation;
+      // No locks are held and the SPI requeue attempt has completed.
+      // Serial logging can delay the next loop; its latency is excluded from
+      // every reported phase, so post-log traffic is not a throughput test.
+      ESP_LOGI(kLogTag,
+          "CFG us id=%u seq=%lu total=%llu dispatch=%llu "
+          "wait=%llu/%llu/%llu work=%llu/%llu/%llu "
+          "profile=%llu/%llu/%llu/%llu count=%lu/%lu/%lu/%lu "
+          "postwait=%llu snapshot=%llu encode=%llu queue=%llu queued=%u",
+          static_cast<unsigned>(logical_receiver_id.load()),
+          static_cast<unsigned long>(operation_tracker.sequence()),
+          static_cast<unsigned long long>(total_us),
+          static_cast<unsigned long long>(timing->dispatch_us),
+          static_cast<unsigned long long>(timing->runtime_wait_us),
+          static_cast<unsigned long long>(timing->native_wait_us),
+          static_cast<unsigned long long>(timing->profile_wait_us),
+          static_cast<unsigned long long>(timing->runtime_work_us),
+          static_cast<unsigned long long>(timing->native_work_us),
+          static_cast<unsigned long long>(timing->profile_work_us),
+          static_cast<unsigned long long>(v.probe.us),
+          static_cast<unsigned long long>(v.read.us),
+          static_cast<unsigned long long>(v.hash.us),
+          static_cast<unsigned long long>(v.decode.us),
+          static_cast<unsigned long>(v.probe.count),
+          static_cast<unsigned long>(v.read.count),
+          static_cast<unsigned long>(v.hash.count),
+          static_cast<unsigned long>(v.decode.count),
+          static_cast<unsigned long long>(timing->post_wait_us),
+          static_cast<unsigned long long>(timing->snapshot_us),
+          static_cast<unsigned long long>(timing->encode_us),
+          static_cast<unsigned long long>(timing->requeue_us),
+          static_cast<unsigned>(requeued));
+    }
   }
 }

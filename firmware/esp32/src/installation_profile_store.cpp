@@ -9,6 +9,21 @@
 namespace ledgrid {
 namespace {
 
+using ProfileTiming = InstallationProfileValidationTiming;
+
+template <typename Operation>
+bool measure_profile_operation(
+    ProfileTiming* timing, ProfileTiming::Phase ProfileTiming::* field,
+    Operation operation) {
+  if (timing == nullptr || timing->clock_us == nullptr) return operation();
+  auto& phase = timing->*field;
+  const auto started = timing->clock_us();
+  ++phase.count;
+  const bool result = operation();
+  phase.us += timing->clock_us() - started;
+  return result;
+}
+
 std::uint16_t read_u16(const std::uint8_t* input) {
   return static_cast<std::uint16_t>(
       (static_cast<std::uint16_t>(input[0]) << 8U) | input[1]);
@@ -101,7 +116,8 @@ bool InstallationProfileManager::begin() {
 void InstallationProfileManager::configure_identity(
     std::uint8_t logical_receiver_id, bool reversed,
     std::uint16_t global_strip_count, std::uint8_t local_strip_count,
-    std::uint16_t leds_per_strip, std::uint16_t global_strip_offset) {
+    std::uint16_t leds_per_strip, std::uint16_t global_strip_offset,
+    InstallationProfileValidationTiming* timing) {
   logical_receiver_id_ = logical_receiver_id;
   reversed_ = reversed;
   static constexpr std::uint16_t kInstalledOrigins[5] = {0, 8, 16, 24, 32};
@@ -129,7 +145,8 @@ void InstallationProfileManager::configure_identity(
   // LRU metadata while the SPI completion task must replenish its reply slots.
   for (InstallationProfileBinding* binding :
        {&ledger_.active, &ledger_.staged, &ledger_.rollback}) {
-    if (binding->present && !binding_valid(*binding, nullptr, nullptr, false)) {
+    if (binding->present &&
+        !binding_valid(*binding, nullptr, nullptr, false, timing)) {
       *binding = {};
       repaired = true;
     }
@@ -144,7 +161,7 @@ void InstallationProfileManager::configure_identity(
       return;
     }
   }
-  if (!refresh_active_view(ledger_, false)) {
+  if (!refresh_active_view(ledger_, false, timing)) {
     active_view_ = {};
     cache_integrity_ok_ = false;
     result_ = InstallationProfileResult::IntegrityError;
@@ -153,7 +170,7 @@ void InstallationProfileManager::configure_identity(
   // Integrity reports the current fail-closed ledger/cache relationship. Keep
   // the result/decoder fields as history, but permit a cleared bad binding to
   // be repaired by a subsequent authenticated install.
-  cache_integrity_ok_ = bindings_valid(ledger_, false);
+  cache_integrity_ok_ = bindings_valid(ledger_, false, timing);
 }
 
 InstallationProfileResult InstallationProfileManager::finish(
@@ -390,38 +407,48 @@ bool InstallationProfileManager::binding_valid(
     const InstallationProfileBinding& binding,
     InstallationProfileViewV1* output,
     InstallationProfileError* error,
-    bool update_access) const {
+    bool update_access, InstallationProfileValidationTiming* timing) const {
   if (!binding.present) {
     if (output != nullptr) *output = {};
     if (error != nullptr) *error = InstallationProfileError::None;
     return true;
   }
   std::uint32_t size = 0;
-  if (store_ == nullptr || !store_->probe(binding.payload_digest, &size) ||
+  if (store_ == nullptr || !measure_profile_operation(
+          timing, &ProfileTiming::probe,
+          [&] { return store_->probe(binding.payload_digest, &size); }) ||
       size != installation_profile_receiver_bytes_v1(
                   expected_local_strips_, expected_leds_per_strip_) ||
       scratch_size_ < 2U * size) return false;
   std::uint8_t* work = scratch_ + kInstallationProfileReceiverBytesV1;
-  if (!store_->read_committed(binding.payload_digest, 0, work, size)) return false;
+  if (!measure_profile_operation(timing, &ProfileTiming::read, [&] {
+        return store_->read_committed(binding.payload_digest, 0, work, size);
+      })) return false;
   std::uint8_t digest[32] = {};
-  sha256(work, size, digest);
+  measure_profile_operation(timing, &ProfileTiming::hash, [&] {
+    sha256(work, size, digest);
+    return true;
+  });
   if (!equal_digest(digest, binding.payload_digest)) return false;
   InstallationProfileReceiverExpectationV1 expectation{
       expected_origin_, reversed_, expected_global_strips_,
       expected_local_strips_, expected_leds_per_strip_};
   InstallationProfileViewV1 view{};
-  if (!decode_installation_profile_receiver_v1(
-          work, size, expectation, &view, error)) return false;
+  if (!measure_profile_operation(timing, &ProfileTiming::decode, [&] {
+        return decode_installation_profile_receiver_v1(
+            work, size, expectation, &view, error);
+      })) return false;
   if (update_access && !store_->touch(binding.payload_digest)) return false;
   if (output != nullptr) *output = view;
   return true;
 }
 
 bool InstallationProfileManager::bindings_valid(
-    const InstallationProfileLedger& ledger, bool update_access) const {
-  return binding_valid(ledger.active, nullptr, nullptr, update_access) &&
-         binding_valid(ledger.staged, nullptr, nullptr, update_access) &&
-         binding_valid(ledger.rollback, nullptr, nullptr, update_access);
+    const InstallationProfileLedger& ledger, bool update_access,
+    InstallationProfileValidationTiming* timing) const {
+  return binding_valid(ledger.active, nullptr, nullptr, update_access, timing) &&
+         binding_valid(ledger.staged, nullptr, nullptr, update_access, timing) &&
+         binding_valid(ledger.rollback, nullptr, nullptr, update_access, timing);
 }
 
 InstallationProfileResult InstallationProfileManager::verify(
@@ -444,24 +471,34 @@ InstallationProfileResult InstallationProfileManager::verify(
 }
 
 bool InstallationProfileManager::refresh_active_view(
-    const InstallationProfileLedger& candidate, bool update_access) {
+    const InstallationProfileLedger& candidate, bool update_access,
+    InstallationProfileValidationTiming* timing) {
   active_view_ = {};
   if (!candidate.active.present) return true;
   std::uint32_t size = 0;
-  if (!store_->probe(candidate.active.payload_digest, &size) ||
+  if (!measure_profile_operation(timing, &ProfileTiming::probe, [&] {
+        return store_->probe(candidate.active.payload_digest, &size);
+      }) ||
       size != installation_profile_receiver_bytes_v1(
                   expected_local_strips_, expected_leds_per_strip_) ||
-      !store_->read_committed(candidate.active.payload_digest, 0, scratch_, size)) {
+      !measure_profile_operation(timing, &ProfileTiming::read, [&] {
+        return store_->read_committed(candidate.active.payload_digest, 0, scratch_, size);
+      })) {
     return false;
   }
   std::uint8_t digest[32] = {};
-  sha256(scratch_, size, digest);
+  measure_profile_operation(timing, &ProfileTiming::hash, [&] {
+    sha256(scratch_, size, digest);
+    return true;
+  });
   if (!equal_digest(digest, candidate.active.payload_digest)) return false;
   InstallationProfileReceiverExpectationV1 expectation{
       expected_origin_, reversed_, expected_global_strips_,
       expected_local_strips_, expected_leds_per_strip_};
-  if (!decode_installation_profile_receiver_v1(
-          scratch_, size, expectation, &active_view_, &decoder_error_)) {
+  if (!measure_profile_operation(timing, &ProfileTiming::decode, [&] {
+        return decode_installation_profile_receiver_v1(
+            scratch_, size, expectation, &active_view_, &decoder_error_);
+      })) {
     return false;
   }
   return !update_access || store_->touch(candidate.active.payload_digest);

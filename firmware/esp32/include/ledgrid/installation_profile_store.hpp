@@ -65,6 +65,15 @@ class InstallationProfilePersistence {
   virtual bool save(const InstallationProfileLedger& ledger) = 0;
 };
 
+struct InstallationProfileValidationTiming {
+  struct Phase {
+    std::uint64_t us = 0;
+    std::uint32_t count = 0;
+  };
+  std::uint64_t (*clock_us)() = nullptr;
+  Phase probe{}, read{}, hash{}, decode{};
+};
+
 class InstallationProfileManager {
  public:
   InstallationProfileManager(
@@ -80,7 +89,8 @@ class InstallationProfileManager {
       std::uint16_t global_strip_count = kInstallationProfileGlobalStripsV1,
       std::uint8_t local_strip_count = kInstallationProfileReceiverStripsV1,
       std::uint16_t leds_per_strip = kInstallationProfileLedsPerStripV1,
-      std::uint16_t global_strip_offset = UINT16_MAX);
+      std::uint16_t global_strip_offset = UINT16_MAX,
+      InstallationProfileValidationTiming* timing = nullptr);
   InstallationProfileResult process(
       const std::uint8_t* command, std::size_t size);
   InstallationProfileStatusV1 status() const;
@@ -101,12 +111,15 @@ class InstallationProfileManager {
       const InstallationProfileBinding& binding,
       InstallationProfileViewV1* view = nullptr,
       InstallationProfileError* error = nullptr,
-      bool update_access = true) const;
+      bool update_access = true,
+      InstallationProfileValidationTiming* timing = nullptr) const;
   bool bindings_valid(const InstallationProfileLedger& ledger,
-                      bool update_access = true) const;
+                      bool update_access = true,
+                      InstallationProfileValidationTiming* timing = nullptr) const;
   bool save_ledger(const InstallationProfileLedger& candidate);
   bool refresh_active_view(const InstallationProfileLedger& candidate,
-                           bool update_access = true);
+                           bool update_access = true,
+                           InstallationProfileValidationTiming* timing = nullptr);
   std::uint64_t calculate_preflight_token() const;
 
   InstallationProfileStore* store_ = nullptr;
