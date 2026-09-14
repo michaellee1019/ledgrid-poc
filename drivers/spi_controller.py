@@ -2200,8 +2200,16 @@ class LEDController:
                 raise ValueError("deferred command serialization requires a command ID")
             else:
                 command = self._bounded_uint("command", command, 0xFF)
+            # Local rendering shares snapshot locks with the SPI task. Its
+            # two receive slots may therefore refill slower than the ordinary
+            # query cadence; draining both and immediately sending a mutation
+            # can lose that single command. Native activation's exact ACK
+            # establishes this ownership before sparse/context commands start.
+            causal_readiness = storage_operation or (
+                int(getattr(self, "_receiver_base_mode", 0)) == 1
+            )
             prior = None
-            if storage_operation:
+            if causal_readiness:
                 prior = self.query_causal_receiver_status(
                     required_status_version=required_status_version
                 )
@@ -2215,9 +2223,8 @@ class LEDController:
             prior_sequence = int(prior.get("receiver_operation_sequence", 0) or 0)
             if prior_sequence >= 0xFFFFFFFF:
                 raise RuntimeError("receiver operation sequence is exhausted")
-            if storage_operation:
-                # Let baseline queries refill before the single storage command.
-                # Keep this storage-path pause out of per-frame sparse updates,
+            if causal_readiness:
+                # Let the causal baseline refill before the single command,
                 # and before deferred serialization so time anchors stay fresh.
                 time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
             if payload_factory is not None:
@@ -2235,8 +2242,9 @@ class LEDController:
             # one legacy-safe v3 snapshot in the two-deep queue; clock one
             # additional query to receive the requested v4 extension. Larger
             # commands can take longer than those minimum queue drains on real
-            # hardware. Ordinary sparse/context commands retain the short
-            # query bound; storage commands get a wall-clock deadline because
+            # hardware. Local ownership uses the established refill cadence,
+            # while ordinary commands retain the bounded query count. Storage
+            # commands get a wall-clock deadline because
             # SPIFFS work can outlast that entire fast polling window.
             minimum_post_queries = SPI_RESPONSE_QUEUE_DEPTH + (
                 required_version >= 4
@@ -2263,7 +2271,10 @@ class LEDController:
                     if time.monotonic() >= deadline:
                         break
                 else:
-                    time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
+                    time.sleep(
+                        FRESH_STATUS_DRAIN_INTERVAL_SECONDS if causal_readiness
+                        else COMMAND_ACK_POLL_INTERVAL_SECONDS
+                    )
                 status = self.query_receiver_status()
                 query_index += 1
                 if storage_operation:
@@ -2274,8 +2285,13 @@ class LEDController:
                     # or contradict this operation.
                     if not getattr(self, "_last_transfer_status_sampled", False):
                         continue
-                elif query_index < minimum_post_queries:
-                    continue
+                else:
+                    if causal_readiness and not getattr(
+                        self, "_last_transfer_status_sampled", False
+                    ):
+                        continue
+                    if query_index < minimum_post_queries:
+                        continue
                 observed_version = int(
                     status.get("receiver_status_version", 0) or 0
                 )

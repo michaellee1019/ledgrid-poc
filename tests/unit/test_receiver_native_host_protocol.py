@@ -180,7 +180,151 @@ class _DelayedRefillNativeSpi:
         return response
 
 
+class _DelayedRefillLocalSpi(_DelayedRefillNativeSpi):
+    def status(self, version):
+        result = super().status(version)
+        result[68] = 1  # LocalBackground, also used by receiver-native modules.
+        if version >= 4:
+            result[320] = 1  # Sparse operation accepted.
+        return result
+
+
+def local_sparse_workload_timing():
+    """Serialized five-receiver command cost, not a wall throughput benchmark."""
+    spi = _DelayedRefillLocalSpi()
+    item = controller(spi)
+    item._transport_envelope_enabled = True
+    item._update_receiver_status(spi.status(6))
+    session = bytes(range(16))
+    timings = {}
+    with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+            patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+        for phase, generation, full in (("snapshot", 1, True), ("dense_delta", 2, False)):
+            started = spi.now
+            if full:
+                for _ in range(5):
+                    item.begin_controller_session(
+                        controller_session_id=session, desired_revision=2,
+                        authoritative_snapshot_digest=bytes(range(32)),
+                    )
+            kind = (protocol.OVERLAY_UPDATE_FULL_SNAPSHOT if full
+                    else protocol.OVERLAY_UPDATE_DELTA)
+            patches = [(0, bytes((1, 1, 1, 1)) * protocol.OVERLAY_LOCAL_PIXELS)]
+            for _ in range(5):
+                item.begin_overlay(
+                    controller_session_id=session, generation=generation,
+                    prior_generation=generation - 1, scene_revision=2,
+                    scene_epoch=3, base_revision=2, update_kind=kind,
+                    expected_patches=2, lease_ms=3000,
+                )
+            for _ in range(5):
+                for payload in item.serialize_overlay_patch_batches(
+                    controller_session_id=session, generation=generation,
+                    patches=patches, update_kind=kind,
+                ):
+                    item._overlay_command_status(payload)
+            for _ in range(5):
+                item.commit_overlay(
+                    controller_session_id=session, generation=generation,
+                    scene_epoch=3, base_revision=2, present_at_scene_time_us=0,
+                )
+            timings[phase] = spi.now - started
+        started = spi.now
+        for _ in range(5):
+            item.renew_overlay(controller_session_id=session, generation=2, lease_ms=3000)
+        timings["renewal"] = spi.now - started
+    return timings, spi
+
+
 class ReceiverNativeHostProtocolTests(unittest.TestCase):
+    def test_sparse_session_begin_survives_native_status_refill_delay(self):
+
+        for legacy_fast_path in (True, False):
+            with self.subTest(legacy_fast_path=legacy_fast_path):
+                spi = _DelayedRefillLocalSpi()
+                spi.command = protocol.CMD_NATIVE_ACTIVATE
+                spi.ready = [spi.status(6), spi.status(6)]
+                item = controller(spi)
+                item._transport_envelope_enabled = True
+                item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+                item._receiver_base_mode = 0 if legacy_fast_path else 1
+                arguments = dict(
+                    controller_session_id=bytes(range(16)),
+                    desired_revision=2,
+                    authoritative_snapshot_digest=bytes(range(32)),
+                )
+                with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                        patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+                    if legacy_fast_path:
+                        with self.assertRaisesRegex(
+                            RuntimeError, "command 0x20.*command 0x56.*4412.*expected 4413"
+                        ):
+                            item._command_status(
+                                item.serialize_controller_session_begin(**arguments),
+                                required_status_version=4,
+                            )
+                    else:
+                        result = item.begin_controller_session(**arguments)
+                        self.assertEqual(result["receiver_last_processed_command"], 0x20)
+                        self.assertEqual(result["receiver_operation_sequence"], 4413)
+                        self.assertEqual(result["receiver_overlay_operation_result"], 1)
+                self.assertEqual(spi.attempts.count(0x20), 1)
+                self.assertEqual(0x20 in spi.dropped, legacy_fast_path)
+
+    def test_local_sparse_workload_keeps_every_mutation_and_fits_lease(self):
+        timings, spi = local_sparse_workload_timing()
+        mutations = [command for command in spi.attempts if command != protocol.CMD_STATUS_QUERY]
+        self.assertEqual(len(mutations), 50)  # snapshot 25, dense delta 20, renewal 5
+        self.assertEqual(spi.sequence, 4412 + 50)
+        self.assertFalse(spi.dropped)
+        for phase, duration in timings.items():
+            with self.subTest(phase=phase):
+                self.assertLess(duration, 3.0)
+
+    def test_local_context_commands_use_the_same_readiness_boundary(self):
+        from tests.unit.test_firmware_host_phase3a_protocol import context
+
+        spi = _DelayedRefillLocalSpi()
+        item = controller(spi)
+        item._transport_envelope_enabled = True
+        item._update_receiver_status(spi.status(6))
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+            for operation in (item.begin_presentation_context, item.set_presentation_context,
+                              item.commit_presentation_context):
+                operation(context())
+        self.assertFalse(spi.dropped)
+        self.assertEqual(spi.sequence, 4415)
+
+    def test_local_readiness_failure_never_sends_a_mutation(self):
+        spi = _DelayedRefillLocalSpi(frozen_counter=True)
+        item = controller(spi)
+        item._transport_envelope_enabled = True
+        item._update_receiver_status(spi.status(6))
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+            with self.assertRaisesRegex(RuntimeError, "causal fresh status"):
+                item.renew_overlay(
+                    controller_session_id=bytes(range(16)), generation=1, lease_ms=3000
+                )
+        self.assertEqual(set(spi.attempts), {protocol.CMD_STATUS_QUERY})
+
+    def test_local_readiness_never_accepts_missing_or_contradictory_ack(self):
+        for fault in ({"acknowledge": False}, {"ack_command": 0x56}, {"ack_increment": 2}):
+            with self.subTest(fault=fault):
+                spi = _DelayedRefillLocalSpi(**fault)
+                item = controller(spi)
+                item._transport_envelope_enabled = True
+                item._update_receiver_status(spi.status(6))
+                with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                        patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+                    with self.assertRaisesRegex(RuntimeError, "next operation sequence"):
+                        item.renew_overlay(
+                            controller_session_id=bytes(range(16)), generation=1, lease_ms=3000
+                        )
+                self.assertEqual(spi.attempts.count(protocol.CMD_OVERLAY_RENEW), 1)
+                self.assertFalse(spi.dropped)
+
     def test_descriptor_and_all_fixed_command_layouts_are_exact(self):
         preflight = protocol.LEDController.serialize_native_preflight(
             **descriptor()
