@@ -94,6 +94,9 @@ except ModuleNotFoundError:  # Direct ``python tools/deployment/deploy_entrypoin
 
 
 SNAPSHOT_SCHEMA_VERSION = 1
+# Installed native startup first published fresh status after 23.97 seconds.
+# This bounds orchestration waits only; receiver ACK and health gates are separate.
+STATE_RESTORE_TIMEOUT_SECONDS = 60
 ROLLBACK_LEGACY_HELPER_FILENAMES = (
     "deploy_target.py",
     "app_releases.py",
@@ -1219,7 +1222,7 @@ class CoordinatorDeployment:
             try:
                 self.target.run("activate", previous)
                 restart = self.target.run("restart")
-                self.target.run("restore-state", "--timeout", "20")
+                self.target.run("restore-state", "--timeout", str(STATE_RESTORE_TIMEOUT_SECONDS))
                 boundary = restart.get("restart_started_at")
                 if not isinstance(boundary, (int, float)) or isinstance(boundary, bool):
                     raise RuntimeError("restoration restart returned no boundary")
@@ -1325,7 +1328,7 @@ class CoordinatorDeployment:
             return OperationResult(outcome="skipped", details={"reason": "no captured state to restore"})
 
         def execute() -> OperationResult:
-            result = self.target.run("restore-state", "--timeout", "20")
+            result = self.target.run("restore-state", "--timeout", str(STATE_RESTORE_TIMEOUT_SECONDS))
             selection = context.state.get("firmware_selection")
             if isinstance(selection, dict):
                 expected = selection.get("receiver_hybrid_config_digest")

@@ -4655,6 +4655,8 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         finally:
             deployment.close()
 
+        self.assertEqual([args for command, args in target.calls if command == "restore-state"],
+                         [("--timeout", "60")])
         self.assertEqual(receipt.outcome, "success")
         self.assertEqual(
             [step.step_id for step in receipt.steps],
@@ -5528,6 +5530,7 @@ class PostActivationCompensationTests(unittest.TestCase):
                     [command for command, _args in target.calls[-4:]],
                     ["activate", "restart", "restore-state", "health"],
                 )
+                self.assertEqual(target.calls[-2], ("restore-state", ("--timeout", "60")))
                 self.assertEqual(target.calls[-4][1], ("b" * 64,))
                 self.assertEqual(target.calls[-1][1][0], "b" * 64)
                 self.assertIn(
