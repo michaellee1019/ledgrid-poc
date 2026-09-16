@@ -26,7 +26,7 @@
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
-      adoptedLook: null, adoptedVibeId: null, activationError: null, retryBlocked: false,
+      adoptedLook: null, adoptedVibeId: null, activationError: null, retryBlocked: false, pendingObservation: null,
     },
     playlist: {id: null, entries: [], saved: [], requestId: null, runId: null,
       saving: false, startIntent: null, statusIntent: 0, statusPoll: 0}
@@ -1367,7 +1367,38 @@
     }
     throw new Error('The wall did not acknowledge this scene in time.');
   }
+  async function waitForActivationObservation() {
+    const receipt = state.wall.pendingObservation;
+    if (!receipt) return;
+    const session = receipt.controller?.session_id;
+    const revision = receipt.controller?.state_revision_after;
+    if (!session || !Number.isSafeInteger(revision) || !receipt.observed_identity) {
+      throw new Error('The activation receipt has no complete observation basis.');
+    }
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 20000) {
+      await refreshWallStatus({preserveAuthored: true});
+      const observation = state.wall.observation;
+      if (observation?.controller_session_id && observation.controller_session_id !== session) {
+        state.wall.pendingObservation = null;
+        throw new Error('The wall restarted before its updated status was available.');
+      }
+      const observedRevision = observation?.controller_state_revision;
+      if (observation?.controller_session_id === session && Number.isSafeInteger(observedRevision) && observedRevision >= revision) {
+        state.wall.pendingObservation = null;
+        if (observedRevision !== revision || stableGalleryJson(observation.active_identity) !== stableGalleryJson(receipt.observed_identity)) {
+          throw new Error('The wall changed before its activated scene could be confirmed.');
+        }
+        return;
+      }
+      await sleep(250);
+    }
+    // Keep the fence across queued edits and explicit retries. An Active
+    // receipt can precede publication of the general status used by Check.
+    throw new Error('The scene is active, but its updated wall status is not available yet.');
+  }
   async function guardedWallActivation(scene, power, targetFps = boundedTargetFps($('#targetFps').value)) {
+    await waitForActivationObservation();
     await refreshWallStatus({preserveAuthored: true});
     if (state.wall.bootstrap?.capabilities?.server_actions?.activation_available !== true) {
       state.wall.dirty = false;
@@ -1389,12 +1420,12 @@
         scene: browserScene, global_settings: globalSettings,
       }),
     });
-    await waitForExactActivation(accepted, checked.basis.controller.session_id);
+    state.wall.pendingObservation = await waitForExactActivation(accepted, checked.basis.controller.session_id);
+    await waitForActivationObservation();
     state.wall.activationError = null;
     // A slider may have produced a newer queued scene while this exact one was
     // being acknowledged. Never snap the controls back to the older scene.
     state.wall.dirty = Boolean(state.publication.queued || state.publication.afterStop);
-    await refreshWallStatus({preserveAuthored: true});
   }
   async function stopOutputNow(scene) {
     state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = 'Stopping…';
