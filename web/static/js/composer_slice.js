@@ -1718,11 +1718,15 @@
   installGalleryLayoutListener();
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene to replace it immediately.`; }
   async function hydrateCurrentScene() {
+    const hydrationIntent = state.intent;
     await refreshStatus();
+    if (!intentIsCurrent(hydrationIntent)) return;
     let response;
     try { response = await fetch(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`); }
-    catch (_) { const error = new Error('Local Composer server unavailable.'); error.serverUnavailable = true; throw error; }
+    catch (_) { if (!intentIsCurrent(hydrationIntent)) return; const error = new Error('Local Composer server unavailable.'); error.serverUnavailable = true; throw error; }
     const body = await response.json();
+    // Recovery describes the state before any edit made while loading.
+    if (!intentIsCurrent(hydrationIntent)) return;
     if (!response.ok) { const error = new Error(body.error || 'Current scene recovery is unavailable.'); if (response.status >= 500) { error.serverUnavailable = true; throw error; } recoverFromInvalidRecovery(body); return; }
     if (body.recovery) {
       state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null;
