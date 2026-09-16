@@ -363,7 +363,7 @@ class _FakeTarget:
         if command == "validate-app":
             return {"release_id": self.candidate, "digest": self.candidate}
         if command == "capture-state":
-            return {"captured": True}
+            return {"captured": True, "service_was_active": True}
         if command == "current-release":
             return {"current_release": self.previous}
         if command == "activate":
@@ -2804,6 +2804,26 @@ class TargetProvisioningTests(unittest.TestCase):
 
 
 class ReceiverServiceQuiescenceTests(unittest.TestCase):
+    def test_capture_preserves_service_state_without_runtime_or_successful_save(self) -> None:
+        for returncode in (0, 3, 4):  # active, inactive, unknown unit
+            with self.subTest(returncode=returncode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                state = subprocess.CompletedProcess((), returncode, "", "")
+                with patch.object(deploy_target, "_command", return_value=state), \
+                        patch.object(deploy_target, "_active_helper_root", return_value=None):
+                    result = deploy_target.capture_state(root)
+                self.assertFalse(result["captured"])
+                self.assertEqual(result["service_was_active"], returncode == 0)
+                runtime = root / "venv/bin/python"
+                runtime.parent.mkdir(parents=True)
+                runtime.touch()
+                failed_save = subprocess.CompletedProcess((), 1, "", "API unavailable")
+                with patch.object(deploy_target, "_command", side_effect=[state, failed_save]), \
+                        patch.object(deploy_target, "_active_helper_root", return_value=root):
+                    result = deploy_target.capture_state(root)
+                self.assertFalse(result["captured"])
+                self.assertEqual(result["service_was_active"], returncode == 0)
+
     def test_checked_stop_verifies_inactive_and_no_service_processes(self) -> None:
         stopped = subprocess.CompletedProcess((), 0, "", "")
         state = subprocess.CompletedProcess((), 0, "ControlPID=0\nActiveState=inactive\nMainPID=0\n", "")
@@ -4938,7 +4958,7 @@ class _RollbackTarget:
         if command == "validate-app":
             return {"release_id": args[0], "digest": args[0]}
         if command == "capture-state":
-            return {"captured": True}
+            return {"captured": True, "service_was_active": True}
         if command == "current-release":
             return {"current_release": self.current}
         if command == "activate":
@@ -5388,6 +5408,7 @@ class PostActivationCompensationTests(unittest.TestCase):
                 "previous_release": "b" * 64,
                 "activated": True,
                 "state_captured": True,
+                    "service_was_active": True,
                 "acceptance_boundary": 100.0,
                 "firmware_selection": {
                     "receiver_health_contract": {"schema_version": 1},
@@ -5397,6 +5418,47 @@ class PostActivationCompensationTests(unittest.TestCase):
         target = _CompensationTarget(fail_command)
         deployment.target = target
         return deployment, context, target
+
+    def test_second_attempt_firmware_skip_preserves_stopped_previous_host(self) -> None:
+        first, first_context, first_target = self._deployment("unused")
+        first_context.state["firmware_mutated"] = True
+        self.assertFalse(first._compensate(RuntimeError("first health failure")).restored)
+        self.assertEqual([call[0] for call in first_target.calls], ["stop-receiver-service", "activate"])
+        for captured in (False, True):
+            with self.subTest(captured=captured):
+                retry, context, target = self._deployment("unused")
+                original_run = target.run
+                def run(command, *args):
+                    if command == "capture-state":
+                        return {"captured": captured, "service_was_active": False}
+                    return original_run(command, *args)
+                target.run = run
+                retry._capture(context)
+                context.state["firmware_mutated"] = False  # Firmware skip on retry.
+                failure = retry._compensate(RuntimeError("second health failure"))
+                self.assertFalse(failure.restored)
+                self.assertEqual([call[0] for call in target.calls], ["stop-receiver-service", "activate"])
+                self.assertIn("running state was not established", failure.restoration_error)
+
+    def test_unknown_entry_service_state_cannot_authorize_prior_host_restart(self) -> None:
+        deployment, context, target = self._deployment("unused")
+        context.state.pop("service_was_active")
+        failure = deployment._compensate(RuntimeError("health failed"))
+        self.assertFalse(failure.restored)
+        self.assertEqual([call[0] for call in target.calls], ["stop-receiver-service", "activate"])
+
+    def test_selected_stopped_candidate_restarts_and_failure_restores_stopped_state(self) -> None:
+        deployment, context, target = self._deployment("health")
+        context.state.update(activated=False, firmware_mutated=False, service_was_active=False,
+                             previous_release="c" * 64)
+        restarted = deployment._restart(context)
+        self.assertEqual(restarted.outcome, "executed")
+        self.assertTrue(context.state["service_restart_attempted"])
+        with self.assertRaises(deploy_entrypoint.RemoteActivationFailed) as caught:
+            deployment._health(context)
+        self.assertFalse(caught.exception.failure.restored)
+        self.assertEqual([call[0] for call in target.calls],
+                         ["restart", "health", "stop-receiver-service", "activate"])
 
     def test_firmware_mutation_never_restarts_unproven_previous_host_on_compensation(self) -> None:
         deployment, context, target = self._deployment("health")
@@ -5483,6 +5545,7 @@ class PostActivationCompensationTests(unittest.TestCase):
                 context.state.update({
                     "release_id": "c" * 64,
                     "state_captured": True,
+                    "service_was_active": True,
                 })
                 target = _BootstrapCompensationTarget(failed_command)
                 deployment.target = target
@@ -5519,6 +5582,7 @@ class PostActivationCompensationTests(unittest.TestCase):
         context.state.update({
             "release_id": "c" * 64,
             "state_captured": True,
+                    "service_was_active": True,
             "acceptance_boundary": 101.0,
         })
         target = _BootstrapCompensationTarget("health", resumed=True)

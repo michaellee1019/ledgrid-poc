@@ -2605,10 +2605,18 @@ def _active_helper_root(root: Path) -> Optional[Path]:
 
 
 def capture_state(root: Path) -> Mapping[str, Any]:
+    # Capture this independently of HTTP/runtime availability: a stopped prior
+    # app may be the deliberate recovery state of an earlier firmware migration.
+    service_was_active = _command(
+        ("systemctl", "is-active", "--quiet", DEFAULT_SYSTEMD_UNIT),
+        check=False,
+        timeout=10.0,
+    ).returncode == 0
     helper_root = _active_helper_root(root)
     runtime = root / "venv" / "bin" / "python"
     if helper_root is None or not runtime.is_file():
-        return {"captured": False, "reason": "no active compatible app/runtime"}
+        return {"captured": False, "reason": "no active compatible app/runtime",
+                "service_was_active": service_was_active}
     completed = _command(
         (runtime, helper_root / "tools" / "deployment" / "preserve_deploy_settings.py", "save"),
         cwd=helper_root,
@@ -2619,9 +2627,11 @@ def capture_state(root: Path) -> Mapping[str, Any]:
         # no state is preferable to fabricating a restorable snapshot.
         return {
             "captured": False,
+            "service_was_active": service_was_active,
             "reason": (completed.stderr.strip() or completed.stdout.strip() or "capture unavailable")[-1000:],
         }
-    return {"captured": True, "output_tail": completed.stdout[-1000:]}
+    return {"captured": True, "output_tail": completed.stdout[-1000:],
+            "service_was_active": service_was_active}
 
 
 def restore_state(root: Path, *, timeout: float) -> Mapping[str, Any]:

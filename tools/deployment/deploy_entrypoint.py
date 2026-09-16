@@ -1121,6 +1121,9 @@ class CoordinatorDeployment:
     def _capture(self, context: DeployContext) -> OperationResult:
         result = self.target.run("capture-state")
         context.state["state_captured"] = bool(result.get("captured"))
+        if "service_was_active" in result and type(result["service_was_active"]) is not bool:
+            raise RuntimeError("captured service state is malformed")
+        context.state["service_was_active"] = result.get("service_was_active")
         return OperationResult(
             outcome="executed" if result.get("captured") else "skipped",
             details=result,
@@ -1177,17 +1180,22 @@ class CoordinatorDeployment:
         previous = self.context.state.get("previous_release")
         if self.context.state.get("compensated"):
             return self.context.state["compensation"]
-        if self.context.state.get("firmware_mutated"):
+        if (self.context.state.get("firmware_mutated")
+                or self.context.state.get("service_was_active") is not True):
             # The prior app may not support the installed receiver protocol.
             # Its unacknowledged CONFIG can poison the new receiver FIFO before
             # recovery. Stop even when no previous app exists; never restart an
-            # unproven host/firmware pair as automatic compensation.
+            # unproven host/firmware pair as automatic compensation. A retry
+            # may skip firmware after the prior attempt deliberately left the
+            # old app selected but stopped: preserve that entry state too.
             try:
                 self.target.run("stop-receiver-service")
                 if isinstance(previous, str) and previous:
                     self.target.run("activate", previous)
+                reason = ("receiver firmware changed" if self.context.state.get("firmware_mutated")
+                          else "prior controller running state was not established")
                 recovery_error = (
-                    "receiver firmware changed; controller stopped; "
+                    f"{reason}; controller stopped; "
                     "restore compatible firmware or deploy a compatible app before restart"
                 )
             except Exception as stop_error:
@@ -1266,7 +1274,8 @@ class CoordinatorDeployment:
         try:
             return operation()
         except (KeyboardInterrupt, DeploymentInterrupted) as exc:
-            if self.context.state.get("activated"):
+            if (self.context.state.get("activated")
+                    or self.context.state.get("service_restart_attempted")):
                 failure = self._compensate(exc)
                 restored = (
                     f"restored {failure.previous_release}"
@@ -1276,14 +1285,15 @@ class CoordinatorDeployment:
                 raise DeploymentInterrupted(f"{exc or 'deployment interrupted'}; {restored}") from exc
             raise
         except Exception as exc:
-            if self.context.state.get("activated"):
+            if (self.context.state.get("activated")
+                    or self.context.state.get("service_restart_attempted")):
                 raise RemoteActivationFailed(self._compensate(exc)) from exc
             raise
 
     def _restart(self, context: DeployContext) -> OperationResult:
-        if not context.state.get("activated") and not context.state.get(
-            "firmware_mutated"
-        ):
+        if (not context.state.get("activated")
+                and not context.state.get("firmware_mutated")
+                and context.state.get("service_was_active") is True):
             # The target-provided selection time shares the API clock. This
             # prevents workstation/Pi skew from invalidating an otherwise safe
             # unchanged-release health check.
@@ -1293,6 +1303,7 @@ class CoordinatorDeployment:
             return OperationResult(outcome="skipped", details={"reason": "release already active"})
 
         def execute() -> OperationResult:
+            context.state["service_restart_attempted"] = True
             result = self.target.run("restart")
             boundary = result.get("restart_started_at")
             if not isinstance(boundary, (int, float)) or isinstance(boundary, bool):
@@ -1307,6 +1318,7 @@ class CoordinatorDeployment:
             not (
                 context.state.get("activated")
                 or context.state.get("firmware_mutated")
+                or context.state.get("service_restart_attempted")
             )
             or not context.state.get("state_captured")
         ):
