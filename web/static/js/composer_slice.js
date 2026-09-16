@@ -1362,7 +1362,21 @@
         }
         return status;
       }
-      if (['failed', 'timed_out', 'rolled_back'].includes(status.phase)) throw new Error(status.error || `Activation ${status.phase}.`);
+      if (['failed', 'timed_out', 'rolled_back'].includes(status.phase)) {
+        // Rollback can advance the revision before general status catches up.
+        // Only the controller's explicit queued-handoff rejection proves no
+        // mutation occurred. Missing rollback evidence alone proves nothing.
+        const rejectedBeforeMutation = status.phase === 'failed'
+          && status.error?.startsWith('durable queued activation rejected before mutation:')
+          && status.controller.state_revision_after === null
+          && status.observed_identity === null
+          && status.telemetry?.complete === false && status.telemetry?.fresh === false
+          && status.rollback?.available === false && status.rollback?.snapshot_id === null
+          && status.rollback?.result === null
+          && status.rollback?.error === 'no rollback authority was acquired before rejection';
+        state.wall.pendingObservation = rejectedBeforeMutation ? null : status;
+        throw new Error(status.error || `Activation ${status.phase}.`);
+      }
       await sleep(500);
     }
     throw new Error('The wall did not acknowledge this scene in time.');
@@ -1372,7 +1386,12 @@
     if (!receipt) return;
     const session = receipt.controller?.session_id;
     const revision = receipt.controller?.state_revision_after;
-    if (!session || !Number.isSafeInteger(revision) || !receipt.observed_identity) {
+    const rollbackObserved = receipt.phase === 'active' || (
+      receipt.rollback?.result === 'succeeded'
+      && receipt.telemetry?.complete === true && receipt.telemetry?.fresh === true
+    );
+    if (!session || !Number.isSafeInteger(revision) || revision < 0
+        || !receipt.observed_identity?.scene_identity?.digest || !rollbackObserved) {
       throw new Error('The activation receipt has no complete observation basis.');
     }
     const startedAt = Date.now();
@@ -1393,9 +1412,9 @@
       }
       await sleep(250);
     }
-    // Keep the fence across queued edits and explicit retries. An Active
-    // receipt can precede publication of the general status used by Check.
-    throw new Error('The scene is active, but its updated wall status is not available yet.');
+    // Keep the fence across queued edits and explicit retries. Terminal
+    // receipts can precede publication of the general status used by Check.
+    throw new Error('The updated wall status is not available yet.');
   }
   async function guardedWallActivation(scene, power, targetFps = boundedTargetFps($('#targetFps').value)) {
     await waitForActivationObservation();
