@@ -197,6 +197,62 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertEqual(status["phase"], "running", status)
         self.assertEqual(self.manager.get_scene_state()["schema"], "ledgrid.scene.v2")
 
+    def test_playlist_preparation_failure_survives_restore_in_status_file(self):
+        from ipc.control_channel import FileControlChannel
+        from scripts.start_server import controller_status_payload
+
+        coordinator = self.channel.activation_coordinator
+        clock = [0.0]
+        runner = PlaylistRunner(self.manager, coordinator, clock=lambda: clock[0])
+        candidate = deepcopy(self.scene)
+        candidate['look']['palette_id'] = 'ember'
+        command = {
+            'schema': 'ledgrid.playlist-command', 'schema_version': 1,
+            'request_id': str(uuid.uuid4()), 'run_id': str(uuid.uuid4()),
+            'action': 'start', 'requested_at': time.time(),
+            'playlist_id': str(uuid.uuid4()), 'playlist_name': 'Preparation diagnostic',
+            'expected_controller_session_id': coordinator.session_id,
+            'expected_controller_state_revision': coordinator.state_revision,
+            'entries': [
+                {'entry_id': str(uuid.uuid4()), 'label': str(index),
+                 'duration_seconds': 5, 'scene': deepcopy(scene)}
+                for index, scene in enumerate((self.scene, candidate))
+            ],
+        }
+        self.assertEqual(runner.start(command)['phase'], 'running')
+        self.manager._receiver_last_failure = {'operation': 'older_sparse_failure'}
+        prior_operations = len(self.controller.operations)
+        error = 'native install failed; compensated=True: receiver 3 command 0x51 was not acknowledged'
+        before = time.time()
+        clock[0] = 6.0
+        with patch.object(self.controller, 'install_native_background', side_effect=RuntimeError(error)):
+            status = runner.advance()
+        self.assertEqual(status['phase'], 'failed')
+        self.assertEqual(status['error'], 'controller rejected playlist entry 2')
+        self.assertEqual(self.manager.get_scene_state(), self.scene)
+        self.assertEqual(len(self.controller.operations), prior_operations)
+        failure = self.manager.get_current_status()['receiver_last_failure']
+        self.assertEqual(failure['operation'], 'receiver_hybrid_preparation')
+        self.assertEqual(failure['phase'], 'before_presentation_takeover')
+        self.assertEqual(failure['scene_digest'], canonical_json_sha256(candidate))
+        self.assertEqual(failure['background'], candidate['background']['component_id'])
+        self.assertEqual(failure['bundle_digest'], candidate['background']['bundle_digest'])
+        self.assertEqual(len(failure['payload_digest']), 64)
+        self.assertEqual(failure['error'], error)
+        self.assertGreaterEqual(failure['observed_at'], before)
+
+        # Ordinary restoration retains the historical diagnostic, and the
+        # production status sink copies it independently from current health.
+        self.assertTrue(self.manager.start_scene(self.scene))
+        channel = FileControlChannel(str(self.directory/'preparation-control.json'),
+                                     str(self.directory/'preparation-status.json'))
+        channel.write_status(controller_status_payload(
+            self.manager, release_id=RELEASE_ID, last_command_id=None, updated_at=time.time(),
+        ))
+        self.assertEqual(channel.read_status()['receiver_last_failure'], failure)
+        failure['error'] = 'changed detached copy'
+        self.assertEqual(self.manager.get_current_status()['receiver_last_failure']['error'], error)
+
     def test_missing_or_stale_managed_profile_is_rejected_without_mutation(self):
         for digest in ('0'*64, 'f'*64):
             with self.subTest(profile=digest):

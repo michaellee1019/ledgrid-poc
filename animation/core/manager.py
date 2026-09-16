@@ -2313,6 +2313,22 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         overlay.cleanup()
                     except Exception:
                         traceback.print_exc()
+                # Preserve the attempted scene's failure separately from the
+                # still-active scene and from logs that may rotate on restart.
+                self._receiver_last_failure = {
+                    "operation": "receiver_hybrid_preparation",
+                    "phase": "before_presentation_takeover",
+                    "observed_at": time.time(),
+                    "scene_revision": scene.revision,
+                    "scene_digest": (
+                        canonical_candidate[0].identity.digest
+                        if canonical_candidate is not None else None
+                    ),
+                    "background": scene.background.plugin_id,
+                    "bundle_digest": scene.background.bundle_digest,
+                    "payload_digest": scene.background.expected_payload_digest,
+                    "error": str(exc),
+                }
                 print(f"✗ Failed to prepare receiver hybrid scene: {exc}")
                 return False
             print(f"✗ Receiver hybrid scene fell back: {exc}")
