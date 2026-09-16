@@ -2803,6 +2803,34 @@ class TargetProvisioningTests(unittest.TestCase):
         )
 
 
+class ReceiverServiceQuiescenceTests(unittest.TestCase):
+    def test_checked_stop_verifies_inactive_and_no_service_processes(self) -> None:
+        stopped = subprocess.CompletedProcess((), 0, "", "")
+        state = subprocess.CompletedProcess((), 0, "ControlPID=0\nActiveState=inactive\nMainPID=0\n", "")
+        with patch.object(deploy_target, "_command", side_effect=[stopped, state]) as command:
+            result = deploy_target.stop_receiver_service()
+        self.assertTrue(result["stopped"])
+        self.assertEqual(command.call_args_list[0].args[0],
+                         ("sudo", "systemctl", "stop", "ledgrid.service"))
+        self.assertEqual(command.call_args_list[0].kwargs["timeout"], 30.0)
+        self.assertNotIn("check", command.call_args_list[0].kwargs)  # checked by default
+
+    def test_active_process_missing_state_or_stop_failure_blocks_programming_gate(self) -> None:
+        for state in ("ActiveState=active\nMainPID=0\nControlPID=0\n",
+                      "ActiveState=inactive\nMainPID=123\nControlPID=0\n",
+                      "ActiveState=inactive\nMainPID=0\nControlPID=456\n", ""):
+            with self.subTest(state=state), patch.object(
+                deploy_target, "_command", side_effect=[
+                    subprocess.CompletedProcess((), 0, "", ""),
+                    subprocess.CompletedProcess((), 0, state, "")]):
+                with self.assertRaisesRegex(RuntimeError, "did not stop completely"):
+                    deploy_target.stop_receiver_service()
+        with patch.object(deploy_target, "_command", side_effect=RuntimeError("stop failed")) as command:
+            with self.assertRaisesRegex(RuntimeError, "stop failed"):
+                deploy_target.stop_receiver_service()
+        self.assertEqual(command.call_count, 1)
+
+
 class TargetFirmwareBuildTests(unittest.TestCase):
     def test_ordinary_target_build_selects_only_feature_off_production_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -2976,6 +3004,12 @@ class TargetFirmwareFailureTests(unittest.TestCase):
         self.validate_bundle = patch.object(
             deploy_target, "_validate_root_owned_firmware_bundle"
         )
+        quiesce = patch.object(
+            deploy_target, "stop_receiver_service",
+            return_value={"stopped": True, "ActiveState": "inactive", "MainPID": "0", "ControlPID": "0"},
+        )
+        self.quiesce = quiesce.start()
+        self.addCleanup(quiesce.stop)
         self.bundle.start()
         self.validate_bundle.start()
         self.addCleanup(self.bundle.stop)
@@ -3125,6 +3159,10 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             binary = self._production_binary(workspace)
             devices = _receiver_devices()
 
+            def program_while_stopped(**kwargs):
+                self.quiesce.assert_called_once_with()
+                return self._program_success(**kwargs)
+
             with (
                 patch.object(
                     deploy_target, "_copy_support_workspace", return_value=(workspace, True),
@@ -3138,7 +3176,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 ),
                 patch.object(
                     deploy_target, "_program_receiver_openocd",
-                    side_effect=self._program_success,
+                    side_effect=program_while_stopped,
                 ) as program,
             ):
                 result = deploy_target.flash_firmware(
@@ -3166,11 +3204,34 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             )
             evidence = json.loads(Path(inventory["flash_evidence_path"]).read_text())
             self.assertEqual(evidence["outcome"], "success")
+            self.assertTrue(evidence["controller_service"]["stopped"])
+            self.quiesce.assert_called_once_with()
             self.assertEqual(len(evidence["boards"]), 5)
             self.assertEqual(
                 (root / ".esp32_firmware_hash").read_text().strip(),
                 result["firmware_installation_digest"],
             )
+
+    def test_failed_controller_quiescence_never_invalidates_or_programs_receivers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            self.quiesce.side_effect = RuntimeError("controller still active")
+            with (
+                patch.object(deploy_target, "_copy_support_workspace", return_value=(workspace, True)),
+                patch.object(deploy_target, "_discover_receiver_devices", return_value=_receiver_devices()),
+                patch.object(deploy_target, "_pinned_openocd", return_value=self._verified_openocd()),
+                patch.object(deploy_target, "_program_receiver_openocd") as program,
+                patch.object(deploy_target, "_invalidate_receiver_firmware_commit") as invalidate,
+                patch.object(deploy_target, "_best_effort_stop_receiver_service") as stop_after_failure,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "controller still active"):
+                    deploy_target.flash_firmware(root, "a" * 64)
+            program.assert_not_called()
+            invalidate.assert_not_called()
+            stop_after_failure.assert_called_once_with()
 
     def test_openocd_flash_retries_only_pre_attach_usb_serial_race(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -3270,6 +3331,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                     root, "a" * 64,
                 )
 
+            self.quiesce.assert_called_once_with()
             self.assertEqual(migrated["outcome"], "executed")
             self.assertEqual(
                 {item["reason"] for item in migrated["receiver_firmware_inventory"]["flash_targets"]},
@@ -4711,6 +4773,8 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         self.assertEqual(by_id["host.restart"].outcome, "executed")
         self.assertEqual(by_id["state.restore"].outcome, "executed")
         commands = [command for command, _args in target.calls]
+        lifecycle = ["flash-firmware", "refresh-receiver-identity", "validate-app", "activate", "restart"]
+        self.assertEqual([command for command in commands if command in lifecycle], lifecycle)
         self.assertIn("restart", commands)
         self.assertIn("restore-state", commands)
 
@@ -5219,6 +5283,8 @@ class _CompensationTarget:
         if should_fail:
             self.failed = True
             raise RuntimeError(f"injected {command} failure")
+        if command == "stop-receiver-service":
+            return {"stopped": True}
         if command == "activate":
             return {"changed": True, "release_id": args[0]}
         if command == "restart":
@@ -5331,6 +5397,35 @@ class PostActivationCompensationTests(unittest.TestCase):
         target = _CompensationTarget(fail_command)
         deployment.target = target
         return deployment, context, target
+
+    def test_firmware_mutation_never_restarts_unproven_previous_host_on_compensation(self) -> None:
+        deployment, context, target = self._deployment("health")
+        context.state["firmware_mutated"] = True
+        with self.assertRaises(deploy_entrypoint.RemoteActivationFailed) as caught:
+            deployment._health(context)
+        failure = caught.exception.failure
+        self.assertFalse(failure.restored)
+        self.assertIn("controller stopped", failure.restoration_error)
+        self.assertIn("compatible", failure.restoration_error)
+        self.assertEqual([call[0] for call in target.calls],
+                         ["health", "stop-receiver-service", "activate"])
+        self.assertEqual(target.calls[-1][1], ("b" * 64,))
+
+    def test_changed_firmware_failure_stops_even_without_previous_app(self) -> None:
+        deployment, context, target = self._deployment("unused")
+        context.state.update(firmware_mutated=True, previous_release=None)
+        failure = deployment._compensate(RuntimeError("candidate unhealthy"))
+        self.assertFalse(failure.restored)
+        self.assertIn("controller stopped", failure.restoration_error)
+        self.assertEqual([call[0] for call in target.calls], ["stop-receiver-service"])
+
+    def test_firmware_compensation_stop_failure_does_not_select_or_restart_prior_host(self) -> None:
+        deployment, context, target = self._deployment("stop-receiver-service")
+        context.state["firmware_mutated"] = True
+        failure = deployment._compensate(RuntimeError("candidate unhealthy"))
+        self.assertFalse(failure.restored)
+        self.assertIn("injected stop-receiver-service failure", failure.restoration_error)
+        self.assertEqual([call[0] for call in target.calls], ["stop-receiver-service"])
 
     def test_every_post_activation_failure_boundary_restores_and_health_checks_prior(self) -> None:
         cases = {

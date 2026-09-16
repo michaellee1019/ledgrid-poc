@@ -2114,6 +2114,22 @@ def _program_receiver_with_init_retry(
     }
 
 
+def stop_receiver_service() -> Mapping[str, Any]:
+    # An explicit systemd stop waits for the service control group to exit and
+    # suppresses Restart=always. Keep it stopped across programming, identity
+    # refresh and app selection; only the coordinator's later restart resumes SPI.
+    _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), timeout=30.0)
+    observed = _command(
+        ("systemctl", "show", DEFAULT_SYSTEMD_UNIT,
+         "--property=ActiveState", "--property=MainPID", "--property=ControlPID"),
+        timeout=10.0,
+    )
+    fields = dict(line.split("=", 1) for line in observed.stdout.splitlines() if "=" in line)
+    if fields != {"ActiveState": "inactive", "MainPID": "0", "ControlPID": "0"}:
+        raise RuntimeError(f"receiver service did not stop completely: {fields}")
+    return {"unit": DEFAULT_SYSTEMD_UNIT, "stopped": True, **fields}
+
+
 def _best_effort_stop_receiver_service() -> None:
     try:
         _command(
@@ -2292,10 +2308,13 @@ def flash_firmware(
                 firmware, installation
             )
             evidence.update({
-                "phase": "authority_invalidation",
+                "phase": "controller_quiesce",
                 "firmware_bundle_root": os.fspath(bundle_root),
                 "firmware_bundle_artifacts": immutable_artifacts,
             })
+            _atomic_json(evidence_path, evidence)
+            evidence["controller_service"] = stop_receiver_service()
+            evidence["phase"] = "authority_invalidation"
             _atomic_json(evidence_path, evidence)
             commit_path = _invalidate_receiver_firmware_commit(
                 root,
@@ -2430,6 +2449,7 @@ def flash_firmware(
     }
     return {
         "outcome": "executed",
+        "controller_service": evidence["controller_service"],
         "ports": ports,
         "flashed_ports": target_ports,
         "firmware_sha256": firmware_sha256,
@@ -4050,6 +4070,7 @@ def _parser() -> argparse.ArgumentParser:
     complete_bootstrap = subparsers.add_parser("complete-legacy-bootstrap")
     complete_bootstrap.add_argument("candidate_release_id")
     subparsers.add_parser("restart")
+    subparsers.add_parser("stop-receiver-service")
     restore = subparsers.add_parser("restore-state")
     restore.add_argument("--timeout", type=float, default=20.0)
     health = subparsers.add_parser("health")
@@ -4164,6 +4185,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = complete_legacy_bootstrap(root, args.candidate_release_id)
     elif args.command == "restart":
         result = restart_service()
+    elif args.command == "stop-receiver-service":
+        result = stop_receiver_service()
     elif args.command == "restore-state":
         result = restore_state(root, timeout=args.timeout)
     elif args.command == "health":

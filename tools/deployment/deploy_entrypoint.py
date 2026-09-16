@@ -1177,7 +1177,29 @@ class CoordinatorDeployment:
         previous = self.context.state.get("previous_release")
         if self.context.state.get("compensated"):
             return self.context.state["compensation"]
-        if not isinstance(previous, str) or not previous:
+        if self.context.state.get("firmware_mutated"):
+            # The prior app may not support the installed receiver protocol.
+            # Its unacknowledged CONFIG can poison the new receiver FIFO before
+            # recovery. Stop even when no previous app exists; never restart an
+            # unproven host/firmware pair as automatic compensation.
+            try:
+                self.target.run("stop-receiver-service")
+                if isinstance(previous, str) and previous:
+                    self.target.run("activate", previous)
+                recovery_error = (
+                    "receiver firmware changed; controller stopped; "
+                    "restore compatible firmware or deploy a compatible app before restart"
+                )
+            except Exception as stop_error:
+                recovery_error = str(stop_error)
+            failure = ActivationFailureEvidence(
+                candidate_release=candidate,
+                previous_release=previous if isinstance(previous, str) else None,
+                candidate_error=str(original_error),
+                restored=False,
+                restoration_error=recovery_error,
+            )
+        elif not isinstance(previous, str) or not previous:
             failure = ActivationFailureEvidence(
                 candidate_release=candidate,
                 previous_release=None,
