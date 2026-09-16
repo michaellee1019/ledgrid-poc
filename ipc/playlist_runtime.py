@@ -263,15 +263,20 @@ class PlaylistRunner:
                     raise PlaylistError("controller did not report playlist ownership")
                 active["index"] = next_index
                 active["owned_revision"] = mutation.resulting_state_revision
-                # Preserve elapsed overshoot for deterministic scheduling.
-                active["deadline"] += entry["duration_seconds"]
-                active["deadline"] = max(active["deadline"], now)
-                remaining = max(0.0, active["deadline"] - now)
+                activated_at = self._clock()
+                activated_wall = self._wall_clock()
+                # Compensate polling overshoot, but do not spend the new
+                # entry's display duration preparing its presentation.
+                active["deadline"] = (
+                    max(active["deadline"] + entry["duration_seconds"], now)
+                    + activated_at - now
+                )
+                remaining = max(0.0, active["deadline"] - activated_at)
                 return self._publish(
                     phase="running", current_index=next_index,
                     current_entry=self._entry_summary(entry),
-                    entry_started_at=self._wall_clock(),
-                    entry_deadline_at=self._wall_clock() + remaining,
+                    entry_started_at=activated_wall,
+                    entry_deadline_at=activated_wall + remaining,
                     remaining_seconds=remaining, error=None,
                 )
             except (ControllerCommandConflictError, PlaylistError, TypeError, ValueError, RuntimeError) as exc:

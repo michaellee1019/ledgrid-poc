@@ -84,6 +84,36 @@ def test_thirty_entry_schedule_is_finite_and_restores_exact_starting_state():
     assert manager.target_fps == 120
 
 
+def test_slow_transition_does_not_consume_entry_dwell(monkeypatch):
+    import ipc.playlist_runtime as runtime
+
+    original_start = runtime.start_scene
+    for lateness in (0, .25):
+        manager, coordinator, initial = fixture()
+        clock = Clock()
+        runner = PlaylistRunner(manager, coordinator, clock=clock,
+                                wall_clock=lambda: clock() + 1000)
+        monkeypatch.setattr(runtime, "start_scene", original_start)
+        runner.start(command(coordinator, [initial, initial], [5, 5]))
+
+        def slow_start(manager, scene):
+            clock.advance(12)
+            return original_start(manager, scene)
+
+        monkeypatch.setattr(runtime, "start_scene", slow_start)
+        clock.advance(5 + lateness)
+        result = runner.advance()
+        assert result["current_index"] == 1
+        assert result["entry_started_at"] == clock() + 1000
+        assert result["entry_deadline_at"] == 1122
+        assert result["remaining_seconds"] == 5 - lateness
+        assert runner.status()["remaining_seconds"] == 5 - lateness
+        assert runner.advance()["phase"] == "running"
+        clock.advance(5 - lateness)
+        assert runner.advance()["phase"] == "completed"
+        assert manager.scene == initial
+
+
 def test_manual_mutation_wins_and_prevents_completion_restore():
     manager, coordinator, initial = fixture()
     clock = Clock()
