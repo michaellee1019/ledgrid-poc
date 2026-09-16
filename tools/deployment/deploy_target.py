@@ -2125,7 +2125,11 @@ def stop_receiver_service() -> Mapping[str, Any]:
         timeout=10.0,
     )
     fields = dict(line.split("=", 1) for line in observed.stdout.splitlines() if "=" in line)
-    if fields != {"ActiveState": "inactive", "MainPID": "0", "ControlPID": "0"}:
+    # The launcher can exit 143 on a successful explicit stop, leaving systemd
+    # failed rather than inactive. Preserve that state; both are quiescent only
+    # with no main/control PID after the checked stop above.
+    if (fields.get("ActiveState") not in {"inactive", "failed"}
+            or fields.get("MainPID") != "0" or fields.get("ControlPID") != "0"):
         raise RuntimeError(f"receiver service did not stop completely: {fields}")
     return {"unit": DEFAULT_SYSTEMD_UNIT, "stopped": True, **fields}
 

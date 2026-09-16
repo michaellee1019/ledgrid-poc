@@ -2835,8 +2835,24 @@ class ReceiverServiceQuiescenceTests(unittest.TestCase):
         self.assertEqual(command.call_args_list[0].kwargs["timeout"], 30.0)
         self.assertNotIn("check", command.call_args_list[0].kwargs)  # checked by default
 
+    def test_successful_stop_with_failed_state_and_zero_pids_preserves_failure_evidence(self) -> None:
+        # Exact observed Sept16 launcher-stop result: exit143 left ActiveState=failed.
+        observed = "MainPID=0\nControlPID=0\nActiveState=failed\n"
+        with patch.object(deploy_target, "_command", side_effect=[
+                subprocess.CompletedProcess((), 0, "", ""),
+                subprocess.CompletedProcess((), 0, observed, "")]) as command:
+            result = deploy_target.stop_receiver_service()
+        self.assertTrue(result["stopped"])
+        self.assertEqual(result["ActiveState"], "failed")
+        self.assertEqual(result["MainPID"], "0")
+        self.assertEqual(result["ControlPID"], "0")
+        self.assertEqual(command.call_count, 2)  # No reset-failed or state rewriting.
+
     def test_active_process_missing_state_or_stop_failure_blocks_programming_gate(self) -> None:
         for state in ("ActiveState=active\nMainPID=0\nControlPID=0\n",
+                      "ActiveState=deactivating\nMainPID=0\nControlPID=0\n",
+                      "ActiveState=failed\nMainPID=123\nControlPID=0\n",
+                      "ActiveState=failed\nMainPID=0\nControlPID=456\n",
                       "ActiveState=inactive\nMainPID=123\nControlPID=0\n",
                       "ActiveState=inactive\nMainPID=0\nControlPID=456\n", ""):
             with self.subTest(state=state), patch.object(
