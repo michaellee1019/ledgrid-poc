@@ -2772,6 +2772,7 @@ class LEDController:
                 "acknowledged_query_index": None,
                 "status_sample_count": 0,
                 "receiver_reset_observed": False,
+                "sparse_authority_drift_observed": False,
                 "status_samples": [],
             }
             last_status_packets = prior_sample["receiver_packets"]
@@ -2869,6 +2870,14 @@ class LEDController:
                         )
                     )
                 )
+                diagnostic["sparse_authority_drift_observed"] = bool(
+                    diagnostic["sparse_authority_drift_observed"]
+                    or (
+                        enforce_sparse_authority
+                        and sample["fresh"]
+                        and sample["sparse_authority"] != authority
+                    )
+                )
                 diagnostic["status_samples"].append(sample)
                 del diagnostic["status_samples"][
                     :-COMMAND_TRANSFER_DIAGNOSTIC_MAX_SAMPLES
@@ -2906,6 +2915,8 @@ class LEDController:
                     and observed_version >= required_version
                     and observed_command == command
                     and observed_sequence == expected_sequence
+                    and not diagnostic["receiver_reset_observed"]
+                    and not diagnostic["sparse_authority_drift_observed"]
                     and (
                         not require_idempotent_result
                         or int(status.get(
@@ -2935,7 +2946,11 @@ class LEDController:
                 ):
                     break
             self._record_command_transfer_diagnostic(diagnostic)
-            if retry_budget and not diagnostic["receiver_reset_observed"]:
+            if (
+                retry_budget
+                and not diagnostic["receiver_reset_observed"]
+                and not diagnostic["sparse_authority_drift_observed"]
+            ):
                 return self._command_status(
                     payload_value,
                     command=command,

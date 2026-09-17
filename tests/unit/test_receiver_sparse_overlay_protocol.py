@@ -855,6 +855,71 @@ class SparseOverlayDriverTests(unittest.TestCase):
             )
         self.assertEqual(generation_drift.spi.sparse_attempts, 1)
 
+    def test_transient_protected_reset_and_authority_drift_stay_latched(self):
+        mutations = {
+            "reset": lambda response: response.__setitem__(
+                slice(12, 16), (1).to_bytes(4, "big")
+            ),
+            "session": lambda response: response.__setitem__(
+                slice(384, 400), bytes((0xA5,)) * 16
+            ),
+            "generation": lambda response: response.__setitem__(
+                slice(336, 344), (2).to_bytes(8, "big")
+            ),
+            "ownership": lambda response: response.__setitem__(73, 3),
+        }
+        for violation, mutate in mutations.items():
+            with self.subTest(violation=violation):
+                item = controller(protected_current=True)
+                original_xfer = item.spi.xfer2
+                injected = False
+
+                def xfer(packet):
+                    nonlocal injected
+                    response = original_xfer(packet)
+                    if (
+                        not injected
+                        and item.spi.sparse_attempts > 0
+                        and len(response) >= protocol.RECEIVER_STATUS_BYTES_V8
+                        and response[:5] == b"LGS8\x08"
+                    ):
+                        protected = bytearray(response)
+                        mutate(protected)
+                        protected[protocol.RECEIVER_STATUS_BYTES_V7:
+                                  protocol.RECEIVER_STATUS_BYTES_V8] = (
+                            binascii.crc32(
+                                protected[:protocol.RECEIVER_STATUS_BYTES_V7]
+                            ).to_bytes(4, "big")
+                        )
+                        response = bytes(protected)
+                        injected = True
+                    return response
+
+                item.spi.xfer2 = xfer
+                with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+                    item.send_overlay_patch_batch(
+                        controller_session_id=SESSION, generation=1,
+                        spans=[(0, bytes((1, 2, 3, 4)))],
+                    )
+                self.assertTrue(injected)
+                self.assertEqual(item.spi.sparse_attempts, 1)
+                diagnostic = item.command_transfer_diagnostics()[-1]
+                self.assertIsNone(diagnostic["acknowledged_query_index"])
+                self.assertTrue(any(
+                    sample["operation_sequence"] == 1
+                    and sample["last_processed_command"]
+                        == protocol.CMD_OVERLAY_PATCH_BATCH
+                    and sample["sparse_authority"]
+                        == diagnostic["prior_status"]["sparse_authority"]
+                    for sample in diagnostic["status_samples"]
+                ))
+                if violation == "reset":
+                    self.assertTrue(diagnostic["receiver_reset_observed"])
+                else:
+                    self.assertTrue(
+                        diagnostic["sparse_authority_drift_observed"]
+                    )
+
     def test_permanent_sparse_failure_exhausts_one_retry(self):
         item = controller(protected_current=True, acknowledge=False)
         with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
