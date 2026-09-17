@@ -29,9 +29,8 @@ import tempfile
 import time
 import sys
 from typing import Any, Iterable, Mapping, Optional, Sequence
-from urllib.error import HTTPError, URLError
+from urllib.error import URLError
 from urllib.request import Request, urlopen
-from urllib.parse import urlsplit, urlunsplit
 
 # RemoteTarget executes this file by absolute path from an arbitrary SSH login
 # directory.  Put this uploaded release ahead of any installed checkout before
@@ -44,7 +43,6 @@ try:
     from tools.deployment.firmware_artifacts import inspect_firmware_installation
     from tools.deployment.receiver_hybrid_config import (
         FINALIZED_RECEIVER_COUNT,
-        migrate_legacy_receiver_hybrid_config,
         resolve_receiver_hybrid_config,
     )
 except ModuleNotFoundError:  # Direct execution from an uploaded snapshot.
@@ -52,7 +50,6 @@ except ModuleNotFoundError:  # Direct execution from an uploaded snapshot.
     from firmware_artifacts import inspect_firmware_installation  # type: ignore[no-redef]
     from receiver_hybrid_config import (  # type: ignore[no-redef]
         FINALIZED_RECEIVER_COUNT,
-        migrate_legacy_receiver_hybrid_config,
         resolve_receiver_hybrid_config,
     )
 
@@ -90,45 +87,6 @@ RECEIVER_FIRMWARE_COMMIT = PurePosixPath(
 MAX_RECEIVER_FIRMWARE_COMMIT_BYTES = 64 * 1024
 MAX_RECEIVER_FIRMWARE_ARTIFACT_BYTES = 32 * 1024 * 1024
 
-# First-cutover bootstrap is deliberately narrower than a full deployment
-# manifest.  These are the source roots needed by the legacy service; target
-# state, firmware/support input, documentation, repository metadata and build
-# products never enter the immutable rollback snapshot.
-LEGACY_BOOTSTRAP_SOURCE_ROOTS = (
-    PurePosixPath("animation"),
-    PurePosixPath("config"),
-    PurePosixPath("drivers"),
-    PurePosixPath("ipc"),
-    PurePosixPath("scripts"),
-    PurePosixPath("tools"),
-    PurePosixPath("web"),
-)
-LEGACY_BOOTSTRAP_ROOT_FILES = (
-    PurePosixPath("pyproject.toml"),
-    PurePosixPath("requirements-pi.lock"),
-    PurePosixPath("requirements.txt"),
-    PurePosixPath("uv.lock"),
-)
-LEGACY_BOOTSTRAP_REQUIRED_FILES = (
-    PurePosixPath("scripts/start_systemd.sh"),
-    PurePosixPath("scripts/start_server.py"),
-    PurePosixPath("tools/deployment/preserve_deploy_settings.py"),
-)
-LEGACY_BOOTSTRAP_EXCLUDED_DIRECTORIES = frozenset({
-    ".git", ".mypy_cache", ".pio", ".pytest_cache", ".ruff_cache",
-    ".tox", ".venv", ".venvs", "__pycache__", "build", "dist",
-    "node_modules", "out", "releases", "support_releases", "venv",
-})
-LEGACY_BOOTSTRAP_SECRET_NAMES = frozenset({
-    ".env", ".netrc", "credentials", "credentials.json", "id_ed25519",
-    "id_rsa", "secrets", "secrets.json",
-})
-LEGACY_BOOTSTRAP_SECRET_SUFFIXES = frozenset({
-    ".key", ".p12", ".pfx", ".pem",
-})
-LEGACY_BOOTSTRAP_RECORD = PurePosixPath("run_state/legacy_app_bootstrap.json")
-
-
 def _path(value: os.PathLike[str] | str) -> Path:
     return Path(value).expanduser().resolve()
 
@@ -138,87 +96,6 @@ def _safe_relative(value: str) -> PurePosixPath:
     if not path.parts or path.is_absolute() or ".." in path.parts or path == PurePosixPath("."):
         raise ValueError(f"unsafe snapshot path: {value!r}")
     return path
-
-
-def _legacy_bootstrap_sensitive(path: PurePosixPath) -> bool:
-    lowered = tuple(part.lower() for part in path.parts)
-    return bool(
-        any(
-            part in LEGACY_BOOTSTRAP_SECRET_NAMES
-            or part.startswith(".env.")
-            for part in lowered
-        )
-        or path.suffix.lower() in LEGACY_BOOTSTRAP_SECRET_SUFFIXES
-    )
-
-
-def _legacy_bootstrap_sources(root: Path) -> Mapping[PurePosixPath, Path]:
-    """Return the bounded, regular-file source set for first cutover."""
-
-    sources: dict[PurePosixPath, Path] = {}
-    for relative in LEGACY_BOOTSTRAP_ROOT_FILES:
-        candidate = root / relative.as_posix()
-        if not candidate.exists():
-            continue
-        metadata = candidate.lstat()
-        if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-            raise RuntimeError(
-                f"legacy bootstrap input must be a regular non-symlink file: {relative}"
-            )
-        sources[relative] = candidate
-
-    for source_root in LEGACY_BOOTSTRAP_SOURCE_ROOTS:
-        directory = root / source_root.as_posix()
-        if not directory.exists():
-            continue
-        metadata = directory.lstat()
-        if directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
-            raise RuntimeError(
-                f"legacy bootstrap source root must be a real directory: {source_root}"
-            )
-        for current, raw_directories, raw_files in os.walk(directory, followlinks=False):
-            current_path = Path(current)
-            retained_directories: list[str] = []
-            for name in sorted(raw_directories):
-                child = current_path / name
-                if name in LEGACY_BOOTSTRAP_EXCLUDED_DIRECTORIES:
-                    continue
-                if child.is_symlink():
-                    raise RuntimeError(
-                        "legacy bootstrap source contains a directory symlink: "
-                        f"{child.relative_to(root)}"
-                    )
-                if not stat.S_ISDIR(child.lstat().st_mode):
-                    raise RuntimeError(
-                        "legacy bootstrap source contains a non-directory entry: "
-                        f"{child.relative_to(root)}"
-                    )
-                retained_directories.append(name)
-            raw_directories[:] = retained_directories
-
-            for name in sorted(raw_files):
-                candidate = current_path / name
-                relative = PurePosixPath(candidate.relative_to(root).as_posix())
-                if _legacy_bootstrap_sensitive(relative):
-                    continue
-                metadata = candidate.lstat()
-                if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-                    raise RuntimeError(
-                        "legacy bootstrap input must be a regular non-symlink file: "
-                        f"{relative}"
-                    )
-                sources[relative] = candidate
-
-    missing = tuple(
-        relative for relative in LEGACY_BOOTSTRAP_REQUIRED_FILES
-        if relative not in sources
-    )
-    if missing:
-        raise RuntimeError(
-            "legacy mutable app lacks required boot inputs: "
-            + ", ".join(path.as_posix() for path in missing)
-        )
-    return dict(sorted(sources.items(), key=lambda item: item[0].as_posix()))
 
 
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -241,42 +118,6 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
             os.close(directory)
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def _read_legacy_bootstrap_record(root: Path) -> Optional[dict[str, Any]]:
-    path = root / LEGACY_BOOTSTRAP_RECORD.as_posix()
-    if not path.exists():
-        if path.is_symlink():
-            raise RuntimeError(
-                "legacy bootstrap record must be a regular non-symlink file"
-            )
-        return None
-    if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
-        raise RuntimeError("legacy bootstrap record must be a regular non-symlink file")
-    payload = _json_object(path)
-    if payload.get("schema_version") != 1:
-        raise RuntimeError("unsupported legacy bootstrap record version")
-    release_id = payload.get("bootstrap_release_id")
-    phase = payload.get("phase")
-    if (
-        not isinstance(release_id, str)
-        or RELEASE_PATTERN.fullmatch(release_id) is None
-        or phase not in {"prepared", "selected", "candidate_pending", "complete"}
-    ):
-        raise RuntimeError("legacy bootstrap record is malformed")
-    candidate = payload.get("candidate_release_id")
-    if candidate is not None and (
-        not isinstance(candidate, str)
-        or RELEASE_PATTERN.fullmatch(candidate) is None
-    ):
-        raise RuntimeError("legacy bootstrap candidate identity is malformed")
-    if phase == "candidate_pending" and candidate is None:
-        raise RuntimeError("pending legacy bootstrap record has no candidate")
-    return payload
-
-
-def _write_legacy_bootstrap_record(root: Path, payload: Mapping[str, Any]) -> None:
-    _atomic_json(root / LEGACY_BOOTSTRAP_RECORD.as_posix(), payload)
 
 
 def _is_beneath(path: PurePosixPath, parent: PurePosixPath) -> bool:
@@ -847,172 +688,6 @@ def build_native_host_preview(
     )
 
 
-def _legacy_service_working_directory(root: Path, unit: str) -> Optional[Path]:
-    pid = _service_main_pid(unit)
-    if pid <= 0:
-        return None
-    try:
-        working_directory = Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
-    except OSError as exc:
-        raise RuntimeError("cannot identify the running legacy service source") from exc
-    if working_directory != root.resolve():
-        raise RuntimeError(
-            "legacy service is not running from the mutable deployment root"
-        )
-    return working_directory
-
-
-def bootstrap_legacy_app(
-    root: Path, candidate_release_id: str, *, unit: str = DEFAULT_SYSTEMD_UNIT,
-) -> Mapping[str, Any]:
-    """Publish the first immutable rollback release without restarting it."""
-
-    manager = _app_manager(root)
-    manager.validate(candidate_release_id)
-    current = manager.current_release_id()
-    record = _read_legacy_bootstrap_record(root)
-
-    if record is not None:
-        bootstrap_id = str(record["bootstrap_release_id"])
-        phase = str(record["phase"])
-        pending_candidate = record.get("candidate_release_id")
-        if phase != "complete":
-            bootstrap = manager.validate(bootstrap_id)
-            if bootstrap.digest != record.get("bootstrap_digest"):
-                raise RuntimeError("legacy bootstrap record digest disagrees with release")
-        else:
-            bootstrap = None
-
-        if current is None and phase == "prepared":
-            previous, selected = manager.activate_if_unset(bootstrap_id)
-            if previous is not None or not selected:
-                raise RuntimeError("legacy bootstrap lost its no-clobber selection boundary")
-            current = bootstrap_id
-            phase = "selected"
-            record = {
-                **record,
-                "phase": phase,
-                "selected_at": time.time(),
-            }
-            _write_legacy_bootstrap_record(root, record)
-
-        if phase == "candidate_pending":
-            if current not in {bootstrap_id, pending_candidate}:
-                raise RuntimeError(
-                    "pending legacy bootstrap disagrees with current release selection"
-                )
-            return {
-                "outcome": "skipped",
-                "reason": "resuming a candidate guarded by the legacy bootstrap",
-                "selected": current == bootstrap_id,
-                "current_release": current,
-                "bootstrap_release_id": bootstrap_id,
-                "bootstrap_digest": record["bootstrap_digest"],
-                "file_count": record.get("file_count"),
-                "phase": phase,
-                "recovery_release": bootstrap_id,
-                "candidate_release_id": pending_candidate,
-                "record_path": os.fspath(
-                    root / LEGACY_BOOTSTRAP_RECORD.as_posix()
-                ),
-            }
-        if phase in {"prepared", "selected"}:
-            if current != bootstrap_id:
-                raise RuntimeError(
-                    "legacy bootstrap record disagrees with current release selection"
-                )
-            return {
-                "outcome": "skipped",
-                "reason": "legacy bootstrap release is already selected",
-                "selected": True,
-                "current_release": current,
-                "bootstrap_release_id": bootstrap_id,
-                "bootstrap_digest": record["bootstrap_digest"],
-                "file_count": record.get("file_count"),
-                "phase": phase,
-                "recovery_release": None,
-                "record_path": os.fspath(
-                    root / LEGACY_BOOTSTRAP_RECORD.as_posix()
-                ),
-            }
-        if current is None:
-            raise RuntimeError(
-                "completed legacy bootstrap has no immutable current release"
-            )
-        manager.validate(current)
-        return {
-            "outcome": "skipped",
-            "reason": "legacy bootstrap lifecycle is complete",
-            "selected": False,
-            "current_release": current,
-            "bootstrap_release_id": record["bootstrap_release_id"],
-            "bootstrap_digest": record["bootstrap_digest"],
-            "file_count": record.get("file_count"),
-            "phase": phase,
-            "recovery_release": None,
-            "record_path": os.fspath(root / LEGACY_BOOTSTRAP_RECORD.as_posix()),
-        }
-
-    if current is not None:
-        manager.validate(current)
-        return {
-            "outcome": "skipped",
-            "reason": "an immutable app release is already selected",
-            "selected": False,
-            "current_release": current,
-            "bootstrap_release_id": None,
-            "recovery_release": None,
-        }
-
-    working_directory = _legacy_service_working_directory(root, unit)
-    if working_directory is None:
-        return {
-            "outcome": "skipped",
-            "reason": (
-                "blank target has no immutable selection or running mutable service"
-            ),
-            "selected": False,
-            "current_release": None,
-            "bootstrap_release_id": None,
-            "recovery_release": None,
-            "phase": "blank_slate",
-        }
-
-    sources = _legacy_bootstrap_sources(root)
-    info = manager.stage(sources)
-    verified = manager.validate(info.id)
-    record = {
-        "schema_version": 1,
-        "phase": "prepared",
-        "bootstrap_release_id": verified.id,
-        "bootstrap_digest": verified.digest,
-        "candidate_release_id": None,
-        "file_count": len(verified.files),
-        "source_working_directory": os.fspath(working_directory),
-        "prepared_at": time.time(),
-    }
-    _write_legacy_bootstrap_record(root, record)
-    previous, selected = manager.activate_if_unset(verified.id)
-    if previous is not None or not selected:
-        raise RuntimeError("legacy bootstrap lost its no-clobber selection boundary")
-    record = {**record, "phase": "selected", "selected_at": time.time()}
-    _write_legacy_bootstrap_record(root, record)
-    manager.validate(verified.id)
-    return {
-        "outcome": "executed",
-        "reason": "snapshotted the running mutable app before first cutover",
-        "selected": True,
-        "current_release": verified.id,
-        "bootstrap_release_id": verified.id,
-        "bootstrap_digest": verified.digest,
-        "file_count": len(verified.files),
-        "phase": "selected",
-        "recovery_release": None,
-        "record_path": os.fspath(root / LEGACY_BOOTSTRAP_RECORD.as_posix()),
-        "reused": info.reused,
-    }
-
-
 def _support_digest(files: Iterable[tuple[PurePosixPath, Path]]) -> str:
     digest = hashlib.sha256(b"ledgrid-support-release-v1\0")
     for relative, source in sorted(files, key=lambda item: item[0].as_posix()):
@@ -1133,6 +808,18 @@ def _support_release(root: Path, release_id: str) -> Path:
 def validate_app(root: Path, release_id: str) -> Mapping[str, Any]:
     manager = _app_manager(root)
     info = manager.validate(release_id)
+    web_entrypoint = info.path / "web" / "app.py"
+    try:
+        web_source = web_entrypoint.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise RuntimeError(
+            "selected app release does not provide the current deployment contract"
+        ) from exc
+    if "/api/v1/composer/operations/telemetry" not in web_source:
+        raise RuntimeError(
+            "selected app release predates the current deployment contract: "
+            "Composer operations telemetry is required"
+        )
     runtime_python = root / "venv" / "bin" / "python"
     if not runtime_python.is_file():
         raise RuntimeError("selected target runtime is missing; provision dependencies first")
@@ -1300,10 +987,8 @@ def provision(
     runtime = ensure_runtime(root, release_id)
     spi = configure_spi(release, hat=hat)
     # Do not replace the boot-time unit while an SPI configuration reboot is
-    # outstanding. On first coordinator cutover there may be no ``current``
-    # symlink yet, so retaining the legacy unit keeps the existing service
-    # bootable through the one allowed reboot. The idempotent resume installs
-    # the current-aware unit after SPI reports ready.
+    # outstanding. A clean initialization may not select ``current`` until the
+    # idempotent resume installs the current-aware unit after SPI reports ready.
     if spi.get("status") == "ready":
         unit = ensure_unit(
             root, user=user, strips=strips, receivers=receivers
@@ -1328,20 +1013,6 @@ def provision(
         "runtime": runtime,
         "unit": unit,
         "spi": spi,
-    }
-
-
-def migrate_receiver_topology(root: Path) -> Mapping[str, Any]:
-    """Reconcile the retired four-receiver rollout file before firmware work."""
-
-    config, migrated = migrate_legacy_receiver_hybrid_config(root)
-    return {
-        "outcome": "executed" if migrated else "skipped",
-        "migrated": migrated,
-        "receiver_hybrid_config": config.to_dict(),
-        "receiver_hybrid_config_digest": config.selection_digest,
-        "strips": config.strip_count,
-        "receivers": len(config.receiver_strip_counts),
     }
 
 
@@ -2497,7 +2168,6 @@ def prune_releases(root: Path, *, retain: int) -> Mapping[str, Any]:
 def activate(root: Path, release_id: str) -> Mapping[str, Any]:
     manager = _app_manager(root)
     current = manager.current_release_id()
-    bootstrap = _read_legacy_bootstrap_record(root)
     if current == release_id:
         manager.validate(release_id)
         return {
@@ -2506,99 +2176,13 @@ def activate(root: Path, release_id: str) -> Mapping[str, Any]:
             "changed": False,
             "selected_at": time.time(),
         }
-    if bootstrap is not None and bootstrap.get("phase") in {
-        "selected", "candidate_pending"
-    }:
-        bootstrap_id = bootstrap["bootstrap_release_id"]
-        pending_candidate = bootstrap.get("candidate_release_id")
-        if current == bootstrap_id and release_id != bootstrap_id:
-            if (
-                bootstrap.get("phase") == "candidate_pending"
-                and pending_candidate not in {None, release_id}
-            ):
-                raise RuntimeError(
-                    "legacy bootstrap already guards a different candidate release"
-                )
-            bootstrap = {
-                **bootstrap,
-                "phase": "candidate_pending",
-                "candidate_release_id": release_id,
-                "candidate_selected_at": time.time(),
-            }
-            _write_legacy_bootstrap_record(root, bootstrap)
-        elif (
-            release_id == bootstrap_id
-            and bootstrap.get("phase") == "candidate_pending"
-            and current == pending_candidate
-        ):
-            # Compensation is allowed to move the lifecycle back to its
-            # reusable selected state after the atomic app selection below.
-            pass
-        elif bootstrap.get("phase") == "candidate_pending":
-            raise RuntimeError(
-                "candidate activation disagrees with pending legacy bootstrap evidence"
-            )
     previous = manager.activate(release_id)
-    if (
-        bootstrap is not None
-        and release_id == bootstrap.get("bootstrap_release_id")
-        and bootstrap.get("phase") == "candidate_pending"
-    ):
-        _write_legacy_bootstrap_record(
-            root,
-            {
-                **bootstrap,
-                "phase": "selected",
-                "candidate_release_id": None,
-                "restored_at": time.time(),
-            },
-        )
     return {
         "release_id": release_id,
         "previous_release": previous,
         "changed": True,
         "selected_at": time.time(),
     }
-
-
-def complete_legacy_bootstrap(
-    root: Path, candidate_release_id: str,
-) -> Mapping[str, Any]:
-    """Close pending bootstrap recovery only after candidate health succeeds."""
-
-    record = _read_legacy_bootstrap_record(root)
-    if record is None:
-        return {"outcome": "skipped", "reason": "no legacy bootstrap lifecycle"}
-    if record.get("phase") == "complete":
-        return {
-            "outcome": "skipped",
-            "reason": "legacy bootstrap lifecycle is already complete",
-            "bootstrap_release_id": record["bootstrap_release_id"],
-        }
-    current = _app_manager(root).current_release_id()
-    bootstrap_id = record["bootstrap_release_id"]
-    pending = record.get("candidate_release_id")
-    if current != candidate_release_id:
-        raise RuntimeError("cannot complete bootstrap for a non-current candidate")
-    if record.get("phase") == "candidate_pending" and pending != candidate_release_id:
-        raise RuntimeError("legacy bootstrap pending candidate identity changed")
-    if record.get("phase") == "selected" and candidate_release_id != bootstrap_id:
-        raise RuntimeError("legacy bootstrap was never bound to this candidate")
-    completed = {
-        **record,
-        "phase": "complete",
-        "candidate_release_id": candidate_release_id,
-        "completed_at": time.time(),
-    }
-    _write_legacy_bootstrap_record(root, completed)
-    return {
-        "outcome": "executed",
-        "bootstrap_release_id": bootstrap_id,
-        "candidate_release_id": candidate_release_id,
-        "phase": "complete",
-        "record_path": os.fspath(root / LEGACY_BOOTSTRAP_RECORD.as_posix()),
-    }
-
 
 def _active_helper_root(root: Path) -> Optional[Path]:
     if (root / "current" / "tools" / "deployment" / "preserve_deploy_settings.py").is_file():
@@ -2609,8 +2193,8 @@ def _active_helper_root(root: Path) -> Optional[Path]:
 
 
 def capture_state(root: Path) -> Mapping[str, Any]:
-    # Capture this independently of HTTP/runtime availability: a stopped prior
-    # app may be the deliberate recovery state of an earlier firmware migration.
+    # Capture this independently of HTTP availability: a stopped current app
+    # may be the deliberate matched app/firmware recovery state.
     service_was_active = _command(
         ("systemctl", "is-active", "--quiet", DEFAULT_SYSTEMD_UNIT),
         check=False,
@@ -2627,8 +2211,8 @@ def capture_state(root: Path) -> Mapping[str, Any]:
         check=False,
     )
     if completed.returncode:
-        # An unhealthy/idle legacy service is a valid first cutover condition;
-        # no state is preferable to fabricating a restorable snapshot.
+        # Report capture failure exactly; the coordinator rejects it for an
+        # existing current target before any provision, flash, or activation.
         return {
             "captured": False,
             "service_was_active": service_was_active,
@@ -2700,26 +2284,6 @@ def _service_release(root: Path, unit: str) -> Optional[str]:
     return relative.parts[0] if len(relative.parts) == 1 else None
 
 
-def _legacy_status_url(api_url: str) -> str:
-    """Return the legacy status URL on the exact same HTTP origin."""
-    parsed = urlsplit(api_url)
-    return urlunsplit((parsed.scheme, parsed.netloc, "/api/status", "", ""))
-
-
-def _legacy_status_for_health(payload: Any) -> Mapping[str, Any]:
-    """Project the former status document onto the health reader's fields."""
-    if not isinstance(payload, dict):
-        raise RuntimeError("legacy controller status is not an object")
-    return {
-        "updated_at": payload.get("updated_at"),
-        "timestamp": payload.get("timestamp"),
-        "release_id": payload.get("release_id"),
-        "release_consistent": payload.get("release_consistent"),
-        "led_info": payload.get("led_info"),
-        "driver_stats": payload.get("driver_stats"),
-    }
-
-
 def _read_api_document(api_url: str, timeout: float) -> Any:
     try:
         with urlopen(api_url, timeout=timeout) as response:  # nosec: fixed/local operator URL
@@ -2731,22 +2295,8 @@ def _read_api_document(api_url: str, timeout: float) -> Any:
 def _api_status(
     api_url: str,
     timeout: float = 2.0,
-    *,
-    allow_legacy_status_fallback: bool = False,
 ) -> Mapping[str, Any]:
-    try:
-        payload = _read_api_document(api_url, timeout)
-    except RuntimeError as exc:
-        cause = exc.__cause__
-        if not (
-            allow_legacy_status_fallback
-            and isinstance(cause, HTTPError)
-            and cause.code == 404
-        ):
-            raise
-        return _legacy_status_for_health(
-            _read_api_document(_legacy_status_url(api_url), timeout)
-        )
+    payload = _read_api_document(api_url, timeout)
     if not isinstance(payload, dict):
         raise RuntimeError("controller operations telemetry is not an object")
     if (
@@ -2758,9 +2308,7 @@ def _api_status(
     diagnostics = payload.get("diagnostics")
     if not isinstance(controller, dict) or not isinstance(diagnostics, dict):
         raise RuntimeError("controller operations telemetry is incomplete")
-    # Keep the health validator independent from the HTTP document shape.  It
-    # receives the exact fields it historically validated, now supplied by the
-    # versioned operations owner rather than the legacy status route.
+    # Keep the health validator independent from the HTTP document shape.
     return {
         **controller,
         "driver_stats": diagnostics.get("driver_stats"),
@@ -2934,16 +2482,12 @@ def _sample_health(
     *,
     unit: str,
     api_url: str,
-    allow_legacy_status_fallback: bool = False,
 ) -> TargetHealthSample:
     active = _command(("systemctl", "is-active", "--quiet", unit), check=False)
     if active.returncode:
         raise RuntimeError(f"systemd unit is not active: {unit}")
     sampled_at = time.time()
-    status = _api_status(
-        api_url,
-        allow_legacy_status_fallback=allow_legacy_status_fallback,
-    )
+    status = _api_status(api_url)
     led_info = status.get("led_info") if isinstance(status.get("led_info"), dict) else {}
     driver = status.get("driver_stats") if isinstance(status.get("driver_stats"), dict) else {}
     aggregate = driver.get("aggregate") if isinstance(driver.get("aggregate"), dict) else {}
@@ -3884,7 +3428,6 @@ def fresh_health(
     unit: str,
     api_url: str,
     receiver_contract: Optional[Mapping[str, Any]] = None,
-    allow_legacy_status_fallback: bool = False,
     validate_transport_deltas: bool = True,
     allow_demo_receiver_3_fec_degradation: bool = False,
 ) -> Mapping[str, Any]:
@@ -3906,7 +3449,6 @@ def fresh_health(
                 root,
                 unit=unit,
                 api_url=api_url,
-                allow_legacy_status_fallback=allow_legacy_status_fallback,
             )
             rejection: Optional[str] = None
             if sample.release_id != release_id:
@@ -4051,9 +3593,6 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--snapshot", type=_path, required=True)
     stage_app_parser = subparsers.add_parser("stage-app")
     stage_app_parser.add_argument("--snapshot", type=_path, required=True)
-    bootstrap = subparsers.add_parser("bootstrap-legacy-app")
-    bootstrap.add_argument("candidate_release_id")
-    bootstrap.add_argument("--unit", default=DEFAULT_SYSTEMD_UNIT)
     stage_support_parser = subparsers.add_parser("stage-support")
     stage_support_parser.add_argument("--snapshot", type=_path, required=True)
     host_preview = subparsers.add_parser("build-native-host-preview")
@@ -4076,7 +3615,6 @@ def _parser() -> argparse.ArgumentParser:
     provision_parser.add_argument("--hat", action="store_true")
     provision_parser.add_argument("--strips", type=int, default=33)
     provision_parser.add_argument("--receivers", type=int, default=5)
-    subparsers.add_parser("migrate-receiver-topology")
     build = subparsers.add_parser("build-firmware")
     build.add_argument("support_id", nargs="?")
     flash = subparsers.add_parser("flash-firmware")
@@ -4100,8 +3638,6 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("capture-state")
     activate_parser = subparsers.add_parser("activate")
     activate_parser.add_argument("release_id")
-    complete_bootstrap = subparsers.add_parser("complete-legacy-bootstrap")
-    complete_bootstrap.add_argument("candidate_release_id")
     subparsers.add_parser("restart")
     subparsers.add_parser("stop-receiver-service")
     restore = subparsers.add_parser("restore-state")
@@ -4117,7 +3653,6 @@ def _parser() -> argparse.ArgumentParser:
     health.add_argument("--unit", default=DEFAULT_SYSTEMD_UNIT)
     health.add_argument("--api-url", default=DEFAULT_API_URL)
     health.add_argument("--receiver-contract-json")
-    health.add_argument("--allow-legacy-status-fallback", action="store_true")
     health.add_argument("--skip-transport-delta-validation", action="store_true")
     health.add_argument(
         "--allow-demo-receiver-3-fec-degradation",
@@ -4141,10 +3676,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = verify_snapshot(args.snapshot)
     elif args.command == "stage-app":
         result = stage_app(root, args.snapshot)
-    elif args.command == "bootstrap-legacy-app":
-        result = bootstrap_legacy_app(
-            root, args.candidate_release_id, unit=args.unit
-        )
     elif args.command == "stage-support":
         result = stage_support(root, args.snapshot)
     elif args.command == "build-native-host-preview":
@@ -4174,8 +3705,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             strips=args.strips,
             receivers=args.receivers,
         )
-    elif args.command == "migrate-receiver-topology":
-        result = migrate_receiver_topology(root)
     elif args.command == "build-firmware":
         result = build_firmware(root, args.support_id)
     elif args.command == "flash-firmware":
@@ -4214,8 +3743,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = capture_state(root)
     elif args.command == "activate":
         result = activate(root, args.release_id)
-    elif args.command == "complete-legacy-bootstrap":
-        result = complete_legacy_bootstrap(root, args.candidate_release_id)
     elif args.command == "restart":
         result = restart_service()
     elif args.command == "stop-receiver-service":
@@ -4243,7 +3770,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             unit=args.unit,
             api_url=args.api_url,
             receiver_contract=receiver_contract,
-            allow_legacy_status_fallback=args.allow_legacy_status_fallback,
             validate_transport_deltas=not args.skip_transport_delta_validation,
             allow_demo_receiver_3_fec_degradation=(
                 args.allow_demo_receiver_3_fec_degradation

@@ -26,8 +26,6 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just preflight` | Alias for the full test gate |
 | `just deploy-precheck` | Full test gate used by deployment |
 | `just deploy-plan` | Read-only source accounting and authoritative coordinator step plan |
-| `just deploy-shadow` | Freeze and verify an immutable snapshot without contacting the Pi |
-| `just deploy-shadow-stage` | Stage immutable app/support releases on the Pi without activation or host/receiver mutation |
 | `just deploy` | Clean-tree coordinated release, provision, changed-firmware reconciliation, activation, and fresh health |
 | `just deploy-dirty` | Explicit coordinated deployment of tracked edits plus allowlisted safe untracked source |
 | `just deploy-verbose` | Clean full deployment with normally captured phase output streamed live |
@@ -47,8 +45,6 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just receiver-native-h4-default-soak <scene-digest>` | Read-only, receipt-bound H4 authored-default supporting soak; defaults to 1,800 seconds |
 | `just receiver-native-h4-maximum-soak <scene-digest>` | Read-only, receipt-bound H4 maximum-work supporting soak; defaults to 1,800 seconds |
 | `just guarded-wall-soak <activation-id> <scene-digest> <release-id> <basis-digest>` | Read-only WALL-02 exact-activation, exact-Check-basis, exact-release, five-receiver soak; defaults to 1,800 seconds at target/minimum displayed 150 FPS |
-| `just deploy-legacy` | Explicit clean recovery path through the retained pre-cutover full shell leaf |
-| `just deploy-python-legacy` | Explicit clean recovery path through the retained pre-cutover Python shell leaf |
 | `just fetch-presets` | Compatibility alias that refreshes wall masks/data and Pi-saved runtime presets for review |
 
 `deploy-no-firmware` is retained as a compatibility alias for
@@ -150,10 +146,12 @@ state remains outside immutable releases:
 - runtime logs
 - calibration and receiver-artifact libraries
 
-The retained legacy full-sync leaf has matching excludes for `current`,
-immutable release trees, incoming/receipt evidence, calibration, receiver
-artifacts, runtime state, presets, environments, and logs. Use it only as an
-explicit recovery path.
+Before any target directory is created or staged, the coordinator verifies that
+the target is either clean or already selects a current immutable release. A
+mutable source tree, active service without `current`, obsolete receiver config,
+or release without current telemetry and state-preservation support fails before
+mutation. A completed historical bootstrap receipt may remain as audit evidence
+when the selected immutable release satisfies the current contract.
 
 Built-in plugin code, manifests, curated presets, tests needed by acceptance,
 and owned assets deploy from `animation/plugins/<plugin_id>/`. The runtime
@@ -163,9 +161,10 @@ preset overlay is never the source of curated content.
 
 `just deploy` always validates a clean source manifest and runs
 `deploy-precheck`. It then runs the coordinator's stable full sequence: source,
-tests, target connection, immutable app stage, receiver build, settings capture,
-host provision, receiver flash reconciliation, candidate validation, activation,
-restart, settings restoration, fresh health, and rollback-safe release pruning.
+tests, current-target preflight, target connection, immutable app stage, receiver
+build and identity preflight, settings capture, host provision, receiver flash
+and identity reconciliation, candidate validation, activation, restart, settings
+restoration, fresh health, and rollback-safe release pruning.
 State capture deliberately precedes any receiver flash because flashing can
 reset a receiver-native scene and must not cause its Python fallback to overwrite
 the saved desired display. The Pi runtime is
@@ -179,18 +178,12 @@ mountpoint carries no runtime and is removed idempotently, including when an
 older preserved legacy environment already occupies its content-addressed
 destination.
 
-Phase 4 first-cutover contract: immediately after `app.stage`, full deploy runs
-`app.bootstrap_legacy` when the target has no selected `current` release but
-still runs the recognized legacy mutable root. The
-step snapshots that application as a content-addressed immutable release and
-records a receipt artifact with kind `legacy_app_bootstrap`, schema `1`, and the
-snapshot digest/release ID. Candidate compensation must select that bootstrap;
-an unsafe, incomplete, or unprovable legacy root fails before activation. This
-bootstrap is a one-time rollback anchor, not acceptance of arbitrary mutable
-target content. When neither an immutable release nor a running mutable service
-exists, the step records a `blank_slate` skip and leaves selection unset for the
-candidate activation; it must not invent a rollback anchor from an inactive
-recovery checkout.
+A clean target with no `current` selection initializes through the normal full
+flow. The coordinator does not turn an old mutable checkout into a release. An
+unsupported or ambiguous target must be restored to a current immutable release
+or cleaned deliberately before deployment. On an existing current target,
+settings capture must succeed before provisioning, firmware flash, or app
+activation can proceed.
 
 ### Receiver hardware reconciliation
 
@@ -279,8 +272,9 @@ canary requires status v5 plus local/profile capabilities, and native canary
 requires status v6 plus the full native capability mask. Widths, offsets, output
 masks, and LEDs per strip must also match exactly. The flash ledger alone is not
 proof that a receiver booted the reconciled image.
-Application-only rollback deliberately omits this new-firmware contract so a
-known legacy application/firmware pair remains recoverable.
+Application-only rollback does not change firmware. It accepts only a release
+with the current telemetry and state-preservation contract, then verifies fresh
+health against the firmware already paired with that release.
 
 Production startup invokes `venv/bin/python` directly. Do not source
 `venv/bin/activate`: activation scripts embed the temporary build location,
@@ -354,11 +348,9 @@ ssh ledgridwall@ledgridwall.local -- \
 
 After H0/H1 acceptance, `enable-native` selects the managed-native firmware and
 runtime gate. `disable` restores feature-off production while retaining the
-finalized topology. A normal full deployment runs the idempotent `migrate`
-operation only after the first candidate passes health. Before that point the
-candidate recognizes the exact retired four-receiver schema as the same
-feature-off finalized selection, allowing build, flash, restart, and rollback
-without making the legacy service unbootable. Unknown legacy state fails closed.
+finalized topology. A present configuration must already use schema v5; retired
+receiver-topology schemas fail during the nonmutating target preflight. An absent
+configuration remains the current finalized feature-off selection.
 
 Changing the selection digest is a fail-closed scene-authority boundary. Restart
 the service, inspect whether the known Python fallback was selected, explicitly
@@ -371,10 +363,9 @@ do not substitute for visual evidence or MISO acknowledgement.
 
 ## Coordinator and immutable-release rollout
 
-Phase 0's thin coordinator is the authoritative `deploy` and `deploy-python`
-path. `deploy-plan` exposes its stable ordered step IDs read-only. The old shell
-leaves remain only under explicit `*-legacy` recovery recipes and do not share
-the authoritative command names.
+The coordinator is the authoritative `deploy` and `deploy-python` path.
+`deploy-plan` exposes its stable ordered step IDs read-only. Retired mutable and
+shadow entrypoints are not part of the command surface.
 
 The release manager stages an explicit source manifest plus previews rendered
 from the frozen source under `releases/<sha256>`, validates every digest, mode,
@@ -391,26 +382,23 @@ rejected so one rollback remains.
 
 Every release contains `.release.json`. Startup accepts that identity only when
 the lowercase SHA-256 digest matches both its content-addressed directory and
-the target's selected `current` symlink. `/api/status` publishes web and
-controller release identities plus `release_consistent`. Acceptance requires
+the target's selected `current` symlink. The Composer operations telemetry endpoint
+publishes web and controller release identities plus `release_consistent`.
+Acceptance requires
 active systemd, agreement between systemd/current/web/controller identities,
 two advancing post-boundary status samples, exact 33 x 138 geometry, ready
 state, and exactly five distinct logical receiver IDs `0..4`.
 
-The cutover sequence is deliberately graduated:
+The supported cutover sequence is:
 
 ```bash
 just deploy-plan
-just deploy-shadow
-just deploy-shadow-stage
 just releases
 just deploy-dirty       # development canary only
 just deploy             # final clean-tree gate
 ```
 
-Shadow staging may create/reuse immutable app/support releases, but cannot
-change `current`, systemd, firmware, settings, or deployment timestamp. If any
-post-activation boundary fails or is interrupted, the coordinator selects the
+If any post-activation boundary fails or is interrupted, the coordinator selects the
 prior immutable app release, restarts it, restores settings, proves its fresh
 health, and records the failure evidence in both receipts.
 
@@ -436,7 +424,7 @@ must not be curated.
 
 ## Verification after deployment
 
-1. Confirm `http://ledgridwall.local:5000/api/status` is current and the UI
+1. Confirm `http://ledgridwall.local:5000/api/v1/composer/operations/telemetry` is current and the UI
    lists the expected manifest-backed plugins.
 2. Check `driver_stats.device_map`, geometry, and receiver integrity counters.
 3. For transport or firmware changes, run:
@@ -513,7 +501,7 @@ tools/deployment/stop_remote.sh stop
 
 The commands above are the supported deployment surface. Phase 0 of the
 [unified roadmap](plan-revamped-animation-pipeline.md) supplies the coordinated,
-immutable delivery foundation; the legacy physical leaf is recovery-only.
+immutable delivery foundation.
 Phase 4 adds separate `native-plan`, `native-build`, `native-publish`, and
 `native-install` workflows around the fail-closed package lifecycle,
 so a background-source change does not imply an app restart, Pi reboot, or
@@ -545,11 +533,10 @@ commands. `native-start` performs no target request. `native-run` fails before
 building, publishing, installing, or contacting the target.
 
 `native-publish` executes the Pi-side library transaction through the selected
-immutable `current` application release. On a legacy first-cutover target with
-no `current` symlink, `native-build` remains available but publication must wait
-for the ordinary full deployment to create the rollback anchor, provision the
-pinned runtime, and activate the first immutable release. Shadow staging alone
-does not cross that boundary and must not be treated as activation.
+immutable `current` application release. On a clean target with no `current`
+symlink, `native-build` remains available but publication must wait for the
+ordinary full deployment to provision the pinned runtime and activate the first
+immutable release.
 
 Build writes an append-only coordinator receipt under the local native-receipt
 directory. Publish writes the corresponding local receipt and a target receipt;

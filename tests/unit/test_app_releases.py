@@ -128,18 +128,6 @@ class AppReleaseTests(unittest.TestCase):
         self.assertFalse((first.path / "scripts/start_server.py").stat().st_mode & 0o222)
         self.assertTrue((first.path / "scripts/start_server.py").stat().st_mode & 0o111)
 
-    def test_activate_if_unset_never_clobbers_an_existing_selection(self):
-        first = self.manager.stage(self.app_files("first"))
-        second = self.manager.stage(self.app_files("second"))
-
-        previous, selected = self.manager.activate_if_unset(first.id)
-        self.assertIsNone(previous)
-        self.assertTrue(selected)
-        previous, selected = self.manager.activate_if_unset(second.id)
-        self.assertEqual(previous, first.id)
-        self.assertFalse(selected)
-        self.assertEqual(self.manager.current_release_id(), first.id)
-
     def test_stage_rejects_state_symlinks_missing_and_unsafe_inputs(self):
         regular = self.write_source("app.py", "ok")
         symlink = self.source / "link.py"
@@ -346,13 +334,13 @@ class AppReleaseTests(unittest.TestCase):
         self.assertEqual(
             set(operations),
             {
-                "app.validate", "app.activate", "host.restart", "state.restore",
-                "health.readiness", "release.prune",
+                "target.preflight_current", "app.validate", "app.activate",
+                "host.restart", "state.restore", "health.readiness", "release.prune",
             },
         )
         for name in (
-            "app.validate", "app.activate", "host.restart", "state.restore",
-            "health.readiness", "release.prune",
+            "target.preflight_current", "app.validate", "app.activate",
+            "host.restart", "state.restore", "health.readiness", "release.prune",
         ):
             operations[name](None)
         self.assertEqual(self.manager.current_release_id(), first.id)

@@ -23,7 +23,6 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 import unittest
 from unittest.mock import MagicMock, patch
-from urllib.error import HTTPError
 
 from animation.core.plugin_loader import AnimationPluginLoader
 from tools.deployment import deploy_entrypoint, deploy_target
@@ -240,7 +239,14 @@ class _Runner:
     def run(self, args, **kwargs):
         normalized = tuple(os.fspath(arg) for arg in args)
         self.calls.append((normalized, kwargs))
-        return CommandResult(normalized, 0, "", "", 0.01)
+        stdout = ""
+        if (
+            normalized[:2] == ("python3", "-c")
+            and len(normalized) >= 3
+            and "unsupported target deployment state" in normalized[2]
+        ):
+            stdout = '{"initialization":"current"}\n'
+        return CommandResult(normalized, 0, stdout, "", 0.01)
 
 
 class _FakeTarget:
@@ -272,34 +278,6 @@ class _FakeTarget:
             }
         if command == "cleanup-snapshot":
             return {"removed": True}
-        if command == "bootstrap-legacy-app":
-            return {
-                "outcome": "skipped",
-                "reason": "an immutable app release is already selected",
-                "selected": False,
-                "current_release": self.previous,
-                "bootstrap_release_id": None,
-                "recovery_release": None,
-            }
-        if command == "migrate-receiver-topology":
-            return {
-                "outcome": "skipped",
-                "migrated": False,
-                "strips": 33,
-                "receivers": 5,
-                "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
-                "receiver_hybrid_config": {
-                    "receiver_strip_counts": [8, 8, 8, 8, 1],
-                    "receiver_global_strip_offsets": [0, 8, 16, 24, 32],
-                    "physical_output_lane_masks": [255, 255, 255, 255, 255],
-                    "reverse_strips_by_logical_receiver": [
-                        False, False, False, False, False,
-                    ],
-                    "reverse_native_strips_by_logical_receiver": [
-                        False, False, True, True, False,
-                    ],
-                },
-            }
         if command == "build-firmware":
             return {
                 "outcome": "skipped",
@@ -385,8 +363,6 @@ class _FakeTarget:
                 "observed_release": args[0],
                 "stable_samples": 2,
             }
-        if command == "complete-legacy-bootstrap":
-            return {"outcome": "skipped", "reason": "no legacy bootstrap lifecycle"}
         if command == "record-deploy":
             return {"recorded": True}
         if command == "prune-releases":
@@ -456,134 +432,6 @@ class TargetSnapshotIntegrationTests(unittest.TestCase):
             inspected["receipt_directory"],
             str(self.target / "run_state/deploy_receipts"),
         )
-
-    def _legacy_bootstrap_fixture(self) -> tuple[AppReleaseManager, str]:
-        files = {
-            "scripts/start_systemd.sh": "#!/bin/bash\n",
-            "scripts/start_server.py": "print('legacy')\n",
-            "tools/deployment/preserve_deploy_settings.py": "print('save')\n",
-            "drivers/led_layout.py": "DEFAULT_STRIP_COUNT = 33\n",
-            "web/app.py": "def create_app(): return None\n",
-        }
-        for relative, contents in files.items():
-            path = self.target / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(contents, encoding="utf-8")
-        (self.target / "scripts/.env").write_text("TOKEN=not-a-release-input\n")
-        cache = self.target / "tools/build"
-        cache.mkdir(parents=True)
-        (cache / "cached.bin").write_bytes(b"cache")
-        candidate_source = self.base / "candidate.txt"
-        candidate_source.write_text("candidate\n", encoding="utf-8")
-        manager = AppReleaseManager(self.target)
-        candidate = manager.stage({"candidate.txt": candidate_source})
-        return manager, candidate.id
-
-    def test_first_cutover_bootstrap_is_immutable_idempotent_and_resume_safe(self) -> None:
-        manager, candidate_id = self._legacy_bootstrap_fixture()
-        with patch.object(
-            deploy_target,
-            "_legacy_service_working_directory",
-            return_value=self.target.resolve(),
-        ):
-            first = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
-
-        bootstrap_id = first["bootstrap_release_id"]
-        self.assertTrue(first["selected"])
-        self.assertNotEqual(bootstrap_id, candidate_id)
-        self.assertEqual(manager.current_release_id(), bootstrap_id)
-        bootstrap = manager.validate(bootstrap_id)
-        self.assertFalse(bootstrap.path.stat().st_mode & stat.S_IWUSR)
-        self.assertTrue((bootstrap.path / "scripts/start_systemd.sh").is_file())
-        self.assertFalse((bootstrap.path / "scripts/.env").exists())
-        self.assertFalse((bootstrap.path / "tools/build/cached.bin").exists())
-
-        repeated = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
-        self.assertEqual(repeated["outcome"], "skipped")
-        self.assertEqual(repeated["bootstrap_release_id"], bootstrap_id)
-        self.assertEqual(manager.current_release_id(), bootstrap_id)
-
-        activated = deploy_target.activate(self.target, candidate_id)
-        self.assertEqual(activated["previous_release"], bootstrap_id)
-        resumed = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
-        self.assertEqual(resumed["recovery_release"], bootstrap_id)
-        self.assertEqual(resumed["phase"], "candidate_pending")
-
-        restored = deploy_target.activate(self.target, bootstrap_id)
-        self.assertEqual(restored["previous_release"], candidate_id)
-        selected = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
-        self.assertEqual(selected["phase"], "selected")
-        self.assertIsNone(selected["recovery_release"])
-
-        deploy_target.activate(self.target, candidate_id)
-        completed = deploy_target.complete_legacy_bootstrap(
-            self.target, candidate_id
-        )
-        self.assertEqual(completed["phase"], "complete")
-        final = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
-        self.assertEqual(final["phase"], "complete")
-        self.assertIsNone(final["recovery_release"])
-
-    def test_blank_slate_bootstrap_skips_without_a_running_mutable_service(self) -> None:
-        manager, candidate_id = self._legacy_bootstrap_fixture()
-        with patch.object(
-            deploy_target,
-            "_service_main_pid",
-            return_value=0,
-        ):
-            result = deploy_target.bootstrap_legacy_app(
-                self.target, candidate_id
-            )
-
-        self.assertEqual(result["outcome"], "skipped")
-        self.assertEqual(result["phase"], "blank_slate")
-        self.assertFalse(result["selected"])
-        self.assertIsNone(result["current_release"])
-        self.assertIsNone(result["bootstrap_release_id"])
-        self.assertIsNone(result["recovery_release"])
-        self.assertIsNone(manager.current_release_id())
-        self.assertFalse(
-            (self.target / deploy_target.LEGACY_BOOTSTRAP_RECORD).exists()
-        )
-
-    def test_prepared_bootstrap_record_recovers_atomic_selection(self) -> None:
-        manager, candidate_id = self._legacy_bootstrap_fixture()
-        with patch.object(
-            deploy_target,
-            "_legacy_service_working_directory",
-            return_value=self.target.resolve(),
-        ):
-            first = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
-        record_path = self.target / deploy_target.LEGACY_BOOTSTRAP_RECORD.as_posix()
-        record = json.loads(record_path.read_text(encoding="utf-8"))
-        deploy_target._write_legacy_bootstrap_record(
-            self.target, {**record, "phase": "prepared"}
-        )
-        manager.current_path.unlink()
-
-        resumed = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
-
-        self.assertTrue(resumed["selected"])
-        self.assertEqual(manager.current_release_id(), first["bootstrap_release_id"])
-        self.assertEqual(
-            json.loads(record_path.read_text(encoding="utf-8"))["phase"],
-            "selected",
-        )
-
-    def test_bootstrap_rejects_symlinked_source_input(self) -> None:
-        _manager, candidate_id = self._legacy_bootstrap_fixture()
-        (self.target / "drivers/linked.py").symlink_to(
-            self.target / "drivers/led_layout.py"
-        )
-        with (
-            patch.object(
-                deploy_target,
-                "_legacy_service_working_directory",
-                return_value=self.target.resolve(),
-            ),
-            self.assertRaisesRegex(RuntimeError, "regular non-symlink"),
-        ):
-            deploy_target.bootstrap_legacy_app(self.target, candidate_id)
 
     def test_snapshot_verification_rejects_mutability_and_byte_tampering(self) -> None:
         selected = self.snapshot / "scripts/start_server.py"
@@ -969,59 +817,6 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         self.assertEqual(sample.receiver_count, 4)
         self.assertEqual(sample.receiver_logical_ids, (0, 1, 2, 3))
         self.assertTrue(sample.ready)
-
-    def test_legacy_status_fallback_is_limited_to_explicit_telemetry_404(self) -> None:
-        telemetry_url = (
-            "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
-        )
-        response = MagicMock()
-        response.__enter__.return_value.read.return_value = json.dumps({
-            "updated_at": 100.25,
-            "release_id": "a" * 64,
-            "release_consistent": True,
-            "led_info": {"strip_count": 33, "leds_per_strip": 138},
-            "driver_stats": {"aggregate": {"num_devices": 5}},
-        }).encode()
-        missing_telemetry = HTTPError(
-            telemetry_url, 404, "Not Found", None, None,
-        )
-        with patch.object(
-            deploy_target, "urlopen", side_effect=(missing_telemetry, response),
-        ) as opener:
-            status = deploy_target._api_status(
-                telemetry_url, allow_legacy_status_fallback=True,
-            )
-
-        self.assertEqual(status["release_id"], "a" * 64)
-        self.assertEqual(status["driver_stats"], {"aggregate": {"num_devices": 5}})
-        self.assertEqual(
-            opener.call_args_list[1].args[0], "http://127.0.0.1:5000/api/status",
-        )
-
-    def test_legacy_status_fallback_does_not_mask_non_404_or_bad_telemetry(self) -> None:
-        telemetry_url = (
-            "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
-        )
-        unavailable = HTTPError(telemetry_url, 503, "Unavailable", None, None)
-        with (
-            patch.object(deploy_target, "urlopen", side_effect=unavailable) as opener,
-            self.assertRaisesRegex(RuntimeError, "HTTP Error 503"),
-        ):
-            deploy_target._api_status(
-                telemetry_url, allow_legacy_status_fallback=True,
-            )
-        self.assertEqual(opener.call_count, 1)
-
-        malformed = MagicMock()
-        malformed.__enter__.return_value.read.return_value = b'{}'
-        with (
-            patch.object(deploy_target, "urlopen", return_value=malformed) as opener,
-            self.assertRaisesRegex(RuntimeError, "contract is unsupported"),
-        ):
-            deploy_target._api_status(
-                telemetry_url, allow_legacy_status_fallback=True,
-            )
-        self.assertEqual(opener.call_count, 1)
 
     def test_sample_health_accepts_idle_controller_as_ready(self) -> None:
         active = subprocess.CompletedProcess(("systemctl",), 0, "", "")
@@ -2690,32 +2485,6 @@ class TargetProvisioningTests(unittest.TestCase):
             self.assertEqual(cleanup[0][:4], ("sudo", "rm", "-f", "--"))
             self.assertEqual(Path(cleanup[0][4]).parent, systemd_root)
 
-    def test_target_topology_migration_is_receipted_and_idempotent(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_dir:
-            root = Path(temporary_dir)
-            path = root / RECEIVER_HYBRID_CONFIG_RELATIVE_PATH
-            path.parent.mkdir(parents=True)
-            path.write_text(json.dumps({
-                "schema": "ledgrid.receiver-hybrid-rollout",
-                "schema_version": 1,
-                "enabled": True,
-                "transport_policy": "degraded_spi1_01_readable",
-                "physical_lane_order": [0, 1, 3, 2],
-                "reverse_strips_by_logical_receiver": [False, False, True, True],
-                "reverse_native_strips_by_logical_receiver": [False, False, True, True],
-            }))
-            migrated = deploy_target.migrate_receiver_topology(root)
-            repeated = deploy_target.migrate_receiver_topology(root)
-
-        self.assertEqual(migrated["outcome"], "executed")
-        self.assertTrue(migrated["migrated"])
-        self.assertEqual(migrated["strips"], 33)
-        self.assertEqual(migrated["receivers"], 5)
-        self.assertRegex(
-            migrated["receiver_hybrid_config_digest"], r"^[0-9a-f]{64}$"
-        )
-        self.assertEqual(repeated["outcome"], "skipped")
-
     def test_runtime_ensure_accepts_first_install_progress_before_final_json(self) -> None:
         root = Path("/target")
         release_id = "a" * 64
@@ -4316,6 +4085,119 @@ class RootOwnedFirmwareBundleTests(unittest.TestCase):
                 )
 
 
+class CurrentTargetPreflightTests(unittest.TestCase):
+    @staticmethod
+    def _write_current_contract(root: Path, release: Path) -> None:
+        app = release / "web" / "app.py"
+        app.parent.mkdir(parents=True)
+        app.write_text(
+            'OPERATIONS_TELEMETRY = "/api/v1/composer/operations/telemetry"\n',
+            encoding="utf-8",
+        )
+        preserve = release / "tools" / "deployment" / "preserve_deploy_settings.py"
+        preserve.parent.mkdir(parents=True)
+        preserve.write_text("# current state helper\n", encoding="utf-8")
+        runtime = root / "venv" / "bin" / "python"
+        runtime.parent.mkdir(parents=True)
+        runtime.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    def _run(self, root: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            (
+                sys.executable,
+                "-c",
+                deploy_entrypoint._REMOTE_CURRENT_PREFLIGHT,
+                os.fspath(root),
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_current_immutable_target_allows_historical_bootstrap_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            release_id = "a" * 64
+            release = root / "releases" / release_id
+            release.mkdir(parents=True)
+            (release / ".release.json").write_text(
+                json.dumps({"id": release_id, "digest": release_id}),
+                encoding="utf-8",
+            )
+            self._write_current_contract(root, release)
+            (root / "current").symlink_to(Path("releases") / release_id)
+            bootstrap = root / "run_state" / "legacy_app_bootstrap.json"
+            bootstrap.parent.mkdir(parents=True)
+            bootstrap.write_text('{"phase":"complete"}', encoding="utf-8")
+
+            completed = self._run(root)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            json.loads(completed.stdout), {"initialization": "current"}
+        )
+
+    def test_current_release_without_operations_contract_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            release_id = "b" * 64
+            release = root / "releases" / release_id
+            release.mkdir(parents=True)
+            (release / ".release.json").write_text(
+                json.dumps({"id": release_id, "digest": release_id}),
+                encoding="utf-8",
+            )
+            (release / "web").mkdir()
+            (release / "web" / "app.py").write_text("# pre-current app\n")
+            (root / "current").symlink_to(Path("releases") / release_id)
+
+            completed = self._run(root)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("current operations contract", completed.stderr)
+
+    def test_rollback_candidate_without_current_telemetry_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            release_id = "c" * 64
+            release = root / "releases" / release_id
+            release.mkdir(parents=True)
+            (release / ".release.json").write_text(
+                json.dumps({"id": release_id, "digest": release_id}),
+                encoding="utf-8",
+            )
+            (release / "web").mkdir()
+            (release / "web" / "app.py").write_text("# old status only\n")
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    deploy_entrypoint._REMOTE_RELEASE_CONTRACT_PREFLIGHT,
+                    os.fspath(root),
+                    release_id,
+                ),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("current operations telemetry", completed.stderr)
+
+    def test_no_current_rejects_inactive_mutable_source_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mutable = root / "web"
+            mutable.mkdir(parents=True)
+            (mutable / "app.py").write_text("# retired mutable root\n")
+
+            completed = self._run(root)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("retired mutable/bootstrap deployment state", completed.stderr)
+        self.assertIn("current immutable deployment contract", completed.stderr)
+
+
 class FrozenSnapshotEntrypointTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_dir = tempfile.TemporaryDirectory()
@@ -4476,10 +4358,6 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
             plan["target_layout"]["native_background_library"],
             "ledgrid-pod/receiver_library/native_backgrounds",
         )
-        self.assertEqual(
-            plan["target_layout"]["legacy_app_bootstrap"],
-            "ledgrid-pod/run_state/legacy_app_bootstrap.json",
-        )
         self.assertFalse((self.repo.root / "receipts").exists())
 
 
@@ -4497,6 +4375,28 @@ class CoordinatorDeploymentGateTests(unittest.TestCase):
                 context.command.assert_called_once_with(
                     ("just", "deploy-precheck"), cwd=ROOT,
                 )
+
+    def test_current_target_capture_failure_stops_before_mutation(self):
+        deployment = object.__new__(deploy_entrypoint.CoordinatorDeployment)
+        deployment.target = MagicMock()
+        deployment.target.run.return_value = {
+            "captured": False,
+            "service_was_active": False,
+            "reason": "save failed",
+        }
+        context = DeployContext(
+            target="fake@wall",
+            mode="python",
+            source_identity={},
+            state={"target_initialization": "current"},
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError, "state capture failed before mutation: save failed"
+        ):
+            deployment._capture(context)
+
+        deployment.target.run.assert_called_once_with("capture-state")
 
     def test_direct_script_stage_uses_dependency_free_native_identity(self):
         probe = textwrap.dedent(
@@ -4686,7 +4586,6 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "stage-app",
                 "build-native-host-preview",
                 "cleanup-snapshot",
-                "bootstrap-legacy-app",
                 "build-firmware",
                 "preflight-receiver-identity",
                 "capture-state",
@@ -4699,9 +4598,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "restart",
                 "restore-state",
                 "health",
-                "complete-legacy-bootstrap",
                 "record-deploy",
-                "migrate-receiver-topology",
                 "prune-releases",
             ],
         )
@@ -4999,8 +4896,6 @@ class _RollbackTarget:
                 "stable_samples": 2,
                 "last_controller_updated_at": 101.0,
             }
-        if command == "complete-legacy-bootstrap":
-            return {"outcome": "skipped", "reason": "no legacy bootstrap lifecycle"}
         if command == "record-deploy":
             return {"recorded": True}
         if command == "prune-releases":
@@ -5044,6 +4939,34 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
         rollback.target = target
         return rollback, context, target, (local_receipts, remote_receipts), helper, runner
 
+    def test_rollback_rejects_pre_current_candidate_before_capture_or_activation(self) -> None:
+        rollback, context, target, _sinks, _helper, _runner = self._rollback()
+        original_run = target.run
+
+        def run(command: str, *args: str):
+            if command == "validate-app":
+                target.calls.append((command, args))
+                raise RuntimeError(
+                    "selected app release predates the current deployment contract"
+                )
+            return original_run(command, *args)
+
+        target.run = run
+        try:
+            receipt = DeployCoordinator().run(context, rollback.steps())
+        finally:
+            rollback.close()
+
+        self.assertEqual(receipt.outcome, "failure")
+        self.assertEqual(
+            [command for command, _args in target.calls],
+            ["inspect", "validate-app"],
+        )
+        self.assertNotIn(
+            "capture-state", [command for command, _args in target.calls]
+        )
+        self.assertNotIn("activate", [command for command, _args in target.calls])
+
     def test_rollback_runs_exact_app_only_order_with_fresh_release_health(self) -> None:
         rollback, context, target, sinks, helper, runner = self._rollback()
 
@@ -5069,7 +4992,6 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
                 "restart",
                 "restore-state",
                 "health",
-                "complete-legacy-bootstrap",
                 "record-deploy",
                 "prune-releases",
             ],
@@ -5084,7 +5006,18 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
         }
         self.assertTrue(forbidden.isdisjoint(command for command, _args in target.calls))
         self.assertEqual(helper, "fake-root/current/tools/deployment/deploy_target.py")
-        self.assertEqual(runner.calls, [], "rollback has no target-connect/provision commands")
+        remote_scripts = [
+            call[0][2]
+            for call in runner.calls
+            if call[0][:2] == ("python3", "-c")
+        ]
+        self.assertEqual(
+            remote_scripts,
+            [
+                deploy_entrypoint._REMOTE_CURRENT_PREFLIGHT,
+                deploy_entrypoint._REMOTE_RELEASE_CONTRACT_PREFLIGHT,
+            ],
+        )
         self.assertFalse(
             any("reboot" in argument for command, _kwargs in runner.calls for argument in command)
         )
@@ -5104,7 +5037,6 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
                 "5",
                 "--timeout",
                 "1.0",
-                "--allow-legacy-status-fallback",
             ),
         )
         self.assertEqual(receipt.health["observed_release"], target.requested)
@@ -5331,73 +5263,6 @@ class _CompensationTarget:
             return {"restored": True}
         if command == "health":
             return {"desired_release": args[0], "observed_release": args[0]}
-        if command == "complete-legacy-bootstrap":
-            return {"outcome": "skipped", "reason": "no legacy bootstrap lifecycle"}
-        if command == "record-deploy":
-            return {"recorded": True}
-        raise AssertionError(command)
-
-
-class _BootstrapCompensationTarget:
-    def __init__(self, fail_command: str, *, resumed: bool = False) -> None:
-        self.fail_command = fail_command
-        self.failed = False
-        self.bootstrap = "b" * 64
-        self.candidate = "c" * 64
-        self.current = self.candidate if resumed else None
-        self.phase = "candidate_pending" if resumed else "none"
-        self.calls: list[tuple[str, tuple[str, ...]]] = []
-
-    def run(self, command: str, *args: str):
-        self.calls.append((command, args))
-        if command == "bootstrap-legacy-app":
-            if self.phase == "none":
-                self.current = self.bootstrap
-                self.phase = "selected"
-                return {
-                    "outcome": "executed",
-                    "selected": True,
-                    "bootstrap_release_id": self.bootstrap,
-                    "bootstrap_digest": self.bootstrap,
-                    "recovery_release": None,
-                }
-            return {
-                "outcome": "skipped",
-                "selected": self.current == self.bootstrap,
-                "bootstrap_release_id": self.bootstrap,
-                "bootstrap_digest": self.bootstrap,
-                "recovery_release": (
-                    self.bootstrap if self.phase == "candidate_pending" else None
-                ),
-            }
-        if command == "current-release":
-            return {"current_release": self.current}
-        if command == "activate":
-            before = self.current
-            self.current = args[0]
-            self.phase = (
-                "candidate_pending"
-                if self.current == self.candidate else "selected"
-            )
-            return {
-                "changed": before != self.current,
-                "release_id": self.current,
-                "previous_release": before,
-                "selected_at": 101.0,
-            }
-        should_fail = command == self.fail_command and not self.failed
-        if should_fail:
-            self.failed = True
-            raise RuntimeError(f"injected {command} failure")
-        if command == "restart":
-            return {"restart_started_at": 102.0}
-        if command == "restore-state":
-            return {"restored": True}
-        if command == "health":
-            return {"desired_release": args[0], "observed_release": args[0]}
-        if command == "complete-legacy-bootstrap":
-            self.phase = "complete"
-            return {"outcome": "executed", "phase": "complete"}
         if command == "record-deploy":
             return {"recorded": True}
         raise AssertionError(command)
@@ -5436,6 +5301,55 @@ class PostActivationCompensationTests(unittest.TestCase):
         target = _CompensationTarget(fail_command)
         deployment.target = target
         return deployment, context, target
+
+    def test_lost_activation_ack_restores_the_previous_current_release(self) -> None:
+        deployment, context, _target = self._deployment("unused")
+
+        class LostAckTarget:
+            def __init__(self) -> None:
+                self.current = "b" * 64
+                self.activation_attempts = 0
+                self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+            def run(self, command: str, *args: str):
+                self.calls.append((command, args))
+                if command == "current-release":
+                    return {"current_release": self.current}
+                if command == "activate":
+                    self.current = args[0]
+                    self.activation_attempts += 1
+                    if self.activation_attempts == 1:
+                        raise RuntimeError("activation acknowledgement lost")
+                    return {"changed": True, "release_id": self.current}
+                if command == "restart":
+                    return {"restart_started_at": 202.0}
+                if command == "restore-state":
+                    return {"restored": True}
+                if command == "health":
+                    return {"desired_release": args[0], "observed_release": args[0]}
+                raise AssertionError(command)
+
+        target = LostAckTarget()
+        deployment.target = target
+        context.state["release_id"] = "c" * 64
+
+        with self.assertRaises(deploy_entrypoint.RemoteActivationFailed) as caught:
+            deployment._activate(context)
+
+        self.assertTrue(caught.exception.failure.restored)
+        self.assertEqual(target.current, "b" * 64)
+        self.assertEqual(
+            [command for command, _args in target.calls],
+            [
+                "current-release",
+                "activate",
+                "current-release",
+                "activate",
+                "restart",
+                "restore-state",
+                "health",
+            ],
+        )
 
     def test_second_attempt_firmware_skip_preserves_stopped_previous_host(self) -> None:
         first, first_context, first_target = self._deployment("unused")
@@ -5533,89 +5447,10 @@ class PostActivationCompensationTests(unittest.TestCase):
                 self.assertEqual(target.calls[-2], ("restore-state", ("--timeout", "60")))
                 self.assertEqual(target.calls[-4][1], ("b" * 64,))
                 self.assertEqual(target.calls[-1][1][0], "b" * 64)
-                self.assertIn(
-                    "--allow-legacy-status-fallback", target.calls[-1][1]
-                )
                 self.assertNotIn(
                     "--receiver-contract-json", target.calls[-1][1]
                 )
 
-    def test_first_cutover_restart_restore_and_health_failures_restore_bootstrap(self) -> None:
-        cases = {
-            "restart": lambda deployment, context: deployment._restart(context),
-            "restore-state": lambda deployment, context: deployment._restore(context),
-            "health": lambda deployment, context: deployment._health(context),
-        }
-        for failed_command, execute in cases.items():
-            with self.subTest(failed_command=failed_command):
-                context = DeployContext(
-                    target="fake@wall",
-                    mode="full",
-                    source_identity={},
-                    attempt_id=f"bootstrap-{failed_command}",
-                )
-                config = deploy_entrypoint.DeploymentConfig(
-                    root=Path.cwd(), mode="python", policy="dirty",
-                    target="fake@wall", health_timeout=1.0,
-                )
-                deployment = deploy_entrypoint.CoordinatorRollback(
-                    config, context, "c" * 64
-                )
-                context.state.update({
-                    "release_id": "c" * 64,
-                    "state_captured": True,
-                    "service_was_active": True,
-                })
-                target = _BootstrapCompensationTarget(failed_command)
-                deployment.target = target
-
-                bootstrap = deployment._bootstrap_legacy(context)
-                self.assertEqual(
-                    bootstrap.artifacts[0].kind, "legacy_app_bootstrap"
-                )
-                deployment._activate(context)
-                context.state["acceptance_boundary"] = 101.0
-                with self.assertRaises(
-                    deploy_entrypoint.RemoteActivationFailed
-                ) as caught:
-                    execute(deployment, context)
-
-                self.assertTrue(caught.exception.failure.restored)
-                self.assertEqual(
-                    caught.exception.failure.previous_release, target.bootstrap
-                )
-                self.assertEqual(target.current, target.bootstrap)
-
-    def test_interrupted_candidate_resume_retains_bootstrap_compensation(self) -> None:
-        context = DeployContext(
-            target="fake@wall", mode="full", source_identity={},
-            attempt_id="bootstrap-resume",
-        )
-        config = deploy_entrypoint.DeploymentConfig(
-            root=Path.cwd(), mode="python", policy="dirty",
-            target="fake@wall", health_timeout=1.0,
-        )
-        deployment = deploy_entrypoint.CoordinatorRollback(
-            config, context, "c" * 64
-        )
-        context.state.update({
-            "release_id": "c" * 64,
-            "state_captured": True,
-                    "service_was_active": True,
-            "acceptance_boundary": 101.0,
-        })
-        target = _BootstrapCompensationTarget("health", resumed=True)
-        deployment.target = target
-
-        deployment._bootstrap_legacy(context)
-        activation = deployment._activate(context)
-        self.assertTrue(activation.details["recovery_guarded"])
-        self.assertTrue(context.state["activated"])
-        with self.assertRaises(deploy_entrypoint.RemoteActivationFailed) as caught:
-            deployment._health(context)
-
-        self.assertTrue(caught.exception.failure.restored)
-        self.assertEqual(target.current, target.bootstrap)
 
 
 class EntrypointReceiptExitTests(unittest.TestCase):

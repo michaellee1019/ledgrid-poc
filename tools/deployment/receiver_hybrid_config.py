@@ -3,11 +3,8 @@
 
 The target-owned ``run_state`` file is the authority for deployment, startup,
 and restart restoration. Firmware selection is derived from allowlisted gates;
-arbitrary PlatformIO environments are never persisted. Schema-v1 describes the
-retired four-receiver installation, schema-v2 contains the disproven fifth-board
-lane-0 assumption, schema-v3 records the prior camera-measured receiver
-permutation, and schema-v4 retains the pre-gradient host reversal map. All four
-older versions are migrated explicitly.
+arbitrary PlatformIO environments are never persisted. Only the current
+schema-v5 finalized five-receiver topology is accepted.
 """
 
 from __future__ import annotations
@@ -26,10 +23,6 @@ from typing import Any
 
 RECEIVER_HYBRID_CONFIG_SCHEMA = "ledgrid.receiver-hybrid-rollout"
 RECEIVER_HYBRID_CONFIG_VERSION = 5
-PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION = 4
-PERMUTED_RECEIVER_HYBRID_CONFIG_VERSION = 3
-LANE_ZERO_RECEIVER_HYBRID_CONFIG_VERSION = 2
-LEGACY_RECEIVER_HYBRID_CONFIG_VERSION = 1
 RECEIVER_HYBRID_CONFIG_RELATIVE_PATH = Path("run_state/receiver_hybrid.json")
 RECEIVER_HYBRID_CONFIG_MAX_BYTES = 4096
 
@@ -61,9 +54,6 @@ DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER = (
 DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER = (
     False, False, True, True, False,
 )
-PREVIOUS_REVERSE_STRIPS_BY_LOGICAL_RECEIVER = (
-    False, False, True, True, False,
-)
 DEFAULT_RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
 DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 16, 24, 32)
 # Receiver 4 owns one semantic strip, but its assembled cable lane was never
@@ -71,9 +61,6 @@ DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 16, 24, 32)
 # physical output on the otherwise dedicated board so the visible column does
 # not depend on an unverified connector assumption.
 DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
-PREVIOUS_PHYSICAL_LANE_ORDER = (0, 1, 3, 2, 4)
-PREVIOUS_RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 24, 16, 32)
-PREVIOUS_PHYSICAL_OUTPUT_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
 
 _CONFIG_KEYS = frozenset({
     "schema", "schema_version", "enabled", "transport_policy",
@@ -82,147 +69,6 @@ _CONFIG_KEYS = frozenset({
     "receiver_global_strip_offsets", "physical_output_lane_masks",
     "native_modules_enabled",
 })
-_LEGACY_CONFIG_KEYS = frozenset({
-    "schema", "schema_version", "enabled", "transport_policy",
-    "physical_lane_order", "reverse_strips_by_logical_receiver",
-    "reverse_native_strips_by_logical_receiver",
-})
-
-
-def _known_legacy_payload() -> dict[str, object]:
-    return {
-        "schema": RECEIVER_HYBRID_CONFIG_SCHEMA,
-        "schema_version": LEGACY_RECEIVER_HYBRID_CONFIG_VERSION,
-        "enabled": True,
-        "transport_policy": DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
-        "physical_lane_order": [0, 1, 3, 2],
-        "reverse_strips_by_logical_receiver": [False, False, True, True],
-        "reverse_native_strips_by_logical_receiver": [False, False, True, True],
-    }
-
-
-def _known_previous_payload(payload: dict[str, Any]) -> bool:
-    """Recognize schema-v4 selections before host direction calibration."""
-
-    if set(payload) != _CONFIG_KEYS:
-        return False
-    enabled = payload.get("enabled")
-    native = payload.get("native_modules_enabled")
-    if type(enabled) is not bool or type(native) is not bool:
-        return False
-    try:
-        policy, _environment = _selection(enabled, native)
-    except ReceiverHybridConfigError:
-        return False
-    return payload == {
-        "schema": RECEIVER_HYBRID_CONFIG_SCHEMA,
-        "schema_version": PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION,
-        "enabled": enabled,
-        "transport_policy": policy,
-        "physical_lane_order": list(DEFAULT_PHYSICAL_LANE_ORDER),
-        "reverse_strips_by_logical_receiver": list(
-            PREVIOUS_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
-        ),
-        "reverse_native_strips_by_logical_receiver": list(
-            DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
-        ),
-        "receiver_strip_counts": list(DEFAULT_RECEIVER_STRIP_COUNTS),
-        "receiver_global_strip_offsets": list(DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS),
-        "physical_output_lane_masks": list(
-            DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS
-        ),
-        "native_modules_enabled": native,
-    }
-
-
-def _known_permuted_payload(payload: dict[str, Any]) -> bool:
-    """Recognize schema-v3 selections with the prior receiver permutation."""
-
-    if set(payload) != _CONFIG_KEYS:
-        return False
-    enabled = payload.get("enabled")
-    native = payload.get("native_modules_enabled")
-    if type(enabled) is not bool or type(native) is not bool:
-        return False
-    try:
-        policy, _environment = _selection(enabled, native)
-    except ReceiverHybridConfigError:
-        return False
-    return payload == {
-        "schema": RECEIVER_HYBRID_CONFIG_SCHEMA,
-        "schema_version": PERMUTED_RECEIVER_HYBRID_CONFIG_VERSION,
-        "enabled": enabled,
-        "transport_policy": policy,
-        "physical_lane_order": list(PREVIOUS_PHYSICAL_LANE_ORDER),
-        "reverse_strips_by_logical_receiver": list(
-            PREVIOUS_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
-        ),
-        "reverse_native_strips_by_logical_receiver": list(
-            DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
-        ),
-        "receiver_strip_counts": list(DEFAULT_RECEIVER_STRIP_COUNTS),
-        "receiver_global_strip_offsets": list(
-            PREVIOUS_RECEIVER_GLOBAL_STRIP_OFFSETS
-        ),
-        "physical_output_lane_masks": list(DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS),
-        "native_modules_enabled": native,
-    }
-
-
-def _known_lane_zero_payload(payload: dict[str, Any]) -> bool:
-    """Recognize schema-v2 selections with the retired tail lane-0 mask."""
-
-    if set(payload) != _CONFIG_KEYS:
-        return False
-    enabled = payload.get("enabled")
-    native = payload.get("native_modules_enabled")
-    if type(enabled) is not bool or type(native) is not bool:
-        return False
-    try:
-        policy, _environment = _selection(enabled, native)
-    except ReceiverHybridConfigError:
-        return False
-    return payload == {
-        "schema": RECEIVER_HYBRID_CONFIG_SCHEMA,
-        "schema_version": LANE_ZERO_RECEIVER_HYBRID_CONFIG_VERSION,
-        "enabled": enabled,
-        "transport_policy": policy,
-        "physical_lane_order": list(PREVIOUS_PHYSICAL_LANE_ORDER),
-        "reverse_strips_by_logical_receiver": list(
-            PREVIOUS_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
-        ),
-        "reverse_native_strips_by_logical_receiver": list(
-            DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
-        ),
-        "receiver_strip_counts": list(DEFAULT_RECEIVER_STRIP_COUNTS),
-        "receiver_global_strip_offsets": list(
-            PREVIOUS_RECEIVER_GLOBAL_STRIP_OFFSETS
-        ),
-        "physical_output_lane_masks": list(
-            PREVIOUS_PHYSICAL_OUTPUT_LANE_MASKS
-        ),
-        "native_modules_enabled": native,
-    }
-
-
-def _previous_config_bridge(
-    payload: dict[str, Any], *, recognized: bool
-) -> "ReceiverHybridConfig":
-    if not recognized:
-        raise ReceiverHybridConfigError(
-            f"schema-v{payload.get('schema_version')} receiver topology is not "
-            "a known installed layout; "
-            "manual inspection is required"
-        )
-    enabled = payload["enabled"]
-    native = payload["native_modules_enabled"]
-    policy, environment = _selection(enabled, native)
-    return ReceiverHybridConfig(
-        enabled=enabled,
-        transport_policy=policy,
-        firmware_environment=environment,
-        native_modules_enabled=native,
-    )
 
 
 class ReceiverHybridConfigError(ValueError):
@@ -517,8 +363,8 @@ def _parse_config(payload: dict[str, Any], path: Path) -> ReceiverHybridConfig:
         or payload["schema_version"] != RECEIVER_HYBRID_CONFIG_VERSION
     ):
         raise ReceiverHybridConfigError(
-            "unsupported receiver-hybrid config schema version; migrate legacy "
-            f"topology before startup: {path}"
+            "unsupported receiver-hybrid config schema version; current schema "
+            f"v{RECEIVER_HYBRID_CONFIG_VERSION} is required before startup: {path}"
         )
     enabled = payload["enabled"]
     native = payload["native_modules_enabled"]
@@ -550,51 +396,12 @@ def _parse_config(payload: dict[str, Any], path: Path) -> ReceiverHybridConfig:
 
 
 def resolve_receiver_hybrid_config(root: Path) -> ReceiverHybridConfig:
-    """Resolve durable state, bridging known older installed topologies."""
+    """Resolve absent feature-off state or the current durable schema."""
     path = receiver_hybrid_config_path(root)
     payload = _read_payload(path)
     if payload is None:
         return OFF_RECEIVER_HYBRID_CONFIG
-    if (
-        type(payload.get("schema_version")) is int
-        and payload.get("schema_version") == LEGACY_RECEIVER_HYBRID_CONFIG_VERSION
-    ):
-        if set(payload) != _LEGACY_CONFIG_KEYS or payload != _known_legacy_payload():
-            raise ReceiverHybridConfigError(
-                "legacy receiver-hybrid config is not the known installed v1 "
-                "layout; manual inspection is required"
-            )
-        # This read-only bridge lets the first immutable candidate start and
-        # pass health before its post-health migration materializes schema v5.
-        return OFF_RECEIVER_HYBRID_CONFIG
-    if (
-        type(payload.get("schema_version")) is int
-        and payload.get("schema_version")
-        == PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION
-    ):
-        # Read-only bridge: the candidate immediately uses the current
-        # camera-measured topology, then post-health migration persists v5.
-        return _previous_config_bridge(
-            payload, recognized=_known_previous_payload(payload)
-        )
-    if (
-        type(payload.get("schema_version")) is int
-        and payload.get("schema_version")
-        == PERMUTED_RECEIVER_HYBRID_CONFIG_VERSION
-    ):
-        return _previous_config_bridge(
-            payload, recognized=_known_permuted_payload(payload)
-        )
-    if (
-        type(payload.get("schema_version")) is int
-        and payload.get("schema_version")
-        == LANE_ZERO_RECEIVER_HYBRID_CONFIG_VERSION
-    ):
-        return _previous_config_bridge(
-            payload, recognized=_known_lane_zero_payload(payload)
-        )
     return _parse_config(payload, path)
-
 
 def _stored_payload(config: ReceiverHybridConfig) -> dict[str, object]:
     return {
@@ -671,58 +478,12 @@ def write_receiver_hybrid_config(
     return resolve_receiver_hybrid_config(root)
 
 
-def migrate_legacy_receiver_hybrid_config(
-    root: Path,
-) -> tuple[ReceiverHybridConfig, bool]:
-    """Migrate known schema-v1/v2/v3/v4 layouts to the current contract."""
-    path = receiver_hybrid_config_path(root)
-    payload = _read_payload(path)
-    if payload is None:
-        config = write_receiver_hybrid_config(root, enabled=False)
-        return config, True
-    if payload.get("schema_version") == RECEIVER_HYBRID_CONFIG_VERSION:
-        return _parse_config(payload, path), False
-    if payload.get("schema_version") == PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION:
-        config = _previous_config_bridge(
-            payload, recognized=_known_previous_payload(payload)
-        )
-        _atomic_write(path, _stored_payload(config))
-        return resolve_receiver_hybrid_config(root), True
-    if (
-        payload.get("schema_version")
-        == PERMUTED_RECEIVER_HYBRID_CONFIG_VERSION
-    ):
-        config = _previous_config_bridge(
-            payload, recognized=_known_permuted_payload(payload)
-        )
-        _atomic_write(path, _stored_payload(config))
-        return resolve_receiver_hybrid_config(root), True
-    if (
-        payload.get("schema_version")
-        == LANE_ZERO_RECEIVER_HYBRID_CONFIG_VERSION
-    ):
-        config = _previous_config_bridge(
-            payload, recognized=_known_lane_zero_payload(payload)
-        )
-        _atomic_write(path, _stored_payload(config))
-        return resolve_receiver_hybrid_config(root), True
-    expected = _known_legacy_payload()
-    if set(payload) != _LEGACY_CONFIG_KEYS or payload != expected:
-        raise ReceiverHybridConfigError(
-            "legacy receiver-hybrid config is not the known installed v1 "
-            "layout; manual inspection is required"
-        )
-    config = OFF_RECEIVER_HYBRID_CONFIG
-    _atomic_write(path, _stored_payload(config))
-    return resolve_receiver_hybrid_config(root), True
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument(
         "action",
-        choices=("show", "enable-local", "enable-native", "disable", "migrate"),
+        choices=("show", "enable-local", "enable-native", "disable"),
     )
     return parser
 
@@ -730,7 +491,6 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     root = args.root.expanduser().resolve()
-    migrated = False
     if args.action == "enable-local":
         config = write_receiver_hybrid_config(root, enabled=True)
     elif args.action == "enable-native":
@@ -739,13 +499,10 @@ def main() -> int:
         )
     elif args.action == "disable":
         config = write_receiver_hybrid_config(root, enabled=False)
-    elif args.action == "migrate":
-        config, migrated = migrate_legacy_receiver_hybrid_config(root)
     else:
         config = resolve_receiver_hybrid_config(root)
     print(json.dumps({
         **config.to_dict(), "config_digest": config.selection_digest,
-        "migrated": migrated,
         "path": os.fspath(receiver_hybrid_config_path(root)),
     }, sort_keys=True, separators=(",", ":")))
     return 0
@@ -761,20 +518,13 @@ __all__ = [
     "DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT",
     "DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY",
     "DEGRADED_SPI1_TRANSPORT_POLICY", "DEGRADED_TRANSPORT_POLICY",
-    "FINALIZED_RECEIVER_COUNT", "LANE_ZERO_RECEIVER_HYBRID_CONFIG_VERSION",
-    "LEGACY_RECEIVER_HYBRID_CONFIG_VERSION",
-    "PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION",
-    "PERMUTED_RECEIVER_HYBRID_CONFIG_VERSION",
-    "PREVIOUS_PHYSICAL_LANE_ORDER",
-    "PREVIOUS_PHYSICAL_OUTPUT_LANE_MASKS",
-    "PREVIOUS_RECEIVER_GLOBAL_STRIP_OFFSETS",
-    "PREVIOUS_REVERSE_STRIPS_BY_LOGICAL_RECEIVER",
+    "FINALIZED_RECEIVER_COUNT",
     "NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT",
     "OFF_RECEIVER_HYBRID_CONFIG", "PRODUCTION_FIRMWARE_ENVIRONMENT",
     "RECEIVER_HYBRID_CONFIG_RELATIVE_PATH", "RECEIVER_HYBRID_CONFIG_SCHEMA",
     "RECEIVER_HYBRID_CONFIG_VERSION", "RECEIVER_HYBRID_TRANSPORT_OFF",
     "STRICT_RECEIVER_HYBRID_TRANSPORT_POLICY", "ReceiverHybridConfig",
-    "ReceiverHybridConfigError", "migrate_legacy_receiver_hybrid_config",
+    "ReceiverHybridConfigError",
     "receiver_hybrid_config_path", "resolve_receiver_hybrid_config",
     "write_receiver_hybrid_config",
 ]

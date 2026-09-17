@@ -245,18 +245,18 @@ class DeployCoordinatorTests(unittest.TestCase):
             [
                 "source.validate",
                 "tests.run",
+                "target.preflight_current",
                 "target.connect",
                 "app.stage",
-                "app.bootstrap_legacy",
                 "receiver.firmware_build",
                 "receiver.identity_preflight",
                 "state.capture",
                 "host.provision",
             ],
         )
-        self.assertGreater(
-            full_ids.index("receiver.topology_migrate"),
-            full_ids.index("health.readiness"),
+        self.assertLess(
+            full_ids.index("target.preflight_current"),
+            full_ids.index("target.connect"),
         )
         self.assertLess(full_ids.index("receiver.firmware_build"), full_ids.index("host.provision"))
         self.assertLess(full_ids.index("receiver.firmware_build"), full_ids.index("receiver.firmware_flash"))
@@ -265,6 +265,10 @@ class DeployCoordinatorTests(unittest.TestCase):
         python_ids = [item[0] for item in PYTHON_STEP_ORDER]
         self.assertNotIn("host.provision", python_ids)
         self.assertNotIn("receiver.firmware_flash", python_ids)
+        self.assertLess(
+            python_ids.index("target.preflight_current"),
+            python_ids.index("target.connect"),
+        )
         operations = {step_id: (lambda _: None) for step_id in python_ids}
         self.assertEqual([step.id for step in build_steps("python", operations)], python_ids)
 

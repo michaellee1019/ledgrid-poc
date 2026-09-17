@@ -107,22 +107,6 @@ native-run plugin_id fallback="aurora_curtains":
 		{{python_env}} --group firmware python tools/deployment/native_background_entrypoint.py \
 		run "{{plugin_id}}" --fallback "{{fallback}}"
 
-# Explicit recovery paths for the retained pre-cutover shell leaves.
-deploy-legacy:
-	{{captured}} --phase deploy.legacy.full -- python3 tools/deployment/deploy_entrypoint.py legacy --mode full --policy clean
-
-deploy-legacy-dirty:
-	{{captured}} --phase deploy.legacy.full -- python3 tools/deployment/deploy_entrypoint.py legacy --mode full --policy dirty
-
-deploy-python-legacy:
-	{{captured}} --phase deploy.legacy.python -- python3 tools/deployment/deploy_entrypoint.py legacy --mode python --policy clean
-
-deploy-shadow:
-	python3 tools/deployment/deploy_entrypoint.py shadow --mode full --policy plan
-
-deploy-shadow-stage:
-	python3 tools/deployment/deploy_entrypoint.py shadow --mode full --policy plan --target-stage
-
 releases:
 	python3 tools/deployment/deploy_entrypoint.py releases
 

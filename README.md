@@ -66,9 +66,9 @@ it records the base commit, selected diff digest, and safe untracked files. Use
 `*-verbose` to stream the normally captured deployment log. The deployment
 target defaults to `ledgridwall@ledgridwall.local`. Both commands stage an
 immutable release, atomically select `current`, require advancing release-aware
-health, and persist matching local/target receipts. Use `just releases` to
-inspect release state, `just rollback <release-id>` for an application-only
-rollback, and the explicitly named `*-legacy` recipes only for recovery.
+health, and persist matching local/target receipts. Use `just releases` to inspect release state and `just rollback <release-id>`
+for recovery to a validated immutable release that provides the current
+operations-telemetry contract.
 
 Receiver-native software is present but remains default-off and is not yet a
 production-accepted wall path. Repository-owned modules use the explicit

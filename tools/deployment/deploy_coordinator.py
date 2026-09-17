@@ -746,13 +746,9 @@ def _exception_details(exc: Exception) -> Mapping[str, Any]:
 FULL_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
     ("source.validate", False, "validate clean or explicit dirty source policy"),
     ("tests.run", False, "run the selected local regression gate"),
+    ("target.preflight_current", False, "reject retired target state before mutation"),
     ("target.connect", False, "verify SSH and deployment privileges"),
     ("app.stage", True, "stage the immutable application release"),
-    (
-        "app.bootstrap_legacy",
-        True,
-        "snapshot the running mutable app as the first rollback release",
-    ),
     ("receiver.firmware_build", False, "build or select receiver firmware"),
     (
         "receiver.identity_preflight",
@@ -772,17 +768,13 @@ FULL_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
     ("host.restart", True, "restart the app service"),
     ("state.restore", True, "restore preserved operator settings"),
     ("health.readiness", False, "require fresh desired-release readiness"),
-    (
-        "receiver.topology_migrate",
-        True,
-        "materialize finalized topology after candidate health",
-    ),
     ("release.prune", True, "retain a bounded rollback-safe app release set"),
 )
 
 PYTHON_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
     ("source.validate", False, "validate clean or explicit dirty source policy"),
     ("tests.run", False, "run the selected local regression gate"),
+    ("target.preflight_current", False, "reject retired target state before mutation"),
     ("target.connect", False, "verify SSH and deployment privileges"),
     ("app.stage", True, "stage the immutable application release"),
     ("app.validate", False, "validate staged imports and static structure"),
@@ -795,6 +787,7 @@ PYTHON_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
 )
 
 ROLLBACK_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
+    ("target.preflight_current", False, "reject retired target state before mutation"),
     ("source.validate", False, "validate requested existing app release"),
     ("app.validate", False, "validate rollback release compatibility"),
     ("state.capture", True, "preserve active operator settings"),
@@ -809,10 +802,9 @@ ROLLBACK_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
 STEP_TIMING_EXPECTATIONS: Mapping[str, str] = {
     "source.validate": "normally <1s",
     "tests.run": "normally 1-2m",
+    "target.preflight_current": "normally <5s",
     "target.connect": "normally <5s",
     "app.stage": "normally 20-40s",
-    "app.bootstrap_legacy": "first cutover can take 5-20s; later runs <1s",
-    "receiver.topology_migrate": "normally <1s",
     "receiver.firmware_build": "cached ~1s; cold cache can take ~13m",
     "receiver.identity_preflight": "normally <1s",
     "host.provision": "normally <5s unless a reboot is required",

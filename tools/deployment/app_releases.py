@@ -528,34 +528,6 @@ class AppReleaseManager:
             temporary.unlink(missing_ok=True)
         return previous
 
-    def activate_if_unset(
-        self, release_id: str, *, validators: Iterable[Validator] = (),
-    ) -> Tuple[Optional[str], bool]:
-        """Select one release only when no immutable release is selected.
-
-        The first coordinator cutover uses this no-clobber boundary to publish
-        a snapshot of the running mutable application.  A concurrent or resumed
-        deployment that already selected ``current`` wins; bootstrap must never
-        replace that selection with an older snapshot.
-        """
-
-        self.validate(release_id, validators=validators)
-        self.root.mkdir(parents=True, exist_ok=True)
-        try:
-            self.current_path.symlink_to(Path("releases") / release_id)
-        except FileExistsError:
-            if not self.current_path.is_symlink():
-                raise ReleaseValidationError(
-                    "current exists but is not an immutable-release symlink",
-                )
-            current = self.current_release_id()
-            if current is None:
-                raise ReleaseValidationError("current release selection is malformed")
-            self.validate(current, validators=validators)
-            return current, False
-        _fsync_directory(self.root)
-        return None, True
-
     def list(self) -> List[ReleaseInfo]:
         if not self.releases_dir.exists():
             return []
@@ -649,6 +621,13 @@ class AppActivation:
     previous_release: Optional[str] = field(default=None, init=False)
     restart_boundary: Optional[float] = field(default=None, init=False)
 
+    def preflight_current_operation(self, _context: Any) -> OperationResult:
+        current = self.manager.current_release_id()
+        if current is None:
+            raise ReleaseValidationError("app rollback requires an active immutable release")
+        info = self.manager.validate(current, validators=self.validators)
+        return OperationResult(details={"current_release": info.id})
+
     def validate_operation(self, _context: Any) -> OperationResult:
         info = self.manager.validate(self.candidate_release, validators=self.validators)
         return OperationResult(details={"release": info.id, "digest": info.digest})
@@ -729,6 +708,7 @@ class AppActivation:
 
     def operations(self) -> Mapping[str, Callable[[Any], OperationResult]]:
         return {
+            "target.preflight_current": self.preflight_current_operation,
             "app.validate": self.validate_operation,
             "app.activate": self.activate_operation,
             "host.restart": self.restart_operation,

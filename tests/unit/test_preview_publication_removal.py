@@ -82,13 +82,8 @@ class PreviewPublicationRemovalTests(unittest.TestCase):
         deploy_source = (ROOT / "tools/deployment/deploy_entrypoint.py").read_text(
             encoding="utf-8"
         )
-        sync_source = (ROOT / "tools/deployment/sync_files.sh").read_text(
-            encoding="utf-8"
-        )
         self.assertNotIn("animation-previews", deploy_source)
-        self.assertNotIn("animation-previews", sync_source)
         self.assertNotIn("generate_animation_previews", deploy_source)
-        self.assertNotIn("generate_animation_previews", sync_source)
 
     def test_generated_composer_bootstrap_has_catalog_without_published_preview_contract(self) -> None:
         payload = json.loads(BOOTSTRAP_PATH.read_text(encoding="utf-8"))

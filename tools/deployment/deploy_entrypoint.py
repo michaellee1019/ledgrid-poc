@@ -5,10 +5,9 @@ The operator contract remains ``just``. This module freezes the selected source,
 uploads it only to a unique target-side ``.incoming`` path, and composes the
 generic coordinator with target leaf commands.
 
-The legacy shell scripts remain available through the explicit ``legacy``
-subcommand.  ``shadow`` is non-activating and can optionally stage immutable
-releases on the target to collect parity evidence without changing systemd,
-firmware, or the selected application.
+Only the current immutable app/full deployment paths and immutable-release
+rollback are exposed. Retired commands and target state fail before target
+mutation.
 """
 
 from __future__ import annotations
@@ -140,6 +139,120 @@ FINALIZED_RECEIVER_SPI_MODE = 0
 FINALIZED_RECEIVER_SPI_SPEEDS_HZ = (
     20_000_000, 20_000_000, 20_000_000, 20_000_000, 20_000_000,
 )
+
+
+_REMOTE_CURRENT_PREFLIGHT = r"""
+import json, pathlib, re, subprocess, sys
+root = pathlib.Path(sys.argv[1]).expanduser().resolve()
+release_root = root / "releases"
+current = root / "current"
+pattern = re.compile(r"[0-9a-f]{64}")
+legacy_markers = (
+    root / "run_state" / "legacy_app_bootstrap.json",
+    *(root / name for name in ("animation", "config", "drivers", "ipc", "scripts", "tools", "web")),
+    *(root / name for name in ("pyproject.toml", "requirements-pi.lock", "requirements.txt", "uv.lock")),
+)
+config = root / "run_state" / "receiver_hybrid.json"
+
+def fail(detail):
+    raise SystemExit(
+        "unsupported target deployment state: " + detail
+        + "; install or restore the current immutable deployment contract before retrying"
+    )
+
+try:
+    selected_exists = current.exists() or current.is_symlink()
+    if selected_exists:
+        if not current.is_symlink():
+            fail("current is not an immutable release symlink")
+        try:
+            relative = current.resolve(strict=True).relative_to(release_root.resolve())
+        except (OSError, ValueError):
+            fail("current does not select a release below releases/")
+        if len(relative.parts) != 1 or pattern.fullmatch(relative.name) is None:
+            fail("current release identity is malformed")
+        metadata = current.resolve() / ".release.json"
+        try:
+            payload = json.loads(metadata.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            fail("current release metadata is missing or malformed")
+        if payload.get("id") != relative.name or payload.get("digest") != relative.name:
+            fail("current release metadata disagrees with its immutable identity")
+        selected = current.resolve()
+        app = selected / "web" / "app.py"
+        preserve = selected / "tools" / "deployment" / "preserve_deploy_settings.py"
+        runtime = root / "venv" / "bin" / "python"
+        try:
+            app_source = app.read_text(encoding="utf-8")
+        except OSError:
+            fail("current release does not provide the current operations contract")
+        if "/api/v1/composer/operations/telemetry" not in app_source:
+            fail("current release does not provide the current operations contract")
+        if not preserve.is_file() or not runtime.is_file():
+            fail("current release cannot preserve and restore operator state")
+        initialization = "current"
+    else:
+        if any(candidate.exists() or candidate.is_symlink() for candidate in legacy_markers):
+            fail("retired mutable/bootstrap deployment state is present")
+        active = subprocess.run(
+            ("systemctl", "is-active", "--quiet", "ledgrid.service"),
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ).returncode == 0
+        if active:
+            fail("a mutable service is active without an immutable current release")
+        initialization = "clean"
+
+    if config.exists() or config.is_symlink():
+        if config.is_symlink() or not config.is_file():
+            fail("receiver topology config is not a regular file")
+        try:
+            config_payload = json.loads(config.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            fail("receiver topology config is malformed")
+        if (
+            config_payload.get("schema") != "ledgrid.receiver-hybrid-rollout"
+            or config_payload.get("schema_version") != 5
+        ):
+            fail("receiver topology config is not current schema v5")
+except SystemExit:
+    raise
+except Exception as exc:
+    fail(str(exc))
+print(json.dumps({"initialization": initialization}, sort_keys=True))
+""".strip()
+
+
+_REMOTE_RELEASE_CONTRACT_PREFLIGHT = r"""
+import json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1]).expanduser().resolve()
+release_id = sys.argv[2]
+if re.fullmatch(r"[0-9a-f]{64}", release_id) is None:
+    raise SystemExit("invalid immutable app release ID")
+release = root / "releases" / release_id
+
+def fail(detail):
+    raise SystemExit(
+        "unsupported rollback candidate: " + detail
+        + "; select a release with the current deployment contract"
+    )
+
+try:
+    if not release.is_dir() or release.is_symlink():
+        fail("immutable release is unavailable")
+    metadata = json.loads((release / ".release.json").read_text(encoding="utf-8"))
+    if metadata.get("id") != release_id or metadata.get("digest") != release_id:
+        fail("release metadata disagrees with its immutable identity")
+    app_source = (release / "web" / "app.py").read_text(encoding="utf-8")
+    if "/api/v1/composer/operations/telemetry" not in app_source:
+        fail("release does not provide current operations telemetry")
+    if not (release / "tools" / "deployment" / "preserve_deploy_settings.py").is_file():
+        fail("release cannot preserve and restore operator state")
+except SystemExit:
+    raise
+except Exception as exc:
+    fail(str(exc))
+print(json.dumps({"release_id": release_id}, sort_keys=True))
+""".strip()
 
 
 _REMOTE_RELEASE_INSPECTOR = r"""
@@ -668,6 +781,24 @@ class CoordinatorDeployment:
             details={"command": list(result.args), "duration_seconds": result.duration_seconds}
         )
 
+    def _preflight_current(self, context: DeployContext) -> OperationResult:
+        result = context.ssh(
+            ("python3", "-c", _REMOTE_CURRENT_PREFLIGHT, self.config.deploy_dir)
+        )
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "current deployment preflight returned invalid JSON"
+            ) from exc
+        initialization = payload.get("initialization")
+        if initialization not in {"current", "clean"}:
+            raise RuntimeError(
+                "current deployment preflight returned an invalid target state"
+            )
+        context.state["target_initialization"] = initialization
+        return OperationResult(details=payload)
+
     def _target_connect(self, context: DeployContext) -> OperationResult:
         result = context.ssh(
             (
@@ -773,14 +904,6 @@ class CoordinatorDeployment:
             or re.fullmatch(r"[0-9a-f]{64}", config_digest) is None
         ):
             raise RuntimeError("firmware build returned no rollout config digest")
-        migrated_digest = self.context.state.get("receiver_topology_digest")
-        if (
-            isinstance(migrated_digest, str)
-            and config_digest != migrated_digest
-        ):
-            raise RuntimeError(
-                "receiver rollout selection changed after topology migration"
-            )
         if firmware_sha256 is not None and (
             not isinstance(firmware_sha256, str)
             or re.fullmatch(r"[0-9a-f]{64}", firmware_sha256) is None
@@ -840,39 +963,6 @@ class CoordinatorDeployment:
             artifacts=artifacts,
         )
 
-    def _bootstrap_legacy(self, context: DeployContext) -> OperationResult:
-        candidate = str(context.state["release_id"])
-        result = self.target.run("bootstrap-legacy-app", candidate)
-        bootstrap_id = result.get("bootstrap_release_id")
-        bootstrap_digest = result.get("bootstrap_digest")
-        recovery = result.get("recovery_release")
-        if bootstrap_id is not None and (
-            not isinstance(bootstrap_id, str)
-            or re.fullmatch(r"[0-9a-f]{64}", bootstrap_id) is None
-        ):
-            raise RuntimeError("legacy bootstrap returned an invalid release identity")
-        if bootstrap_digest is not None and bootstrap_digest != bootstrap_id:
-            raise RuntimeError("legacy bootstrap release/digest evidence disagrees")
-        if recovery is not None and recovery != bootstrap_id:
-            raise RuntimeError("legacy bootstrap returned an invalid recovery release")
-        context.state["bootstrap_release_id"] = bootstrap_id
-        context.state["bootstrap_recovery_release"] = recovery
-        artifacts = ()
-        if isinstance(bootstrap_id, str) and isinstance(bootstrap_digest, str):
-            artifacts = (
-                Artifact(
-                    "legacy_app_bootstrap",
-                    bootstrap_id,
-                    bootstrap_digest,
-                    "1",
-                ),
-            )
-        return OperationResult(
-            outcome=str(result.get("outcome", "executed")),
-            details=result,
-            artifacts=artifacts,
-        )
-
     def _receiver_identity_preflight(self, _context: DeployContext) -> OperationResult:
         selection = self.context.state.get("firmware_selection")
         if not isinstance(selection, dict):
@@ -915,34 +1005,6 @@ class CoordinatorDeployment:
             "rotation_required": rotation_required,
             "current_authority_digest": current_digest,
         }
-        return OperationResult(
-            outcome=str(result.get("outcome", "executed")), details=result
-        )
-
-    def _topology_migrate(self, _context: DeployContext) -> OperationResult:
-        result = self.target.run("migrate-receiver-topology")
-        if (
-            result.get("strips") != self.config.strips
-            or result.get("receivers") != self.config.receiver_count
-        ):
-            raise RuntimeError(
-                "target receiver topology disagrees with deployment geometry"
-            )
-        digest = result.get("receiver_hybrid_config_digest")
-        if (
-            not isinstance(digest, str)
-            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
-        ):
-            raise RuntimeError("receiver topology migration returned no digest")
-        selection = self.context.state.get("firmware_selection")
-        if (
-            isinstance(selection, dict)
-            and digest != selection.get("receiver_hybrid_config_digest")
-        ):
-            raise RuntimeError(
-                "post-health topology migration changed rollout semantics"
-            )
-        self.context.state["receiver_topology_digest"] = digest
         return OperationResult(
             outcome=str(result.get("outcome", "executed")), details=result
         )
@@ -1124,6 +1186,11 @@ class CoordinatorDeployment:
     def _capture(self, context: DeployContext) -> OperationResult:
         result = self.target.run("capture-state")
         context.state["state_captured"] = bool(result.get("captured"))
+        if context.state.get("target_initialization") == "current" and not result.get("captured"):
+            reason = result.get("reason", "capture unavailable")
+            raise RuntimeError(
+                f"current deployment state capture failed before mutation: {reason}"
+            )
         if "service_was_active" in result and type(result["service_was_active"]) is not bool:
             raise RuntimeError("captured service state is malformed")
         context.state["service_was_active"] = result.get("service_was_active")
@@ -1135,14 +1202,7 @@ class CoordinatorDeployment:
     def _activate(self, context: DeployContext) -> OperationResult:
         candidate = str(context.state["release_id"])
         before = self.target.run("current-release").get("current_release")
-        recovery = context.state.get("bootstrap_recovery_release")
-        recovery_guarded = bool(
-            before == candidate
-            and isinstance(recovery, str)
-            and recovery
-            and recovery != candidate
-        )
-        context.state["previous_release"] = recovery if recovery_guarded else before
+        context.state["previous_release"] = before
         try:
             result = self.target.run("activate", candidate)
         except Exception as exc:
@@ -1157,7 +1217,7 @@ class CoordinatorDeployment:
                 context.state["activated"] = True
                 raise RemoteActivationFailed(self._compensate(exc)) from exc
             raise
-        context.state["activated"] = bool(result.get("changed")) or recovery_guarded
+        context.state["activated"] = bool(result.get("changed"))
         selected_at = result.get("selected_at")
         if isinstance(selected_at, (int, float)) and not isinstance(selected_at, bool):
             context.state["selection_boundary"] = float(selected_at)
@@ -1173,7 +1233,6 @@ class CoordinatorDeployment:
             outcome="executed" if result.get("changed") else "skipped",
             details={
                 **result,
-                "recovery_guarded": recovery_guarded,
                 "effective_previous_release": context.state["previous_release"],
             },
         )
@@ -1239,7 +1298,6 @@ class CoordinatorDeployment:
                     str(self.config.receiver_count),
                     "--timeout",
                     str(self.config.health_timeout),
-                    "--allow-legacy-status-fallback",
                 )
                 failure = ActivationFailureEvidence(
                     candidate_release=candidate,
@@ -1370,10 +1428,6 @@ class CoordinatorDeployment:
                 # explicit hardware/release qualification concern.
                 *(("--skip-transport-delta-validation",) if receiver_health_args else ()),
                 *receiver_health_args,
-                *self._health_compatibility_args(),
-            )
-            bootstrap = self.target.run(
-                "complete-legacy-bootstrap", str(context.state["release_id"])
             )
             recorded = self.target.run("record-deploy")
             warnings = result.get("warnings")
@@ -1393,15 +1447,11 @@ class CoordinatorDeployment:
                 outcome="warning" if warnings else "executed",
                 details={
                 **result,
-                "legacy_bootstrap": bootstrap,
                 "deployment_status": recorded,
                 "health_policy": self.config.health_policy,
             })
 
         return self._post_activation(execute)
-
-    def _health_compatibility_args(self) -> tuple[str, ...]:
-        return ()
 
     def _prune(self, _context: DeployContext) -> OperationResult:
         try:
@@ -1424,9 +1474,9 @@ class CoordinatorDeployment:
         operations: dict[str, Operation] = {
             "source.validate": self._source_validate,
             "tests.run": self._tests,
+            "target.preflight_current": self._preflight_current,
             "target.connect": self._target_connect,
             "app.stage": self._stage,
-            "app.bootstrap_legacy": self._bootstrap_legacy,
             "app.validate": self._validate_app,
             "state.capture": self._capture,
             "app.activate": self._activate,
@@ -1438,7 +1488,6 @@ class CoordinatorDeployment:
         if self.config.mode == "full":
             operations.update(
                 {
-                    "receiver.topology_migrate": self._topology_migrate,
                     "receiver.firmware_build": self._firmware_build,
                     "receiver.identity_preflight": self._receiver_identity_preflight,
                     "host.provision": self._provision,
@@ -1527,6 +1576,19 @@ class CoordinatorRollback(CoordinatorDeployment):
             details={**captured.details, "pinned_helper": self.target._helper_path},
         )
 
+    def _validate_app(self, context: DeployContext) -> OperationResult:
+        validated = super()._validate_app(context)
+        context.ssh(
+            (
+                "python3",
+                "-c",
+                _REMOTE_RELEASE_CONTRACT_PREFLIGHT,
+                self.config.deploy_dir,
+                self.release_id,
+            )
+        )
+        return validated
+
     def _source_validate(self, _context: DeployContext) -> OperationResult:
         inspected = self.target.run("inspect")
         current = inspected.get("current_release")
@@ -1547,6 +1609,7 @@ class CoordinatorRollback(CoordinatorDeployment):
 
     def operations(self) -> Mapping[str, Operation]:
         return {
+            "target.preflight_current": self._preflight_current,
             "source.validate": self._source_validate,
             "app.validate": self._validate_app,
             "state.capture": self._capture,
@@ -1556,12 +1619,6 @@ class CoordinatorRollback(CoordinatorDeployment):
             "health.readiness": self._health,
             "release.prune": self._prune,
         }
-
-    def _health_compatibility_args(self) -> tuple[str, ...]:
-        # A selected historical immutable release can predate Composer
-        # operations telemetry. The target only consults its legacy status
-        # endpoint after telemetry explicitly reports 404.
-        return ("--allow-legacy-status-fallback",)
 
     def steps(self):
         return build_steps("rollback", self.operations())
@@ -1648,91 +1705,6 @@ def list_releases(config: DeploymentConfig) -> Mapping[str, Any]:
     return payload
 
 
-def shadow_deployment(config: DeploymentConfig, *, target_stage: bool = False) -> Mapping[str, Any]:
-    """Build parity evidence without activation, provisioning, restart, or flash."""
-    plan = manifest_plan(config.root, "full" if config.mode == "full" else "fast")
-    identity = _validate_source_policy(config.root, plan, config.policy)
-    temporary = tempfile.TemporaryDirectory(prefix="ledgrid-shadow-")
-    snapshot_path = Path(temporary.name) / "snapshot"
-    try:
-        evidence = freeze_snapshot(
-            config.root,
-            "full" if config.mode == "full" else "fast",
-            config.policy,
-            snapshot_path,
-        )
-        result: dict[str, Any] = {
-            "mode": config.mode,
-            "source_policy": config.policy,
-            "source_identity": identity,
-            "snapshot": evidence.to_dict(),
-            "steps": [
-                {"id": step.id, "mutating": step.mutating, "description": step.description}
-                for step in CoordinatorDeployment(config, _context(config)).steps()
-            ],
-            "target_staged": False,
-        }
-        if target_stage:
-            context = _context(config)
-            target = RemoteTarget(context, config.deploy_dir)
-            context.ssh(
-                (
-                    "mkdir", "-p", config.deploy_dir, f"{config.deploy_dir}/.incoming",
-                    f"{config.deploy_dir}/run_state/deploy_receipts",
-                )
-            )
-            context.command(
-                (
-                    "rsync", "-az", "--delete", "-e",
-                    _rsync_ssh_command(config.ssh_options),
-                    os.fspath(evidence.path) + "/",
-                    f"{config.target}:{target.incoming}/",
-                ),
-                cwd=config.root,
-            )
-            result["support_stage"] = target.run(
-                "stage-support", "--snapshot", target.incoming,
-            )
-            result["app_stage"] = target.run("stage-app", "--snapshot", target.incoming)
-            result["incoming_cleanup"] = target.run(
-                "cleanup-snapshot", "--snapshot", target.incoming,
-            )
-            result["target_staged"] = True
-        return result
-    finally:
-        if snapshot_path.exists():
-            for path in snapshot_path.rglob("*"):
-                if path.is_dir():
-                    path.chmod(0o755)
-            snapshot_path.chmod(0o755)
-        temporary.cleanup()
-
-
-def run_legacy(config: DeploymentConfig) -> int:
-    """Run the retained monolithic leaf only through an explicit compatibility path."""
-    if config.policy == "plan":
-        raise ValueError("the plan source policy is read-only and cannot run the legacy leaf")
-    if config.force_firmware:
-        raise ValueError("forced firmware flashing is unavailable through the legacy leaf")
-    scope = "full" if config.mode == "full" else "fast"
-    plan = manifest_plan(config.root, scope)
-    _validate_source_policy(config.root, plan, config.policy)
-    if config.run_tests:
-        command = (
-            ("just", "deploy-precheck")
-            if config.mode == "full"
-            else ("just", "test-unit", "test-rendering", "test-deployment")
-        )
-        subprocess.run(command, cwd=config.root, check=True)
-    leaf = (
-        config.root / "tools" / "deployment" / "deploy.sh"
-        if config.mode == "full"
-        else config.root / "tools" / "deployment" / "deploy_python.sh"
-    )
-    completed = subprocess.run((os.fspath(leaf),), cwd=config.root, check=False)
-    return completed.returncode
-
-
 def deployment_plan(config: DeploymentConfig) -> Mapping[str, Any]:
     scope = "full" if config.mode == "full" else "fast"
     plan = manifest_plan(config.root, scope)
@@ -1779,9 +1751,6 @@ def deployment_plan(config: DeploymentConfig) -> Mapping[str, Any]:
                 ),
                 "current": f"{config.deploy_dir}/current",
                 "receipts": f"{config.deploy_dir}/run_state/deploy_receipts",
-                "legacy_app_bootstrap": (
-                    f"{config.deploy_dir}/run_state/legacy_app_bootstrap.json"
-                ),
             },
         }
     finally:
@@ -1885,16 +1854,9 @@ def _config(args: argparse.Namespace) -> DeploymentConfig:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for name in ("plan", "run", "legacy"):
+    for name in ("plan", "run"):
         child = subparsers.add_parser(name)
         _add_common(child)
-    shadow = subparsers.add_parser("shadow")
-    _add_common(shadow)
-    shadow.add_argument(
-        "--target-stage",
-        action="store_true",
-        help="upload and stage content-addressed releases without activating them",
-    )
     rollback = subparsers.add_parser("rollback")
     _add_rollback_options(rollback)
     releases = subparsers.add_parser("releases")
@@ -1908,17 +1870,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.command == "plan":
         print(json.dumps(deployment_plan(config), indent=2, sort_keys=True))
         return 0
-    if args.command == "shadow":
-        print(
-            json.dumps(
-                shadow_deployment(config, target_stage=args.target_stage),
-                indent=2,
-                sort_keys=True,
-            )
-        )
-        return 0
-    if args.command == "legacy":
-        return run_legacy(config)
     if args.command == "releases":
         print(json.dumps(list_releases(config), indent=2, sort_keys=True))
         return 0

@@ -90,7 +90,6 @@ class DeployRecipeTests(unittest.TestCase):
         )
         self.assertIn('os.environ.get("TEST", "true")', entrypoint)
         self.assertIn('("just", "deploy-precheck")', entrypoint)
-        self.assertIn('("just", "test-unit", "test-rendering", "test-deployment")', entrypoint)
         self.assertIn("set quiet := true", justfile)
         self.assertNotIn('["bash", "-euxo"', justfile)
 
@@ -115,8 +114,14 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn("run_captured.py --log-dir .deploy-logs", justfile)
         self.assertIn("deploy_entrypoint.py plan --mode full", justfile)
         self.assertIn("deploy_entrypoint.py plan --mode python", justfile)
-        self.assertIn("deploy-legacy:", justfile)
-        self.assertIn("deploy-python-legacy:", justfile)
+        for retired in (
+            "deploy-legacy:",
+            "deploy-legacy-dirty:",
+            "deploy-python-legacy:",
+            "deploy-shadow:",
+            "deploy-shadow-stage:",
+        ):
+            self.assertNotIn(retired, justfile)
         self.assertIn("--force-firmware", justfile)
 
     def test_native_recipes_use_only_the_separate_native_workflow(self):
@@ -203,30 +208,6 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertEqual(forced.count("deploy_entrypoint.py run --mode full"), 1)
         self.assertIn("--force-firmware", forced)
 
-    def test_full_deploy_uses_digest_environment_and_reports_startup_failures(self):
-        script = (ROOT / "tools/deployment/deploy.sh").read_text(encoding="utf-8")
-        self.assertIn("runtime_env.py ensure", script)
-        self.assertIn("--lock requirements-pi.lock --link venv", script)
-        self.assertNotIn("pip install -r requirements.txt", script)
-        self.assertIn("for attempt in {1..120}", script)
-        self.assertIn("collecting startup logs", script)
-        self.assertIn("journalctl -u ledgrid.service -n 80", script)
-
-    def test_legacy_full_sync_preserves_cutover_and_target_owned_state(self):
-        script = (ROOT / "tools/deployment/sync_files.sh").read_text(
-            encoding="utf-8"
-        )
-        for protected in (
-            "/current",
-            "/releases/***",
-            "/.incoming/***",
-            "/receipts/***",
-            "/calibration_photos/***",
-            "/receiver_library/***",
-            "/presets/animations/***",
-        ):
-            self.assertIn(f"protect {protected}", script)
-
     def test_partial_firmware_failure_is_not_reported_as_success(self):
         script = (ROOT / "tools/deployment/flash_esp32.sh").read_text(
             encoding="utf-8"
@@ -311,13 +292,6 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn("platformio.ini", artifact_identity)
         self.assertIn("partitions.csv", artifact_identity)
         self.assertIn("sdkconfig.defaults", artifact_identity)
-
-    def test_fast_deploy_can_recover_when_old_web_process_is_broken(self):
-        script = (ROOT / "tools/deployment/deploy_python.sh").read_text(encoding="utf-8")
-        self.assertIn("Existing web service is unhealthy", script)
-        self.assertIn('restore_saved=0', script)
-        self.assertIn('if [ "$restore_saved" = 1 ]', script)
-        self.assertIn("for attempt in {1..120}", script)
 
     def test_wall_data_recipe_fetches_masks_and_presets_together(self):
         justfile = (ROOT / "Justfile").read_text(encoding="utf-8")

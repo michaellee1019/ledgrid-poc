@@ -1,6 +1,6 @@
 #!/bin/bash
 # Configure SPI on the Raspberry Pi (idempotent).
-# Runs on the Pi (invoked remotely by deploy.sh).
+# Runs on the Pi through the current coordinator target helper.
 #
 # Wall layout (LEDGRID_HAT=0, default): 5 ESP32s, 33 strips
 #   /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1 /dev/spidev1.2
