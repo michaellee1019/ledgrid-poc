@@ -41,6 +41,11 @@ class FakeSparseSpi:
         reset_on_command=False,
         advance_packets_after_command=False,
         fec_capable=False,
+        drop_sparse_attempts=0,
+        hide_sparse_ack_attempts=0,
+        drift_sparse_authority=False,
+        drift_sparse_generation=False,
+        protected_current=False,
     ):
         self.max_speed_hz = 20_000_000
         self.mode = 0
@@ -49,11 +54,24 @@ class FakeSparseSpi:
         self.acknowledge = acknowledge
         self.acknowledge_after_status_queries = acknowledge_after_status_queries
         self.overlay_result = overlay_result
+        self.configured_overlay_result = overlay_result
         self.crc_on_command = crc_on_command
         self.corrupt_status_after_command = corrupt_status_after_command
         self.reset_on_command = reset_on_command
         self.advance_packets_after_command = advance_packets_after_command
         self.fec_capable = fec_capable
+        self.drop_sparse_attempts = drop_sparse_attempts
+        self.hide_sparse_ack_attempts = hide_sparse_ack_attempts
+        self.drift_sparse_authority = drift_sparse_authority
+        self.drift_sparse_generation = drift_sparse_generation
+        self.protected_current = protected_current
+        self.sparse_attempts = 0
+        self.effective_sparse_mutations = 0
+        self.last_sparse_payload = None
+        self.hide_sparse_status = False
+        self.hidden_status_queries = 0
+        self.overlay_session = bytes(16)
+        self.overlay_staged_generation = 1
         self.mutation_seen = False
         self.packet_counter = 100
         self.crc_errors = 0
@@ -77,12 +95,21 @@ class FakeSparseSpi:
         if length < protocol.RECEIVER_STATUS_BYTES_V3:
             return bytes(length)
         status_bytes = (
-            protocol.RECEIVER_STATUS_BYTES_V4
+            protocol.RECEIVER_STATUS_BYTES_V8
+            if self.protected_current
+            and length >= protocol.RECEIVER_STATUS_BYTES_V8
+            else protocol.RECEIVER_STATUS_BYTES_V4
             if self.sparse_capable and length >= protocol.RECEIVER_STATUS_BYTES_V4
             else protocol.RECEIVER_STATUS_BYTES_V3
         )
         response = bytearray(status_bytes)
-        response[:5] = b"LGS4\x04" if status_bytes == 416 else b"LGS3\x03"
+        response[:5] = (
+            b"LGS8\x08"
+            if status_bytes == protocol.RECEIVER_STATUS_BYTES_V8
+            else b"LGS4\x04"
+            if status_bytes == protocol.RECEIVER_STATUS_BYTES_V4
+            else b"LGS3\x03"
+        )
         capabilities = (
             protocol.CAPABILITY_STATUS_V3
             | protocol.CAPABILITY_EXPLICIT_BASE_OWNERSHIP
@@ -93,6 +120,8 @@ class FakeSparseSpi:
                 protocol.CAPABILITY_SPARSE_OVERLAY_V1
                 | protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
             )
+        if self.protected_current:
+            capabilities |= protocol.CAPABILITY_STATUS_CRC32_V8
         if self.fec_capable:
             capabilities |= (
                 protocol.CAPABILITY_FEC_ENVELOPE_V2
@@ -105,16 +134,33 @@ class FakeSparseSpi:
         response[64:68] = capabilities.to_bytes(4, "big")
         response[12:16] = self.packet_counter.to_bytes(4, "big")
         response[16:20] = self.crc_errors.to_bytes(4, "big")
+        if self.protected_current:
+            response[68] = 1
+            response[73] = 2
+            response[96:104] = (1).to_bytes(8, "big")
+            response[144:176] = bytes((0x11,)) * 32
+            response[280:296] = bytes((0x22,)) * 16
         response[313] = state[0]
         response[316:320] = state[1].to_bytes(4, "big")
-        if status_bytes == protocol.RECEIVER_STATUS_BYTES_V4 and state[1]:
-            response[320] = self.overlay_result
+        if status_bytes >= protocol.RECEIVER_STATUS_BYTES_V4:
+            if state[1]:
+                response[320] = self.overlay_result
+            response[336:344] = self.overlay_staged_generation.to_bytes(8, "big")
+            response[344:352] = (1).to_bytes(8, "big")
+            response[352:360] = (1).to_bytes(8, "big")
+            response[360:368] = (1).to_bytes(8, "big")
+            response[384:400] = self.overlay_session
+        if status_bytes == protocol.RECEIVER_STATUS_BYTES_V8:
+            response[protocol.RECEIVER_STATUS_BYTES_V7:] = binascii.crc32(
+                response[:protocol.RECEIVER_STATUS_BYTES_V7]
+            ).to_bytes(4, "big")
         return bytes(response[:length])
 
     def xfer2(self, packet):
         wire = bytes(packet)
         command = wire[0]
         semantic_length = len(wire) - protocol.CRC_BYTES
+        semantic = wire[:semantic_length]
         if command == protocol.CMD_ALIGNED_ENVELOPE:
             if wire[1] == protocol.FEC_ENVELOPE_VERSION:
                 semantic = _decode_clean_v7(wire)
@@ -122,7 +168,11 @@ class FakeSparseSpi:
                 command = semantic[0]
             else:
                 semantic_length = int.from_bytes(wire[2:4], "big")
-                command = wire[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
+                semantic = wire[
+                    protocol.ALIGNED_ENVELOPE_HEADER_BYTES:
+                    protocol.ALIGNED_ENVELOPE_HEADER_BYTES + semantic_length
+                ]
+                command = semantic[0]
         status_query = command == protocol.CMD_STATUS_QUERY
         self.packets.append(wire)
         prior = self.queued.pop(0)
@@ -143,6 +193,21 @@ class FakeSparseSpi:
                 self.pending_ack = (command, sequence, remaining)
         elif not status_query:
             self.mutation_seen = True
+            sparse = command in (
+                protocol.CMD_OVERLAY_PATCH,
+                protocol.CMD_OVERLAY_PATCH_BATCH,
+            )
+            dropped = False
+            if sparse:
+                self.sparse_attempts += 1
+                dropped = self.sparse_attempts <= self.drop_sparse_attempts
+                self.hide_sparse_status = (
+                    self.sparse_attempts <= self.hide_sparse_ack_attempts
+                )
+                if self.drift_sparse_authority and self.sparse_attempts == 1:
+                    self.overlay_session = bytes((0xA5,)) * 16
+                if self.drift_sparse_generation and self.sparse_attempts == 1:
+                    self.overlay_staged_generation = 2
             if self.reset_on_command:
                 self.packet_counter = 0
                 self.last_command = 0
@@ -150,8 +215,24 @@ class FakeSparseSpi:
                 self.pending_ack = None
             elif self.crc_on_command:
                 self.crc_errors += 1
-            elif self.acknowledge:
-                next_sequence = self.operation_sequence + 1
+            elif self.acknowledge and not dropped:
+                duplicate = bool(
+                    sparse
+                    and self.protected_current
+                    and self.last_sparse_payload == bytes(semantic)
+                    and self.last_command == command
+                )
+                if duplicate:
+                    if self.configured_overlay_result in (1, 2):
+                        self.overlay_result = 2
+                    next_sequence = self.operation_sequence
+                else:
+                    if self.configured_overlay_result in (1, 2):
+                        self.overlay_result = 1
+                    next_sequence = self.operation_sequence + 1
+                    if sparse:
+                        self.effective_sparse_mutations += 1
+                        self.last_sparse_payload = bytes(semantic)
                 if self.acknowledge_after_status_queries:
                     self.pending_ack = (
                         command,
@@ -161,10 +242,9 @@ class FakeSparseSpi:
                 else:
                     self.last_command = command
                     self.operation_sequence = next_sequence
-        if (
-            status_query
-            and self.mutation_seen
-            and self.advance_packets_after_command
+        if status_query and (
+            self.protected_current
+            or (self.mutation_seen and self.advance_packets_after_command)
         ):
             self.packet_counter += 1
         self.queued.append((self.last_command, self.operation_sequence))
@@ -174,13 +254,24 @@ class FakeSparseSpi:
             and semantic_length >= protocol.RECEIVER_STATUS_BYTES_V4
         )
         self.queued_status_bytes.append(
-            protocol.RECEIVER_STATUS_BYTES_V4
+            protocol.RECEIVER_STATUS_BYTES_V8
+            if self.protected_current
+            and status_query
+            and semantic_length >= protocol.RECEIVER_STATUS_BYTES_V8
+            else protocol.RECEIVER_STATUS_BYTES_V4
             if requested_v4 else protocol.RECEIVER_STATUS_BYTES_V3
         )
+        hide_response = bool(
+            status_query and self.mutation_seen and self.hide_sparse_status
+        )
+        if hide_response:
+            self.hidden_status_queries += 1
+            if self.hidden_status_queries >= protocol.COMMAND_ACK_MAX_STATUS_QUERIES:
+                self.hide_sparse_status = False
         if (
             status_query
             and self.mutation_seen
-            and self.corrupt_status_after_command
+            and (self.corrupt_status_after_command or hide_response)
         ):
             return bytes(len(response))
         return response
@@ -226,6 +317,11 @@ def controller(
     reset_on_command=False,
     advance_packets_after_command=False,
     fec_capable=False,
+    drop_sparse_attempts=0,
+    hide_sparse_ack_attempts=0,
+    drift_sparse_authority=False,
+    drift_sparse_generation=False,
+    protected_current=False,
 ):
     spi = FakeSparseSpi(
         sparse_capable=sparse_capable,
@@ -237,6 +333,11 @@ def controller(
         reset_on_command=reset_on_command,
         advance_packets_after_command=advance_packets_after_command,
         fec_capable=fec_capable,
+        drop_sparse_attempts=drop_sparse_attempts,
+        hide_sparse_ack_attempts=hide_sparse_ack_attempts,
+        drift_sparse_authority=drift_sparse_authority,
+        drift_sparse_generation=drift_sparse_generation,
+        protected_current=protected_current,
     )
     with mock.patch.object(protocol.spidev, "SpiDev", return_value=spi):
         item = protocol.LEDController(strips=8, leds_per_strip=138)
@@ -247,11 +348,30 @@ def controller(
     spi.mutation_seen = False
     spi.packet_counter = 100
     spi.crc_errors = 0
+    spi.sparse_attempts = 0
+    spi.effective_sparse_mutations = 0
+    spi.last_sparse_payload = None
+    spi.hide_sparse_status = False
+    spi.hidden_status_queries = 0
+    spi.overlay_session = bytes(16)
+    spi.overlay_staged_generation = 1
     spi.queued = [(0, 0), (0, 0)]
     spi.queued_status_bytes = [
-        protocol.RECEIVER_STATUS_BYTES_V3,
-        protocol.RECEIVER_STATUS_BYTES_V3,
+        protocol.RECEIVER_STATUS_BYTES_V8 if protected_current
+        else protocol.RECEIVER_STATUS_BYTES_V3,
+        protocol.RECEIVER_STATUS_BYTES_V8 if protected_current
+        else protocol.RECEIVER_STATUS_BYTES_V3,
     ]
+    if protected_current:
+        item._receiver_capabilities |= (
+            protocol.CAPABILITY_STATUS_CRC32_V8
+            | protocol.CAPABILITY_SPARSE_OVERLAY_V1
+            | protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+        )
+        item._receiver_status_integrity_required = True
+        item._receiver_status_integrity_established = True
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V8
+        item._hardware_serial = "02:00:00:00:00:01"
     return item
 
 
@@ -642,6 +762,114 @@ class SparseOverlayDriverTests(unittest.TestCase):
             if packet[0] == protocol.CMD_OVERLAY_PATCH
         )
         self.assertEqual(len(patch), protocol.MAX_SPI_TRANSFER)
+
+    def test_protected_sparse_drop_resends_once_with_original_sequence(self):
+        item = controller(protected_current=True, drop_sparse_attempts=1)
+        status = item.send_overlay_patch_batch(
+            controller_session_id=SESSION,
+            generation=1,
+            spans=[(0, bytes((1, 2, 3, 4)))],
+        )
+
+        self.assertEqual(status["receiver_operation_sequence"], 1)
+        self.assertEqual(item.spi.sparse_attempts, 2)
+        self.assertEqual(item.spi.effective_sparse_mutations, 1)
+        diagnostics = item.command_transfer_diagnostics()[-2:]
+        self.assertEqual(diagnostics[0]["expected_operation_sequence"], 1)
+        self.assertEqual(
+            diagnostics[1]["retry_of_diagnostic_id"],
+            diagnostics[0]["diagnostic_id"],
+        )
+        self.assertTrue(
+            diagnostics[1]["outcome"].startswith("acknowledged")
+        )
+
+    def test_protected_sparse_lost_ack_replays_without_second_mutation(self):
+        item = controller(
+            protected_current=True, hide_sparse_ack_attempts=1
+        )
+        status = item.send_overlay_patch_batch(
+            controller_session_id=SESSION,
+            generation=1,
+            spans=[(0, bytes((1, 2, 3, 4)))],
+        )
+
+        self.assertEqual(status["receiver_operation_sequence"], 1)
+        self.assertEqual(status["receiver_overlay_operation_result"], 2)
+        self.assertEqual(item.spi.sparse_attempts, 2)
+        self.assertEqual(item.spi.effective_sparse_mutations, 1)
+        retry = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(retry["expected_operation_sequence"], 1)
+        self.assertTrue(retry["requires_idempotent_result"])
+
+    def test_known_exact_repeat_accepts_same_sequence_without_stale_payload(self):
+        item = controller(protected_current=True)
+        fields = {
+            "controller_session_id": SESSION,
+            "generation": 1,
+            "start": 7,
+            "premultiplied_rgba": bytes((1, 2, 3, 4)),
+        }
+        first = item.send_overlay_patch(**fields)
+        repeated = item.send_overlay_patch(**fields)
+
+        self.assertEqual(first["receiver_operation_sequence"], 1)
+        self.assertEqual(repeated["receiver_operation_sequence"], 1)
+        self.assertEqual(repeated["receiver_overlay_operation_result"], 2)
+        self.assertEqual(item.spi.effective_sparse_mutations, 1)
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(diagnostic["expected_operation_sequence"], 1)
+        self.assertTrue(diagnostic["requires_idempotent_result"])
+
+    def test_sparse_retry_rejects_reset_and_authority_drift(self):
+        reset = controller(protected_current=True, reset_on_command=True)
+        with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+            reset.send_overlay_patch_batch(
+                controller_session_id=SESSION, generation=1,
+                spans=[(0, bytes((1, 2, 3, 4)))],
+            )
+        self.assertEqual(reset.spi.sparse_attempts, 1)
+        self.assertTrue(
+            reset.command_transfer_diagnostics()[-1]["receiver_reset_observed"]
+        )
+
+        drift = controller(
+            protected_current=True, hide_sparse_ack_attempts=1,
+            drift_sparse_authority=True,
+        )
+        with self.assertRaisesRegex(RuntimeError, "authority drift"):
+            drift.send_overlay_patch_batch(
+                controller_session_id=SESSION, generation=1,
+                spans=[(0, bytes((1, 2, 3, 4)))],
+            )
+        self.assertEqual(drift.spi.sparse_attempts, 1)
+
+        generation_drift = controller(
+            protected_current=True, hide_sparse_ack_attempts=1,
+            drift_sparse_generation=True,
+        )
+        with self.assertRaisesRegex(RuntimeError, "authority drift"):
+            generation_drift.send_overlay_patch_batch(
+                controller_session_id=SESSION, generation=1,
+                spans=[(0, bytes((1, 2, 3, 4)))],
+            )
+        self.assertEqual(generation_drift.spi.sparse_attempts, 1)
+
+    def test_permanent_sparse_failure_exhausts_one_retry(self):
+        item = controller(protected_current=True, acknowledge=False)
+        with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+            item.send_overlay_patch_batch(
+                controller_session_id=SESSION, generation=1,
+                spans=[(0, bytes((1, 2, 3, 4)))],
+            )
+        self.assertEqual(item.spi.sparse_attempts, 2)
+        self.assertEqual(item.spi.effective_sparse_mutations, 0)
+        diagnostics = item.command_transfer_diagnostics()[-2:]
+        self.assertIsNone(diagnostics[0]["retry_of_diagnostic_id"])
+        self.assertEqual(
+            diagnostics[1]["retry_of_diagnostic_id"],
+            diagnostics[0]["diagnostic_id"],
+        )
 
     def test_negotiated_fec_batch_keeps_exact_ack_and_wire_diagnostic(self):
         item = controller(fec_capable=True)

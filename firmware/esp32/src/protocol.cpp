@@ -289,8 +289,21 @@ void encode_v2_fields(
 
 bool ReceiverOperationTracker::begin(std::uint8_t command) {
   if (sequence_ == UINT32_MAX) return false;
+  prior_sequence_ = sequence_;
+  prior_last_processed_command_ = last_processed_command_;
   ++sequence_;
   last_processed_command_ = command;
+  return true;
+}
+
+bool ReceiverOperationTracker::collapse_latest_replay(std::uint8_t command) {
+  if (sequence_ == 0 || last_processed_command_ != command ||
+      prior_sequence_ + 1U != sequence_ ||
+      prior_last_processed_command_ != command) {
+    return false;
+  }
+  sequence_ = prior_sequence_;
+  last_processed_command_ = prior_last_processed_command_;
   return true;
 }
 

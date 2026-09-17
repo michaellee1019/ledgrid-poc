@@ -1296,6 +1296,22 @@ void execute_command(const CommandQueue::Command& command) {
   auto native_result = ledgrid::NativeModuleResult::InvalidState;
   const bool accepted = allowed && !command.rejected &&
       process_command(command.bytes, command.size, &native_result);
+  const bool sparse_patch =
+      id == static_cast<std::uint8_t>(ledgrid::ReceiverCommand::OverlayPatch) ||
+      id == static_cast<std::uint8_t>(
+          ledgrid::ReceiverCommand::OverlayPatchBatch);
+  if (accepted && sparse_patch) {
+    // Runtime validation runs first. Only its byte-exact latest-payload
+    // Idempotent result may collapse this tracker increment. The command
+    // queue publication frontier keeps every status candidate frozen until
+    // execution finishes; this lock makes the collapse atomic with snapshots.
+    lock_runtime();
+    if (receiver_runtime.last_overlay_result() ==
+        ledgrid::OverlayOperationResult::Idempotent) {
+      operation_tracker.collapse_latest_replay(id);
+    }
+    unlock_runtime();
+  }
 #if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
   if (allowed && is_native_module_command(id)) {
     native_operation_result_latch.record(sequence, id, native_result);

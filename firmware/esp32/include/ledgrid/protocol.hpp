@@ -313,6 +313,9 @@ class ReceiverOperationTracker {
         last_processed_command_(last_processed_command) {}
 
   bool begin(std::uint8_t command);
+  // Collapse only an immediately preceding, runtime-validated exact replay.
+  // The executor calls this before completing the command queue publication.
+  bool collapse_latest_replay(std::uint8_t command);
   std::uint32_t sequence() const { return sequence_; }
   std::uint8_t last_processed_command() const {
     return last_processed_command_;
@@ -322,6 +325,8 @@ class ReceiverOperationTracker {
  private:
   std::uint32_t sequence_ = 0;
   std::uint8_t last_processed_command_ = 0;
+  std::uint32_t prior_sequence_ = 0;
+  std::uint8_t prior_last_processed_command_ = 0;
 };
 
 struct ReceiverStatusV2 {

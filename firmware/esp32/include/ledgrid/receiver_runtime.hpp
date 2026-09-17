@@ -269,9 +269,11 @@ class ReceiverRuntime {
       const std::uint8_t* command, std::size_t size,
       std::uint64_t local_monotonic_us);
   ReceiverOperationResult overlay_patch(
-      const std::uint8_t* command, std::size_t size);
+      const std::uint8_t* command, std::size_t size,
+      std::uint64_t local_monotonic_us);
   ReceiverOperationResult overlay_patch_batch(
-      const std::uint8_t* command, std::size_t size);
+      const std::uint8_t* command, std::size_t size,
+      std::uint64_t local_monotonic_us);
   ReceiverOperationResult overlay_commit(
       const std::uint8_t* command, std::size_t size,
       std::uint64_t local_monotonic_us);

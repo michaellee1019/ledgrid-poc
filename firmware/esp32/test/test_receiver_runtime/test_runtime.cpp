@@ -1716,6 +1716,77 @@ void test_sparse_batch_applies_multiple_spans_atomically_and_retries_exactly() {
   TEST_ASSERT_EQUAL_UINT8(0, composite[composite.size() - 1U]);
 }
 
+void test_sparse_tracker_collapses_only_runtime_validated_exact_latest_replay() {
+  ledgrid::ReceiverRuntime runtime(true);
+  activate_local_hybrid(&runtime);
+  const std::uint64_t now = 7500000;
+  auto begin = overlay_begin_command(
+      runtime, 1, 0, ledgrid::OverlayUpdateKind::FullSnapshot, 2, 3000);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(begin.data(), begin.size(), now)));
+  auto batch = overlay_patch_batch_command(
+      runtime, 1, {{0, {1, 2, 3, 4}}});
+  ledgrid::ReceiverOperationTracker tracker;
+  const auto execute = [](
+      ledgrid::ReceiverRuntime* target,
+      ledgrid::ReceiverOperationTracker* target_tracker,
+      const std::vector<std::uint8_t>& packet,
+      std::uint64_t command_now) {
+    const auto command = packet[0];
+    TEST_ASSERT_TRUE(target_tracker->begin(command));
+    const auto result = target->process_command(
+        packet.data(), packet.size(), command_now);
+    if (
+        result == ledgrid::ReceiverOperationResult::Ok &&
+        target->last_overlay_result() ==
+            ledgrid::OverlayOperationResult::Idempotent) {
+      return target_tracker->collapse_latest_replay(command);
+    }
+    return false;
+  };
+
+  TEST_ASSERT_FALSE(execute(&runtime, &tracker, batch, now));
+  TEST_ASSERT_EQUAL_UINT32(1, tracker.sequence());
+  TEST_ASSERT_EQUAL_UINT16(1, runtime.overlay_status(now).accepted_patches);
+  TEST_ASSERT_TRUE(execute(&runtime, &tracker, batch, now));
+  TEST_ASSERT_EQUAL_UINT32(1, tracker.sequence());
+  TEST_ASSERT_EQUAL_UINT16(1, runtime.overlay_status(now).accepted_patches);
+
+  auto conflict = batch;
+  conflict.back() ^= 1U;
+  TEST_ASSERT_FALSE(execute(&runtime, &tracker, conflict, now));
+  TEST_ASSERT_EQUAL_UINT32(2, tracker.sequence());
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::PatchConflict),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+
+  runtime.complete_host_frame();
+  TEST_ASSERT_FALSE(execute(&runtime, &tracker, batch, now));
+  TEST_ASSERT_EQUAL_UINT32(3, tracker.sequence());
+  TEST_ASSERT_NOT_EQUAL(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::Idempotent),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+
+  ledgrid::ReceiverRuntime expired_runtime(true);
+  activate_local_hybrid(&expired_runtime, now);
+  auto expiring_begin = overlay_begin_command(
+      expired_runtime, 1, 0, ledgrid::OverlayUpdateKind::FullSnapshot, 2, 1);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      expired_runtime.process_command(
+          expiring_begin.data(), expiring_begin.size(), now)));
+  auto expiring_batch = overlay_patch_batch_command(
+      expired_runtime, 1, {{0, {1, 2, 3, 4}}});
+  ledgrid::ReceiverOperationTracker expired_tracker;
+  TEST_ASSERT_FALSE(execute(
+      &expired_runtime, &expired_tracker, expiring_batch, now));
+  TEST_ASSERT_FALSE(execute(
+      &expired_runtime, &expired_tracker, expiring_batch, now + 1000));
+  TEST_ASSERT_EQUAL_UINT32(2, expired_tracker.sequence());
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::LeaseExpired),
+      static_cast<std::uint8_t>(expired_runtime.last_overlay_result()));
+}
+
 void test_sparse_batch_rejects_malformed_unsorted_overlap_and_premul_atomically() {
   ledgrid::ReceiverRuntime runtime(true);
   activate_local_hybrid(&runtime);
@@ -2090,6 +2161,7 @@ int main(int, char**) {
   RUN_TEST(test_sparse_order_interruption_session_lease_restart_and_takeover);
   RUN_TEST(test_sparse_generation_counter_exhaustion_is_fail_closed);
   RUN_TEST(test_sparse_batch_applies_multiple_spans_atomically_and_retries_exactly);
+  RUN_TEST(test_sparse_tracker_collapses_only_runtime_validated_exact_latest_replay);
   RUN_TEST(test_sparse_batch_rejects_malformed_unsorted_overlap_and_premul_atomically);
   RUN_TEST(test_sparse_batch_accepts_exact_maximum_span_capacity);
   RUN_TEST(test_generated_malformed_batches_reject_with_exact_runtime_results);

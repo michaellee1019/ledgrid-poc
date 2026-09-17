@@ -91,6 +91,7 @@ TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS = 3
 FULL_FRAME_STATUS_SAMPLE_INTERVAL = 128
 FULL_FRAME_STATUS_SAMPLE_RECEIVERS = 5
 COMMAND_ACK_MAX_STATUS_QUERIES = 16
+SPARSE_COMMAND_RETRY_BUDGET = 1
 COMMAND_TRANSFER_DIAGNOSTIC_HISTORY = 32
 COMMAND_TRANSFER_DIAGNOSTIC_MAX_SAMPLES = 32
 COMMAND_ACK_POLL_INTERVAL_SECONDS = 0.001
@@ -2392,7 +2393,8 @@ class LEDController:
             )
 
     def _command_transfer_status_sample(
-        self, status, *, sampled, fresh=None, timestamp_ns
+        self, status, *, sampled, fresh=None, timestamp_ns,
+        include_sparse_authority=False,
     ):
         """Detach the bounded fields needed to explain one command outcome."""
         status = status if isinstance(status, dict) else {}
@@ -2423,7 +2425,45 @@ class LEDController:
             "status_unprotected_rejections": int(
                 getattr(self, "_receiver_status_unprotected_rejections", 0)
             ),
+            "sparse_authority": (
+                self._sparse_command_authority(status)
+                if include_sparse_authority else None
+            ),
         }
+
+    def _sparse_command_authority(self, status):
+        """Return state that a duplicate-safe sparse retry must not cross."""
+        status = status if isinstance(status, dict) else {}
+        keys = (
+            "receiver_status_version",
+            "receiver_status_integrity_established",
+            "receiver_logical_device",
+            "receiver_base_mode", "receiver_context_state",
+            "receiver_active_context_digest", "receiver_active_session_id",
+            "receiver_active_scene_revision",
+            "receiver_overlay_session_id",
+            "receiver_overlay_committed_generation",
+            "receiver_overlay_staged_generation",
+            "receiver_foreground_scene_revision",
+            "receiver_foreground_scene_epoch",
+            "receiver_foreground_base_revision",
+        )
+        authority = {key: status.get(key) for key in keys}
+        authority["bound_hardware_serial"] = getattr(
+            self, "_hardware_serial", None
+        )
+        return authority
+
+    @staticmethod
+    def _require_complete_sparse_retry_authority(authority):
+        if (
+            authority.get("receiver_status_version") != 8
+            or authority.get("receiver_status_integrity_established") is not True
+            or any(value is None for value in authority.values())
+        ):
+            raise RuntimeError(
+                "sparse command retry requires complete protected receiver authority"
+            )
 
     def _command_transfer_now_ns(self):
         return int(getattr(self, "_monotonic_ns", time.monotonic_ns)())
@@ -2570,7 +2610,11 @@ class LEDController:
         return int(getattr(self, "_command_transfer_diagnostic_id", 0))
 
     def _command_status(
-        self, payload, *, command=None, required_status_version=3, storage_operation=False
+        self, payload, *, command=None, required_status_version=3,
+        storage_operation=False, sparse_retry_budget=0,
+        _expected_operation_sequence=None, _sparse_retry_authority=None,
+        _sparse_retry_prior_sequence=None, _sparse_retry_prior_packets=None,
+        _retry_of_diagnostic_id=None,
     ):
         """Send a command and prove its exact acknowledgement, never a stale OK."""
         transport_lock = getattr(self, "_transport_lock", None)
@@ -2584,6 +2628,17 @@ class LEDController:
                 raise ValueError("deferred command serialization requires a command ID")
             else:
                 command = self._bounded_uint("command", command, 0xFF)
+            retry_budget = self._bounded_uint(
+                "sparse_retry_budget", sparse_retry_budget,
+                SPARSE_COMMAND_RETRY_BUDGET,
+            )
+            sparse_command = command in (
+                CMD_OVERLAY_PATCH, CMD_OVERLAY_PATCH_BATCH
+            )
+            if retry_budget and not sparse_command:
+                raise ValueError(
+                    "sparse retries are limited to duplicate-safe patch commands"
+                )
             diagnostic_started_ns = self._command_transfer_now_ns()
             # Local rendering shares snapshot locks with the SPI task. Its
             # two receive slots may therefore refill slower than the ordinary
@@ -2635,8 +2690,63 @@ class LEDController:
                 prior,
                 sampled=getattr(self, "_last_transfer_status_sampled", False),
                 timestamp_ns=self._command_transfer_now_ns(),
+                include_sparse_authority=sparse_command,
             )
-            expected_sequence = prior_sequence + 1
+            payload_value = bytes(payload)
+            authority = prior_sample["sparse_authority"]
+            retrying = _expected_operation_sequence is not None
+            if retrying or retry_budget:
+                self._require_complete_sparse_retry_authority(authority)
+            if retrying:
+                expected_sequence = int(_expected_operation_sequence)
+                original_sequence = int(_sparse_retry_prior_sequence)
+                original_packets = int(_sparse_retry_prior_packets)
+                if authority != _sparse_retry_authority:
+                    raise RuntimeError(
+                        "sparse command retry rejected after receiver authority drift"
+                    )
+                if (
+                    prior_sequence < original_sequence
+                    or (
+                        original_packets >= 0
+                        and prior_sample["receiver_packets"] >= 0
+                        and prior_sample["receiver_packets"] < original_packets
+                    )
+                ):
+                    raise RuntimeError(
+                        "sparse command retry rejected after receiver reset"
+                    )
+                if prior_sequence not in (original_sequence, expected_sequence):
+                    raise RuntimeError(
+                        "sparse command retry rejected after operation sequence drift"
+                    )
+                if (
+                    prior_sequence == expected_sequence
+                    and prior_sample["last_processed_command"] != command
+                ):
+                    raise RuntimeError(
+                        "sparse command retry rejected after conflicting operation"
+                    )
+                require_idempotent_result = prior_sequence == expected_sequence
+            else:
+                cached = getattr(self, "_last_acknowledged_sparse_command", None)
+                repeat = bool(
+                    sparse_command
+                    and isinstance(cached, dict)
+                    and cached.get("payload") == payload_value
+                    and cached.get("sequence") == prior_sequence
+                    and cached.get("command") == command
+                    and cached.get("authority") == authority
+                    and prior_sample["last_processed_command"] == command
+                )
+                expected_sequence = (
+                    prior_sequence if repeat else prior_sequence + 1
+                )
+                require_idempotent_result = repeat
+            enforce_sparse_authority = bool(
+                sparse_command
+                and (retrying or retry_budget or require_idempotent_result)
+            )
             diagnostic = {
                 "version": 1,
                 "route": {
@@ -2655,6 +2765,9 @@ class LEDController:
                 "command_sent_monotonic_ns": self._command_transfer_now_ns(),
                 "prior_status": prior_sample,
                 "expected_operation_sequence": expected_sequence,
+                "retry_budget": retry_budget,
+                "retry_of_diagnostic_id": _retry_of_diagnostic_id,
+                "requires_idempotent_result": require_idempotent_result,
                 "minimum_post_queries": None,
                 "acknowledged_query_index": None,
                 "status_sample_count": 0,
@@ -2734,6 +2847,7 @@ class LEDController:
                     sampled=sampled,
                     fresh=fresh,
                     timestamp_ns=self._command_transfer_now_ns(),
+                    include_sparse_authority=sparse_command,
                 )
                 sample["query_index"] = query_index
                 if fresh and observed_packets >= 0:
@@ -2792,11 +2906,28 @@ class LEDController:
                     and observed_version >= required_version
                     and observed_command == command
                     and observed_sequence == expected_sequence
+                    and (
+                        not require_idempotent_result
+                        or int(status.get(
+                            "receiver_overlay_operation_result", 0
+                        ) or 0) == 2
+                    )
+                    and (
+                        not enforce_sparse_authority
+                        or self._sparse_command_authority(status) == authority
+                    )
                 ):
                     diagnostic["acknowledged_query_index"] = query_index
                     self._record_command_transfer_diagnostic(
                         diagnostic, acknowledged=True
                     )
+                    if sparse_command:
+                        self._last_acknowledged_sparse_command = {
+                            "payload": payload_value,
+                            "command": command,
+                            "sequence": expected_sequence,
+                            "authority": dict(authority),
+                        }
                     return status
                 if observed_sequence > expected_sequence or (
                     observed_sequence == expected_sequence
@@ -2804,6 +2935,19 @@ class LEDController:
                 ):
                     break
             self._record_command_transfer_diagnostic(diagnostic)
+            if retry_budget and not diagnostic["receiver_reset_observed"]:
+                return self._command_status(
+                    payload_value,
+                    command=command,
+                    required_status_version=required_status_version,
+                    storage_operation=storage_operation,
+                    sparse_retry_budget=retry_budget - 1,
+                    _expected_operation_sequence=expected_sequence,
+                    _sparse_retry_authority=authority,
+                    _sparse_retry_prior_sequence=prior_sequence,
+                    _sparse_retry_prior_packets=prior_sample["receiver_packets"],
+                    _retry_of_diagnostic_id=diagnostic["diagnostic_id"],
+                )
             raise RuntimeError(
                 f"receiver did not acknowledge command 0x{command:02x} "
                 "with the next operation sequence; last status "
@@ -3634,7 +3778,27 @@ class LEDController:
         return self._overlay_command_status(payload)
 
     def _overlay_command_status(self, payload):
-        status = self._command_status(payload, required_status_version=4)
+        command = int(payload[0])
+        duplicate_safe_patch = command in (
+            CMD_OVERLAY_PATCH, CMD_OVERLAY_PATCH_BATCH
+        )
+        protected_current_receiver = bool(
+            duplicate_safe_patch
+            and int(getattr(self, "_receiver_capabilities", 0) or 0)
+                & CAPABILITY_STATUS_CRC32_V8
+            and getattr(
+                self, "_receiver_status_integrity_established", False
+            ) is True
+            and getattr(self, "_hardware_serial", None) is not None
+        )
+        status = self._command_status(
+            payload,
+            required_status_version=(8 if protected_current_receiver else 4),
+            sparse_retry_budget=(
+                SPARSE_COMMAND_RETRY_BUDGET
+                if protected_current_receiver else 0
+            ),
+        )
         if int(status.get("receiver_status_version", 0) or 0) < 4:
             raise RuntimeError("receiver status v4 is required for sparse-overlay results")
         result = int(status.get("receiver_overlay_operation_result", 0) or 0)

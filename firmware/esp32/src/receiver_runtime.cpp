@@ -577,9 +577,10 @@ ReceiverOperationResult ReceiverRuntime::overlay_begin(
 }
 
 ReceiverOperationResult ReceiverRuntime::overlay_patch(
-    const std::uint8_t* command, std::size_t size) {
+    const std::uint8_t* command, std::size_t size,
+    std::uint64_t local_monotonic_us) {
 #if !LEDGRID_ENABLE_LOCAL_BACKGROUND
-  (void)command; (void)size;
+  (void)command; (void)size; (void)local_monotonic_us;
   return finish_overlay(OverlayOperationResult::InvalidState);
 #else
   if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
@@ -602,6 +603,12 @@ ReceiverOperationResult ReceiverRuntime::overlay_patch(
   }
   if (generation != overlay_generation_order_.staged_generation) {
     return finish_overlay(OverlayOperationResult::InvalidState);
+  }
+  if (staged_lease_ms_ != 0 &&
+      local_monotonic_us >= staged_started_local_us_ &&
+      local_monotonic_us - staged_started_local_us_ >=
+          static_cast<std::uint64_t>(staged_lease_ms_) * 1000ULL) {
+    return finish_overlay(OverlayOperationResult::LeaseExpired);
   }
   const std::uint16_t start = read_u16(command + 26);
   const std::uint16_t count = read_u16(command + 28);
@@ -640,10 +647,12 @@ ReceiverOperationResult ReceiverRuntime::overlay_patch(
 }
 
 ReceiverOperationResult ReceiverRuntime::overlay_patch_batch(
-    const std::uint8_t* command, std::size_t size) {
+    const std::uint8_t* command, std::size_t size,
+    std::uint64_t local_monotonic_us) {
 #if !LEDGRID_ENABLE_LOCAL_BACKGROUND
   (void)command;
   (void)size;
+  (void)local_monotonic_us;
   return finish_overlay(OverlayOperationResult::InvalidState);
 #else
   if (!local_background_enabled_) {
@@ -670,6 +679,12 @@ ReceiverOperationResult ReceiverRuntime::overlay_patch_batch(
   }
   if (generation != overlay_generation_order_.staged_generation) {
     return finish_overlay(OverlayOperationResult::InvalidState);
+  }
+  if (staged_lease_ms_ != 0 &&
+      local_monotonic_us >= staged_started_local_us_ &&
+      local_monotonic_us - staged_started_local_us_ >=
+          static_cast<std::uint64_t>(staged_lease_ms_) * 1000ULL) {
+    return finish_overlay(OverlayOperationResult::LeaseExpired);
   }
 
   const std::uint16_t span_count = read_u16(command + 26);
@@ -1014,9 +1029,9 @@ ReceiverOperationResult ReceiverRuntime::process_command(
     case ReceiverCommand::OverlayBegin:
       return overlay_begin(command, size, local_monotonic_us);
     case ReceiverCommand::OverlayPatch:
-      return overlay_patch(command, size);
+      return overlay_patch(command, size, local_monotonic_us);
     case ReceiverCommand::OverlayPatchBatch:
-      return overlay_patch_batch(command, size);
+      return overlay_patch_batch(command, size, local_monotonic_us);
     case ReceiverCommand::OverlayCommit:
       return overlay_commit(command, size, local_monotonic_us);
     case ReceiverCommand::OverlayClear:
