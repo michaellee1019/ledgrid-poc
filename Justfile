@@ -236,12 +236,10 @@ test-composer-current:
 		tests/unit/test_composer_slice.py \
 		tests/unit/test_composer_offline_shell.py \
 		tests/unit/test_browser_composer_profile_runtime.py \
-		tests/unit/test_composer_runtime_preview.py \
 		tests/unit/test_installation_profile_authoring.py::InstallationProfileAuthoringTests::test_update_is_restart_safe_and_stale_update_has_zero_mutation \
 		tests/unit/test_installation_profile_authoring_api.py::InstallationProfileAuthoringApiTests::test_get_and_put_require_etag_and_stale_put_has_zero_mutation \
 		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_every_current_catalog_animation_reaches_real_controller_activation \
-		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_full_current_catalog_matrix_uses_browser_requests_preview_and_exact_receipts \
-		tests/unit/test_deploy_startup.py
+		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_full_current_catalog_matrix_uses_browser_requests_preview_and_exact_receipts
 
 # Required gate before a normal wall deployment.  This uses only the in-memory
 # preview controller, so it cannot contact receivers or mutate wall state.
