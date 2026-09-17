@@ -17,6 +17,7 @@ import numpy as np
 from drivers.spi_controller import (
     CAPABILITY_ALIGNED_ENVELOPE_V1,
     CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
+    CAPABILITY_FEC_ENVELOPE_V7,
     CAPABILITY_PRESENTATION_CONTEXT_V1,
     CAPABILITY_STATIC_LOCAL_BACKGROUND,
     CAPABILITY_STATUS_V3,
@@ -673,6 +674,8 @@ class MultiDeviceLEDController:
             current_required = (
                 CAPABILITY_STATUS_CRC32_V8 | CAPABILITY_ALIGNED_ENVELOPE_V1
             )
+            if getattr(device, "_fec_transport_requested", False):
+                current_required |= CAPABILITY_FEC_ENVELOPE_V7
             if (
                 int(status.get("receiver_status_version", 0) or 0) != 8
                 or status.get("receiver_status_integrity_established") is not True

@@ -111,6 +111,7 @@ def startup_model(*, sticky=False):
         device.total_leds = width * 138
         device.logical_device_id = index
         device.global_strip_offset = offsets[index]
+        device._receiver_status_integrity_required = True
         device._transport_envelope_enabled = True
         devices.append(device)
     wall = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
@@ -183,6 +184,34 @@ class ReceiverStartupStatusProtocolTests(unittest.TestCase):
         self.assertEqual(
             [(device.config_calls, device.lane_calls) for device in wall.devices],
             [(0, 0), (0, 0)],
+        )
+
+
+    def test_later_selected_fec_peer_rejects_roster_before_any_topology_mutation(self):
+        clock, wall = startup_model()
+        peer = wall.devices[3]
+        peer._fec_transport_requested = True
+        original_snapshot = peer.spi.snapshot
+
+        def snapshot_without_current_fec():
+            value = bytearray(original_snapshot())
+            capabilities = int.from_bytes(value[64:68], "big")
+            value[64:68] = (
+                capabilities & ~protocol.CAPABILITY_FEC_ENVELOPE_V7
+            ).to_bytes(4, "big")
+            checksum_status(value)
+            return bytes(value)
+
+        peer.spi.snapshot = snapshot_without_current_fec
+        peer.spi.ready = [peer.spi.snapshot(), peer.spi.snapshot()]
+        with patch.object(protocol.time, "sleep", side_effect=clock.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: clock.now):
+            with self.assertRaisesRegex(RuntimeError, "receiver 3.*not the supported"):
+                wall._initialize_receiver_identity_observability()
+
+        self.assertEqual(
+            [len(device.spi.applied) for device in wall.devices],
+            [0, 0, 0, 0, 0],
         )
 
     def test_steady_status_collection_keeps_one_query_per_receiver(self):
@@ -416,6 +445,8 @@ class ReceiverServicedConfigTests(unittest.TestCase):
     def test_concurrent_frame_producer_cannot_cross_config_ack_lock(self):
         device = controller()
         device._receiver_status_integrity_required = True
+        device.logical_device_id = 0
+        device.global_strip_offset = 0
         entered, release, frame_started, frame_done = (threading.Event() for _ in range(4))
         transfers, failures = [], []
 
