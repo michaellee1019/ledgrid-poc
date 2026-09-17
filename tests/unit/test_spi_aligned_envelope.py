@@ -5,6 +5,7 @@ import tempfile
 import threading
 import types
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -41,11 +42,19 @@ class _RecordingSpi:
         self.write_only_packets.append(packet)
 
 
-def _controller(*, envelope):
+def _controller(*, envelope=True):
     item = protocol.LEDController.__new__(protocol.LEDController)
     item.spi = _RecordingSpi()
     item._transport_lock = threading.RLock()
-    item._transport_envelope_enabled = envelope
+    item._transport_envelope_enabled = True
+    item._receiver_status_integrity_established = True
+    item._receiver_status_current_peer_rejected = False
+    item._receiver_capabilities = (
+        protocol.CAPABILITY_STATUS_CRC32_V8
+        | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
+    )
+    item._fec_transport_requested = False
+    item._fec_transport_enabled = False
     item.logical_device_id = 0
     item._spidev_buffer_size = protocol.MAX_SPI_TRANSFER
     item._writebytes2_supported = None
@@ -89,6 +98,21 @@ def _status_v3(receiver_packets, *, aligned):
     )
     response[64:68] = capabilities.to_bytes(4, "big")
     response[314] = protocol.STAGGER_OFF
+    return response
+
+
+def _status_v8(receiver_packets):
+    response = bytearray(protocol.RECEIVER_STATUS_BYTES_V8)
+    response[:5] = b"LGS8\x08"
+    response[12:16] = int(receiver_packets).to_bytes(4, "big")
+    response[64:68] = (
+        protocol.CAPABILITY_STATUS_CRC32_V8
+        | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
+    ).to_bytes(4, "big")
+    response[314] = protocol.STAGGER_OFF
+    response[protocol.RECEIVER_STATUS_BYTES_V7:] = binascii.crc32(
+        response[:protocol.RECEIVER_STATUS_BYTES_V7]
+    ).to_bytes(4, "big")
     return response
 
 
@@ -142,23 +166,17 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         self.assertEqual(packet[-3], 0)
         self.assert_crc(packet)
 
-    def test_status_queries_preserve_full_v3_through_v6_semantic_snapshots(self):
-        cases = (
-            (protocol.RECEIVER_STATUS_BYTES_V3, 328),
-            (protocol.RECEIVER_STATUS_BYTES_V4, 424),
-            (protocol.RECEIVER_STATUS_BYTES_V5, 776),
-            (protocol.RECEIVER_STATUS_BYTES_V6, 1224),
+    def test_status_query_carries_the_complete_current_v8_snapshot_length(self):
+        semantic = bytes((protocol.CMD_STATUS_QUERY,)) + bytes(
+            protocol.RECEIVER_STATUS_BYTES_V8 - 1
         )
-        for semantic_size, expected_wire_size in cases:
-            with self.subTest(semantic_size=semantic_size):
-                semantic = bytes((protocol.CMD_STATUS_QUERY,)) + bytes(
-                    semantic_size - 1
-                )
-                packet = protocol._encode_aligned_envelope(semantic)
-                self.assertEqual(len(packet), expected_wire_size)
-                self.assertEqual(int.from_bytes(packet[2:4], "big"), semantic_size)
-                self.assertEqual(packet[4:4 + semantic_size], semantic)
-                self.assert_crc(packet)
+        packet = protocol._encode_aligned_envelope(semantic)
+        self.assertEqual(len(packet), 1260)
+        self.assertEqual(
+            int.from_bytes(packet[2:4], "big"), protocol.RECEIVER_STATUS_BYTES_V8
+        )
+        self.assertEqual(packet[4:4 + len(semantic)], semantic)
+        self.assert_crc(packet)
 
     def test_exact_maximum_fits_4096_and_one_byte_more_fails_closed(self):
         semantic = bytes((protocol.CMD_NATIVE_CHUNK,)) + bytes(
@@ -189,105 +207,23 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
                 protocol._read_spidev_buffer_size(path.with_name("missing"))
             )
 
-    def test_controller_keeps_legacy_wire_until_three_fresh_observations(self):
-        item = _controller(envelope=False)
-        item._xfer(bytes((protocol.CMD_PING,)))
-        self.assertEqual(len(item.spi.packets[-1]), 3)
-        self.assertEqual(item.spi.packets[-1][0], protocol.CMD_PING)
-        self.assert_crc(item.spi.packets[-1])
 
-        item._xfer(bytes((protocol.CMD_STATUS_QUERY,)) + bytes(319))
-        self.assertEqual(len(item.spi.packets[-1]), 322)
-        self.assertEqual(item.spi.packets[-1][0], protocol.CMD_STATUS_QUERY)
-        self.assert_crc(item.spi.packets[-1])
 
-        for receiver_packets in (1, 2):
-            item._update_receiver_status_v3(
-                _status_v3(receiver_packets, aligned=True)
-            )
-            self.assertFalse(item._transport_envelope_enabled)
-        item._update_receiver_status_v3(_status_v3(3, aligned=True))
-        self.assertTrue(item._transport_envelope_enabled)
 
-        item._xfer(bytes((protocol.CMD_SET_ALL,)) + bytes(8 * 138 * 3))
-        self.assertEqual(len(item.spi.packets[-1]), 3320)
-        self.assertEqual(item.spi.packets[-1][0], protocol.CMD_ALIGNED_ENVELOPE)
-        self.assert_crc(item.spi.packets[-1])
 
-    def test_one_snapshot_and_repeated_stale_counter_never_enable(self):
-        item = _controller(envelope=False)
-        item._update_receiver_status_v3(_status_v3(7, aligned=True))
-        self.assertFalse(item._transport_envelope_enabled)
-        self.assertEqual(item._transport_envelope_candidate_streak, 1)
-        for _ in range(3):
-            item._update_receiver_status_v3(_status_v3(7, aligned=True))
-        self.assertFalse(item._transport_envelope_enabled)
-        self.assertEqual(item._transport_envelope_candidate_streak, 0)
-        self.assertEqual(item._transport_envelope_stale_observations, 3)
 
-    def test_one_fresh_absence_does_not_downgrade_but_three_do(self):
-        item = _controller(envelope=False)
-        for counter in (1, 2, 3):
-            item._update_receiver_status_v3(_status_v3(counter, aligned=True))
-        self.assertTrue(item._transport_envelope_enabled)
+    def test_current_steady_state_guard_adds_no_query_or_spi_io(self):
+        item = _controller()
+        item.query_causal_receiver_status = mock.Mock(
+            side_effect=AssertionError("steady-state guard must not query")
+        )
+        before = len(item.spi.packets)
 
-        item._update_receiver_status_v3(_status_v3(4, aligned=False))
-        self.assertTrue(item._transport_envelope_enabled)
-        self.assertEqual(item._transport_envelope_candidate_streak, 1)
-        item._update_receiver_status_v3(_status_v3(5, aligned=True))
-        self.assertTrue(item._transport_envelope_enabled)
-        self.assertEqual(item._transport_envelope_candidate_streak, 0)
+        for _ in range(1000):
+            item._require_current_receiver_protocol()
 
-        for counter in (6, 7, 8):
-            item._update_receiver_status_v3(_status_v3(counter, aligned=False))
-        self.assertFalse(item._transport_envelope_enabled)
-        self.assertEqual(item._transport_envelope_transitions, 2)
-
-    def test_reboot_counter_reset_requires_three_fresh_legacy_observations(self):
-        item = _controller(envelope=False)
-        item._receiver_status_responses = 0
-        item._legacy_snapshot_warned = False
-        item.debug = False
-        for counter in (100, 101, 102):
-            item._update_receiver_status_v3(_status_v3(counter, aligned=True))
-        self.assertTrue(item._transport_envelope_enabled)
-
-        for index, counter in enumerate((1, 2), start=1):
-            protocol.LEDController._update_receiver_status(
-                item, _status_v2(counter)
-            )
-            self.assertTrue(item._transport_envelope_enabled)
-            self.assertEqual(item._transport_envelope_candidate_streak, index)
-        protocol.LEDController._update_receiver_status(item, _status_v2(3))
-        self.assertFalse(item._transport_envelope_enabled)
-        self.assertEqual(item._transport_envelope_counter_resets, 1)
-
-    def test_invalid_miso_resets_pending_streak_without_flipping_active_state(self):
-        item = _controller(envelope=False)
-        for counter in (1, 2):
-            item._update_receiver_status_v3(_status_v3(counter, aligned=True))
-        self.assertEqual(item._transport_envelope_candidate_streak, 2)
-        invalid = bytearray(protocol.RECEIVER_STATUS_BYTES_V3)
-        protocol.LEDController._update_receiver_status(item, invalid)
-        self.assertFalse(item._transport_envelope_enabled)
-        self.assertEqual(item._transport_envelope_candidate_streak, 0)
-        self.assertEqual(item._transport_envelope_invalid_resets, 1)
-
-        for counter in (3, 4, 5):
-            item._update_receiver_status_v3(_status_v3(counter, aligned=True))
-        self.assertTrue(item._transport_envelope_enabled)
-        item._update_receiver_status_v3(_status_v3(6, aligned=False))
-        protocol.LEDController._update_receiver_status(item, bytes(10))
-        self.assertTrue(item._transport_envelope_enabled)
-        self.assertEqual(item._transport_envelope_candidate_streak, 0)
-        self.assertEqual(item._transport_envelope_invalid_resets, 1)
-
-        item._update_receiver_status_v3(_status_v3(7, aligned=False))
-        truncated = _status_v3(8, aligned=False)[:100]
-        protocol.LEDController._update_receiver_status(item, truncated)
-        self.assertTrue(item._transport_envelope_enabled)
-        self.assertEqual(item._transport_envelope_candidate_streak, 0)
-        self.assertEqual(item._transport_envelope_invalid_resets, 1)
+        item.query_causal_receiver_status.assert_not_called()
+        self.assertEqual(len(item.spi.packets), before)
 
     def test_controller_accounts_semantic_envelope_padding_crc_and_wire_bytes(self):
         item = _controller(envelope=True)
@@ -387,15 +323,15 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         item.total_leds = 138
         item._frame_packet = bytearray(1 + 138 * 3 + protocol.CRC_BYTES)
         item._aligned_frame_packet = bytearray(424)
-        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V8
         item._refresh_configuration = lambda: None
         item._update_receiver_status = types.MethodType(
             protocol.LEDController._update_receiver_status, item
         )
         item.spi.miso_responses = [
-            bytes(protocol.RECEIVER_STATUS_BYTES_V6),
-            bytes(protocol.RECEIVER_STATUS_BYTES_V6),
-            _status_v6(20, aligned=True),
+            bytes(protocol.RECEIVER_STATUS_BYTES_V8),
+            bytes(protocol.RECEIVER_STATUS_BYTES_V8),
+            _status_v8(20),
         ]
 
         item.set_all_pixels(
@@ -409,7 +345,7 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
 
         self.assertEqual(len(item.spi.response_packets), 3)
         for packet in item.spi.response_packets:
-            self.assertEqual(len(packet), 1224)
+            self.assertEqual(len(packet), 1260)
             self.assertEqual(packet[0], protocol.CMD_ALIGNED_ENVELOPE)
         self.assertEqual(len(item.spi.write_only_packets), 2)
         self.assertTrue(all(
@@ -505,7 +441,7 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
             protocol.LEDController._update_receiver_status, item
         )
         frame = np.zeros((8 * 138, 3), dtype=np.uint8)
-        fresh = bytes(_status_v3(20, aligned=True))
+        fresh = bytes(_status_v8(20))
         item.spi.miso_responses = [
             bytes(3320),
             fresh[:100],

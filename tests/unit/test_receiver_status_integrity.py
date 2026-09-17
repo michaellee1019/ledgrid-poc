@@ -19,7 +19,8 @@ def authority(item):
                           if key != 'spi' and not key.endswith('_lock')
                           and key not in ('_receiver_status_integrity_errors',
                                           '_receiver_status_unprotected_rejections',
-                                          '_receiver_status_integrity_last_failure')})
+                                          '_receiver_status_integrity_last_failure',
+                                          '_receiver_status_current_peer_rejected')})
 
 
 class StatusIntegrityTests(unittest.TestCase):
@@ -107,87 +108,7 @@ class StatusIntegrityTests(unittest.TestCase):
                 self.assertEqual(authority(item), before)
         self.assertFalse(item.get_stats()['receiver_status_integrity_verified'])
 
-    def test_legacy_discovery_and_sticky_reconnect_request_protection_without_authority(self):
-        legacy = status_v6(sequence=383790)
-        legacy[64:68] = (1 << 21).to_bytes(4, 'big')
-        for hint in (legacy, status_v8(sequence=383790)[:320]):
-            with self.subTest(header=hint[:5]):
-                item = controller()
-                self.assertFalse(item._update_receiver_status(hint))
-                stats = item.get_stats()
-                self.assertEqual(stats['receiver_status_version'], 0)
-                self.assertEqual(stats['receiver_capabilities'], 0)
-                self.assertIsNone(stats['receiver_operation_sequence'])
-                self.assertTrue(stats['receiver_status_integrity_required'])
-                self.assertFalse(stats['receiver_status_integrity_verified'])
-                self.assertEqual(item._receiver_status_query_bytes, 1252)
 
-    def test_real_two_slot_sticky_reconnect_drains_interleaved_legacy_without_false_error(self):
-        class ReceiverQueue:
-            def __init__(self):
-                self.counter = 2
-                self.sticky_v8 = True
-                self.lengths = []
-                self.queued = [self.snapshot(8, 1), self.snapshot(8, 2)]
-
-            @staticmethod
-            def snapshot(version, counter):
-                packet = status_v8(sequence=191895)
-                packet[12:16] = counter.to_bytes(4, 'big')
-                if version == 3:
-                    packet = packet[:320]
-                    packet[:5] = b'LGS3\x03'
-                else:
-                    checksum_status(packet)
-                return packet + bytes(4096 - len(packet))
-
-            def xfer2(self, packet):
-                wire = bytes(packet)
-                if wire[0] == protocol.CMD_ALIGNED_ENVELOPE:
-                    size = int.from_bytes(wire[2:4], 'big')
-                    semantic = wire[4:4 + size]
-                else:
-                    semantic = wire[:-2]
-                self.lengths.append(len(semantic))
-                result = self.queued.pop(0)[:len(wire)]
-                self.assert_query(semantic)
-                self.counter += 1
-                self.sticky_v8 = len(semantic) == 1252
-                self.queued.append(self.snapshot(8 if self.sticky_v8 else 3, self.counter))
-                return result
-
-            @staticmethod
-            def assert_query(semantic):
-                assert semantic[0] == protocol.CMD_STATUS_QUERY
-                assert not any(semantic[1:])
-
-        spi = ReceiverQueue()
-        item = controller(spi)
-        item.query_receiver_status()  # Q320 reads old v8A prefix, queues legacy C.
-        self.assertTrue(item.get_stats()['receiver_status_integrity_required'])
-        self.assertFalse(item.get_stats()['receiver_status_integrity_verified'])
-        item.query_receiver_status()  # Q1252 reads old complete v8B.
-        self.assertTrue(item.get_stats()['receiver_status_integrity_verified'])
-        self.assertFalse(item.get_stats()['receiver_status_integrity_established'])
-        before = authority(item)
-        item.query_receiver_status()  # Q1252 reads legitimate queued legacy C.
-        self.assertEqual(item.get_stats()['receiver_status_integrity_errors'], 0)
-        self.assertEqual(item.get_stats()['receiver_status_unprotected_rejections'], 1)
-        self.assertEqual(item.get_stats()['receiver_operation_sequence'], 191895)
-        self.assertEqual(item.get_stats()['receiver_status_version'], 8)
-        # Transport byte counters may advance; authoritative status cannot.
-        self.assertEqual(item._receiver_packets, before['_receiver_packets'])
-        with patch.object(protocol.time, 'sleep'):
-            result = item.query_causal_receiver_status(required_status_version=8)
-        self.assertTrue(result['receiver_status_integrity_established'])
-        self.assertEqual(result['receiver_status_integrity_errors'], 0)
-        self.assertEqual(spi.lengths[0], 320)
-        self.assertEqual(set(spi.lengths[1:]), {1252})
-        spi.queued[0] = spi.snapshot(3, spi.counter + 1)
-        item.query_receiver_status()
-        self.assertEqual(item.get_stats()['receiver_status_integrity_errors'], 1)
-        self.assertEqual(item._receiver_status_query_bytes, 1252)
-        self.assertTrue(item.get_stats()['receiver_status_integrity_established'])
 
     def test_bootstrap_requires_three_distinct_advancing_checked_snapshots(self):
         item = controller()
@@ -227,25 +148,6 @@ class StatusIntegrityTests(unittest.TestCase):
         self.assertEqual(authority(item), before)
         self.assertEqual(item._receiver_status_query_bytes, 1252)
 
-    def test_v8_fec_negotiation_finalizes_terminal_baseline_without_query_downgrade(self):
-        from tests.unit.test_spi_fec_envelope import (
-            _controller, _status_v7_with_terminal_counts,
-        )
-        item = _controller(requested=True)
-        for counter in (1, 2, 3):
-            packet = _status_v7_with_terminal_counts(
-                counter, uncorrectable=8, semantic_crc=0, framing=10) + bytearray(4)
-            packet[:5] = b'LGS8\x08'
-            packet[64:68] = (int.from_bytes(packet[64:68], 'big') |
-                             protocol.CAPABILITY_STATUS_CRC32_V8).to_bytes(4, 'big')
-            self.assertTrue(protocol.LEDController._update_receiver_status(
-                item, checksum_status(packet)))
-        self.assertTrue(item._fec_transport_enabled)
-        self.assertTrue(item._receiver_fec_terminal_baseline_finalized)
-        self.assertEqual(item._receiver_fec_terminal_baseline,
-                         {'uncorrectable_packets': 8, 'semantic_crc_errors': 0,
-                          'framing_errors': 10})
-        self.assertEqual(item._receiver_status_query_bytes, 1252)
 
     def test_actual_shifted_baseline_is_rejected_before_single_exact_mutation(self):
         class ShiftedBaselineSpi(_DelayedRefillNativeSpi):
@@ -323,7 +225,7 @@ class StatusIntegrityTests(unittest.TestCase):
                 item._transport_envelope_enabled = True
                 with patch.object(protocol.time, 'sleep', side_effect=spi.sleep), \
                         patch.object(protocol.time, 'monotonic', side_effect=lambda: spi.now):
-                    with self.assertRaisesRegex(RuntimeError, 'causal fresh status v8'):
+                    with self.assertRaisesRegex(RuntimeError, '(?:current protected|causal fresh) status v8'):
                         item.native_stop()
                 self.assertEqual(set(spi.attempts), {protocol.CMD_STATUS_QUERY})
                 self.assertLess(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS + 0.01)

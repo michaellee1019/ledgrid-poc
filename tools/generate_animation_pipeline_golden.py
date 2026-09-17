@@ -402,24 +402,24 @@ def build_fixture() -> Dict[str, Any]:
                 "controller_session_hex": session.hex(),
                 "generation": generation,
                 "span_count": 1,
-                "spans": [{"start": 0, "count": 1015}],
+                "spans": [{"start": 0, "count": 1014}],
             },
-            payload=_batch_entries(((0, 1015),)),
+            payload=_batch_entries(((0, 1014),)),
         ),
         _packet_vector(
             "overlay_patch_batch_maximum_spans",
             command_ids["overlay_patch_batch"],
-            batch_header(508),
+            batch_header(507),
             fields={
                 "controller_session_hex": session.hex(),
                 "generation": generation,
-                "span_count": 508,
+                "span_count": 507,
                 "spans": [
                     {"start": start, "count": 1}
-                    for start in range(0, 1016, 2)
+                    for start in range(0, 1014, 2)
                 ],
             },
-            payload=_batch_entries(tuple((start, 1) for start in range(0, 1016, 2))),
+            payload=_batch_entries(tuple((start, 1) for start in range(0, 1014, 2))),
         ),
         _packet_vector(
             "overlay_patch_batch_full_snapshot_tail",

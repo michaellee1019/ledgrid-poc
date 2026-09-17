@@ -38,7 +38,6 @@ from drivers.spi_controller import (
     OVERLAY_UPDATE_DELTA,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
     SPI_RESPONSE_QUEUE_DEPTH,
-    TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS,
     SPI_BUS,
     SPI_MODE,
     SPI_SPEED,
@@ -606,8 +605,7 @@ class MultiDeviceLEDController:
             self.devices.append(device)
 
         # All bus/controller objects must exist before observability I/O begins.
-        # Confirmed v3 receivers get their physical logical identity immediately;
-        # older receivers retain the exact legacy five-byte CONFIG packet.
+        # Establish the matched protected peer before any topology mutation.
         self._initialize_receiver_identity_observability()
         
         if self.debug:
@@ -660,68 +658,57 @@ class MultiDeviceLEDController:
         return self._receiver_identity_authority_digest
 
     def _initialize_receiver_identity_observability(self):
-        """Best-effort topology provisioning without blocking legacy streaming."""
+        """Preflight the complete current roster before topology mutation."""
+        current_devices = []
         for index, device in enumerate(self.devices):
-            try:
-                # Discovery and topology setup run before streaming can supply
-                # status. Pace the two-slot queue, then establish protected
-                # framing before any acknowledged provisioning mutation.
-                fresh_query = getattr(device, "query_fresh_receiver_status", None)
-                causal_query = getattr(device, "query_causal_receiver_status", None)
-                if callable(fresh_query):
-                    status = fresh_query()
-                    required = 8 if status.get("receiver_status_integrity_required") else 3
-                    if callable(causal_query) and (
-                        required == 8 or int(status.get("receiver_status_version", 0) or 0) >= 3
-                    ):
-                        status = causal_query(required_status_version=required)
-                else:
-                    # Legacy/dry-run facades retain their original interface.
-                    for _ in range(
-                        SPI_RESPONSE_QUEUE_DEPTH + TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
-                    ):
-                        status = device.query_receiver_status()
-                device.logical_device_id = index
-                config_ack = getattr(device, "configure_acknowledged", None)
-                lane_ack = getattr(device, "set_lane_mask_acknowledged", None)
-                if (int(status.get("receiver_status_version", 0) or 0) >= 3
-                        and callable(config_ack) and callable(lane_ack)):
-                    self._require_ack(config_ack(), "topology configuration", index)
-                    self._require_ack(
-                        lane_ack(self.receiver_lane_masks[index]), "lane-mask configuration", index
-                    )
-                else:
-                    device.configure()
-                    device.set_lane_mask(self.receiver_lane_masks[index])
-                if int(device.get_stats().get("receiver_status_version", 0) or 0) >= 3:
-                    if callable(causal_query):
-                        status = causal_query(required_status_version=3)
-                    else:
-                        for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
-                            status = device.query_receiver_status()
-                    expected_topology = {
-                        "receiver_logical_device": index,
-                        "receiver_active_strips": self.receiver_strip_counts[index],
-                        "receiver_global_strip_offset": (
-                            self.receiver_global_strip_offsets[index]
-                        ),
-                        "receiver_lane_mask": self.receiver_lane_masks[index],
-                    }
-                    mismatches = [
-                        f"{field}={status.get(field)!r}, expected {expected!r}"
-                        for field, expected in expected_topology.items()
-                        if status.get(field) != expected
-                    ]
-                    if mismatches:
-                        raise RuntimeError(
-                            "reported topology mismatch after CONFIG/lane-mask: "
-                            + "; ".join(mismatches)
-                        )
-            except Exception as exc:
-                print(
-                    f"[LEDGRID] Receiver {index} topology observability unavailable: {exc}; "
-                    "continuing with ordinary host streaming",
-                    file=sys.stderr,
+            causal_query = getattr(device, "query_causal_receiver_status", None)
+            config_ack = getattr(device, "configure_acknowledged", None)
+            lane_ack = getattr(device, "set_lane_mask_acknowledged", None)
+            if not all(callable(item) for item in (causal_query, config_ack, lane_ack)):
+                raise RuntimeError(
+                    f"receiver {index} does not implement the current protected protocol"
+                )
+            status = causal_query(required_status_version=8)
+            capabilities = int(status.get("receiver_capabilities", 0) or 0)
+            current_required = (
+                CAPABILITY_STATUS_CRC32_V8 | CAPABILITY_ALIGNED_ENVELOPE_V1
+            )
+            if (
+                int(status.get("receiver_status_version", 0) or 0) != 8
+                or status.get("receiver_status_integrity_established") is not True
+                or current_required & ~capabilities
+            ):
+                raise RuntimeError(
+                    f"receiver {index} is not the supported protected status-v8 peer"
+                )
+            current_devices.append((index, device, causal_query, config_ack, lane_ack))
+
+        for index, device, causal_query, config_ack, lane_ack in current_devices:
+            device.logical_device_id = index
+            self._require_ack(config_ack(), "topology configuration", index)
+            self._require_ack(
+                lane_ack(self.receiver_lane_masks[index]),
+                "lane-mask configuration",
+                index,
+            )
+            status = causal_query(required_status_version=8)
+            expected_topology = {
+                "receiver_logical_device": index,
+                "receiver_active_strips": self.receiver_strip_counts[index],
+                "receiver_global_strip_offset": (
+                    self.receiver_global_strip_offsets[index]
+                ),
+                "receiver_lane_mask": self.receiver_lane_masks[index],
+            }
+            mismatches = [
+                f"{field}={status.get(field)!r}, expected {expected!r}"
+                for field, expected in expected_topology.items()
+                if status.get(field) != expected
+            ]
+            if mismatches:
+                raise RuntimeError(
+                    "reported topology mismatch after CONFIG/lane-mask: "
+                    + "; ".join(mismatches)
                 )
 
     def refresh_receiver_status(self, request_id: str) -> Dict[str, Any]:
@@ -736,17 +723,22 @@ class MultiDeviceLEDController:
                     before = int(
                         device.get_stats().get("receiver_status_responses", 0) or 0
                     )
-                    fresh_query = getattr(
-                        device, "query_fresh_receiver_status", None
+                    causal_query = getattr(
+                        device, "query_causal_receiver_status", None
                     )
-                    if callable(fresh_query):
-                        status = fresh_query()
-                    else:
-                        status = None
-                        # Compatibility for test/dry-run facades that expose
-                        # only the original single-transfer query surface.
-                        for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
-                            status = device.query_receiver_status()
+                    if not callable(causal_query):
+                        raise RuntimeError(
+                            "receiver does not implement the current protected protocol"
+                        )
+                    status = causal_query(required_status_version=8)
+                    if (
+                        not isinstance(status, dict)
+                        or int(status.get("receiver_status_version", 0) or 0) != 8
+                        or status.get("receiver_status_integrity_established") is not True
+                    ):
+                        raise RuntimeError(
+                            "receiver did not provide current protected status v8"
+                        )
                     after = int(
                         device.get_stats().get("receiver_status_responses", 0) or 0
                     )
@@ -2118,7 +2110,7 @@ class MultiDeviceLEDController:
             }
 
     def _trusted_receiver_lane_status(self, logical_device):
-        """Return one causally fresh v3+ lane-mask status for one receiver.
+        """Return one causally fresh protected-v8 lane-mask status.
 
         This is deliberately kept next to trusted complete-frame receipts: a
         diagnostic lane change must not trust the controller's configured
@@ -2137,12 +2129,12 @@ class MultiDeviceLEDController:
         fresh_query = getattr(device, "query_causal_receiver_status", None)
         if not callable(fresh_query):
             raise RuntimeError("receiver lane-mask acknowledgement requires fresh status")
-        status = fresh_query(required_status_version=3)
+        status = fresh_query(required_status_version=8)
         after = status.get("receiver_status_responses") if isinstance(status, dict) else None
         if isinstance(after, bool) or not isinstance(after, int) or after <= before:
             raise RuntimeError("receiver lane-mask acknowledgement used a stale status")
-        if int(status.get("receiver_status_version", 0) or 0) < 3:
-            raise RuntimeError("receiver lane-mask acknowledgement requires receiver status v3")
+        if int(status.get("receiver_status_version", 0) or 0) != 8:
+            raise RuntimeError("receiver lane-mask acknowledgement requires protected status v8")
         if status.get("receiver_logical_device") != logical_device:
             raise RuntimeError("receiver lane-mask acknowledgement has the wrong receiver")
         lane_mask = status.get("receiver_lane_mask")
@@ -2188,7 +2180,7 @@ class MultiDeviceLEDController:
             operation_status = device.set_lane_mask_acknowledged(lane_mask)
             if (
                 not isinstance(operation_status, dict)
-                or int(operation_status.get("receiver_status_version", 0) or 0) < 3
+                or int(operation_status.get("receiver_status_version", 0) or 0) != 8
                 or operation_status.get("receiver_logical_device") != logical_device
                 or not self._status_result_ok(operation_status)
             ):
@@ -2560,41 +2552,49 @@ class MultiDeviceLEDController:
         require_capability=False,
         require_identity=True,
         required_capabilities=None,
-        required_status_version=3,
+        required_status_version=8,
         status_evidence=None,
     ):
+        if required_status_version != 8:
+            raise ValueError("only current protected status v8 is supported")
         statuses = []
         for index, device in enumerate(self.devices):
             status = device.query_receiver_status()
+            qualified = bool(
+                isinstance(status, dict)
+                and int(status.get("receiver_status_version", 0) or 0) == 8
+                and status.get("receiver_status_integrity_established") is True
+                and getattr(device, "_last_transfer_status_sampled", True)
+            )
+            if not qualified:
+                query = getattr(device, "query_causal_receiver_status", None)
+                if not callable(query):
+                    raise RuntimeError(
+                        f"receiver {index} cannot obtain current protected status v8"
+                    )
+                status = query(required_status_version=8)
             if status_evidence is not None:
                 status_evidence.append(self._foreground_status_evidence(index, status))
             if not isinstance(status, dict):
                 raise RuntimeError(f"receiver {index} returned no status")
-            if (required_status_version > 3 and (
-                    int(status.get("receiver_status_version", 0) or 0) < required_status_version
-                    or not getattr(device, "_last_transfer_status_sampled", True))):
-                # A legacy-safe v3 packet can follow an exact v7 command ACK.
-                # Its absent foreground extension is not evidence of an empty
-                # generation. Drain read-only for an actual qualified snapshot.
-                query = getattr(device, "query_causal_receiver_status", None)
-                if not callable(query):
-                    raise RuntimeError(
-                        f"receiver {index} cannot obtain fresh status v{required_status_version}"
-                    )
-                status = query(required_status_version=required_status_version)
-                if status_evidence is not None:
-                    status_evidence.append(self._foreground_status_evidence(index, status))
-                if not isinstance(status, dict):
-                    raise RuntimeError(f"receiver {index} returned no status")
-                if (int(status.get("receiver_status_version", 0) or 0) < required_status_version
-                        or not getattr(device, "_last_transfer_status_sampled", True)):
-                    raise RuntimeError(
-                        f"receiver {index} did not provide fresh status v{required_status_version}"
-                    )
-            if (require_capability
-                    and int(status.get("receiver_status_version", 0) or 0) < 3):
-                raise RuntimeError(f"receiver {index} does not expose status v3")
+            if (
+                int(status.get("receiver_status_version", 0) or 0) != 8
+                or status.get("receiver_status_integrity_established") is not True
+                or not getattr(device, "_last_transfer_status_sampled", True)
+            ):
+                raise RuntimeError(
+                    f"receiver {index} did not provide current protected status v8"
+                )
             capabilities = int(status.get("receiver_capabilities", 0) or 0)
+            current_required = (
+                CAPABILITY_STATUS_CRC32_V8 | CAPABILITY_ALIGNED_ENVELOPE_V1
+            )
+            missing_current = current_required & ~capabilities
+            if missing_current:
+                raise RuntimeError(
+                    f"receiver {index} lacks current protocol capabilities "
+                    f"0x{missing_current:08x}"
+                )
             required = (
                 LOCAL_BACKGROUND_REQUIRED_CAPABILITIES
                 if required_capabilities is None
@@ -2884,7 +2884,7 @@ class MultiDeviceLEDController:
                 statuses = self._receiver_statuses(
                     require_capability=True,
                     required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
-                    required_status_version=4,
+                    required_status_version=8,
                 )
                 if any(int(status.get("receiver_base_mode", -1)) != 1 for status in statuses):
                     raise RuntimeError("sparse foreground requires local background ownership")
@@ -3010,7 +3010,7 @@ class MultiDeviceLEDController:
                 committed = self._receiver_statuses(
                     require_capability=True,
                     required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
-                    required_status_version=4,
+                    required_status_version=8,
                     status_evidence=publish_evidence["post_commit_statuses"],
                 )
                 receiver_states = []
@@ -3141,7 +3141,7 @@ class MultiDeviceLEDController:
                 statuses = self._receiver_statuses(
                     require_capability=True,
                     required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
-                    required_status_version=4,
+                    required_status_version=8,
                 )
                 revisions = {
                     int(status.get("receiver_foreground_scene_revision", -1))
@@ -3245,7 +3245,7 @@ class MultiDeviceLEDController:
                     statuses = self._receiver_statuses(
                         require_capability=True,
                         required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
-                        required_status_version=4,
+                        required_status_version=8,
                     )
                     for index, status in enumerate(statuses):
                         if int(status.get("receiver_foreground_state", -1)) != 0:
@@ -3276,19 +3276,21 @@ class MultiDeviceLEDController:
             return not errors
 
     def _provision_local_identities(self):
-        """Provision physical host mapping before any context is staged."""
-        for device in self.devices:
-            for _ in range(2):
-                device.query_receiver_status()
+        """Reconfirm current protected authority before context staging."""
         self._receiver_statuses(
-            require_capability=True, require_identity=False
+            require_capability=True, require_identity=False,
+            required_status_version=8,
         )
         for index, device in enumerate(self.devices):
             device.logical_device_id = index
-            device.configure()
-            for _ in range(2):
-                device.query_receiver_status()
-        return self._receiver_statuses(require_capability=True)
+            self._require_ack(
+                device.configure_acknowledged(),
+                "topology configuration",
+                index,
+            )
+        return self._receiver_statuses(
+            require_capability=True, required_status_version=8
+        )
 
     def _commit_presentation_contexts(self, context):
         """Commit each board against one compensated host monotonic anchor."""
@@ -3765,7 +3767,6 @@ class MultiDeviceLEDController:
         crc_bytes_sent = 0
         errors = 0
         receiver_status_devices = 0
-        receiver_legacy_status_devices = 0
         receiver_crc_errors = 0
         receiver_packets = 0
         receiver_crc_ok_packets = 0
@@ -3897,8 +3898,6 @@ class MultiDeviceLEDController:
                 receiver_status_devices += 1
                 receiver_lane_masks.append(int(stats.get('receiver_lane_mask', 0xFF)))
                 receiver_stagger_phases.append(int(stats.get('receiver_stagger_phases', 0)))
-                if stats.get('receiver_status_legacy'):
-                    receiver_legacy_status_devices += 1
             receiver_crc_errors += int(stats.get('receiver_crc_errors', 0) or 0)
             receiver_packets += int(stats.get('receiver_packets', 0) or 0)
             receiver_crc_ok_packets += int(stats.get('receiver_crc_ok_packets', 0) or 0)
@@ -4110,7 +4109,6 @@ class MultiDeviceLEDController:
                 'crc_bytes_sent': crc_bytes_sent,
                 'errors': errors,
                 'receiver_status_devices': receiver_status_devices,
-                'receiver_legacy_status_devices': receiver_legacy_status_devices,
                 'receiver_lane_masks': receiver_lane_masks,
                 'receiver_stagger_phases': receiver_stagger_phases,
                 'receiver_crc_errors': receiver_crc_errors,

@@ -77,7 +77,6 @@ RECEIVER_STATUS_BYTES_V8 = 1252
 # The ESP32 slave keeps two response buffers queued. A command's result is
 # therefore observable after two complete status-query transfers.
 SPI_RESPONSE_QUEUE_DEPTH = 2
-TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS = 3
 # Full-frame streaming does not consume a command acknowledgement, but parsing
 # the several-kilobyte full-duplex response from every SET_ALL forces spidev to
 # materialize thousands of Python integers per receiver and frame.  Keep an
@@ -102,8 +101,8 @@ STORAGE_COMMAND_ACK_TIMEOUT_SECONDS = 5.0
 # A streamed receiver can be inside a roughly 4.5 ms parallel-LED presentation
 # when its completed SPI transaction becomes available to the receiver task.
 # Pace queue-drain queries beyond that installed display cycle so the third
-# transfer can actually clock the requested extended snapshot instead of three
-# already-queued legacy-safe v3 responses.
+# transfer can clock a causally current protected snapshot instead of an older
+# queued v8 response.
 FRESH_STATUS_DRAIN_INTERVAL_SECONDS = 0.005
 MAX_PIXELS_SET_ALL = (MAX_ALIGNED_SEMANTIC_BYTES - 1) // 3
 MAX_PIXELS_PER_RANGE = min(255, (MAX_ALIGNED_SEMANTIC_BYTES - 4) // 3)
@@ -496,15 +495,6 @@ MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
 FEC_MAX_RGBA_PIXELS_PER_PATCH = (
     MAX_FEC_SEMANTIC_BYTES - OVERLAY_PATCH_HEADER_BYTES
 ) // 4
-LEGACY_MAX_RGBA_PIXELS_PER_PATCH = (
-    MAX_SPI_TRANSFER - OVERLAY_PATCH_HEADER_BYTES - CRC_BYTES
-) // 4
-LEGACY_MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
-    MAX_SPI_TRANSFER
-    - OVERLAY_PATCH_BATCH_HEADER_BYTES
-    - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
-    - CRC_BYTES
-) // 4
 PROFILE_BINDING_BYTES = 64
 PROFILE_PREFLIGHT_BYTES = 69
 PROFILE_BEGIN_BYTES = 81
@@ -656,14 +646,6 @@ ALL_LANES_MASK = 0xFF
 STAGGER_OFF = 1
 MAX_STAGGER_PHASES = 3
 
-# The receiver's MISO buffer is zero-initialized and firmware only writes the
-# snapshot bytes it knows about, so a field added past a previously complete
-# layout reads back as zero on a board that was flashed before the field
-# existed. Zero is outside every legal phase count, which makes it a usable
-# sentinel for "flashed firmware predates stagger_phases".
-LEGACY_SNAPSHOT_SENTINEL = 0
-
-
 class LEDController:
     """Control LED strips via SPI"""
     
@@ -742,8 +724,6 @@ class LEDController:
         self._receiver_status_seen = False
         self._receiver_status_version = 0
         self._receiver_status_max_version_seen = 0
-        self._receiver_status_legacy = False
-        self._legacy_snapshot_warned = False
         self._receiver_status_responses = 0
         self._receiver_status_misses = 0
         self._receiver_packets = 0
@@ -863,29 +843,10 @@ class LEDController:
         self._receiver_profile_activations = 0
         self._receiver_profile_restores = 0
         self._clear_receiver_native_status()
-        self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V3
-        # Rolling-deployment safety: emit legacy packets until this exact
-        # receiver proves aligned-envelope support across three fresh,
-        # counter-advancing status snapshots. New firmware continues decoding
-        # both wire formats.
-        self._transport_envelope_enabled = False
-        self._transport_envelope_candidate = None
-        self._transport_envelope_candidate_streak = 0
-        self._transport_envelope_last_receiver_packets = None
-        self._transport_envelope_fresh_observations = 0
-        self._transport_envelope_stale_observations = 0
-        self._transport_envelope_counter_resets = 0
-        self._transport_envelope_invalid_resets = 0
-        self._transport_envelope_transitions = 0
+        self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
+        # The installed pair uses one current framing and status contract.
+        self._transport_envelope_enabled = True
         self._fec_transport_enabled = False
-        self._fec_transport_candidate = None
-        self._fec_transport_candidate_streak = 0
-        self._fec_transport_last_receiver_packets = None
-        self._fec_transport_fresh_observations = 0
-        self._fec_transport_stale_observations = 0
-        self._fec_transport_counter_resets = 0
-        self._fec_transport_invalid_resets = 0
-        self._fec_transport_transitions = 0
         self._fec_frames_sent = 0
         self._fec_codewords_sent = 0
         self._fec_parity_bytes_sent = 0
@@ -897,14 +858,16 @@ class LEDController:
         self._writebytes2_supported = None
         self._last_transfer_captured_response = False
         self._last_transfer_status_sampled = False
-        self._receiver_status_integrity_required = False
+        self._receiver_status_integrity_required = True
         self._receiver_status_integrity_verified = False
         self._receiver_status_integrity_established = False
         self._receiver_status_integrity_fresh_count = 0
         self._receiver_status_integrity_last_packets = None
+        self._receiver_status_last_packets = None
         self._receiver_status_integrity_errors = 0
         self._receiver_status_integrity_last_failure = None
         self._receiver_status_unprotected_rejections = 0
+        self._receiver_status_current_peer_rejected = False
         self._command_transfer_diagnostic_id = 0
         self._command_transfer_diagnostics = []
         self._full_frame_sequence = 0
@@ -1005,7 +968,6 @@ class LEDController:
         """Return whether one pixel-bearing sparse command uses negotiated FEC."""
         return bool(
             command in (CMD_OVERLAY_PATCH, CMD_OVERLAY_PATCH_BATCH)
-            and getattr(self, "_transport_envelope_enabled", False)
             and getattr(self, "_fec_transport_requested", False)
             and getattr(self, "_fec_transport_enabled", False)
         )
@@ -1013,9 +975,7 @@ class LEDController:
     def _sparse_transport_semantic_limit(self):
         if self._fec_sparse_command_enabled(CMD_OVERLAY_PATCH_BATCH):
             return MAX_FEC_SEMANTIC_BYTES
-        if getattr(self, "_transport_envelope_enabled", False):
-            return MAX_ALIGNED_SEMANTIC_BYTES
-        return MAX_SPI_TRANSFER - CRC_BYTES
+        return MAX_ALIGNED_SEMANTIC_BYTES
 
     def sparse_overlay_batch_capacity(self):
         """Return the negotiated semantic and per-span limits for one route."""
@@ -1034,9 +994,25 @@ class LEDController:
         """Return the selected wire size for bounded command diagnostics."""
         if self._fec_sparse_command_enabled(command):
             return _fec_envelope_wire_size(payload_length)
-        if getattr(self, "_transport_envelope_enabled", False):
-            return _aligned_envelope_wire_size(payload_length)
-        return payload_length + CRC_BYTES
+        return _aligned_envelope_wire_size(payload_length)
+
+    def _require_current_receiver_protocol(self):
+        """Establish the matched v8/aligned contract before any mutation."""
+        if getattr(self, "_receiver_status_current_peer_rejected", False):
+            raise RuntimeError(
+                "unsupported receiver protocol: current protected status v8 required"
+            )
+        if not self._receiver_status_integrity_established:
+            self.query_causal_receiver_status(required_status_version=8)
+        required = CAPABILITY_STATUS_CRC32_V8 | CAPABILITY_ALIGNED_ENVELOPE_V1
+        if getattr(self, "_fec_transport_requested", False):
+            required |= CAPABILITY_FEC_ENVELOPE_V7
+        missing = required & ~int(self._receiver_capabilities)
+        if missing:
+            raise RuntimeError(
+                "unsupported receiver protocol: missing current capabilities "
+                f"0x{missing:08x}"
+            )
 
     def _xfer_packet(self, buf, payload_length, *, response_required=True):
         """Finalize and transfer a packet whose CRC storage is preallocated."""
@@ -1044,13 +1020,9 @@ class LEDController:
         if transport_lock is None:
             transport_lock = self._transport_lock = threading.RLock()
         with transport_lock:
-            envelope_enabled = bool(
-                getattr(self, "_transport_envelope_enabled", False)
-                # A protected-status query defines aligned framing itself;
-                # bootstrap need not trust legacy capability observations.
-                or (payload_length == RECEIVER_STATUS_BYTES_V8
-                    and buf[0] == CMD_STATUS_QUERY)
-            )
+            if payload_length and int(buf[0]) != CMD_STATUS_QUERY:
+                self._require_current_receiver_protocol()
+            envelope_enabled = True
             fec_sparse_command = bool(
                 payload_length
                 and self._fec_sparse_command_enabled(int(buf[0]))
@@ -1065,10 +1037,7 @@ class LEDController:
                 )
             )
             maximum_payload = (
-                MAX_FEC_SEMANTIC_BYTES
-                if fec_enabled
-                else MAX_ALIGNED_SEMANTIC_BYTES if envelope_enabled
-                else MAX_SPI_TRANSFER - CRC_BYTES
+                MAX_FEC_SEMANTIC_BYTES if fec_enabled else MAX_ALIGNED_SEMANTIC_BYTES
             )
             if payload_length < 1 or payload_length > maximum_payload:
                 raise ValueError(
@@ -1131,13 +1100,6 @@ class LEDController:
                     - payload_length
                     - CRC_BYTES
                 )
-            else:
-                crc = _crc16_ccitt(memoryview(buf)[:payload_length])
-                buf[payload_length] = (crc >> 8) & 0xFF
-                buf[payload_length + 1] = crc & 0xFF
-                wire = buf
-                envelope_bytes = 0
-                padding_bytes = 0
             # Preserve the established transport-counter contract: these
             # counters describe the one kernel transfer attempt, including an
             # ambiguous ioctl failure that must never be retried.  FEC's
@@ -1251,8 +1213,7 @@ class LEDController:
 
     def _fec_full_frame_enabled(self):
         return bool(
-            getattr(self, "_transport_envelope_enabled", False)
-            and getattr(self, "_fec_transport_requested", False)
+            getattr(self, "_fec_transport_requested", False)
             and getattr(self, "_fec_transport_enabled", False)
         )
 
@@ -1502,191 +1463,61 @@ class LEDController:
 
     def _update_receiver_status(self, response, *, full_status_expected=False,
                                 transfer_bytes=None):
-        """Parse the ESP32 status snapshot returned alongside an SPI write."""
-        protected = bool(getattr(self, "_receiver_status_integrity_required", False))
+        """Accept only the complete CRC-protected current status snapshot."""
         magic = tuple(response[:4]) if response is not None else ()
-        if magic == RECEIVER_STATUS_MAGIC_V8 or protected:
-            if response is None or len(response) < RECEIVER_STATUS_BYTES_V8:
-                if (not protected and magic == RECEIVER_STATUS_MAGIC_V8
-                        and len(response) >= 5 and int(response[4]) == 8):
-                    # Reconnecting to a sticky-v8 receiver may clock only its
-                    # prefix. Treat that header as discovery, never authority.
-                    self._receiver_status_integrity_required = True
-                    self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
-                if full_status_expected:
-                    self._record_status_integrity_failure(
-                        response, "truncated_snapshot", transfer_bytes=transfer_bytes
-                    )
-                return False
-            if magic != RECEIVER_STATUS_MAGIC_V8:
-                legacy = magic in (
-                    RECEIVER_STATUS_MAGIC, RECEIVER_STATUS_MAGIC_V2,
-                    RECEIVER_STATUS_MAGIC_V3, RECEIVER_STATUS_MAGIC_V4,
-                    RECEIVER_STATUS_MAGIC_V5, RECEIVER_STATUS_MAGIC_V6,
-                    RECEIVER_STATUS_MAGIC_V7,
-                )
-                if legacy:
-                    self._receiver_status_unprotected_rejections = getattr(
-                        self, "_receiver_status_unprotected_rejections", 0
-                    ) + 1
-                # Initial queued legacy replies are expected discovery drains.
-                # Unknown headers, or a downgrade after the causal bootstrap,
-                # are integrity failures and remain visible to strict health.
-                if not legacy or getattr(self, "_receiver_status_integrity_established", False):
-                    self._record_status_integrity_failure(
-                        response, "legacy_after_bootstrap" if legacy else "invalid_header",
-                        transfer_bytes=transfer_bytes,
-                    )
-                return False
-            checksum = binascii.crc32(bytes(response[:RECEIVER_STATUS_BYTES_V7])) & 0xFFFFFFFF
-            if (int(response[4]) != 8
-                    or self._response_u32(response, RECEIVER_STATUS_BYTES_V7) != checksum):
+        if response is None or len(response) < RECEIVER_STATUS_BYTES_V8:
+            if full_status_expected:
                 self._record_status_integrity_failure(
-                    response, "invalid_version" if int(response[4]) != 8 else "crc32_mismatch",
-                    transfer_bytes=transfer_bytes, computed_crc32=checksum,
+                    response, "truncated_snapshot", transfer_bytes=transfer_bytes
                 )
-                return False
-            # Nothing authoritative, including negotiation state, changes
-            # until the complete snapshot and header pass the checksum.
-            self._receiver_status_integrity_required = True
-            self._receiver_status_integrity_verified = True
-            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
-            fresh = bool(self._update_receiver_status_v7(response))
-            if not getattr(self, "_receiver_status_integrity_established", False):
-                packets = self._receiver_packets
-                previous = getattr(self, "_receiver_status_integrity_last_packets", None)
-                count = getattr(self, "_receiver_status_integrity_fresh_count", 0)
-                if previous is not None and packets <= previous:
-                    count = 0
-                if fresh:
-                    count += 1
-                self._receiver_status_integrity_last_packets = packets
-                self._receiver_status_integrity_fresh_count = count
-                # A legacy query from a reconnecting host may have queued one
-                # legacy reply behind a previously queued v8 reply. Only after
-                # this causal barrier is any further legacy reply a downgrade.
-                self._receiver_status_integrity_established = count > SPI_RESPONSE_QUEUE_DEPTH
-            return fresh
-        if (response is not None and len(response) >= RECEIVER_STATUS_BYTES_V3
-                and magic in (RECEIVER_STATUS_MAGIC_V3, RECEIVER_STATUS_MAGIC_V4,
-                              RECEIVER_STATUS_MAGIC_V5, RECEIVER_STATUS_MAGIC_V6,
-                              RECEIVER_STATUS_MAGIC_V7)
-                and self._response_u32(response, 64) & CAPABILITY_STATUS_CRC32_V8):
-            # Legacy bytes advertise discovery only, never protected authority.
-            self._receiver_status_integrity_required = True
-            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
             return False
-        # SPI is full duplex, so the response can only be as long as the
-        # command. Short control/configuration transfers cannot carry either
-        # status structure and therefore are not telemetry misses.
-        if response is None or len(response) < RECEIVER_STATUS_BYTES:
-            self._reset_transport_envelope_candidate(invalid=False)
-            self._reset_fec_transport_candidate(invalid=False)
-            return False
-        magic = tuple(int(response[index]) for index in range(4))
-        indicated_status = {
-            RECEIVER_STATUS_MAGIC_V2: (2, RECEIVER_STATUS_BYTES_V2),
-            RECEIVER_STATUS_MAGIC_V3: (3, RECEIVER_STATUS_BYTES_V3),
-            RECEIVER_STATUS_MAGIC_V4: (4, RECEIVER_STATUS_BYTES_V4),
-            RECEIVER_STATUS_MAGIC_V5: (5, RECEIVER_STATUS_BYTES_V5),
-            RECEIVER_STATUS_MAGIC_V6: (6, RECEIVER_STATUS_BYTES_V6),
-            RECEIVER_STATUS_MAGIC_V7: (7, RECEIVER_STATUS_BYTES_V7),
-        }.get(magic)
-        indicated_status_bytes = None
-        if indicated_status is not None:
-            indicated_status_version, indicated_status_bytes = indicated_status
-            if (
-                len(response) < indicated_status_bytes
-                or int(response[4]) != indicated_status_version
-            ):
-                self._reset_transport_envelope_candidate(invalid=False)
-                self._reset_fec_transport_candidate(invalid=False)
-                return False
-        known_status_bytes = {
-            2: RECEIVER_STATUS_BYTES_V2,
-            3: RECEIVER_STATUS_BYTES_V3,
-            4: RECEIVER_STATUS_BYTES_V4,
-            5: RECEIVER_STATUS_BYTES_V5,
-            6: RECEIVER_STATUS_BYTES_V6,
-            7: RECEIVER_STATUS_BYTES_V7,
-        }.get(getattr(self, '_receiver_status_version', 0), RECEIVER_STATUS_BYTES)
-        if indicated_status_bytes is None and len(response) < known_status_bytes:
-            # The Host clocked an ordinary command shorter than the known
-            # atomic status snapshot. This breaks a pending consecutive streak
-            # but is neither corruption nor a telemetry miss.
-            self._reset_transport_envelope_candidate(invalid=False)
-            self._reset_fec_transport_candidate(invalid=False)
-            return False
-        if magic == RECEIVER_STATUS_MAGIC_V7 and len(response) >= RECEIVER_STATUS_BYTES_V7:
-            return bool(self._update_receiver_status_v7(response))
-        if magic == RECEIVER_STATUS_MAGIC_V6 and len(response) >= RECEIVER_STATUS_BYTES_V6:
-            return bool(self._update_receiver_status_v6(response))
-        if magic == RECEIVER_STATUS_MAGIC_V5 and len(response) >= RECEIVER_STATUS_BYTES_V5:
-            return bool(self._update_receiver_status_v5(response))
-        if magic == RECEIVER_STATUS_MAGIC_V4 and len(response) >= RECEIVER_STATUS_BYTES_V4:
-            return bool(self._update_receiver_status_v4(response))
-        if magic == RECEIVER_STATUS_MAGIC_V3 and len(response) >= RECEIVER_STATUS_BYTES_V3:
-            return bool(self._update_receiver_status_v3(response))
-
-        if magic == RECEIVER_STATUS_MAGIC_V2 and len(response) >= RECEIVER_STATUS_BYTES_V2:
-            self._receiver_status_seen = True
-            self._note_receiver_status_version(int(response[4]))
-            self._receiver_status_responses = getattr(self, '_receiver_status_responses', 0) + 1
-            self._receiver_active_strips = int(response[6])
-            self._receiver_lane_mask = int(response[7])
-            self._receiver_leds_per_strip = self._response_u16(response, 8)
-            self._receiver_queued_transactions = self._response_u16(response, 10)
-            self._receiver_packets = self._response_u32(response, 12)
-            self._receiver_crc_errors = self._response_u32(response, 16)
-            self._receiver_crc_ok_packets = self._response_u32(response, 20)
-            self._receiver_frames_accepted = self._response_u32(response, 24)
-            self._receiver_frames_displayed = self._response_u32(response, 28)
-            self._receiver_frames_rendered = self._receiver_frames_displayed
-            self._receiver_frames_superseded = self._response_u32(response, 32)
-            self._receiver_publish_drops = self._response_u32(response, 36)
-            self._receiver_spi_queue_errors = self._response_u32(response, 40)
-            self._receiver_last_crc_us = self._response_u16(response, 44)
-            self._receiver_last_copy_us = self._response_u16(response, 46)
-            self._receiver_last_encode_us = self._response_u16(response, 48)
-            self._receiver_last_show_us = self._response_u16(response, 50)
-            self._receiver_last_accepted_sequence = self._response_u32(response, 52)
-            self._receiver_last_displayed_sequence = self._response_u32(response, 56)
-            self._receiver_display_errors = self._response_u32(response, 60)
-            # Zero means the receiver predates the field; leave it as read so
-            # callers can tell that apart from a legal phase count.
-            self._receiver_stagger_phases = int(response[64])
-            self._note_legacy_snapshot(
-                self._receiver_stagger_phases == LEGACY_SNAPSHOT_SENTINEL
+        if magic != RECEIVER_STATUS_MAGIC_V8:
+            legacy = magic in (
+                RECEIVER_STATUS_MAGIC, RECEIVER_STATUS_MAGIC_V2,
+                RECEIVER_STATUS_MAGIC_V3, RECEIVER_STATUS_MAGIC_V4,
+                RECEIVER_STATUS_MAGIC_V5, RECEIVER_STATUS_MAGIC_V6,
+                RECEIVER_STATUS_MAGIC_V7,
             )
-            fresh = self._observe_transport_envelope_capability(
-                False, self._receiver_packets
+            if legacy:
+                self._receiver_status_unprotected_rejections = getattr(
+                    self, "_receiver_status_unprotected_rejections", 0
+                ) + 1
+                self._receiver_status_current_peer_rejected = True
+            self._record_status_integrity_failure(
+                response,
+                "unsupported_status_version" if legacy else "invalid_header",
+                transfer_bytes=transfer_bytes,
             )
-            self._observe_fec_transport_capability(False, self._receiver_packets)
-            return fresh
-
-        if magic != RECEIVER_STATUS_MAGIC:
-            self._reset_transport_envelope_candidate(invalid=True)
-            self._reset_fec_transport_candidate(invalid=True)
-            if getattr(self, '_receiver_status_seen', False):
-                self._receiver_status_misses = getattr(self, '_receiver_status_misses', 0) + 1
             return False
-
-        self._receiver_status_seen = True
-        self._note_receiver_status_version(1)
-        self._receiver_status_responses = getattr(self, '_receiver_status_responses', 0) + 1
-        self._receiver_packets = self._response_u32(response, 4)
-        self._receiver_crc_errors = self._response_u32(response, 8)
-        self._receiver_crc_ok_packets = self._response_u32(response, 12)
-        self._receiver_frames_rendered = self._response_u32(response, 16)
-        self._receiver_last_crc_us = self._response_u16(response, 20)
-        self._receiver_last_copy_us = self._response_u16(response, 22)
-        self._receiver_last_show_us = self._response_u16(response, 24)
-        self._receiver_active_strips = int(response[26])
-        self._receiver_leds_per_strip = self._response_u16(response, 27)
-        fresh = self._observe_transport_envelope_capability(
-            False, self._receiver_packets
-        )
-        self._observe_fec_transport_capability(False, self._receiver_packets)
+        checksum = binascii.crc32(
+            bytes(response[:RECEIVER_STATUS_BYTES_V7])
+        ) & 0xFFFFFFFF
+        if (
+            int(response[4]) != 8
+            or self._response_u32(response, RECEIVER_STATUS_BYTES_V7) != checksum
+        ):
+            self._record_status_integrity_failure(
+                response,
+                "invalid_version" if int(response[4]) != 8 else "crc32_mismatch",
+                transfer_bytes=transfer_bytes,
+                computed_crc32=checksum,
+            )
+            return False
+        self._receiver_status_integrity_verified = True
+        fresh = bool(self._update_receiver_status_v7(response))
+        if not getattr(self, "_receiver_status_integrity_established", False):
+            packets = self._receiver_packets
+            previous = getattr(self, "_receiver_status_integrity_last_packets", None)
+            count = getattr(self, "_receiver_status_integrity_fresh_count", 0)
+            if previous is not None and packets <= previous:
+                count = 0
+            if fresh:
+                count += 1
+            self._receiver_status_integrity_last_packets = packets
+            self._receiver_status_integrity_fresh_count = count
+            self._receiver_status_integrity_established = (
+                count > SPI_RESPONSE_QUEUE_DEPTH
+            )
         return fresh
 
     def _note_receiver_status_version(self, version):
@@ -1698,125 +1529,16 @@ class LEDController:
             version,
         )
 
-    def _reset_transport_envelope_candidate(self, *, invalid=False):
-        """Discard an unproven transition without changing active framing."""
-        self._transport_envelope_candidate = None
-        self._transport_envelope_candidate_streak = 0
-        if invalid:
-            self._transport_envelope_invalid_resets = (
-                getattr(self, "_transport_envelope_invalid_resets", 0) + 1
-            )
-
-    def _reset_fec_transport_candidate(self, *, invalid=False):
-        """Discard an unproven FEC transition without changing active framing."""
-        self._fec_transport_candidate = None
-        self._fec_transport_candidate_streak = 0
-        if invalid:
-            self._fec_transport_invalid_resets = (
-                getattr(self, "_fec_transport_invalid_resets", 0) + 1
-            )
-
-    def _observe_fec_transport_capability(self, advertised, receiver_packets):
-        """Enable v7 only after opt-in and three fresh capability snapshots."""
-        advertised = bool(
-            getattr(self, "_fec_transport_requested", False) and advertised
-        )
+    def _observe_current_receiver_packets(self, receiver_packets):
+        """Return whether this protected snapshot advances the receiver epoch."""
         receiver_packets = int(receiver_packets)
-        last_packets = getattr(self, "_fec_transport_last_receiver_packets", None)
-        if last_packets is not None and receiver_packets == last_packets:
-            self._fec_transport_stale_observations = (
-                getattr(self, "_fec_transport_stale_observations", 0) + 1
-            )
-            self._reset_fec_transport_candidate()
-            return False
-        if last_packets is not None and receiver_packets < last_packets:
-            self._fec_transport_counter_resets = (
-                getattr(self, "_fec_transport_counter_resets", 0) + 1
-            )
-            self._reset_fec_transport_candidate()
-        self._fec_transport_last_receiver_packets = receiver_packets
-        self._fec_transport_fresh_observations = (
-            getattr(self, "_fec_transport_fresh_observations", 0) + 1
-        )
-        active = bool(getattr(self, "_fec_transport_enabled", False))
-        if advertised == active:
-            self._reset_fec_transport_candidate()
-            return True
-        candidate = getattr(self, "_fec_transport_candidate", None)
-        if candidate is advertised:
-            self._fec_transport_candidate_streak = (
-                getattr(self, "_fec_transport_candidate_streak", 0) + 1
-            )
-        else:
-            self._fec_transport_candidate = advertised
-            self._fec_transport_candidate_streak = 1
-        if (
-            self._fec_transport_candidate_streak
-            >= TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
-        ):
-            self._fec_transport_enabled = advertised
-            self._fec_transport_transitions = (
-                getattr(self, "_fec_transport_transitions", 0) + 1
-            )
-            self._reset_fec_transport_candidate()
-        return True
-
-    def _observe_transport_envelope_capability(
-        self, advertised, receiver_packets
-    ):
-        """Commit a framing transition after three fresh receiver observations."""
-        advertised = bool(advertised)
-        receiver_packets = int(receiver_packets)
-        last_packets = getattr(
-            self, "_transport_envelope_last_receiver_packets", None
-        )
-        if last_packets is not None and receiver_packets == last_packets:
-            self._transport_envelope_stale_observations = (
-                getattr(self, "_transport_envelope_stale_observations", 0) + 1
-            )
-            self._reset_transport_envelope_candidate()
-            return False
-        if last_packets is not None and receiver_packets < last_packets:
-            # Receiver reboot, counter reset, or uint32 wrap starts a new
-            # evidence epoch. The first post-reset observation may seed, but
-            # can never by itself change active framing.
-            self._transport_envelope_counter_resets = (
-                getattr(self, "_transport_envelope_counter_resets", 0) + 1
-            )
-            self._reset_transport_envelope_candidate()
-        self._transport_envelope_last_receiver_packets = receiver_packets
-        self._transport_envelope_fresh_observations = (
-            getattr(self, "_transport_envelope_fresh_observations", 0) + 1
-        )
-
-        active = bool(getattr(self, "_transport_envelope_enabled", False))
-        if advertised == active:
-            self._reset_transport_envelope_candidate()
-            return True
-        candidate = getattr(self, "_transport_envelope_candidate", None)
-        if candidate is advertised:
-            self._transport_envelope_candidate_streak = (
-                getattr(self, "_transport_envelope_candidate_streak", 0) + 1
-            )
-        else:
-            self._transport_envelope_candidate = advertised
-            self._transport_envelope_candidate_streak = 1
-        if (
-            self._transport_envelope_candidate_streak
-            >= TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
-        ):
-            self._transport_envelope_enabled = advertised
-            self._transport_envelope_transitions = (
-                getattr(self, "_transport_envelope_transitions", 0) + 1
-            )
-            self._reset_transport_envelope_candidate()
-        return True
+        previous = getattr(self, "_receiver_status_last_packets", None)
+        self._receiver_status_last_packets = receiver_packets
+        return previous is None or receiver_packets != previous
 
     def _update_receiver_status_v3(self, response):
         """Parse status v3 after the firmware-defined layout is available."""
-        # Phase 3A deliberately retains the complete v2 prefix so old counters
-        # and operational dashboards do not disappear when local playback is
-        # enabled. The extension offsets below are synchronized with
+        # Status v8 retains this prefix; offsets stay synchronized with
         # firmware/esp32/include/ledgrid/protocol.hpp.
         self._receiver_status_seen = True
         self._note_receiver_status_version(int(response[4]))
@@ -1842,36 +1564,14 @@ class LEDController:
         self._receiver_last_displayed_sequence = self._response_u32(response, 56)
         self._receiver_display_errors = self._response_u32(response, 60)
         self._receiver_capabilities = self._response_u32(response, 64)
-        fresh = self._observe_transport_envelope_capability(
-            self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1,
-            self._receiver_packets,
-        )
+        fresh = self._observe_current_receiver_packets(self._receiver_packets)
         fec_advertised = bool(
             self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1
             and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V7
         )
-        fec_terminal_telemetry_available = bool(
-            len(response) >= RECEIVER_STATUS_BYTES_V7
-            and tuple(int(response[index]) for index in range(4))
-            in (RECEIVER_STATUS_MAGIC_V7, RECEIVER_STATUS_MAGIC_V8)
-            and int(response[4]) in (7, 8)
+        self._fec_transport_enabled = bool(
+            getattr(self, "_fec_transport_requested", False) and fec_advertised
         )
-        defer_fec_observation = (
-            getattr(self, "_fec_transport_requested", False)
-            and fec_advertised
-            and not fec_terminal_telemetry_available
-        )
-        if defer_fec_observation:
-            # The legacy status-v3 capability prefix can arrive several queued responses
-            # before and between v7 terminal snapshots.  It neither advances
-            # nor contradicts the v7-only negotiation evidence because no
-            # process lifetime baseline can be captured from the prefix.
-            pass
-        else:
-            self._observe_fec_transport_capability(
-                fec_advertised,
-                self._receiver_packets,
-            )
         self._receiver_base_mode = int(response[68])
         self._receiver_foreground_state = int(response[69])
         self._receiver_maintenance_state = int(response[70])
@@ -1917,70 +1617,9 @@ class LEDController:
         self._receiver_logical_device = int(response[312])
         self._receiver_last_processed_command = int(response[313])
         self._receiver_stagger_phases = int(response[314])
-        self._note_legacy_snapshot(
-            self._receiver_stagger_phases == LEGACY_SNAPSHOT_SENTINEL
-        )
         self._receiver_operation_sequence = self._response_u32(response, 316)
-        if getattr(self, "_receiver_status_integrity_required", False):
-            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
-        elif self._receiver_capabilities & (
-            CAPABILITY_FEC_ENVELOPE_V2
-            | CAPABILITY_FEC_ENVELOPE_V3
-            | CAPABILITY_FEC_ENVELOPE_V4
-            | CAPABILITY_FEC_ENVELOPE_V5
-            | CAPABILITY_FEC_ENVELOPE_V6
-            | CAPABILITY_FEC_ENVELOPE_V7
-        ):
-            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V7
-        elif self._receiver_capabilities & CAPABILITY_STATUS_V6:
-            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V6
-        elif (
-            self._receiver_capabilities & CAPABILITY_INSTALLATION_PROFILE_V1
-            and self._receiver_capabilities & CAPABILITY_STATUS_V5
-        ):
-            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V5
-        elif self._receiver_capabilities & CAPABILITY_SPARSE_OVERLAY_V1:
-            # Status v4 preserves this entire prefix. Discover support through
-            # the legacy-safe 320-byte query before asking for the extension.
-            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V4
-        else:
-            # A receiver may restart into a feature-off image while this host
-            # process survives. Return to the universally supported v3 query.
-            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V3
-
-        # A sparse-capable receiver deliberately queues a legacy-safe v3
-        # response for every non-status command. Do not combine that fresh v3
-        # prefix with an older cached v4 overlay extension: callers must either
-        # observe a coherent v3 snapshot with no extension or wait for the next
-        # negotiated v4 response.
-        response_magic = tuple(int(response[index]) for index in range(4))
-        if response_magic == RECEIVER_STATUS_MAGIC_V3:
-            self._clear_receiver_overlay_status()
-            self._clear_receiver_profile_status()
-            self._clear_receiver_native_status()
+        self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
         return fresh
-
-    def _clear_receiver_overlay_status(self):
-        """Drop v4-only telemetry after an actual status-v3 response."""
-        self._receiver_overlay_operation_result = 0
-        self._receiver_overlay_update_kind = 0
-        self._receiver_overlay_expected_patches = 0
-        self._receiver_overlay_accepted_patches = 0
-        self._receiver_overlay_committed_coverage_pixels = 0
-        self._receiver_overlay_committed_generation = 0
-        self._receiver_overlay_staged_generation = 0
-        self._receiver_foreground_scene_revision = 0
-        self._receiver_foreground_scene_epoch = 0
-        self._receiver_foreground_base_revision = 0
-        self._receiver_foreground_present_at_scene_time_us = 0
-        self._receiver_overlay_lease_ms = 0
-        self._receiver_overlay_lease_remaining_ms = 0
-        self._receiver_overlay_session_id = None
-        self._receiver_overlay_composite_frames = 0
-        self._receiver_overlay_last_composite_us = 0
-        self._receiver_overlay_max_composite_us = 0
-        self._receiver_overlay_commits = 0
-        self._receiver_overlay_expirations = 0
 
     def _update_receiver_status_v4(self, response):
         """Parse the status-v4 sparse-overlay extension after its v3 prefix."""
@@ -2011,44 +1650,7 @@ class LEDController:
         self._receiver_overlay_max_composite_us = self._response_u16(response, 406)
         self._receiver_overlay_commits = self._response_u32(response, 408)
         self._receiver_overlay_expirations = self._response_u32(response, 412)
-        if tuple(int(response[index]) for index in range(4)) == RECEIVER_STATUS_MAGIC_V4:
-            self._clear_receiver_profile_status()
-            self._clear_receiver_native_status()
         return fresh
-
-    def _clear_receiver_profile_status(self):
-        """Drop status-v5-only profile telemetry after a real downgrade."""
-        self._receiver_profile_result = 0
-        self._receiver_profile_transfer_state = 0
-        self._receiver_profile_decoder_error = 0
-        self._receiver_profile_flags = 0
-        self._receiver_profile_capacity_bytes = 0
-        self._receiver_profile_used_bytes = 0
-        self._receiver_profile_free_bytes = 0
-        self._receiver_profile_reserve_bytes = 0
-        self._receiver_profile_reclaimable_bytes = 0
-        self._receiver_profile_received_bytes = 0
-        self._receiver_profile_total_bytes = 0
-        self._receiver_profile_state_generation = 0
-        self._receiver_profile_preflight_token = 0
-        for name in (
-            "_receiver_profile_last_probe_payload_digest",
-            "_receiver_profile_transfer_global_digest",
-            "_receiver_profile_transfer_payload_digest",
-            "_receiver_profile_active_global_digest",
-            "_receiver_profile_active_payload_digest",
-            "_receiver_profile_staged_global_digest",
-            "_receiver_profile_staged_payload_digest",
-            "_receiver_profile_rollback_global_digest",
-            "_receiver_profile_rollback_payload_digest",
-        ):
-            setattr(self, name, None)
-        self._receiver_profile_writes = 0
-        self._receiver_profile_evictions = 0
-        self._receiver_profile_stages = 0
-        self._receiver_profile_verifies = 0
-        self._receiver_profile_activations = 0
-        self._receiver_profile_restores = 0
 
     @staticmethod
     def _optional_digest_from_response(response, offset, *, present=True):
@@ -2108,12 +1710,10 @@ class LEDController:
         self._receiver_profile_verifies = self._response_u16(response, 762)
         self._receiver_profile_activations = self._response_u16(response, 764)
         self._receiver_profile_restores = self._response_u16(response, 766)
-        if tuple(int(response[index]) for index in range(4)) == RECEIVER_STATUS_MAGIC_V5:
-            self._clear_receiver_native_status()
         return fresh
 
     def _clear_receiver_native_status(self):
-        """Drop status-v6-only module telemetry after a real downgrade."""
+        """Initialize native-module telemetry before the first status sample."""
         self._receiver_native_result = 0
         self._receiver_native_transfer_state = 0
         self._receiver_native_watchdog_phase = 0
@@ -2272,8 +1872,8 @@ class LEDController:
             self._receiver_fec_terminal_baseline_invalid = True
         elif fresh and not baseline_finalized:
             # SPI responses are queued.  Keep advancing the lifetime snapshot
-            # throughout the three-observation negotiation so an early queued
-            # v7 response cannot hide historical pre-enable outcomes.
+            # throughout current-protocol establishment so an early queued
+            # response cannot hide historical pre-enable outcomes.
             baseline = dict(current)
             self._receiver_fec_terminal_baseline = baseline
 
@@ -2308,7 +1908,7 @@ class LEDController:
             transport_lock = self._transport_lock = threading.RLock()
         with transport_lock:
             payload = bytearray(
-                getattr(self, "_receiver_status_query_bytes", RECEIVER_STATUS_BYTES_V3)
+                getattr(self, "_receiver_status_query_bytes", RECEIVER_STATUS_BYTES_V8)
             )
             payload[0] = CMD_STATUS_QUERY
             self._xfer(payload)
@@ -2339,27 +1939,29 @@ class LEDController:
         self._drain_fresh_receiver_status()
         return self.get_stats()
 
-    def query_causal_receiver_status(self, *, required_status_version=3):
-        """Drain pending commands before returning a negotiated status baseline."""
-        required = self._bounded_uint("required_status_version", required_status_version, 8)
-        if required < 3:
-            raise ValueError("causal receiver status requires version 3 through 8")
+    def query_causal_receiver_status(self, *, required_status_version=8):
+        """Drain pending commands before returning a current protected baseline."""
+        self._bounded_uint(
+            "required_status_version", required_status_version, 8
+        )
+        if required_status_version != 8:
+            raise ValueError("only current protected status v8 is supported")
+        required = 8
         transport_lock = getattr(self, "_transport_lock", None)
         if transport_lock is None:
             transport_lock = self._transport_lock = threading.RLock()
         with transport_lock:
-            if required == 8:
-                # Reject downgraded headers before the first protected baseline.
-                self._receiver_status_integrity_required = True
-                self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
-            if getattr(self, "_receiver_status_integrity_required", False):
-                required = 8
+            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
             deadline = time.monotonic() + STORAGE_COMMAND_ACK_TIMEOUT_SECONDS
             fresh_count = 0
             last_packets = None
             status = None
             while time.monotonic() < deadline:
                 status = self.query_receiver_status()
+                if getattr(self, "_receiver_status_current_peer_rejected", False):
+                    raise RuntimeError(
+                        "unsupported receiver protocol: current protected status v8 required"
+                    )
                 if time.monotonic() >= deadline:
                     break
                 if getattr(self, "_last_transfer_status_sampled", False):
@@ -2610,7 +2212,7 @@ class LEDController:
         return int(getattr(self, "_command_transfer_diagnostic_id", 0))
 
     def _command_status(
-        self, payload, *, command=None, required_status_version=3,
+        self, payload, *, command=None, required_status_version=8,
         storage_operation=False, sparse_retry_budget=0,
         _expected_operation_sequence=None, _sparse_retry_authority=None,
         _sparse_retry_prior_sequence=None, _sparse_retry_prior_packets=None,
@@ -2648,39 +2250,21 @@ class LEDController:
             required_version = self._bounded_uint(
                 "required_status_version", required_status_version, 8
             )
-            if required_version < 3:
-                raise ValueError("required_status_version must be 3 through 8")
-            causal_readiness = (
-                storage_operation or required_version == 8
-                or getattr(self, "_receiver_status_integrity_required", False)
-                or int(getattr(self, "_receiver_base_mode", 0)) == 1
+            if required_version != 8:
+                raise ValueError("only current protected status v8 is supported")
+            prior = self.query_causal_receiver_status(
+                required_status_version=required_status_version
             )
-            prior = None
-            if causal_readiness:
-                prior = self.query_causal_receiver_status(
-                    required_status_version=required_status_version
-                )
-            else:
-                for query_index in range(SPI_RESPONSE_QUEUE_DEPTH):
-                    if query_index:
-                        time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
-                    prior = self.query_receiver_status()
-                if getattr(self, "_receiver_status_integrity_required", False):
-                    # Discovery may enter protected mode during the fast drain.
-                    # Establish its causal baseline before any mutation.
-                    causal_readiness = True
-                    prior = self.query_causal_receiver_status(required_status_version=8)
-            if int(prior.get("receiver_status_version", 0) or 0) < 3:
-                raise RuntimeError("receiver status v3 is required for command acknowledgement")
+            if int(prior.get("receiver_status_version", 0) or 0) != 8:
+                raise RuntimeError("current protected status v8 is required for command acknowledgement")
             if int(prior.get("receiver_spi_queue_errors", 0) or 0):
                 raise RuntimeError("receiver SPI queue fault requires receiver reset before commands")
             prior_sequence = int(prior.get("receiver_operation_sequence", 0) or 0)
             if prior_sequence >= 0xFFFFFFFF:
                 raise RuntimeError("receiver operation sequence is exhausted")
-            if causal_readiness:
-                # Let the causal baseline refill before the single command,
-                # and before deferred serialization so time anchors stay fresh.
-                time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
+            # Let the causal baseline refill before the single command,
+            # and before deferred serialization so time anchors stay fresh.
+            time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
             if payload_factory is not None:
                 payload = payload_factory()
                 if not payload or int(payload[0]) != command:
@@ -2760,7 +2344,7 @@ class LEDController:
                 "wire_bytes": self._command_wire_size(command, payload_bytes),
                 "required_status_version": required_version,
                 "storage_operation": bool(storage_operation),
-                "causal_readiness": bool(causal_readiness),
+                "causal_readiness": True,
                 "started_monotonic_ns": diagnostic_started_ns,
                 "command_sent_monotonic_ns": self._command_transfer_now_ns(),
                 "prior_status": prior_sample,
@@ -2785,9 +2369,8 @@ class LEDController:
             if getattr(self, "_receiver_status_integrity_required", False):
                 required_version = 8
             # The slave has to queue a response before it knows the length of
-            # the master's next transfer. A sparse command therefore leaves
-            # one legacy-safe v3 snapshot in the two-deep queue; clock one
-            # additional query to receive the requested v4 extension. Larger
+            # the master's next transfer. Clock beyond the two-deep response
+            # queue to receive status produced after the command. Larger
             # commands can take longer than those minimum queue drains on real
             # hardware. Local ownership uses the established refill cadence,
             # while ordinary commands retain the bounded query count. Storage
@@ -2819,10 +2402,7 @@ class LEDController:
                     if time.monotonic() >= deadline:
                         break
                 else:
-                    time.sleep(
-                        FRESH_STATUS_DRAIN_INTERVAL_SECONDS if causal_readiness
-                        else COMMAND_ACK_POLL_INTERVAL_SECONDS
-                    )
+                    time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
                 query_index += 1
                 try:
                     status = self.query_receiver_status()
@@ -2891,7 +2471,7 @@ class LEDController:
                     if not getattr(self, "_last_transfer_status_sampled", False):
                         continue
                 else:
-                    if causal_readiness and not getattr(
+                    if not getattr(
                         self, "_last_transfer_status_sampled", False
                     ):
                         continue
@@ -3139,49 +2719,49 @@ class LEDController:
 
     def profile_preflight(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_preflight(**kwargs), required_status_version=5,
+            self.serialize_profile_preflight(**kwargs), required_status_version=8,
             storage_operation=True,
         )
 
     def profile_begin(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_begin(**kwargs), required_status_version=5,
+            self.serialize_profile_begin(**kwargs), required_status_version=8,
             storage_operation=True,
         )
 
     def profile_chunk(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_chunk(**kwargs), required_status_version=5,
+            self.serialize_profile_chunk(**kwargs), required_status_version=8,
             storage_operation=True,
         )
 
     def profile_finalize(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_finalize(**kwargs), required_status_version=5,
+            self.serialize_profile_finalize(**kwargs), required_status_version=8,
             storage_operation=True,
         )
 
     def profile_verify(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_verify(**kwargs), required_status_version=5,
+            self.serialize_profile_verify(**kwargs), required_status_version=8,
             storage_operation=True,
         )
 
     def profile_activate(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_activate(**kwargs), required_status_version=5,
+            self.serialize_profile_activate(**kwargs), required_status_version=8,
             storage_operation=True,
         )
 
     def profile_restore(self, **kwargs):
         return self._command_status(
-            self.serialize_profile_restore(**kwargs), required_status_version=5,
+            self.serialize_profile_restore(**kwargs), required_status_version=8,
             storage_operation=True,
         )
 
     def profile_abort(self):
         return self._command_status(
-            bytes((CMD_PROFILE_ABORT,)), required_status_version=5,
+            bytes((CMD_PROFILE_ABORT,)), required_status_version=8,
             storage_operation=True,
         )
 
@@ -3537,7 +3117,7 @@ class LEDController:
         )
         first_pixel = cls._bounded_uint("start", start, 0xFFFF)
         rgba, count = cls._premultiplied_rgba_bytes(
-            premultiplied_rgba, maximum=LEGACY_MAX_RGBA_PIXELS_PER_PATCH
+            premultiplied_rgba, maximum=MAX_RGBA_PIXELS_PER_PATCH
         )
         if first_pixel + count > OVERLAY_LOCAL_PIXELS:
             raise ValueError(
@@ -3573,7 +3153,7 @@ class LEDController:
                 raise ValueError("each batch span must be a (start, RGBA) pair")
             first_pixel = cls._bounded_uint("start", item[0], 0xFFFF)
             rgba, count = cls._premultiplied_rgba_bytes(
-                item[1], maximum=LEGACY_MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                item[1], maximum=MAX_RGBA_PIXELS_PER_BATCH_SPAN
             )
             if first_pixel + count > OVERLAY_LOCAL_PIXELS:
                 raise ValueError(
@@ -3585,10 +3165,9 @@ class LEDController:
                     "overlay batch spans must be sorted and non-overlapping"
                 )
             packet_bytes += OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES + len(rgba)
-            if packet_bytes > MAX_SPI_TRANSFER:
+            if packet_bytes - CRC_BYTES > MAX_ALIGNED_SEMANTIC_BYTES:
                 raise ValueError(
-                    f"overlay patch batch exceeds the {MAX_SPI_TRANSFER}-byte "
-                    "SPI transaction ceiling including CRC"
+                    "overlay patch batch exceeds the current aligned semantic limit"
                 )
             encoded.append((first_pixel, count, rgba))
             prior_end = first_pixel + count
@@ -3808,14 +3387,14 @@ class LEDController:
         )
         status = self._command_status(
             payload,
-            required_status_version=(8 if protected_current_receiver else 4),
+            required_status_version=8,
             sparse_retry_budget=(
                 SPARSE_COMMAND_RETRY_BUDGET
                 if protected_current_receiver else 0
             ),
         )
-        if int(status.get("receiver_status_version", 0) or 0) < 4:
-            raise RuntimeError("receiver status v4 is required for sparse-overlay results")
+        if int(status.get("receiver_status_version", 0) or 0) != 8:
+            raise RuntimeError("current protected status v8 is required for sparse-overlay results")
         result = int(status.get("receiver_overlay_operation_result", 0) or 0)
         if result not in (1, 2):
             result_name = OVERLAY_OPERATION_RESULT_NAMES.get(
@@ -3856,33 +3435,9 @@ class LEDController:
             int(getattr(self, "_receiver_capabilities", 0) or 0)
             & CAPABILITY_SPARSE_OVERLAY_BATCH_V1
         ):
-            # A sparse-v1 receiver can still consume the original single-span
-            # packets. Re-split them to the final negotiated transport limit
-            # and materialize every packet before I/O; otherwise an aligned
-            # host could stage an early span and only then reject a later
-            # legacy-sized span.
-            if self._fec_sparse_command_enabled(CMD_OVERLAY_PATCH):
-                maximum_pixels = FEC_MAX_RGBA_PIXELS_PER_PATCH
-            elif getattr(self, "_transport_envelope_enabled", False):
-                maximum_pixels = MAX_RGBA_PIXELS_PER_PATCH
-            else:
-                maximum_pixels = LEGACY_MAX_RGBA_PIXELS_PER_PATCH
-            fallback_packets = []
-            for start, value in patch_items:
-                rgba, count = self._premultiplied_rgba_bytes(
-                    value, maximum=OVERLAY_LOCAL_PIXELS
-                )
-                for offset in range(0, count, maximum_pixels):
-                    span_count = min(maximum_pixels, count - offset)
-                    byte_start = offset * 4
-                    byte_end = byte_start + span_count * 4
-                    fallback_packets.append(self.serialize_overlay_patch(
-                        controller_session_id=controller_session_id,
-                        generation=generation,
-                        start=start + offset,
-                        premultiplied_rgba=rgba[byte_start:byte_end],
-                    ))
-            packets = tuple(fallback_packets)
+            raise RuntimeError(
+                "unsupported receiver protocol: sparse-overlay batch capability required"
+            )
         statuses = []
         for packet in packets:
             statuses.append(self._overlay_command_status(packet))
@@ -3971,28 +3526,6 @@ class LEDController:
             packet_after_ack_drain, command=CMD_PRESENTATION_CONTEXT_COMMIT
         )
 
-    def _note_legacy_snapshot(self, is_legacy):
-        """Record, and announce once, a snapshot missing its newest field.
-
-        Nothing about this combination fails: the older bytes still parse, the
-        counters stay correct, and the receiver keeps reporting. That silence
-        is the hazard, because a phase count of zero otherwise looks like a
-        stuck receiver rather than a host that is newer than the flash.
-        """
-        self._receiver_status_legacy = is_legacy
-        if not is_legacy or getattr(self, '_legacy_snapshot_warned', False):
-            return
-
-        self._legacy_snapshot_warned = True
-        print(
-            f"Warning: /dev/spidev{getattr(self, 'bus', '?')}."
-            f"{getattr(self, 'device', '?')} returned a status "
-            f"snapshot with no stagger_phases field, so its flashed firmware "
-            f"predates the {RECEIVER_STATUS_BYTES_V2}-byte layout this host "
-            "expects. Every other counter is still valid. Reflash with "
-            "'just deploy' before trusting the reported phase count.",
-            file=sys.stderr,
-        )
 
     def _refresh_configuration(self, force=False, *, acknowledged=False):
         transport_lock = getattr(self, "_transport_lock", None)
@@ -4015,34 +3548,22 @@ class LEDController:
         config_changed = (self._last_sent_config != current_config)
         
         if force or config_changed or (now - self._last_config_refresh) > self._config_refresh_interval:
+            logical_device_id = self._optional_logical_device_id(
+                getattr(self, "logical_device_id", None)
+            )
+            global_strip_offset = self._optional_global_strip_offset(
+                getattr(self, "global_strip_offset", None)
+            )
             cfg = [
                 CMD_CONFIG,
                 self.strip_count & 0xFF,
                 (self.leds_per_strip >> 8) & 0xFF,
                 self.leds_per_strip & 0xFF,
-                1 if self.debug else 0,
+                (1 if self.debug else 0)
+                | (0x80 if getattr(self, "reverse_native_strip_order", False) else 0),
+                0 if logical_device_id is None else logical_device_id,
             ]
-            logical_device_id = self._optional_logical_device_id(
-                getattr(self, "logical_device_id", None)
-            )
-            if (
-                logical_device_id is not None
-                and getattr(self, "_receiver_status_version", 0) >= 3
-                and getattr(self, "_receiver_capabilities", 0) & CAPABILITY_STATUS_V3
-            ):
-                # Byte 4 remains the legacy debug byte for four/five-byte
-                # CONFIG.  Status-v3 receivers interpret bit 7 only when the
-                # logical receiver byte makes this the six-byte form.
-                if getattr(self, "reverse_native_strip_order", False):
-                    cfg[4] |= 0x80
-                cfg.append(logical_device_id)
-                global_strip_offset = self._optional_global_strip_offset(
-                    getattr(self, "global_strip_offset", None)
-                )
-                if (
-                    global_strip_offset is not None
-                ):
-                    cfg.extend(struct.pack(">H", global_strip_offset))
+            cfg.extend(struct.pack(">H", 0 if global_strip_offset is None else global_strip_offset))
             status = None
             if acknowledged or getattr(self, "_receiver_status_integrity_required", False):
                 status = self._command_status(cfg, storage_operation=True)
@@ -4263,9 +3784,7 @@ class LEDController:
         try:
             if total_pixels <= MAX_PIXELS_SET_ALL:
                 payload_length = 1 + total_pixels * 3
-                aligned_frame = bool(
-                    getattr(self, "_transport_envelope_enabled", False)
-                )
+                aligned_frame = True
                 buf = self._frame_packet
                 buf[0] = CMD_SET_ALL
                 if rgb_bytes is not None:
@@ -4287,7 +3806,7 @@ class LEDController:
                 status_query_bytes = int(getattr(
                     self,
                     "_receiver_status_query_bytes",
-                    RECEIVER_STATUS_BYTES_V3,
+                    RECEIVER_STATUS_BYTES_V8,
                 ))
                 separate_status_query = (
                     scheduled_status_sample
@@ -4298,17 +3817,10 @@ class LEDController:
                     )
                 )
                 if separate_status_query:
-                    # A one-strip aligned SET_ALL is too short to clock a
-                    # complete status snapshot. A receiver selected for FEC
-                    # also needs v7-only lifetime counters before FEC can be
-                    # enabled; its ordinary pre-FEC SET_ALL response is the
-                    # deliberately legacy-safe v3 prefix and cannot advance
-                    # that negotiation. Once enabled, the protected
-                    # host-to-receiver envelope has no corresponding
-                    # receiver-to-host FEC payload. In all three cases, sample
-                    # first with the established fresh status-query drain,
-                    # then keep the actual frame on the write-only path. The
-                    # logical frame is still classified exactly once below.
+                    # A short aligned SET_ALL cannot clock the complete v8
+                    # status snapshot. FEC protects host-to-receiver bytes only,
+                    # so its frame transfer also needs a separate v8 status
+                    # query. Sample first, then retain the write-only fast path.
                     transport_lock = getattr(self, "_transport_lock", None)
                     if transport_lock is None:
                         transport_lock = self._transport_lock = threading.RLock()
@@ -4430,7 +3942,7 @@ class LEDController:
         with transport_lock:
             # Streaming intentionally samples status sparsely. A cached baseline
             # can attribute an earlier frame to this write, even if it fails.
-            before = self.query_causal_receiver_status(required_status_version=3)
+            before = self.query_causal_receiver_status(required_status_version=8)
             before_responses = before.get("receiver_status_responses")
             before_accepted = before.get("receiver_frames_accepted")
             before_sequence = before.get("receiver_last_accepted_sequence")
@@ -4445,12 +3957,12 @@ class LEDController:
                 or not 0 <= before_sequence <= 0xFFFFFFFF
             ):
                 raise RuntimeError("complete-frame acknowledgement has invalid baseline counters")
-            if int(before.get("receiver_status_version", 0) or 0) < 3:
-                raise RuntimeError("complete-frame acknowledgement requires receiver status v3")
+            if int(before.get("receiver_status_version", 0) or 0) != 8:
+                raise RuntimeError("complete-frame acknowledgement requires protected status v8")
             if before.get("receiver_logical_device") != self.logical_device_id:
                 raise RuntimeError("complete-frame acknowledgement has the wrong receiver")
             self.set_all_pixels(colors, wall_frame_sequence=wall_frame_sequence)
-            status = self.query_causal_receiver_status(required_status_version=3)
+            status = self.query_causal_receiver_status(required_status_version=8)
             after = status.get("receiver_status_responses")
             accepted = status.get("receiver_frames_accepted")
             receiver_sequence = status.get("receiver_last_accepted_sequence")
@@ -4481,8 +3993,8 @@ class LEDController:
                 raise RuntimeError(
                     "complete-frame acknowledgement did not advance the receiver-assigned sequence"
                 )
-            if int(status.get("receiver_status_version", 0) or 0) < 3:
-                raise RuntimeError("complete-frame acknowledgement requires receiver status v3")
+            if int(status.get("receiver_status_version", 0) or 0) != 8:
+                raise RuntimeError("complete-frame acknowledgement requires protected status v8")
             if status.get("receiver_logical_device") != self.logical_device_id:
                 raise RuntimeError("complete-frame acknowledgement has the wrong receiver")
         return {
@@ -4515,33 +4027,6 @@ class LEDController:
             'transport_envelope_enabled': bool(
                 getattr(self, '_transport_envelope_enabled', False)
             ),
-            'transport_envelope_negotiation_required': (
-                TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
-            ),
-            'transport_envelope_negotiation_candidate': getattr(
-                self, '_transport_envelope_candidate', None
-            ),
-            'transport_envelope_negotiation_streak': getattr(
-                self, '_transport_envelope_candidate_streak', 0
-            ),
-            'transport_envelope_last_receiver_packets': getattr(
-                self, '_transport_envelope_last_receiver_packets', None
-            ),
-            'transport_envelope_fresh_observations': getattr(
-                self, '_transport_envelope_fresh_observations', 0
-            ),
-            'transport_envelope_stale_observations': getattr(
-                self, '_transport_envelope_stale_observations', 0
-            ),
-            'transport_envelope_counter_resets': getattr(
-                self, '_transport_envelope_counter_resets', 0
-            ),
-            'transport_envelope_invalid_resets': getattr(
-                self, '_transport_envelope_invalid_resets', 0
-            ),
-            'transport_envelope_transitions': getattr(
-                self, '_transport_envelope_transitions', 0
-            ),
             'transport_envelope_bytes_sent': getattr(
                 self, '_transport_envelope_bytes_sent', 0
             ),
@@ -4552,30 +4037,6 @@ class LEDController:
                 getattr(self, '_fec_transport_requested', False)
             ),
             'fec_transport_enabled': self._fec_full_frame_enabled(),
-            'fec_transport_negotiation_candidate': getattr(
-                self, '_fec_transport_candidate', None
-            ),
-            'fec_transport_negotiation_streak': getattr(
-                self, '_fec_transport_candidate_streak', 0
-            ),
-            'fec_transport_negotiation_required': (
-                TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
-            ),
-            'fec_transport_fresh_observations': getattr(
-                self, '_fec_transport_fresh_observations', 0
-            ),
-            'fec_transport_stale_observations': getattr(
-                self, '_fec_transport_stale_observations', 0
-            ),
-            'fec_transport_counter_resets': getattr(
-                self, '_fec_transport_counter_resets', 0
-            ),
-            'fec_transport_invalid_resets': getattr(
-                self, '_fec_transport_invalid_resets', 0
-            ),
-            'fec_transport_transitions': getattr(
-                self, '_fec_transport_transitions', 0
-            ),
             'fec_frames_sent': getattr(self, '_fec_frames_sent', 0),
             'fec_codewords_sent': getattr(self, '_fec_codewords_sent', 0),
             'fec_parity_bytes_sent': getattr(
@@ -4641,7 +4102,6 @@ class LEDController:
             'receiver_status_max_version_seen': getattr(
                 self, '_receiver_status_max_version_seen', 0
             ),
-            'receiver_status_legacy': getattr(self, '_receiver_status_legacy', False),
             'receiver_status_responses': self._receiver_status_responses,
             'receiver_status_misses': self._receiver_status_misses,
             'receiver_packets': self._receiver_packets,

@@ -42,25 +42,16 @@ def _controller(*, requested):
     item = protocol.LEDController.__new__(protocol.LEDController)
     item.spi = _RecordingSpi()
     item._transport_lock = threading.RLock()
-    item._transport_envelope_enabled = False
+    item._transport_envelope_enabled = True
     item._fec_transport_requested = requested
-    item._fec_transport_enabled = False
-    item._transport_envelope_candidate = None
-    item._transport_envelope_candidate_streak = 0
-    item._transport_envelope_last_receiver_packets = None
-    item._transport_envelope_fresh_observations = 0
-    item._transport_envelope_stale_observations = 0
-    item._transport_envelope_counter_resets = 0
-    item._transport_envelope_invalid_resets = 0
-    item._transport_envelope_transitions = 0
-    item._fec_transport_candidate = None
-    item._fec_transport_candidate_streak = 0
-    item._fec_transport_last_receiver_packets = None
-    item._fec_transport_fresh_observations = 0
-    item._fec_transport_stale_observations = 0
-    item._fec_transport_counter_resets = 0
-    item._fec_transport_invalid_resets = 0
-    item._fec_transport_transitions = 0
+    item._fec_transport_enabled = requested
+    item._receiver_status_integrity_established = True
+    item._receiver_status_current_peer_rejected = False
+    item._receiver_capabilities = (
+        protocol.CAPABILITY_STATUS_CRC32_V8
+        | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
+        | (protocol.CAPABILITY_FEC_ENVELOPE_V7 if requested else 0)
+    )
     item._fec_frames_sent = 0
     item._fec_codewords_sent = 0
     item._fec_parity_bytes_sent = 0
@@ -287,80 +278,10 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exact FEC wire size"):
             protocol._encode_fec_envelope(b"x", bytearray(132))
 
-    def test_opt_in_requires_three_fresh_capability_observations(self):
-        item = _controller(requested=True)
-        for counter in (1, 2):
-            protocol.LEDController._update_receiver_status(
-                item, _status_v7(counter)
-            )
-            self.assertFalse(item._fec_transport_enabled)
-        protocol.LEDController._update_receiver_status(item, _status_v7(3))
-        self.assertTrue(item._transport_envelope_enabled)
-        self.assertTrue(item._fec_transport_enabled)
-        self.assertEqual(
-            item._receiver_status_query_bytes,
-            protocol.RECEIVER_STATUS_BYTES_V7,
-        )
 
-    def test_legacy_v2_through_v6_capabilities_never_enable_v7_host_frames(self):
-        item = _controller(requested=True)
-        for counter in range(1, 5):
-            response = _status_v7(counter, fec=False)
-            capabilities = (
-                protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
-                | protocol.CAPABILITY_FEC_ENVELOPE_V2
-                | protocol.CAPABILITY_FEC_ENVELOPE_V3
-                | protocol.CAPABILITY_FEC_ENVELOPE_V4
-                | protocol.CAPABILITY_FEC_ENVELOPE_V5
-                | protocol.CAPABILITY_FEC_ENVELOPE_V6
-            )
-            response[64:68] = capabilities.to_bytes(4, "big")
-            protocol.LEDController._update_receiver_status(item, response)
-        self.assertTrue(item._transport_envelope_enabled)
-        self.assertFalse(item._fec_transport_enabled)
-        self.assertEqual(
-            item._receiver_status_query_bytes,
-            protocol.RECEIVER_STATUS_BYTES_V7,
-        )
 
-    def test_unrequested_receiver_never_enables_v2(self):
-        item = _controller(requested=False)
-        for counter in range(1, 8):
-            protocol.LEDController._update_receiver_status(
-                item, _status_v7(counter)
-            )
-        self.assertTrue(item._transport_envelope_enabled)
-        self.assertFalse(item._fec_transport_enabled)
 
-    def test_stale_and_capability_absence_cannot_enable(self):
-        item = _controller(requested=True)
-        protocol.LEDController._update_receiver_status(item, _status_v7(1))
-        protocol.LEDController._update_receiver_status(item, _status_v7(1))
-        protocol.LEDController._update_receiver_status(item, _status_v7(2))
-        self.assertFalse(item._fec_transport_enabled)
 
-    def test_negotiated_fec_downgrades_only_after_fresh_consensus_and_resets(self):
-        item = _controller(requested=True)
-        for counter in (1, 2, 3):
-            protocol.LEDController._update_receiver_status(item, _status_v7(counter))
-        self.assertTrue(item._fec_transport_enabled)
-        for counter in (4, 5):
-            protocol.LEDController._update_receiver_status(
-                item, _status_v7(counter, fec=False)
-            )
-            self.assertTrue(item._fec_transport_enabled)
-        protocol.LEDController._update_receiver_status(
-            item, _status_v7(6, fec=False)
-        )
-        self.assertFalse(item._fec_transport_enabled)
-        protocol.LEDController._update_receiver_status(item, _status_v7(1))
-        self.assertFalse(item._fec_transport_enabled)
-        self.assertGreaterEqual(item._fec_transport_counter_resets, 1)
-        for counter in (3, 4, 5):
-            protocol.LEDController._update_receiver_status(
-                item, _status_v7(counter, fec=False)
-            )
-        self.assertFalse(item._fec_transport_enabled)
 
     def test_selected_full_frame_uses_v7_once_and_accounts_exactly(self):
         item = _controller(requested=True)
@@ -415,10 +336,11 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(item._fec_parity_bytes_sent, 0)
         self.assertEqual(item._fec_data_padding_bytes_sent, 0)
 
-    def test_sparse_fec_is_negotiated_and_does_not_protect_other_commands(self):
+    def test_sparse_fec_selection_does_not_protect_other_commands(self):
         semantic = bytes((protocol.CMD_OVERLAY_PATCH, 1, 2, 3))
         item = _controller(requested=True)
         item._transport_envelope_enabled = True
+        item._fec_transport_enabled = False
         item._xfer(semantic)
         self.assertEqual(item.spi.packets[-1][:2], b"\x0b\x01")
         self.assertEqual(item._fec_sparse_packets_sent, 0)
@@ -437,7 +359,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         item = _controller(requested=True)
         item._transport_envelope_enabled = True
         item._fec_transport_enabled = True
-        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V7
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V8
         item._update_receiver_status = lambda _response, **_kwargs: True
         colors = np.zeros((8 * 138, 3), dtype=np.uint8)
 
@@ -449,7 +371,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
             self.assertEqual(
                 len(packet),
                 protocol._aligned_envelope_wire_size(
-                    protocol.RECEIVER_STATUS_BYTES_V7
+                    protocol.RECEIVER_STATUS_BYTES_V8
                 ),
             )
         self.assertEqual(len(item.spi.write_only_packets), 0)
@@ -472,40 +394,6 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(item._full_frame_frames_since_status_sample, 0)
         self.assertEqual(item._full_frame_max_status_sample_gap, 0)
 
-    def test_pre_fec_sample_drains_v7_queue_before_write_only_aligned_frame(self):
-        item = _controller(requested=True)
-        item._transport_envelope_enabled = True
-        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V7
-        item._update_receiver_status = lambda _response, **_kwargs: True
-        colors = np.zeros((8 * 138, 3), dtype=np.uint8)
-
-        with mock.patch.object(protocol.time, "sleep") as sleep:
-            item.set_all_pixels(colors, wall_frame_sequence=76)
-
-        self.assertEqual(len(item.spi.response_packets), 3)
-        for packet in item.spi.response_packets:
-            self.assertEqual(
-                len(packet),
-                protocol._aligned_envelope_wire_size(
-                    protocol.RECEIVER_STATUS_BYTES_V7
-                ),
-            )
-        self.assertEqual(len(item.spi.write_only_packets), 1)
-        self.assertEqual(len(item.spi.write_only_packets[0]), 3320)
-        self.assertEqual(item._spi_transfers, 4)
-        self.assertEqual(item._fec_frames_sent, 0)
-        self.assertEqual(item._full_frame_transfers, 1)
-        self.assertEqual(item._full_frame_status_transfers, 1)
-        self.assertEqual(item._full_frame_status_samples, 1)
-        self.assertEqual(item._full_frame_status_sample_misses, 0)
-        self.assertEqual(item._full_frame_write_only_transfers, 0)
-        self.assertEqual(
-            sleep.call_args_list,
-            [
-                mock.call(protocol.FRESH_STATUS_DRAIN_INTERVAL_SECONDS),
-                mock.call(protocol.FRESH_STATUS_DRAIN_INTERVAL_SECONDS),
-            ],
-        )
 
     def test_failed_transfer_does_not_claim_fec_or_full_frame_sent(self):
         item = _controller(requested=True)
@@ -531,7 +419,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(item._full_frame_transfers, 0)
         self.assertEqual(item._errors, 1)
 
-    def test_non_fec_legacy_geometry_above_fec_max_constructs_and_configures(self):
+    def test_non_fec_current_geometry_above_fec_max_constructs_and_configures(self):
         fake = _RecordingSpi()
         with mock.patch.object(protocol.spidev, "SpiDev", return_value=fake):
             item = protocol.LEDController(strips=10, leds_per_strip=130)
@@ -549,271 +437,12 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertIs(item._frame_packet, previous_frame)
         self.assertIs(item._aligned_frame_packet, previous_aligned)
 
-    def test_status_v7_parses_exact_accounting_and_timing(self):
-        item = _controller(requested=True)
-        response = _status_v7(9)
-        values = (11, 7, 3, 4, 1, 2, 1)
-        for offset, value in zip(range(1216, 1244, 4), values):
-            response[offset:offset + 4] = value.to_bytes(4, "big")
-        response[1244:1246] = (83).to_bytes(2, "big")
-        response[1246:1248] = (109).to_bytes(2, "big")
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, response)
-        )
-        self.assertEqual(item._receiver_fec_packets_received, 11)
-        self.assertEqual(item._receiver_fec_packets_accepted, 7)
-        self.assertEqual(item._receiver_fec_corrected_packets, 3)
-        self.assertEqual(item._receiver_fec_corrected_codewords, 4)
-        self.assertEqual(item._receiver_fec_uncorrectable_packets, 1)
-        self.assertEqual(item._receiver_fec_semantic_crc_errors, 2)
-        self.assertEqual(item._receiver_fec_framing_errors, 1)
-        self.assertEqual(11, 7 + 1 + 2 + 1)
-        self.assertEqual(item._receiver_fec_last_decode_us, 83)
-        self.assertEqual(item._receiver_fec_max_decode_us, 109)
-        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 0)
-        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 0)
-        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 0)
-        self.assertEqual(
-            item._receiver_fec_terminal_baseline,
-            {
-                "uncorrectable_packets": 1,
-                "semantic_crc_errors": 2,
-                "framing_errors": 1,
-            },
-        )
-        self.assertFalse(item._receiver_fec_terminal_baseline_invalid)
 
-        for receiver_packets in (10, 11):
-            acknowledgement = _status_v7(receiver_packets)
-            for offset, value in zip(range(1216, 1244, 4), values):
-                acknowledgement[offset:offset + 4] = value.to_bytes(4, "big")
-            self.assertTrue(
-                protocol.LEDController._update_receiver_status(
-                    item, acknowledgement
-                )
-            )
-        self.assertTrue(item._fec_transport_enabled)
 
-        later = _status_v7(12)
-        later_values = (15, 8, 4, 5, 2, 4, 4)
-        for offset, value in zip(range(1216, 1244, 4), later_values):
-            later[offset:offset + 4] = value.to_bytes(4, "big")
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, later)
-        )
-        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 1)
-        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 2)
-        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 3)
 
-        reset = _status_v7(1)
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, reset)
-        )
-        self.assertEqual(item._receiver_fec_terminal_counter_resets, 1)
-        self.assertEqual(
-            item._receiver_fec_terminal_baseline,
-            {
-                "uncorrectable_packets": 1,
-                "semantic_crc_errors": 2,
-                "framing_errors": 1,
-            },
-        )
-        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 0)
-        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 0)
-        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 0)
 
-    def test_pre_enable_terminal_baseline_tracks_queued_history_until_fec_ack(self):
-        item = _controller(requested=True)
 
-        observations = (
-            _status_v7_with_terminal_counts(
-                1, uncorrectable=0, semantic_crc=0, framing=0
-            ),
-            _status_v7_with_terminal_counts(
-                2, uncorrectable=8, semantic_crc=0, framing=10
-            ),
-            _status_v7_with_terminal_counts(
-                3, uncorrectable=8, semantic_crc=0, framing=10
-            ),
-        )
-        for index, response in enumerate(observations):
-            self.assertTrue(
-                protocol.LEDController._update_receiver_status(item, response)
-            )
-            if index < 2:
-                self.assertFalse(item._fec_transport_enabled)
 
-        self.assertTrue(item._fec_transport_enabled)
-        self.assertEqual(
-            item._receiver_fec_terminal_baseline,
-            {
-                "uncorrectable_packets": 8,
-                "semantic_crc_errors": 0,
-                "framing_errors": 10,
-            },
-        )
-        self.assertTrue(item._receiver_fec_terminal_baseline_finalized)
-
-        unchanged = _status_v7_with_terminal_counts(
-            4, uncorrectable=8, semantic_crc=0, framing=10
-        )
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, unchanged)
-        )
-        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 0)
-        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 0)
-        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 0)
-
-        increased = _status_v7_with_terminal_counts(
-            5, uncorrectable=9, semantic_crc=1, framing=12
-        )
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, increased)
-        )
-        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 1)
-        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 1)
-        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 2)
-
-    def test_fec_waits_for_v7_baseline_after_queued_v3_capability_prefixes(self):
-        item = _controller(requested=True)
-
-        for receiver_packets in (1, 2, 3, 4):
-            self.assertTrue(
-                protocol.LEDController._update_receiver_status(
-                    item, _status_v3(receiver_packets, fec=True)
-                )
-            )
-            self.assertFalse(item._fec_transport_enabled)
-            self.assertIsNone(item._receiver_fec_terminal_baseline)
-
-        for index, receiver_packets in enumerate((5, 7, 9)):
-            self.assertTrue(
-                protocol.LEDController._update_receiver_status(
-                    item,
-                    _status_v7_with_terminal_counts(
-                        receiver_packets,
-                        uncorrectable=4,
-                        semantic_crc=0,
-                        framing=3,
-                    ),
-                )
-            )
-            if index < 2:
-                self.assertFalse(item._fec_transport_enabled)
-                self.assertTrue(
-                    protocol.LEDController._update_receiver_status(
-                        item, _status_v3(receiver_packets + 1, fec=True)
-                    )
-                )
-                self.assertFalse(item._fec_transport_enabled)
-
-        self.assertTrue(item._fec_transport_enabled)
-        self.assertTrue(item._receiver_fec_terminal_baseline_finalized)
-        self.assertFalse(item._receiver_fec_terminal_baseline_invalid)
-        self.assertEqual(
-            item._receiver_fec_terminal_baseline,
-            {
-                "uncorrectable_packets": 4,
-                "semantic_crc_errors": 0,
-                "framing_errors": 3,
-            },
-        )
-        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 0)
-        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 0)
-        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 0)
-
-    def test_finalized_fec_baseline_survives_queued_downgrade_acknowledgements(self):
-        item = _controller(requested=True)
-        for receiver_packets in (1, 2, 3):
-            self.assertTrue(
-                protocol.LEDController._update_receiver_status(
-                    item,
-                    _status_v7_with_terminal_counts(
-                        receiver_packets,
-                        uncorrectable=8,
-                        semantic_crc=0,
-                        framing=10,
-                    ),
-                )
-            )
-        expected_baseline = dict(item._receiver_fec_terminal_baseline)
-
-        for receiver_packets in (4, 5, 6):
-            self.assertTrue(
-                protocol.LEDController._update_receiver_status(
-                    item,
-                    _status_v7_with_terminal_counts(
-                        receiver_packets,
-                        uncorrectable=8,
-                        semantic_crc=0,
-                        framing=10,
-                        fec=False,
-                    ),
-                )
-            )
-
-        self.assertFalse(item._fec_transport_enabled)
-        self.assertTrue(item._receiver_fec_terminal_baseline_finalized)
-        self.assertEqual(item._receiver_fec_terminal_baseline, expected_baseline)
-
-        queued = _status_v7_with_terminal_counts(
-            7,
-            uncorrectable=8,
-            semantic_crc=0,
-            framing=10,
-            fec=False,
-        )
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, queued)
-        )
-        self.assertEqual(item._receiver_fec_terminal_baseline, expected_baseline)
-
-    def test_latest_status_version_can_return_to_v3_after_v7_without_losing_proof(self):
-        item = _controller(requested=True)
-
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, _status_v7(9))
-        )
-        self.assertEqual(item._receiver_status_version, 7)
-        self.assertEqual(item._receiver_status_max_version_seen, 7)
-
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, _status_v3(10))
-        )
-        self.assertEqual(item._receiver_status_version, 3)
-        self.assertEqual(item._receiver_status_max_version_seen, 7)
-
-    def test_status_max_version_seen_is_actual_and_starts_at_observed_v3(self):
-        item = _controller(requested=True)
-
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, _status_v3(1))
-        )
-
-        self.assertEqual(item._receiver_status_version, 3)
-        self.assertEqual(item._receiver_status_max_version_seen, 3)
-
-        mismatched = _status_v7(2)
-        mismatched[4] = 3
-        self.assertFalse(
-            protocol.LEDController._update_receiver_status(item, mismatched)
-        )
-        self.assertEqual(item._receiver_status_version, 3)
-        self.assertEqual(item._receiver_status_max_version_seen, 3)
-        self.assertIsNone(
-            getattr(item, "_receiver_fec_terminal_baseline", None)
-        )
-
-    def test_status_v7_baseline_cannot_start_after_fec_is_already_enabled(self):
-        item = _controller(requested=True)
-        item._fec_transport_enabled = True
-
-        self.assertTrue(
-            protocol.LEDController._update_receiver_status(item, _status_v7(1))
-        )
-
-        self.assertIsNone(item._receiver_fec_terminal_baseline)
-        self.assertTrue(item._receiver_fec_terminal_baseline_invalid)
 
 
 if __name__ == "__main__":

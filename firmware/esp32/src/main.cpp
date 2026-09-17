@@ -63,7 +63,7 @@ portMUX_TYPE command_mux = portMUX_INITIALIZER_UNLOCKED;
 TaskHandle_t command_task_handle = nullptr;
 TaskHandle_t spi_task_handle = nullptr;
 struct EncodedStatus {
-  std::uint8_t versions[6][ledgrid::kStatusBytesV8]{};
+  std::uint8_t bytes[ledgrid::kStatusBytesV8]{};
 };
 EncodedStatus status_buffers[2];
 unsigned published_status = 0;
@@ -199,8 +199,6 @@ std::atomic<std::uint16_t> fec_max_decode_us{0};
 std::atomic<std::uint32_t> spi_queue_errors{0};
 std::atomic<std::uint32_t> display_errors{0};
 std::atomic<std::uint16_t> queued_transactions{0};
-// SPI-task owned. Explicit legacy queries allow an older host to reconnect.
-bool status_v8_negotiated = false;
 std::atomic<std::uint16_t> last_crc_us{0};
 std::atomic<std::uint16_t> last_copy_us{0};
 std::atomic<std::uint32_t> last_accepted_sequence{0};
@@ -741,11 +739,6 @@ ledgrid::ReceiverStatusV7 status_snapshot(ConfigTiming* timing = nullptr) {
   status.capabilities = ledgrid::kCapabilityStatusV3 |
                         ledgrid::kCapabilityExplicitBaseOwnership |
                         ledgrid::kCapabilityAlignedEnvelopeV1 |
-                        ledgrid::kCapabilityFecEnvelopeV2 |
-                        ledgrid::kCapabilityFecEnvelopeV3 |
-                        ledgrid::kCapabilityFecEnvelopeV4 |
-                        ledgrid::kCapabilityFecEnvelopeV5 |
-                        ledgrid::kCapabilityFecEnvelopeV6 |
                         ledgrid::kCapabilityStatusCrc32V8;
   const std::size_t active_semantic_bytes =
       1U + static_cast<std::size_t>(output.strip_count) *
@@ -883,18 +876,14 @@ ledgrid::ReceiverStatusV7 status_snapshot(ConfigTiming* timing = nullptr) {
 // encoded immutable version under the publication lock and never takes a
 // runtime, native, profile, display or filesystem lock.
 void encode_status(const ledgrid::ReceiverStatusV7& status, EncodedStatus* encoded) {
-  ledgrid::encode_receiver_status_v3(status, encoded->versions[0], ledgrid::kStatusBytesV8);
-  ledgrid::encode_receiver_status_v4(status, encoded->versions[1], ledgrid::kStatusBytesV8);
-  ledgrid::encode_receiver_status_v5(status, encoded->versions[2], ledgrid::kStatusBytesV8);
-  ledgrid::encode_receiver_status_v6(status, encoded->versions[3], ledgrid::kStatusBytesV8);
-  ledgrid::encode_receiver_status_v7(status, encoded->versions[4], ledgrid::kStatusBytesV8);
-  ledgrid::encode_receiver_status_v8(status, encoded->versions[5], ledgrid::kStatusBytesV8);
+  ledgrid::encode_receiver_status_v8(
+      status, encoded->bytes, ledgrid::kStatusBytesV8);
 }
 
-bool queue_spi_transaction(std::size_t index, unsigned version = 3) {
+bool queue_spi_transaction(std::size_t index) {
   portENTER_CRITICAL(&command_mux);
   std::memcpy(spi_tx_buffers[index],
-              status_buffers[published_status].versions[version - 3],
+              status_buffers[published_status].bytes,
               ledgrid::kStatusBytesV8);
   portEXIT_CRITICAL(&command_mux);
   auto& transaction = spi_transactions[index];
@@ -1382,7 +1371,6 @@ void spi_service(void*) {
     const std::size_t index = reinterpret_cast<std::size_t>(completed->user);
     const std::size_t bytes = completed->trans_len / 8U;
     const std::uint8_t* packet = spi_rx_buffers[index];
-    unsigned response_version = status_v8_negotiated ? 8 : 3;
 
     if (bytes < 1U + kCrcBytes) {
       ++crc_errors;
@@ -1440,21 +1428,7 @@ void spi_service(void*) {
         const std::size_t payload_bytes = decoded.size;
         const bool status_query = command[0] == static_cast<std::uint8_t>(
             ledgrid::ReceiverCommand::StatusQuery);
-        if (status_query) {
-          const bool accepted = ledgrid::valid_status_query(
-              command, payload_bytes, LEDGRID_ENABLE_LOCAL_BACKGROUND != 0,
-              installation_profiles_available(), receiver_native_modules_available());
-          status_v8_negotiated = ledgrid::status_v8_after_dispatch(
-              status_v8_negotiated, accepted, command, payload_bytes);
-          response_version = status_v8_negotiated ? 8 : 3;
-          if (status_v8_negotiated) response_version = 8;
-          else if (accepted) {
-            if (payload_bytes == ledgrid::kStatusBytesV7) response_version = 7;
-            else if (payload_bytes == ledgrid::kStatusBytesV6) response_version = 6;
-            else if (payload_bytes == ledgrid::kStatusBytesV5) response_version = 5;
-            else if (payload_bytes == ledgrid::kStatusBytesV4) response_version = 4;
-          }
-        } else {
+        if (!status_query) {
           portENTER_CRITICAL(&command_mux);
           const auto admission = command_queue.admit(command, payload_bytes);
           portEXIT_CRITICAL(&command_mux);
@@ -1465,7 +1439,7 @@ void spi_service(void*) {
     // Classification includes counter updates and DMA refill. The executor
     // cannot publish a snapshot made halfway through either operation.
     // queue_spi_transaction counts an API failure; commands are never retried.
-    queue_spi_transaction(index, response_version);
+    queue_spi_transaction(index);
     portENTER_CRITICAL(&command_mux);
     command_queue.classified();
     portEXIT_CRITICAL(&command_mux);
@@ -1584,9 +1558,9 @@ extern "C" void app_main() {
     while (true) vTaskDelay(pdMS_TO_TICKS(1000));
   }
 
-  ESP_LOGI(kLogTag, "LED Grid ESP32-S3 parallel receiver v3");
+  ESP_LOGI(kLogTag, "LED Grid ESP32-S3 parallel receiver protocol v8");
   // Boot/reset starts with empty admission state and a fresh committed image;
-  // no prior DMA descriptors, negotiation or published snapshots survive.
+  // no prior DMA descriptors or published snapshots survive.
   encode_status(status_snapshot(), &status_buffers[0]);
   command_task_handle = xTaskGetCurrentTaskHandle();
   initialize_spi();

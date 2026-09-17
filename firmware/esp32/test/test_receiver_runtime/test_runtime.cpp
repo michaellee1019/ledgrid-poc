@@ -224,9 +224,9 @@ std::vector<std::uint8_t> canonical_dispatch_command(std::uint8_t command) {
     case ledgrid::ReceiverCommand::SetBrightness: size = 2; break;
     case ledgrid::ReceiverCommand::SetRange: size = 4; break;
     case ledgrid::ReceiverCommand::SetAll: size = 13; break;
-    case ledgrid::ReceiverCommand::Config: size = 4; break;
+    case ledgrid::ReceiverCommand::Config: size = 8; break;
     case ledgrid::ReceiverCommand::StatusQuery:
-      size = ledgrid::kStatusBytesV3;
+      size = ledgrid::kStatusBytesV8;
       break;
     case ledgrid::ReceiverCommand::LocalBackgroundStart: size = 21; break;
     case ledgrid::ReceiverCommand::LocalBackgroundParameters: size = 11; break;
@@ -755,34 +755,36 @@ void test_status_v3_preserves_v2_prefix_and_extended_offsets() {
   TEST_ASSERT_EQUAL_HEX8(4, encoded[319]);
 }
 
-void test_status_query_is_exact_zero_padded_and_non_owning() {
-  std::array<std::uint8_t, ledgrid::kStatusBytesV3> query{};
+void test_status_query_is_current_exact_zero_padded_and_non_owning() {
+  std::array<std::uint8_t, ledgrid::kStatusBytesV8> query{};
   query[0] = 0x08;
   TEST_ASSERT_TRUE(ledgrid::valid_status_query(query.data(), query.size()));
   query.back() = 1;
   TEST_ASSERT_FALSE(ledgrid::valid_status_query(query.data(), query.size()));
   query.back() = 0;
-  TEST_ASSERT_FALSE(ledgrid::valid_status_query(query.data(), query.size() - 1));
-  TEST_ASSERT_FALSE(ledgrid::command_may_claim_base(ledgrid::ReceiverCommand::StatusQuery));
+  TEST_ASSERT_FALSE(ledgrid::valid_status_query(
+      query.data(), ledgrid::kStatusBytesV7));
+  TEST_ASSERT_FALSE(ledgrid::command_may_claim_base(
+      ledgrid::ReceiverCommand::StatusQuery));
 }
 
-void test_config_identity_is_backward_compatible_and_fail_closed() {
+void test_config_identity_requires_current_topology_payload() {
   std::uint8_t logical_id = 0xFF;
-  const std::uint8_t legacy4[] = {0x07, 8, 0, 138};
-  const std::uint8_t legacy5[] = {0x07, 8, 0, 138, 1};
-  const std::uint8_t provisioned[] = {0x07, 8, 0, 138, 0, 3};
-  const std::uint8_t bad[] = {0x07, 8, 0, 138, 0, 4};
-  TEST_ASSERT_TRUE(ledgrid::parse_logical_receiver_id(
-      legacy4, sizeof(legacy4), logical_id, &logical_id));
-  TEST_ASSERT_EQUAL_HEX8(0xFF, logical_id);
-  TEST_ASSERT_TRUE(ledgrid::parse_logical_receiver_id(
-      legacy5, sizeof(legacy5), logical_id, &logical_id));
-  TEST_ASSERT_EQUAL_HEX8(0xFF, logical_id);
-  TEST_ASSERT_TRUE(ledgrid::parse_logical_receiver_id(
-      provisioned, sizeof(provisioned), logical_id, &logical_id));
+  std::uint16_t global_offset = 0xFFFF;
+  const std::uint8_t current[] = {0x07, 8, 0, 138, 0, 3, 0, 24};
+  const std::uint8_t obsolete[] = {0x07, 8, 0, 138, 0, 3};
+  const std::uint8_t bad_id[] = {0x07, 8, 0, 138, 0, 0xFF, 0, 24};
+  TEST_ASSERT_TRUE(ledgrid::parse_receiver_topology(
+      current, sizeof(current), logical_id, global_offset,
+      &logical_id, &global_offset));
   TEST_ASSERT_EQUAL_UINT8(3, logical_id);
-  TEST_ASSERT_FALSE(ledgrid::parse_logical_receiver_id(
-      bad, sizeof(bad), logical_id, &logical_id));
+  TEST_ASSERT_EQUAL_UINT16(24, global_offset);
+  TEST_ASSERT_FALSE(ledgrid::parse_receiver_topology(
+      obsolete, sizeof(obsolete), logical_id, global_offset,
+      &logical_id, &global_offset));
+  TEST_ASSERT_FALSE(ledgrid::parse_receiver_topology(
+      bad_id, sizeof(bad_id), logical_id, global_offset,
+      &logical_id, &global_offset));
 }
 
 void test_scene_time_is_common_across_different_receiver_boot_clocks() {
@@ -2020,59 +2022,7 @@ void test_host_takeover_invalidates_sparse_controller_authority() {
           delta_before_repair.data(), delta_before_repair.size(), now + 1000)));
 }
 
-void test_status_v4_negotiates_after_exact_v3_prefix() {
-  ledgrid::ReceiverStatusV4 status{};
-  status.capabilities = ledgrid::kCapabilityStatusV3 |
-                        ledgrid::kCapabilitySparseOverlayV1;
-  status.overlay_result = ledgrid::OverlayOperationResult::PatchConflict;
-  status.overlay_update_kind = ledgrid::OverlayUpdateKind::Delta;
-  status.overlay_expected_patches = 3;
-  status.overlay_accepted_patches = 2;
-  status.overlay_committed_coverage_pixels = 17;
-  status.overlay_committed_generation = 0x0102030405060708ULL;
-  status.overlay_staged_generation = 9;
-  status.foreground_scene_revision = 10;
-  status.foreground_scene_epoch = 11;
-  status.foreground_base_revision = 10;
-  status.foreground_present_at_scene_time_us = 12;
-  status.overlay_lease_ms = 3000;
-  status.overlay_lease_remaining_ms = 999;
-  status.overlay_session[0] = 0xAA;
-  status.overlay_composite_frames = 13;
-  status.overlay_last_composite_us = 14;
-  status.overlay_max_composite_us = 15;
-  status.overlay_commits = 16;
-  status.overlay_expirations = 17;
-  std::array<std::uint8_t, ledgrid::kStatusBytesV4> encoded{};
-  TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v4(
-      status, encoded.data(), encoded.size()));
-  TEST_ASSERT_EQUAL_STRING_LEN("LGS4", reinterpret_cast<char*>(encoded.data()), 4);
-  TEST_ASSERT_EQUAL_UINT8(4, encoded[4]);
-  TEST_ASSERT_EQUAL_UINT8(14, encoded[320]);
-  TEST_ASSERT_EQUAL_UINT8(2, encoded[321]);
-  TEST_ASSERT_EQUAL_UINT8(17, encoded[327]);
-  TEST_ASSERT_EQUAL_UINT8(0x01, encoded[328]);
-  TEST_ASSERT_EQUAL_UINT8(0x08, encoded[335]);
-  TEST_ASSERT_EQUAL_UINT8(0xAA, encoded[384]);
-  TEST_ASSERT_EQUAL_UINT8(17, encoded[415]);
-  std::array<std::uint8_t, ledgrid::kStatusBytesV3> legacy{};
-  TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v3(
-      status, legacy.data(), legacy.size()));
-  TEST_ASSERT_EQUAL_STRING_LEN("LGS3", reinterpret_cast<char*>(legacy.data()), 4);
-  std::array<std::uint8_t, ledgrid::kStatusBytesV4> query{};
-  query[0] = 0x08;
-  TEST_ASSERT_TRUE(ledgrid::valid_status_query(
-      query.data(), ledgrid::kStatusBytesV3, false));
-  TEST_ASSERT_FALSE(ledgrid::valid_status_query(
-      query.data(), query.size(), false));
-  TEST_ASSERT_TRUE(ledgrid::valid_status_query(
-      query.data(), query.size(), true));
-  query[400] = 1;
-  TEST_ASSERT_FALSE(ledgrid::valid_status_query(
-      query.data(), query.size(), true));
-}
-
-void test_status_v8_crc_vector_and_sticky_negotiation() {
+void test_status_v8_crc_vector_and_current_query_contract() {
   ledgrid::ReceiverStatusV7 status{};
   status.capabilities = ledgrid::kCapabilityStatusCrc32V8;
   status.operation_sequence = 191895;
@@ -2102,20 +2052,12 @@ void test_status_v8_crc_vector_and_sticky_negotiation() {
       false, false, false);
   TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ledgrid::ReceiverDispatchRoute::StatusQuery),
                          static_cast<std::uint8_t>(dispatch.route));
-  bool selected = false;  // boot retains legacy discovery
-  selected = ledgrid::status_v8_after_dispatch(selected, true, query.data(), query.size());
-  TEST_ASSERT_TRUE(selected);
-  const std::uint8_t short_command[] = {0x35};
-  TEST_ASSERT_TRUE(ledgrid::status_v8_after_dispatch(selected, true, short_command, 1));
-  TEST_ASSERT_TRUE(ledgrid::status_v8_after_dispatch(selected, false, query.data(), 320));
   query.back() = 1;
-  TEST_ASSERT_FALSE(ledgrid::valid_status_query(query.data(), query.size(), true, true, true));
-  TEST_ASSERT_TRUE(ledgrid::status_v8_after_dispatch(selected, false, query.data(), query.size()));
+  TEST_ASSERT_FALSE(ledgrid::valid_status_query(
+      query.data(), query.size(), true, true, true));
   query.back() = 0;
-  // An old host's explicit accepted query restores legacy replies. Two queued
-  // snapshots remain untouched; selection applies to subsequent refills.
-  TEST_ASSERT_TRUE(ledgrid::valid_status_query(query.data(), 320));
-  TEST_ASSERT_FALSE(ledgrid::status_v8_after_dispatch(selected, true, query.data(), 320));
+  TEST_ASSERT_FALSE(ledgrid::valid_status_query(
+      query.data(), ledgrid::kStatusBytesV7));
 }
 
 }  // namespace
@@ -2125,7 +2067,7 @@ void tearDown() {}
 
 int main(int, char**) {
   UNITY_BEGIN();
-  RUN_TEST(test_status_v8_crc_vector_and_sticky_negotiation);
+  RUN_TEST(test_status_v8_crc_vector_and_current_query_contract);
   RUN_TEST(test_command_ids_ownership_and_disabled_behavior_are_explicit);
   RUN_TEST(test_fifth_receiver_startup_to_first_host_frame_contract_is_exact);
   RUN_TEST(test_start_parameter_stop_takeover_restart_and_failure_transitions);
@@ -2139,8 +2081,8 @@ int main(int, char**) {
   RUN_TEST(test_context_retries_revision_order_and_conflicts_are_safe);
   RUN_TEST(test_sha256_standard_and_fixture_vectors);
   RUN_TEST(test_status_v3_preserves_v2_prefix_and_extended_offsets);
-  RUN_TEST(test_status_query_is_exact_zero_padded_and_non_owning);
-  RUN_TEST(test_config_identity_is_backward_compatible_and_fail_closed);
+  RUN_TEST(test_status_query_is_current_exact_zero_padded_and_non_owning);
+  RUN_TEST(test_config_identity_requires_current_topology_payload);
   RUN_TEST(test_scene_time_is_common_across_different_receiver_boot_clocks);
   RUN_TEST(test_staging_replacement_context_preserves_active_scene_time_until_commit);
   RUN_TEST(test_cadence_has_no_integer_period_drift_over_thirty_minutes);
@@ -2167,6 +2109,5 @@ int main(int, char**) {
   RUN_TEST(test_generated_malformed_batches_reject_with_exact_runtime_results);
   RUN_TEST(test_sparse_lease_expiry_requires_full_snapshot_repair);
   RUN_TEST(test_host_takeover_invalidates_sparse_controller_authority);
-  RUN_TEST(test_status_v4_negotiates_after_exact_v3_prefix);
   return UNITY_END();
 }

@@ -29,7 +29,7 @@ class _ReceiverQueue:
     def __init__(self, clock, *, sticky=False):
         self.clock = clock
         clock.receivers.append(self)
-        self.status_version = 8 if sticky else 3
+        self.status_version = 8
         self.packets = 0
         self.sequence = 0
         self.command = 0
@@ -54,11 +54,7 @@ class _ReceiverQueue:
         value[80:84] = self.offset.to_bytes(4, 'big')
         value[312] = self.logical_id
         value[314] = 1
-        if self.status_version == 3:
-            value = value[:320]
-            value[:5] = b'LGS3\x03'
-        else:
-            checksum_status(value)
+        checksum_status(value)
         return value + bytes(4096 - len(value))
 
     def complete(self):
@@ -67,7 +63,8 @@ class _ReceiverQueue:
             self.packets += 1
             command = semantic[0]
             if command == protocol.CMD_STATUS_QUERY:
-                self.status_version = 8 if len(semantic) == 1252 else 3
+                assert len(semantic) == protocol.RECEIVER_STATUS_BYTES_V8
+                self.status_version = 8
             else:
                 self.sequence += 1
                 self.command = command
@@ -114,6 +111,7 @@ def startup_model(*, sticky=False):
         device.total_leds = width * 138
         device.logical_device_id = index
         device.global_strip_offset = offsets[index]
+        device._transport_envelope_enabled = True
         devices.append(device)
     wall = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
     wall.devices = devices
@@ -123,27 +121,89 @@ def startup_model(*, sticky=False):
     return clock, wall
 
 
-class ReceiverStartupStatusProtocolTests(unittest.TestCase):
-    def test_old_unpaced_discovery_burst_permanently_poisoned_clean_health(self):
-        clock, wall = startup_model()
-        device = wall.devices[0]
-        with patch.object(protocol.time, 'sleep', side_effect=clock.sleep), \
-                patch.object(protocol.time, 'monotonic', side_effect=lambda: clock.now):
-            # Exact removed startup burst; no corruption is injected.
-            for _ in range(5):
-                device.query_receiver_status()
-            self.assertEqual(device.get_stats()['receiver_status_integrity_errors'], 3)
-            self.assertEqual(device.spi.dropped, [protocol.CMD_STATUS_QUERY] * 3)
-            clock.sleep(0.03)
-            status = device.query_causal_receiver_status(required_status_version=8)
-        self.assertTrue(status['receiver_status_integrity_established'])
-        self.assertEqual(status['receiver_status_integrity_errors'], 3)
-        failure = status['receiver_status_integrity_last_failure']
-        self.assertEqual(failure['reason'], 'invalid_header')
-        self.assertTrue(failure['all_zero'])
-        self.assertEqual(failure['transfer_bytes'], 1260)
+class _CurrentProtocolDevice:
+    def __init__(self, *, current=True, sampled=True):
+        self.current = current
+        self._last_transfer_status_sampled = sampled
+        self.query_calls = 0
+        self.causal_calls = 0
+        self.config_calls = 0
+        self.lane_calls = 0
+        self.logical_device_id = None
 
-    def test_cold_and_sticky_five_receiver_startup_proves_topology_without_drops(self):
+    def _status(self):
+        return {
+            "receiver_status_version": 8 if self.current else 7,
+            "receiver_status_integrity_established": self.current,
+            "receiver_capabilities": (
+                protocol.CAPABILITY_STATUS_CRC32_V8
+                | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
+                if self.current else 0
+            ),
+            "receiver_last_result": 1,
+            "receiver_logical_device": self.logical_device_id,
+            "receiver_active_strips": 8,
+            "receiver_global_strip_offset": 0,
+            "receiver_lane_mask": 0xFF,
+        }
+
+    def query_receiver_status(self):
+        self.query_calls += 1
+        return self._status()
+
+    def query_causal_receiver_status(self, *, required_status_version):
+        self.causal_calls += 1
+        assert required_status_version == 8
+        self._last_transfer_status_sampled = True
+        return self._status()
+
+    def configure_acknowledged(self):
+        self.config_calls += 1
+        return {"receiver_last_result": 1}
+
+    def set_lane_mask_acknowledged(self, _mask):
+        self.lane_calls += 1
+        return {"receiver_last_result": 1}
+
+
+class ReceiverStartupStatusProtocolTests(unittest.TestCase):
+    def test_later_obsolete_peer_rejects_roster_before_any_topology_mutation(self):
+        wall = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
+        wall.devices = [
+            _CurrentProtocolDevice(current=True),
+            _CurrentProtocolDevice(current=False),
+        ]
+        wall.receiver_strip_counts = (8, 8)
+        wall.receiver_global_strip_offsets = (0, 8)
+        wall.receiver_lane_masks = (0xFF, 0xFF)
+
+        with self.assertRaisesRegex(RuntimeError, "receiver 1.*not the supported"):
+            wall._initialize_receiver_identity_observability()
+
+        self.assertEqual(
+            [(device.config_calls, device.lane_calls) for device in wall.devices],
+            [(0, 0), (0, 0)],
+        )
+
+    def test_steady_status_collection_keeps_one_query_per_receiver(self):
+        wall = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
+        qualified = _CurrentProtocolDevice()
+        qualified.logical_device_id = 0
+        wall.devices = [qualified]
+
+        statuses = wall._receiver_statuses()
+
+        self.assertEqual(len(statuses), 1)
+        self.assertEqual((qualified.query_calls, qualified.causal_calls), (1, 0))
+
+        unqualified = _CurrentProtocolDevice(sampled=False)
+        unqualified.logical_device_id = 0
+        wall.devices = [unqualified]
+        wall._receiver_statuses()
+        self.assertEqual((unqualified.query_calls, unqualified.causal_calls), (1, 1))
+
+
+    def test_current_five_receiver_coldstart_and_reconnect_prove_topology_without_drops(self):
         for sticky in (False, True):
             with self.subTest(sticky=sticky):
                 clock, wall = startup_model(sticky=sticky)
@@ -201,11 +261,7 @@ class _ServicedReceiverQueue(_ReceiverQueue):
     def snapshot(self):
         if self.committed is None:
             return super().snapshot()
-        value = bytearray(self.committed)
-        if self.status_version == 3:
-            value[:5] = b'LGS3\x03'
-            value[320:] = bytes(4096 - 320)
-        return bytes(value)
+        return bytes(self.committed)
 
     def complete(self):
         while self.pending and self.pending[0][0] <= self.clock.now:
@@ -241,7 +297,8 @@ class _ServicedReceiverQueue(_ReceiverQueue):
         self.packets += 1
         command = semantic[0]
         if command == protocol.CMD_STATUS_QUERY:
-            self.status_version = 8 if len(semantic) == 1252 else 3
+            assert len(semantic) == protocol.RECEIVER_STATUS_BYTES_V8
+            self.status_version = 8
         else:
             self.events.append(('receive', command, self.clock.now))
             available = self.pending[-1][0] if self.pending else self.clock.now

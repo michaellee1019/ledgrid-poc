@@ -28,8 +28,7 @@ constexpr std::size_t kStatusBytesV8 = kStatusBytesV7 + 4;
 // ESP32-S3 SPI slave DMA requires every Host write to be a multiple of one
 // 32-bit word.  The transport envelope carries an exact semantic length and
 // CRC-covered zero padding so command parsers never mistake DMA padding for
-// command data.  Receivers continue to accept legacy packets during rolling
-// deployment; Hosts only emit the envelope after discovering its capability.
+// command data. The matched current host and firmware always use this framing.
 constexpr std::uint8_t kAlignedEnvelopeVersion = 1;
 constexpr std::size_t kAlignedEnvelopeHeaderBytes = 4;
 constexpr std::size_t kSpiDmaAlignmentBytes = 4;
@@ -391,8 +390,7 @@ struct ReceiverStatusV3 : ReceiverStatusV2 {
   std::uint32_t operation_sequence = 0;
 };
 
-// Status v4 is negotiated only after a legacy-safe v3 query exposes the
-// sparse-overlay capability. Bytes 0..319 remain an exact status-v3 prefix.
+// Status v8 retains bytes 0..319 as this sparse-overlay layout prefix.
 struct ReceiverStatusV4 : ReceiverStatusV3 {
   OverlayOperationResult overlay_result = OverlayOperationResult::None;
   OverlayUpdateKind overlay_update_kind = OverlayUpdateKind::FullSnapshot;
@@ -451,14 +449,13 @@ struct ReceiverStatusV5 : ReceiverStatusV4 {
   InstallationProfileStatusV1 installation_profile{};
 };
 
-// Status v6 is negotiated only when the native-module capability is present.
-// Bytes 0..767 remain an exact status-v5 prefix.
+// Status v8 retains bytes 0..767 as this native-module layout prefix.
 struct ReceiverStatusV6 : ReceiverStatusV5 {
   NativeModuleStatusV1 native_module{};
 };
 
-// Status v7 is always available with aligned-envelope v2 capability.  It
-// preserves the complete v6 prefix and gives exact FEC outcome accounting:
+// Status v8 preserves the complete v6 prefix and gives exact FEC outcome
+// accounting:
 // packets_received == packets_accepted + uncorrectable_packets +
 // semantic_crc_errors + framing_errors.
 struct ReceiverStatusV7 : ReceiverStatusV6 {
@@ -504,11 +501,6 @@ bool encode_receiver_status_v8(
     const ReceiverStatusV7& status,
     std::uint8_t* output,
     std::size_t output_size);
-
-// Call only after dispatch validation. Only an accepted explicit status query
-// changes the response format; ordinary/failed commands retain its selection.
-bool status_v8_after_dispatch(bool current, bool accepted,
-                              const std::uint8_t* command, std::size_t size);
 
 bool command_may_claim_base(ReceiverCommand command);
 ReceiverDispatchDecision classify_receiver_dispatch(

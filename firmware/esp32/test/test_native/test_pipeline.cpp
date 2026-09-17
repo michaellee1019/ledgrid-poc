@@ -996,7 +996,7 @@ void test_status_v2_layout_is_stable() {
       status, encoded.data(), ledgrid::kStatusBytesV2 - 1));
 }
 
-void test_aligned_envelope_decodes_exact_semantic_payload_and_legacy_packets() {
+void test_aligned_envelope_decodes_current_payload_and_rejects_raw_packets() {
   const std::vector<std::uint8_t> semantic = {
       static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetRange),
       0x00, 0x02, 0x01, 0x11, 0x22, 0x33};
@@ -1024,12 +1024,9 @@ void test_aligned_envelope_decodes_exact_semantic_payload_and_legacy_packets() {
   TEST_ASSERT_FALSE(colliding_report.fec_envelope_attempted);
   TEST_ASSERT_EQUAL_MEMORY(colliding.data(), decoded.data, colliding.size());
 
-  const auto legacy = legacy_packet(semantic);
-  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-      legacy.data(), legacy.size(), &decoded));
-  TEST_ASSERT_FALSE(decoded.aligned_envelope);
-  TEST_ASSERT_EQUAL_UINT32(semantic.size(), decoded.size);
-  TEST_ASSERT_EQUAL_MEMORY(semantic.data(), decoded.data, semantic.size());
+  const auto raw = legacy_packet(semantic);
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      raw.data(), raw.size(), &decoded));
 }
 
 void test_aligned_envelope_accepts_frame_and_exact_maximum_semantic_sizes() {
@@ -1057,36 +1054,24 @@ void test_aligned_envelope_accepts_frame_and_exact_maximum_semantic_sizes() {
   TEST_ASSERT_EQUAL_UINT32(maximum.size(), decoded.size);
 }
 
-void test_aligned_envelope_preserves_full_status_query_semantics() {
-  struct Case {
-    std::size_t semantic_size;
-    std::size_t wire_size;
-    bool sparse_overlay;
-    bool installation_profile;
-    bool native_modules;
-  };
-  constexpr std::array<Case, 4> kCases = {{
-      {ledgrid::kStatusBytesV3, 328, false, false, false},
-      {ledgrid::kStatusBytesV4, 424, true, false, false},
-      {ledgrid::kStatusBytesV5, 776, true, true, false},
-      {ledgrid::kStatusBytesV6, 1224, true, true, true},
-  }};
+void test_aligned_envelope_accepts_only_current_status_query_semantics() {
+  std::vector<std::uint8_t> semantic(ledgrid::kStatusBytesV8, 0);
+  semantic[0] = static_cast<std::uint8_t>(
+      ledgrid::ReceiverCommand::StatusQuery);
+  const auto packet = aligned_packet(semantic);
 
-  for (const auto& test_case : kCases) {
-    std::vector<std::uint8_t> semantic(test_case.semantic_size, 0);
-    semantic[0] = static_cast<std::uint8_t>(
-        ledgrid::ReceiverCommand::StatusQuery);
-    const auto packet = aligned_packet(semantic);
-    TEST_ASSERT_EQUAL_UINT32(test_case.wire_size, packet.size());
-
-    ledgrid::ReceiverPacketPayload decoded{};
-    TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-        packet.data(), packet.size(), &decoded));
-    TEST_ASSERT_EQUAL_UINT32(test_case.semantic_size, decoded.size);
-    TEST_ASSERT_TRUE(ledgrid::valid_status_query(
-        decoded.data, decoded.size, test_case.sparse_overlay,
-        test_case.installation_profile, test_case.native_modules));
-  }
+  ledgrid::ReceiverPacketPayload decoded{};
+  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+      packet.data(), packet.size(), &decoded));
+  TEST_ASSERT_EQUAL_UINT32(ledgrid::kStatusBytesV8, decoded.size);
+  TEST_ASSERT_TRUE(ledgrid::valid_status_query(decoded.data, decoded.size));
+  TEST_ASSERT_FALSE(ledgrid::valid_status_query(
+      decoded.data, ledgrid::kStatusBytesV7));
+  semantic.back() = 1;
+  const auto nonzero_packet = aligned_packet(semantic);
+  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+      nonzero_packet.data(), nonzero_packet.size(), &decoded));
+  TEST_ASSERT_FALSE(ledgrid::valid_status_query(decoded.data, decoded.size));
 }
 
 void test_aligned_envelope_rejects_bad_crc_version_length_padding_and_alignment() {
@@ -1140,43 +1125,23 @@ void test_fec_envelope_golden_layout_and_exact_installed_sizes() {
   TEST_ASSERT_EQUAL_MEMORY(
       expected_prefix, golden.data() + golden.size() - sizeof(expected_prefix),
       sizeof(expected_prefix));
-  const auto legacy_v2 = fec_v2_packet(show);
-  std::array<std::uint8_t, ledgrid::kFecScratchBytes> legacy_scratch{};
-  ledgrid::ReceiverPacketPayload legacy_decoded{};
-  ledgrid::ReceiverPacketDecodeReport legacy_report{};
-  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-      legacy_v2.data(), legacy_v2.size(), &legacy_decoded, &legacy_report,
-      legacy_scratch.data(), legacy_scratch.size()));
-  TEST_ASSERT_TRUE(legacy_report.fec_envelope_attempted);
-  TEST_ASSERT_EQUAL_MEMORY(show.data(), legacy_decoded.data, show.size());
-
-  const auto legacy_v5 = fec_v5_packet(show);
-  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-      legacy_v5.data(), legacy_v5.size(), &legacy_decoded, &legacy_report,
-      legacy_scratch.data(), legacy_scratch.size()));
-  TEST_ASSERT_TRUE(legacy_report.fec_envelope_attempted);
-  TEST_ASSERT_EQUAL_MEMORY(show.data(), legacy_decoded.data, show.size());
-
-  const auto legacy_v6 = fec_v6_packet(show);
-  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-      legacy_v6.data(), legacy_v6.size(), &legacy_decoded, &legacy_report,
-      legacy_scratch.data(), legacy_scratch.size()));
-  TEST_ASSERT_TRUE(legacy_report.fec_envelope_attempted);
-  TEST_ASSERT_EQUAL_MEMORY(show.data(), legacy_decoded.data, show.size());
-
-  const auto legacy_v4 = fec_v4_packet(show);
-  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-      legacy_v4.data(), legacy_v4.size(), &legacy_decoded, &legacy_report,
-      legacy_scratch.data(), legacy_scratch.size()));
-  TEST_ASSERT_TRUE(legacy_report.fec_envelope_attempted);
-  TEST_ASSERT_EQUAL_MEMORY(show.data(), legacy_decoded.data, show.size());
-
-  const auto legacy_v3 = fec_v3_packet(show);
-  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-      legacy_v3.data(), legacy_v3.size(), &legacy_decoded, &legacy_report,
-      legacy_scratch.data(), legacy_scratch.size()));
-  TEST_ASSERT_TRUE(legacy_report.fec_envelope_attempted);
-  TEST_ASSERT_EQUAL_MEMORY(show.data(), legacy_decoded.data, show.size());
+  std::array<std::uint8_t, ledgrid::kFecScratchBytes> scratch{};
+  ledgrid::ReceiverPacketPayload decoded{};
+  ledgrid::ReceiverPacketDecodeReport report{};
+  const std::array<std::vector<std::uint8_t>, 5> obsolete = {{
+      fec_v2_packet(show), fec_v3_packet(show), fec_v4_packet(show),
+      fec_v5_packet(show), fec_v6_packet(show),
+  }};
+  for (const auto& packet : obsolete) {
+    TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+        packet.data(), packet.size(), &decoded, &report,
+        scratch.data(), scratch.size()));
+    TEST_ASSERT_TRUE(report.fec_envelope_attempted);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(
+            ledgrid::ReceiverPacketDecodeResult::InvalidFraming),
+        static_cast<std::uint8_t>(report.result));
+  }
 
   std::vector<std::uint8_t> broad(1U + 8U * 138U * 3U, 0x5A);
   broad[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
@@ -1194,9 +1159,6 @@ void test_fec_envelope_golden_layout_and_exact_installed_sizes() {
   TEST_ASSERT_LESS_OR_EQUAL_UINT32(
       ledgrid::kAnimationPipelineMaxTransactionBytes,
       maximum_packet.size());
-  std::array<std::uint8_t, ledgrid::kFecScratchBytes> scratch{};
-  ledgrid::ReceiverPacketPayload decoded{};
-  ledgrid::ReceiverPacketDecodeReport report{};
   TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
       maximum_packet.data(), maximum_packet.size(), &decoded, &report,
       scratch.data(), scratch.size()));
@@ -1500,24 +1462,6 @@ void test_fec_outer_parity_covers_the_full_installed_frame_and_fails_closed() {
   TEST_ASSERT_EQUAL_UINT16(0, report.corrected_bits);
   TEST_ASSERT_EQUAL_MEMORY(semantic.data(), decoded.data, semantic.size());
 
-  const auto legacy_v6 = fec_v6_packet(semantic);
-  auto legacy_beyond_radius = legacy_v6;
-  const std::size_t legacy_codewords =
-      (legacy_v6.size() - ledgrid::kFecWireHeaderBytes) /
-      ledgrid::kFecCodewordBytes;
-  for (std::size_t index = 0; index < std::size(errors); ++index) {
-    legacy_beyond_radius[
-        fec_rs_wire_offset(matrix, symbols[index], 0U, legacy_codewords)] ^=
-        errors[index];
-  }
-  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
-      legacy_beyond_radius.data(), legacy_beyond_radius.size(), &decoded,
-      &report, scratch.data(), scratch.size()));
-  TEST_ASSERT_EQUAL_UINT8(
-      static_cast<std::uint8_t>(
-          ledgrid::ReceiverPacketDecodeResult::FecUncorrectable),
-      static_cast<std::uint8_t>(report.result));
-
   auto two_data_blocks = canonical;
   damage_block(&two_data_blocks, 0U);
   damage_block(&two_data_blocks, data_codewords - 1U);
@@ -1809,9 +1753,9 @@ int main(int, char**) {
   RUN_TEST(test_startup_rainbow_cycles_once_per_second_and_checks_bounds);
   RUN_TEST(test_mailbox_replaces_only_unread_ready_frames);
   RUN_TEST(test_status_v2_layout_is_stable);
-  RUN_TEST(test_aligned_envelope_decodes_exact_semantic_payload_and_legacy_packets);
+  RUN_TEST(test_aligned_envelope_decodes_current_payload_and_rejects_raw_packets);
   RUN_TEST(test_aligned_envelope_accepts_frame_and_exact_maximum_semantic_sizes);
-  RUN_TEST(test_aligned_envelope_preserves_full_status_query_semantics);
+  RUN_TEST(test_aligned_envelope_accepts_only_current_status_query_semantics);
   RUN_TEST(test_aligned_envelope_rejects_bad_crc_version_length_padding_and_alignment);
   RUN_TEST(test_fec_envelope_golden_layout_and_exact_installed_sizes);
   RUN_TEST(test_fec_corrects_header_payload_crc_and_distinct_codeword_bits);

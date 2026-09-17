@@ -163,7 +163,7 @@ class SpiInstallationProfileReceiver:
         return self._status
 
     def refresh(self) -> dict[str, Any]:
-        """Clock a causally fresh negotiated v5 snapshot from the two-deep queue."""
+        """Clock a causally fresh protected-v8 snapshot from the response queue."""
 
         self._require_enabled()
         status = None
@@ -175,7 +175,7 @@ class SpiInstallationProfileReceiver:
             # application, including waits behind already-running CONFIG work.
             with transport_lock:
                 status = self.device.query_causal_receiver_status(
-                    required_status_version=5
+                    required_status_version=8
                 )
                 return self._apply_status(status)
         except Exception as exc:

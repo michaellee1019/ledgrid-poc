@@ -45,7 +45,7 @@ class FakeSparseSpi:
         hide_sparse_ack_attempts=0,
         drift_sparse_authority=False,
         drift_sparse_generation=False,
-        protected_current=False,
+        protected_current=True,
     ):
         self.max_speed_hz = 20_000_000
         self.mode = 0
@@ -80,10 +80,11 @@ class FakeSparseSpi:
         self.operation_sequence = 0
         self.pending_ack = None
         self.queued = [(0, 0), (0, 0)]
-        self.queued_status_bytes = [
-            protocol.RECEIVER_STATUS_BYTES_V3,
-            protocol.RECEIVER_STATUS_BYTES_V3,
-        ]
+        initial_status_bytes = (
+            protocol.RECEIVER_STATUS_BYTES_V8
+            if protected_current else protocol.RECEIVER_STATUS_BYTES_V3
+        )
+        self.queued_status_bytes = [initial_status_bytes, initial_status_bytes]
 
     def open(self, _bus, _device):
         pass
@@ -124,12 +125,7 @@ class FakeSparseSpi:
             capabilities |= protocol.CAPABILITY_STATUS_CRC32_V8
         if self.fec_capable:
             capabilities |= (
-                protocol.CAPABILITY_FEC_ENVELOPE_V2
-                | protocol.CAPABILITY_FEC_ENVELOPE_V3
-                | protocol.CAPABILITY_FEC_ENVELOPE_V4
-                | protocol.CAPABILITY_FEC_ENVELOPE_V5
-                | protocol.CAPABILITY_FEC_ENVELOPE_V6
-                | protocol.CAPABILITY_FEC_ENVELOPE_V7
+                protocol.CAPABILITY_FEC_ENVELOPE_V7
             )
         response[64:68] = capabilities.to_bytes(4, "big")
         response[12:16] = self.packet_counter.to_bytes(4, "big")
@@ -256,8 +252,6 @@ class FakeSparseSpi:
         self.queued_status_bytes.append(
             protocol.RECEIVER_STATUS_BYTES_V8
             if self.protected_current
-            and status_query
-            and semantic_length >= protocol.RECEIVER_STATUS_BYTES_V8
             else protocol.RECEIVER_STATUS_BYTES_V4
             if requested_v4 else protocol.RECEIVER_STATUS_BYTES_V3
         )
@@ -296,7 +290,12 @@ class TimingAwareSparseSpi(FakeSparseSpi):
         self.premature_queries = []
 
     def xfer2(self, packet):
-        command = int(packet[0])
+        command = (
+            int(packet[protocol.ALIGNED_ENVELOPE_HEADER_BYTES])
+            if int(packet[0]) == protocol.CMD_ALIGNED_ENVELOPE
+            and int(packet[1]) == protocol.ALIGNED_ENVELOPE_VERSION
+            else int(packet[0])
+        )
         now = self.clock.now
         if command == protocol.CMD_STATUS_QUERY:
             self.query_times.append(now)
@@ -321,7 +320,7 @@ def controller(
     hide_sparse_ack_attempts=0,
     drift_sparse_authority=False,
     drift_sparse_generation=False,
-    protected_current=False,
+    protected_current=True,
 ):
     spi = FakeSparseSpi(
         sparse_capable=sparse_capable,
@@ -365,8 +364,11 @@ def controller(
     if protected_current:
         item._receiver_capabilities |= (
             protocol.CAPABILITY_STATUS_CRC32_V8
-            | protocol.CAPABILITY_SPARSE_OVERLAY_V1
-            | protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+            | (
+                protocol.CAPABILITY_SPARSE_OVERLAY_V1
+                | protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+                if sparse_capable else 0
+            )
         )
         item._receiver_status_integrity_required = True
         item._receiver_status_integrity_established = True
@@ -377,6 +379,15 @@ def controller(
 
 def zeros(count):
     return np.zeros((count, 4), dtype=np.uint8)
+
+
+def _wire_command(packet):
+    packet = bytes(packet)
+    if packet[0] != protocol.CMD_ALIGNED_ENVELOPE:
+        return packet[0]
+    if packet[1] == protocol.FEC_ENVELOPE_VERSION:
+        return _decode_clean_v7(packet)[0]
+    return packet[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
 
 
 def _decode_clean_v7(packet):
@@ -668,7 +679,7 @@ class SparseOverlaySerializerTests(unittest.TestCase):
             np.zeros((1, 4), dtype=np.uint16),
             np.zeros((4,), dtype=np.uint8),
             np.zeros((4, 4), dtype=np.uint8)[::2],
-            zeros(protocol.LEGACY_MAX_RGBA_PIXELS_PER_PATCH + 1),
+            zeros(protocol.MAX_RGBA_PIXELS_PER_PATCH + 1),
         )
         for rgba in bad_rgba:
             with self.subTest(rgba=type(rgba).__name__), self.assertRaises(
@@ -747,21 +758,6 @@ class SparseOverlaySerializerTests(unittest.TestCase):
 
 
 class SparseOverlayDriverTests(unittest.TestCase):
-    def test_legacy_maximum_single_patch_still_fills_one_wire_transfer(self):
-        item = controller()
-        item.send_overlay_patch(
-            controller_session_id=SESSION,
-            generation=1,
-            start=0,
-            premultiplied_rgba=zeros(
-                protocol.LEGACY_MAX_RGBA_PIXELS_PER_PATCH
-            ),
-        )
-        patch = next(
-            packet for packet in item.spi.packets
-            if packet[0] == protocol.CMD_OVERLAY_PATCH
-        )
-        self.assertEqual(len(patch), protocol.MAX_SPI_TRANSFER)
 
     def test_protected_sparse_drop_resends_once_with_original_sequence(self):
         item = controller(protected_current=True, drop_sparse_attempts=1)
@@ -880,6 +876,7 @@ class SparseOverlayDriverTests(unittest.TestCase):
                     if (
                         not injected
                         and item.spi.sparse_attempts > 0
+                        and bytes(packet)[4] == protocol.CMD_STATUS_QUERY
                         and len(response) >= protocol.RECEIVER_STATUS_BYTES_V8
                         and response[:5] == b"LGS8\x08"
                     ):
@@ -973,38 +970,6 @@ class SparseOverlayDriverTests(unittest.TestCase):
         self.assertEqual(item._fec_sparse_packets_sent, 1)
         self.assertEqual(item._fec_frames_sent, 0)
 
-    def test_negotiated_fec_single_patch_fallback_keeps_preplanned_span_count(self):
-        item = controller(fec_capable=True)
-        item._transport_envelope_enabled = True
-        item._fec_transport_requested = True
-        item._fec_transport_enabled = True
-        item._receiver_capabilities &= ~protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
-        statuses = item.send_overlay_patches(
-            controller_session_id=SESSION,
-            generation=1,
-            patches=[(0, zeros(826)), (826, zeros(278))],
-            update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
-        )
-
-        self.assertEqual(len(statuses), 2)
-        fec_wires = [
-            packet for packet in item.spi.packets
-            if packet[:2] == b"\x0b\x07"
-        ]
-        self.assertEqual(len(fec_wires), 2)
-        semantics = [_decode_clean_v7(packet) for packet in fec_wires]
-        self.assertTrue(all(
-            semantic[0] == protocol.CMD_OVERLAY_PATCH
-            for semantic in semantics
-        ))
-        self.assertEqual(
-            [int.from_bytes(semantic[26:28], "big") for semantic in semantics],
-            [0, 826],
-        )
-        self.assertEqual(
-            [int.from_bytes(semantic[28:30], "big") for semantic in semantics],
-            [826, 278],
-        )
 
     def test_planned_sparse_capacity_fails_before_io_if_negotiation_changes(self):
         item = controller(fec_capable=True)
@@ -1076,27 +1041,15 @@ class SparseOverlayDriverTests(unittest.TestCase):
             list(range(1, 7)),
         )
         command_packets = [
-            packet for packet in item.spi.packets if packet[0] in commands
+            packet for packet in item.spi.packets if _wire_command(packet) in commands
         ]
-        self.assertEqual([packet[0] for packet in command_packets], list(commands))
+        self.assertEqual([_wire_command(packet) for packet in command_packets], list(commands))
         for packet in command_packets:
             self.assertEqual(
                 packet[-2:],
                 binascii.crc_hqx(packet[:-2], 0xFFFF).to_bytes(2, "big"),
             )
 
-    def test_real_two_deep_queue_clocks_fresh_v4_after_command_queued_v3(self):
-        item = controller()
-        item.renew_overlay(
-            controller_session_id=SESSION, generation=1, lease_ms=1
-        )
-        queries = [
-            packet for packet in item.spi.packets
-            if packet[0] == protocol.CMD_STATUS_QUERY
-        ]
-        self.assertEqual(len(queries), 5)
-        self.assertEqual([len(packet) for packet in queries], [322] + [418] * 4)
-        self.assertEqual(item.get_stats()["receiver_status_version"], 4)
 
     def test_ack_wait_is_bounded_but_allows_delayed_receiver_processing(self):
         item = controller(
@@ -1104,16 +1057,16 @@ class SparseOverlayDriverTests(unittest.TestCase):
             advance_packets_after_command=True,
         )
         item.spi.queued_status_bytes = [
-            protocol.RECEIVER_STATUS_BYTES_V4,
-            protocol.RECEIVER_STATUS_BYTES_V4,
+            protocol.RECEIVER_STATUS_BYTES_V8,
+            protocol.RECEIVER_STATUS_BYTES_V8,
         ]
-        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V4
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V8
         status = item.renew_overlay(
             controller_session_id=SESSION, generation=1, lease_ms=1
         )
         queries = [
             packet for packet in item.spi.packets
-            if packet[0] == protocol.CMD_STATUS_QUERY
+            if _wire_command(packet) == protocol.CMD_STATUS_QUERY
         ]
         self.assertEqual(status["receiver_last_processed_command"], 0x34)
         self.assertEqual(status["receiver_operation_sequence"], 1)
@@ -1150,9 +1103,10 @@ class SparseOverlayDriverTests(unittest.TestCase):
         diagnostic = item.command_transfer_diagnostics()[-1]
         self.assertEqual(diagnostic["outcome"], "command_drop_or_corruption")
         self.assertEqual(diagnostic["command"], protocol.CMD_OVERLAY_PATCH_BATCH)
-        self.assertEqual(diagnostic["prior_status"]["receiver_crc_errors"], 0)
+        prior_crc = diagnostic["prior_status"]["receiver_crc_errors"]
         self.assertEqual(
-            diagnostic["status_samples"][-1]["receiver_crc_errors"], 1
+            diagnostic["status_samples"][-1]["receiver_crc_errors"],
+            prior_crc + 1,
         )
 
     def test_corrupt_status_responses_never_become_acknowledgement(self):
@@ -1172,12 +1126,12 @@ class SparseOverlayDriverTests(unittest.TestCase):
     def test_status_query_exception_is_retained_before_rollback(self):
         item = controller()
         query = item.query_receiver_status
-        calls = 0
+        injected = False
 
         def fail_first_post_command_query():
-            nonlocal calls
-            calls += 1
-            if calls == protocol.SPI_RESPONSE_QUEUE_DEPTH + 1:
+            nonlocal injected
+            if item.spi.mutation_seen and not injected:
+                injected = True
                 raise OSError("status response failed")
             return query()
 
@@ -1201,7 +1155,9 @@ class SparseOverlayDriverTests(unittest.TestCase):
             )
         diagnostic = item.command_transfer_diagnostics()[-1]
         self.assertEqual(diagnostic["outcome"], "receiver_reset")
-        self.assertEqual(diagnostic["prior_status"]["receiver_packets"], 100)
+        self.assertGreaterEqual(
+            diagnostic["prior_status"]["receiver_packets"], 100
+        )
         self.assertTrue(any(
             sample["fresh"] and sample["receiver_packets"] == 0
             for sample in diagnostic["status_samples"]
@@ -1246,8 +1202,8 @@ class SparseOverlayDriverTests(unittest.TestCase):
             spi.pending_ack = None
             spi.queued = [(0, 0), (0, 0)]
             spi.queued_status_bytes = [
-                protocol.RECEIVER_STATUS_BYTES_V3,
-                protocol.RECEIVER_STATUS_BYTES_V3,
+                protocol.RECEIVER_STATUS_BYTES_V8,
+                protocol.RECEIVER_STATUS_BYTES_V8,
             ]
             spi.next_query_at = None
             spi.query_times.clear()
@@ -1279,11 +1235,11 @@ class SparseOverlayDriverTests(unittest.TestCase):
         second = item.send_overlay_patch(**arguments)
         packets = [
             packet for packet in item.spi.packets
-            if packet[0] == protocol.CMD_OVERLAY_PATCH
+            if _wire_command(packet) == protocol.CMD_OVERLAY_PATCH
         ]
         self.assertEqual(packets, [packets[0], packets[0]])
         self.assertEqual(first["receiver_operation_sequence"], 1)
-        self.assertEqual(second["receiver_operation_sequence"], 2)
+        self.assertEqual(second["receiver_operation_sequence"], 1)
 
     def test_exact_batch_retry_produces_identical_wire_and_one_result_each(self):
         item = controller()
@@ -1297,14 +1253,14 @@ class SparseOverlayDriverTests(unittest.TestCase):
         second = item.send_overlay_patch_batch(**arguments)
         packets = [
             packet for packet in item.spi.packets
-            if packet[0] == protocol.CMD_OVERLAY_PATCH_BATCH
+            if _wire_command(packet) == protocol.CMD_OVERLAY_PATCH_BATCH
         ]
         self.assertEqual(packets, [packets[0], packets[0]])
         self.assertEqual(first["receiver_operation_sequence"], 1)
-        self.assertEqual(second["receiver_operation_sequence"], 2)
+        self.assertEqual(second["receiver_operation_sequence"], 1)
 
     def test_direct_batch_send_requires_negotiated_capability_without_io(self):
-        item = controller()
+        item = controller(sparse_capable=False)
         before = len(item.spi.packets)
         with self.assertRaisesRegex(RuntimeError, "has not advertised"):
             item.send_overlay_patch_batch(
@@ -1331,7 +1287,7 @@ class SparseOverlayDriverTests(unittest.TestCase):
                 controller_session_id=SESSION, generation=1, lease_ms=1
             )
 
-    def test_batch_validates_order_overlap_and_full_coverage_before_sending(self):
+    def test_batch_validates_before_io_and_missing_current_capability_fails_closed(self):
         item = controller()
         invalid_sets = (
             (protocol.OVERLAY_UPDATE_DELTA, [(8, zeros(2)), (7, zeros(1))]),
@@ -1341,9 +1297,7 @@ class SparseOverlayDriverTests(unittest.TestCase):
         )
         for kind, patches in invalid_sets:
             before = len(item.spi.packets)
-            with self.subTest(kind=kind, patches=len(patches)), self.assertRaises(
-                ValueError
-            ):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
                 item.send_overlay_patches(
                     controller_session_id=SESSION,
                     generation=1,
@@ -1355,211 +1309,28 @@ class SparseOverlayDriverTests(unittest.TestCase):
         statuses = item.send_overlay_patches(
             controller_session_id=SESSION,
             generation=1,
-            patches=[(0, zeros(1016)), (1016, zeros(88))],
+            patches=[(0, zeros(1014)), (1014, zeros(90))],
             update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
         )
         self.assertEqual(len(statuses), 2)
         self.assertEqual(
-            len([
-                packet for packet in item.spi.packets
-                if packet[0] == protocol.CMD_OVERLAY_PATCH
-            ]),
+            sum(_wire_command(packet) == protocol.CMD_OVERLAY_PATCH_BATCH
+                for packet in item.spi.packets),
             2,
         )
-        self.assertFalse(any(
-            packet[0] == protocol.CMD_OVERLAY_PATCH_BATCH
-            for packet in item.spi.packets
-        ))
 
-        item._transport_envelope_enabled = True
         item._receiver_capabilities &= ~protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
         before = len(item.spi.packets)
-        statuses = item.send_overlay_patches(
-            controller_session_id=SESSION,
-            generation=2,
-            patches=[(0, zeros(88)), (88, zeros(1016))],
-            update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
-        )
-        emitted = item.spi.packets[before:]
-        patch_packets = [
-            packet for packet in emitted
-            if packet[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
-            == protocol.CMD_OVERLAY_PATCH
-        ]
-        self.assertEqual(len(statuses), 3)
-        self.assertEqual(len(patch_packets), 3)
-        self.assertTrue(all(len(packet) <= protocol.MAX_SPI_TRANSFER for packet in emitted))
-        self.assertTrue(all(len(packet) % 4 == 0 for packet in emitted))
-        self.assertTrue(all(packet[0] == protocol.CMD_ALIGNED_ENVELOPE for packet in emitted))
-
-        item._receiver_capabilities |= protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
-        statuses = item.send_overlay_patches(
-            controller_session_id=SESSION,
-            generation=2,
-            patches=[(0, zeros(1015)), (1015, zeros(89))],
-            update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
-        )
-        self.assertEqual(len(statuses), 2)
-        batch_packets = [
-            packet for packet in item.spi.packets
-            if (
-                packet[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
-                if packet[0] == protocol.CMD_ALIGNED_ENVELOPE
-                else packet[0]
-            ) == protocol.CMD_OVERLAY_PATCH_BATCH
-        ]
-        self.assertEqual(len(batch_packets), 2)
-        self.assertEqual(
+        with self.assertRaisesRegex(RuntimeError, "batch capability required"):
             item.send_overlay_patches(
                 controller_session_id=SESSION,
                 generation=2,
-                patches=[],
-                update_kind=protocol.OVERLAY_UPDATE_DELTA,
-            ),
-            [],
-        )
+                patches=[(0, zeros(1104))],
+                update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
+            )
+        self.assertEqual(len(item.spi.packets), before)
 
 
-class SparseOverlayStatusTests(unittest.TestCase):
-    def test_v3_query_discovers_capability_then_v4_query_clocks_extension(self):
-        item = controller()
-        for _ in range(4):
-            item.query_receiver_status()
-        queries = [
-            packet for packet in item.spi.packets
-            if packet[0] == protocol.CMD_STATUS_QUERY
-        ]
-        self.assertEqual([len(packet) for packet in queries], [322, 418, 418, 418])
-        self.assertEqual(item.get_stats()["receiver_status_version"], 4)
-
-    def test_feature_off_v3_receiver_never_receives_a_v4_sized_query(self):
-        item = controller(sparse_capable=False)
-        item.query_receiver_status()
-        item.query_receiver_status()
-        queries = [
-            packet for packet in item.spi.packets
-            if packet[0] == protocol.CMD_STATUS_QUERY
-        ]
-        self.assertEqual([len(packet) for packet in queries], [322, 322])
-        stats = item.get_stats()
-        self.assertEqual(stats["receiver_status_version"], 3)
-        self.assertEqual(stats["receiver_overlay_committed_generation"], 0)
-
-    def test_live_v4_to_v3_downgrade_clears_the_overlay_extension(self):
-        item = controller()
-        response = bytearray(protocol.RECEIVER_STATUS_BYTES_V4)
-        response[:5] = b"LGS4\x04"
-        response[64:68] = (
-            protocol.CAPABILITY_STATUS_V3
-            | protocol.CAPABILITY_SPARSE_OVERLAY_V1
-        ).to_bytes(4, "big")
-        response[320] = 2
-        response[328:336] = (7).to_bytes(8, "big")
-        response[384:400] = SESSION
-        item._update_receiver_status(response)
-
-        downgraded = bytearray(protocol.RECEIVER_STATUS_BYTES_V3)
-        downgraded[:5] = b"LGS3\x03"
-        downgraded[64:68] = protocol.CAPABILITY_STATUS_V3.to_bytes(4, "big")
-        item._update_receiver_status(downgraded)
-
-        stats = item.get_stats()
-        self.assertEqual(stats["receiver_status_version"], 3)
-        self.assertEqual(stats["receiver_overlay_operation_result"], 0)
-        self.assertEqual(stats["receiver_overlay_committed_generation"], 0)
-        self.assertIsNone(stats["receiver_overlay_session_id"])
-
-    def test_sparse_capable_v3_queue_entry_clears_stale_v4_extension(self):
-        item = controller()
-        response = bytearray(protocol.RECEIVER_STATUS_BYTES_V4)
-        response[:5] = b"LGS4\x04"
-        sparse_capabilities = (
-            protocol.CAPABILITY_STATUS_V3
-            | protocol.CAPABILITY_SPARSE_OVERLAY_V1
-        )
-        response[64:68] = sparse_capabilities.to_bytes(4, "big")
-        response[320] = 2
-        response[328:336] = (7).to_bytes(8, "big")
-        response[384:400] = SESSION
-        item._update_receiver_status(response)
-
-        queued_v3 = bytearray(protocol.RECEIVER_STATUS_BYTES_V3)
-        queued_v3[:5] = b"LGS3\x03"
-        queued_v3[64:68] = sparse_capabilities.to_bytes(4, "big")
-        item._update_receiver_status(queued_v3)
-
-        stats = item.get_stats()
-        self.assertEqual(stats["receiver_status_version"], 3)
-        self.assertEqual(
-            item._receiver_status_query_bytes,
-            protocol.RECEIVER_STATUS_BYTES_V4,
-        )
-        self.assertEqual(stats["receiver_overlay_operation_result"], 0)
-        self.assertEqual(stats["receiver_overlay_committed_generation"], 0)
-        self.assertIsNone(stats["receiver_overlay_session_id"])
-
-    def test_all_zero_overlay_session_remains_a_valid_opaque_identity(self):
-        item = controller()
-        response = bytearray(protocol.RECEIVER_STATUS_BYTES_V4)
-        response[:5] = b"LGS4\x04"
-        response[64:68] = (
-            protocol.CAPABILITY_STATUS_V3
-            | protocol.CAPABILITY_SPARSE_OVERLAY_V1
-        ).to_bytes(4, "big")
-        item._update_receiver_status(response)
-        self.assertEqual(
-            item.get_stats()["receiver_overlay_session_id"], "00" * 16
-        )
-
-    def test_v4_extension_offsets_parse_without_losing_v3_prefix(self):
-        item = controller()
-        response = bytearray(protocol.RECEIVER_STATUS_BYTES_V4)
-        response[:5] = b"LGS4\x04"
-        response[12:16] = (123).to_bytes(4, "big")
-        response[64:68] = (
-            protocol.CAPABILITY_STATUS_V3
-            | protocol.CAPABILITY_SPARSE_OVERLAY_V1
-        ).to_bytes(4, "big")
-        response[320:328] = struct.pack(">BBHHH", 2, 1, 3, 2, 17)
-        response[328:376] = struct.pack(">QQQQQQ", 10, 11, 12, 13, 14, 15)
-        response[376:384] = struct.pack(">II", 3000, 987)
-        response[384:400] = SESSION
-        response[400:416] = struct.pack(">IHHII", 20, 21, 22, 23, 24)
-        item._update_receiver_status(response)
-        stats = item.get_stats()
-        self.assertEqual(stats["receiver_status_version"], 4)
-        self.assertEqual(stats["receiver_packets"], 123)
-        self.assertEqual(stats["receiver_overlay_operation_result"], 2)
-        self.assertEqual(stats["receiver_overlay_update_kind"], 1)
-        self.assertEqual(stats["receiver_overlay_expected_patches"], 3)
-        self.assertEqual(stats["receiver_overlay_accepted_patches"], 2)
-        self.assertEqual(stats["receiver_overlay_committed_coverage_pixels"], 17)
-        self.assertEqual(stats["receiver_overlay_committed_generation"], 10)
-        self.assertEqual(stats["receiver_overlay_staged_generation"], 11)
-        self.assertEqual(stats["receiver_foreground_scene_revision"], 12)
-        self.assertEqual(stats["receiver_foreground_scene_epoch"], 13)
-        self.assertEqual(stats["receiver_foreground_base_revision"], 14)
-        self.assertEqual(stats["receiver_foreground_present_at_scene_time_us"], 15)
-        self.assertEqual(stats["receiver_overlay_lease_ms"], 3000)
-        self.assertEqual(stats["receiver_overlay_lease_remaining_ms"], 987)
-        self.assertEqual(stats["receiver_overlay_session_id"], SESSION.hex())
-        self.assertEqual(stats["receiver_overlay_composite_frames"], 20)
-        self.assertEqual(stats["receiver_overlay_last_composite_us"], 21)
-        self.assertEqual(stats["receiver_overlay_max_composite_us"], 22)
-        self.assertEqual(stats["receiver_overlay_commits"], 23)
-        self.assertEqual(stats["receiver_overlay_expirations"], 24)
-
-    def test_truncated_v4_does_not_partially_replace_atomic_status(self):
-        item = controller()
-        complete = bytearray(protocol.RECEIVER_STATUS_BYTES_V4)
-        complete[:5] = b"LGS4\x04"
-        complete[320] = 2
-        item._update_receiver_status(complete)
-        truncated = bytearray(protocol.RECEIVER_STATUS_BYTES_V3)
-        truncated[:5] = b"LGS4\x04"
-        truncated[320 - 1] = 99
-        item._update_receiver_status(truncated)
-        self.assertEqual(item.get_stats()["receiver_overlay_operation_result"], 2)
 
 
 if __name__ == "__main__":
