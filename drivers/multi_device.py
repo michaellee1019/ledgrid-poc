@@ -2830,9 +2830,35 @@ class MultiDeviceLEDController:
                     "base_revision": base_revision, "lease_ms": lease_ms,
                     "present_at_scene_time_us": present_at_scene_time_us,
                 },
+                "command_transfers": [],
                 "commit_acknowledgements": [],
                 "post_commit_statuses": [],
             }
+
+            def command_with_evidence(index, phase, callback):
+                device = self.devices[index]
+                diagnostics = getattr(device, "command_transfer_diagnostics", None)
+                cursor = 0
+                if callable(diagnostics):
+                    cursor_reader = getattr(
+                        device, "command_transfer_diagnostic_cursor", None
+                    )
+                    if callable(cursor_reader):
+                        cursor = int(cursor_reader())
+                    else:
+                        existing = diagnostics()
+                        if existing:
+                            cursor = int(existing[-1].get("diagnostic_id", 0))
+                try:
+                    return callback()
+                finally:
+                    if callable(diagnostics):
+                        for transfer in diagnostics(since_id=cursor):
+                            publish_evidence["command_transfers"].append({
+                                "logical_device": index,
+                                "phase": phase,
+                                "diagnostic": transfer,
+                            })
             try:
                 statuses = self._receiver_statuses(
                     require_capability=True,
@@ -2881,10 +2907,14 @@ class MultiDeviceLEDController:
                 if new_session:
                     for index, device in enumerate(self.devices):
                         touched = True
-                        status = device.begin_controller_session(
-                            controller_session_id=session,
-                            desired_revision=scene_revision,
-                            authoritative_snapshot_digest=digest,
+                        status = command_with_evidence(
+                            index,
+                            "foreground_session",
+                            lambda device=device: device.begin_controller_session(
+                                controller_session_id=session,
+                                desired_revision=scene_revision,
+                                authoritative_snapshot_digest=digest,
+                            ),
                         )
                         self._require_overlay_ack(
                             status, "foreground session", index
@@ -2894,38 +2924,51 @@ class MultiDeviceLEDController:
                     self.devices, per_device_patches
                 )):
                     touched = True
-                    status = device.begin_overlay(
-                        controller_session_id=session,
-                        generation=overlay_generation,
-                        prior_generation=previous_generation,
-                        scene_revision=scene_revision,
-                        scene_epoch=scene_epoch,
-                        base_revision=base_revision,
-                        format=OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
-                        update_kind=update_kind,
-                        expected_patches=len(patches),
-                        lease_ms=lease_ms,
+                    status = command_with_evidence(
+                        index,
+                        "foreground_begin",
+                        lambda device=device, patches=patches: device.begin_overlay(
+                            controller_session_id=session,
+                            generation=overlay_generation,
+                            prior_generation=previous_generation,
+                            scene_revision=scene_revision,
+                            scene_epoch=scene_epoch,
+                            base_revision=base_revision,
+                            format=OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
+                            update_kind=update_kind,
+                            expected_patches=len(patches),
+                            lease_ms=lease_ms,
+                        ),
                     )
                     self._require_overlay_ack(status, "foreground begin", index)
 
                 for index, (device, patches) in enumerate(zip(
                     self.devices, per_device_patches
                 )):
-                    for status in device.send_overlay_patches(
-                        controller_session_id=session,
-                        generation=overlay_generation,
-                        patches=patches,
-                        update_kind=update_kind,
-                    ):
+                    statuses = command_with_evidence(
+                        index,
+                        "foreground_patch",
+                        lambda device=device, patches=patches: device.send_overlay_patches(
+                            controller_session_id=session,
+                            generation=overlay_generation,
+                            patches=patches,
+                            update_kind=update_kind,
+                        ),
+                    )
+                    for status in statuses:
                         self._require_overlay_ack(status, "foreground patch", index)
 
                 for index, device in enumerate(self.devices):
-                    status = device.commit_overlay(
-                        controller_session_id=session,
-                        generation=overlay_generation,
-                        scene_epoch=scene_epoch,
-                        base_revision=base_revision,
-                        present_at_scene_time_us=present_at_scene_time_us,
+                    status = command_with_evidence(
+                        index,
+                        "foreground_commit",
+                        lambda device=device: device.commit_overlay(
+                            controller_session_id=session,
+                            generation=overlay_generation,
+                            scene_epoch=scene_epoch,
+                            base_revision=base_revision,
+                            present_at_scene_time_us=present_at_scene_time_us,
+                        ),
                     )
                     publish_evidence["commit_acknowledgements"].append(
                         self._foreground_status_evidence(index, status)
@@ -2983,10 +3026,14 @@ class MultiDeviceLEDController:
                 if touched:
                     for index, device in enumerate(self.devices):
                         try:
-                            status = device.clear_overlay(
-                                controller_session_id=session,
-                                generation=compensation_generation,
-                                scene_revision=scene_revision,
+                            status = command_with_evidence(
+                                index,
+                                "foreground_compensation_clear",
+                                lambda device=device: device.clear_overlay(
+                                    controller_session_id=session,
+                                    generation=compensation_generation,
+                                    scene_revision=scene_revision,
+                                ),
                             )
                             self._require_overlay_ack(
                                 status, "foreground compensation clear", index

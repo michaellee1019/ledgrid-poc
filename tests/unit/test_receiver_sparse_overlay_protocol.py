@@ -36,6 +36,10 @@ class FakeSparseSpi:
         acknowledge=True,
         acknowledge_after_status_queries=0,
         overlay_result=1,
+        crc_on_command=False,
+        corrupt_status_after_command=False,
+        reset_on_command=False,
+        advance_packets_after_command=False,
     ):
         self.max_speed_hz = 20_000_000
         self.mode = 0
@@ -44,6 +48,13 @@ class FakeSparseSpi:
         self.acknowledge = acknowledge
         self.acknowledge_after_status_queries = acknowledge_after_status_queries
         self.overlay_result = overlay_result
+        self.crc_on_command = crc_on_command
+        self.corrupt_status_after_command = corrupt_status_after_command
+        self.reset_on_command = reset_on_command
+        self.advance_packets_after_command = advance_packets_after_command
+        self.mutation_seen = False
+        self.packet_counter = 100
+        self.crc_errors = 0
         self.packets = []
         self.last_command = 0
         self.operation_sequence = 0
@@ -81,6 +92,8 @@ class FakeSparseSpi:
                 | protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
             )
         response[64:68] = capabilities.to_bytes(4, "big")
+        response[12:16] = self.packet_counter.to_bytes(4, "big")
+        response[16:20] = self.crc_errors.to_bytes(4, "big")
         response[313] = state[0]
         response[316:320] = state[1].to_bytes(4, "big")
         if status_bytes == protocol.RECEIVER_STATUS_BYTES_V4 and state[1]:
@@ -94,6 +107,7 @@ class FakeSparseSpi:
         if command == protocol.CMD_ALIGNED_ENVELOPE:
             semantic_length = int.from_bytes(wire[2:4], "big")
             command = wire[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
+        status_query = command == protocol.CMD_STATUS_QUERY
         self.packets.append(wire)
         prior = self.queued.pop(0)
         prior_status_bytes = self.queued_status_bytes.pop(0)
@@ -102,7 +116,7 @@ class FakeSparseSpi:
             response += bytes(len(wire) - len(response))
         else:
             response = response[:len(wire)]
-        if command == protocol.CMD_STATUS_QUERY and self.pending_ack is not None:
+        if status_query and self.pending_ack is not None:
             command, sequence, remaining = self.pending_ack
             remaining -= 1
             if remaining <= 0:
@@ -111,20 +125,35 @@ class FakeSparseSpi:
                 self.pending_ack = None
             else:
                 self.pending_ack = (command, sequence, remaining)
-        elif command != protocol.CMD_STATUS_QUERY and self.acknowledge:
-            next_sequence = self.operation_sequence + 1
-            if self.acknowledge_after_status_queries:
-                self.pending_ack = (
-                    command,
-                    next_sequence,
-                    self.acknowledge_after_status_queries,
-                )
-            else:
-                self.last_command = command
-                self.operation_sequence = next_sequence
+        elif not status_query:
+            self.mutation_seen = True
+            if self.reset_on_command:
+                self.packet_counter = 0
+                self.last_command = 0
+                self.operation_sequence = 0
+                self.pending_ack = None
+            elif self.crc_on_command:
+                self.crc_errors += 1
+            elif self.acknowledge:
+                next_sequence = self.operation_sequence + 1
+                if self.acknowledge_after_status_queries:
+                    self.pending_ack = (
+                        command,
+                        next_sequence,
+                        self.acknowledge_after_status_queries,
+                    )
+                else:
+                    self.last_command = command
+                    self.operation_sequence = next_sequence
+        if (
+            status_query
+            and self.mutation_seen
+            and self.advance_packets_after_command
+        ):
+            self.packet_counter += 1
         self.queued.append((self.last_command, self.operation_sequence))
         requested_v4 = (
-            command == protocol.CMD_STATUS_QUERY
+            status_query
             and self.sparse_capable
             and semantic_length >= protocol.RECEIVER_STATUS_BYTES_V4
         )
@@ -132,6 +161,12 @@ class FakeSparseSpi:
             protocol.RECEIVER_STATUS_BYTES_V4
             if requested_v4 else protocol.RECEIVER_STATUS_BYTES_V3
         )
+        if (
+            status_query
+            and self.mutation_seen
+            and self.corrupt_status_after_command
+        ):
+            return bytes(len(response))
         return response
 
 
@@ -170,12 +205,20 @@ def controller(
     acknowledge=True,
     acknowledge_after_status_queries=0,
     overlay_result=1,
+    crc_on_command=False,
+    corrupt_status_after_command=False,
+    reset_on_command=False,
+    advance_packets_after_command=False,
 ):
     spi = FakeSparseSpi(
         sparse_capable=sparse_capable,
         acknowledge=acknowledge,
         acknowledge_after_status_queries=acknowledge_after_status_queries,
         overlay_result=overlay_result,
+        crc_on_command=crc_on_command,
+        corrupt_status_after_command=corrupt_status_after_command,
+        reset_on_command=reset_on_command,
+        advance_packets_after_command=advance_packets_after_command,
     )
     with mock.patch.object(protocol.spidev, "SpiDev", return_value=spi):
         item = protocol.LEDController(strips=8, leds_per_strip=138)
@@ -183,6 +226,9 @@ def controller(
     spi.last_command = 0
     spi.operation_sequence = 0
     spi.pending_ack = None
+    spi.mutation_seen = False
+    spi.packet_counter = 100
+    spi.crc_errors = 0
     spi.queued = [(0, 0), (0, 0)]
     spi.queued_status_bytes = [
         protocol.RECEIVER_STATUS_BYTES_V3,
@@ -619,7 +665,15 @@ class SparseOverlayDriverTests(unittest.TestCase):
         self.assertEqual(item.get_stats()["receiver_status_version"], 4)
 
     def test_ack_wait_is_bounded_but_allows_delayed_receiver_processing(self):
-        item = controller(acknowledge_after_status_queries=4)
+        item = controller(
+            acknowledge_after_status_queries=8,
+            advance_packets_after_command=True,
+        )
+        item.spi.queued_status_bytes = [
+            protocol.RECEIVER_STATUS_BYTES_V4,
+            protocol.RECEIVER_STATUS_BYTES_V4,
+        ]
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V4
         status = item.renew_overlay(
             controller_session_id=SESSION, generation=1, lease_ms=1
         )
@@ -634,6 +688,114 @@ class SparseOverlayDriverTests(unittest.TestCase):
             len(queries),
             protocol.SPI_RESPONSE_QUEUE_DEPTH
             + protocol.COMMAND_ACK_MAX_STATUS_QUERIES,
+        )
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(diagnostic["outcome"], "delayed_processing")
+        self.assertEqual(diagnostic["command"], protocol.CMD_OVERLAY_RENEW)
+        self.assertEqual(diagnostic["payload_bytes"], protocol.OVERLAY_RENEW_BYTES)
+        self.assertEqual(diagnostic["route"]["bus"], protocol.SPI_BUS)
+        self.assertEqual(diagnostic["prior_status"]["operation_sequence"], 0)
+        self.assertEqual(diagnostic["expected_operation_sequence"], 1)
+        self.assertEqual(
+            diagnostic["status_samples"][-1]["operation_sequence"], 1
+        )
+        self.assertLessEqual(
+            len(diagnostic["status_samples"]),
+            protocol.COMMAND_ACK_MAX_STATUS_QUERIES,
+        )
+
+    def test_command_crc_growth_is_distinct_from_missing_status_response(self):
+        item = controller(acknowledge=False, crc_on_command=True)
+        item._receiver_capabilities |= protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+        with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+            item.send_overlay_patch_batch(
+                controller_session_id=SESSION,
+                generation=1,
+                spans=((0, zeros(1)),),
+            )
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(diagnostic["outcome"], "command_drop_or_corruption")
+        self.assertEqual(diagnostic["command"], protocol.CMD_OVERLAY_PATCH_BATCH)
+        self.assertEqual(diagnostic["prior_status"]["receiver_crc_errors"], 0)
+        self.assertEqual(
+            diagnostic["status_samples"][-1]["receiver_crc_errors"], 1
+        )
+
+    def test_corrupt_status_responses_never_become_acknowledgement(self):
+        item = controller(corrupt_status_after_command=True)
+        with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+            item.renew_overlay(
+                controller_session_id=SESSION, generation=1, lease_ms=1
+            )
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(
+            diagnostic["outcome"], "status_response_loss_or_corruption"
+        )
+        self.assertFalse(any(
+            sample["fresh"] for sample in diagnostic["status_samples"]
+        ))
+
+    def test_status_query_exception_is_retained_before_rollback(self):
+        item = controller()
+        query = item.query_receiver_status
+        calls = 0
+
+        def fail_first_post_command_query():
+            nonlocal calls
+            calls += 1
+            if calls == protocol.SPI_RESPONSE_QUEUE_DEPTH + 1:
+                raise OSError("status response failed")
+            return query()
+
+        item.query_receiver_status = fail_first_post_command_query
+        with self.assertRaisesRegex(OSError, "status response failed"):
+            item.renew_overlay(
+                controller_session_id=SESSION, generation=1, lease_ms=1
+            )
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(diagnostic["outcome"], "status_response_error")
+        self.assertEqual(diagnostic["status_query_exception_index"], 1)
+        self.assertEqual(diagnostic["command"], protocol.CMD_OVERLAY_RENEW)
+
+    def test_receiver_counter_rollback_is_classified_as_reset(self):
+        item = controller(reset_on_command=True)
+        item.spi.operation_sequence = 5
+        item.spi.queued = [(0, 5), (0, 5)]
+        with self.assertRaisesRegex(RuntimeError, "expected 6"):
+            item.renew_overlay(
+                controller_session_id=SESSION, generation=1, lease_ms=1
+            )
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(diagnostic["outcome"], "receiver_reset")
+        self.assertEqual(diagnostic["prior_status"]["receiver_packets"], 100)
+        self.assertTrue(any(
+            sample["fresh"] and sample["receiver_packets"] == 0
+            for sample in diagnostic["status_samples"]
+        ))
+
+    def test_command_diagnostic_history_is_bounded_and_detached(self):
+        item = controller()
+        for generation in range(protocol.COMMAND_TRANSFER_DIAGNOSTIC_HISTORY + 3):
+            item.renew_overlay(
+                controller_session_id=SESSION,
+                generation=generation + 1,
+                lease_ms=1,
+            )
+        diagnostics = item.command_transfer_diagnostics()
+        self.assertEqual(
+            len(diagnostics), protocol.COMMAND_TRANSFER_DIAGNOSTIC_HISTORY
+        )
+        self.assertEqual(diagnostics[0]["diagnostic_id"], 4)
+        diagnostics[-1]["status_samples"][-1]["operation_sequence"] = -99
+        self.assertNotEqual(
+            item.command_transfer_diagnostics()[-1]["status_samples"][-1][
+                "operation_sequence"
+            ],
+            -99,
+        )
+        latest_id = diagnostics[-1]["diagnostic_id"]
+        self.assertEqual(
+            item.command_transfer_diagnostics(since_id=latest_id), []
         )
 
     def test_ack_queries_are_paced_without_weakening_exact_ack(self):

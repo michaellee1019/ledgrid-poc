@@ -1,3 +1,4 @@
+import copy
 import sys
 import threading
 import types
@@ -347,6 +348,60 @@ class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
                 self.assertEqual(observed["receiver_overlay_session_id"], SESSION.hex())
                 self.assertEqual(devices[0].committed_generation, 2)
                 self.assertEqual(bool(failure["cleanup_errors"]), cleanup_fails)
+
+    def test_patch_transfer_diagnostic_survives_compensation(self):
+        class DiagnosticFailureDevice(Device):
+            def __init__(self, logical_device):
+                super().__init__(logical_device)
+                self.diagnostics = []
+
+            def command_transfer_diagnostics(self, *, since_id=0):
+                return [
+                    copy.deepcopy(item)
+                    for item in self.diagnostics
+                    if item["diagnostic_id"] > since_id
+                ]
+
+            def send_overlay_patches(self, **fields):
+                self.diagnostics.append({
+                    "diagnostic_id": 1,
+                    "command": 0x35,
+                    "outcome": "command_drop_or_corruption",
+                    "status_samples": [{"operation_sequence": 10}],
+                })
+                raise RuntimeError("foreground patch transfer failed")
+
+            def clear_overlay(self, **fields):
+                self.diagnostics[0]["status_samples"][0]["operation_sequence"] = 999
+                self.diagnostics.append({
+                    "diagnostic_id": 2,
+                    "command": 0x33,
+                    "outcome": "acknowledged",
+                    "status_samples": [{"operation_sequence": 11}],
+                })
+                return super().clear_overlay(**fields)
+
+        item = controller([DiagnosticFailureDevice(0)])
+        self.assertFalse(item.publish_sparse_overlay(
+            transparent_wall(8), controller_session_id=SESSION,
+            generation=1, prior_generation=0, scene_revision=7,
+            scene_epoch=11, base_revision=13, lease_ms=3000,
+            present_at_scene_time_us=17, full_snapshot=True,
+        ))
+        evidence = item._local_background_status["foreground_publish_evidence"]
+        self.assertEqual(
+            [(entry["phase"], entry["diagnostic"]["diagnostic_id"])
+             for entry in evidence["command_transfers"]],
+            [("foreground_patch", 1), ("foreground_compensation_clear", 2)],
+        )
+        failed = evidence["command_transfers"][0]
+        self.assertEqual(failed["logical_device"], 0)
+        self.assertEqual(failed["diagnostic"]["command"], 0x35)
+        self.assertEqual(failed["diagnostic"]["outcome"],
+                         "command_drop_or_corruption")
+        self.assertEqual(
+            failed["diagnostic"]["status_samples"][0]["operation_sequence"], 10
+        )
 
     def test_full_snapshot_is_two_canonical_batch_spans_per_receiver(self):
         devices = [Device(index) for index in range(4)]

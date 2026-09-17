@@ -677,8 +677,92 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
                 item.native_preflight(**descriptor())
         self.assertEqual(spi.attempts.count(protocol.CMD_NATIVE_PREFLIGHT), 1)
         self.assertGreater(spi.attempts.count(protocol.CMD_STATUS_QUERY), 16)
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertGreater(
+            diagnostic["status_sample_count"],
+            protocol.COMMAND_TRANSFER_DIAGNOSTIC_MAX_SAMPLES,
+        )
+        self.assertEqual(
+            len(diagnostic["status_samples"]),
+            protocol.COMMAND_TRANSFER_DIAGNOSTIC_MAX_SAMPLES,
+        )
         self.assertGreaterEqual(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS)
         self.assertLess(spi.now, protocol.STORAGE_COMMAND_ACK_TIMEOUT_SECONDS + 0.05)
+
+    def test_missing_status_replies_are_not_called_delayed_processing(self):
+        class MissingPostCommandStatusSpi(_DelayedRefillNativeSpi):
+            def __init__(self):
+                super().__init__(command_delay=0)
+                self.mutation_seen = False
+                self.missing = 3
+
+            def xfer2(self, packet):
+                semantic_size = int.from_bytes(packet[2:4], "big")
+                command = int(packet[4]) if semantic_size else int(packet[0])
+                response = super().xfer2(packet)
+                if command != protocol.CMD_STATUS_QUERY:
+                    self.mutation_seen = True
+                elif self.mutation_seen and self.missing:
+                    self.missing -= 1
+                    return bytes(len(response))
+                return response
+
+        spi = MissingPostCommandStatusSpi()
+        item = controller(spi)
+        item._transport_envelope_enabled = True
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V8
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+            result = item.native_stop()
+        self.assertEqual(result["receiver_last_processed_command"],
+                         protocol.CMD_NATIVE_STOP)
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(
+            diagnostic["outcome"],
+            "acknowledged_after_status_response_loss_or_corruption",
+        )
+        self.assertNotEqual(diagnostic["outcome"], "delayed_processing")
+        self.assertGreater(
+            diagnostic["status_samples"][-1]["status_integrity_errors"],
+            diagnostic["prior_status"]["status_integrity_errors"],
+        )
+
+    def test_late_status_integrity_failures_control_failure_classification(self):
+        class LateCorruptStatusSpi(_DelayedRefillNativeSpi):
+            def __init__(self):
+                super().__init__(acknowledge=False, command_delay=0)
+                self.mutation_seen = False
+                self.valid_post_statuses = 3
+
+            def xfer2(self, packet):
+                semantic_size = int.from_bytes(packet[2:4], "big")
+                command = int(packet[4]) if semantic_size else int(packet[0])
+                response = super().xfer2(packet)
+                if command != protocol.CMD_STATUS_QUERY:
+                    self.mutation_seen = True
+                elif self.mutation_seen:
+                    if self.valid_post_statuses:
+                        self.valid_post_statuses -= 1
+                    else:
+                        return bytes(len(response))
+                return response
+
+        spi = LateCorruptStatusSpi()
+        item = controller(spi)
+        item._transport_envelope_enabled = True
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V8
+        with patch.object(protocol.time, "sleep", side_effect=spi.sleep), \
+                patch.object(protocol.time, "monotonic", side_effect=lambda: spi.now):
+            with self.assertRaisesRegex(RuntimeError, "next operation sequence"):
+                item.native_stop()
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(
+            diagnostic["outcome"], "status_response_loss_or_corruption"
+        )
+        self.assertGreater(
+            diagnostic["status_samples"][-1]["status_integrity_errors"],
+            diagnostic["prior_status"]["status_integrity_errors"],
+        )
 
     def test_native_ack_rejects_zero_miso_and_repeated_packet_counters(self):
         for kwargs in ({"command_delay": 10}, {"frozen_counter": True}):

@@ -8,6 +8,7 @@ import time
 import colorsys
 import argparse
 import binascii
+import copy
 from dataclasses import replace
 import math
 from pathlib import Path
@@ -90,6 +91,8 @@ TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS = 3
 FULL_FRAME_STATUS_SAMPLE_INTERVAL = 128
 FULL_FRAME_STATUS_SAMPLE_RECEIVERS = 5
 COMMAND_ACK_MAX_STATUS_QUERIES = 16
+COMMAND_TRANSFER_DIAGNOSTIC_HISTORY = 32
+COMMAND_TRANSFER_DIAGNOSTIC_MAX_SAMPLES = 32
 COMMAND_ACK_POLL_INTERVAL_SECONDS = 0.001
 # Native and installation-profile commands can spend hundreds of milliseconds
 # in SPIFFS before refilling a status slot. Wait read-only for their exact
@@ -894,6 +897,8 @@ class LEDController:
         self._receiver_status_integrity_errors = 0
         self._receiver_status_integrity_last_failure = None
         self._receiver_status_unprotected_rejections = 0
+        self._command_transfer_diagnostic_id = 0
+        self._command_transfer_diagnostics = []
         self._full_frame_sequence = 0
         self._presentation_commit_context_cache = {}
         self._monotonic_ns = time.monotonic_ns
@@ -2314,6 +2319,184 @@ class LEDController:
                 f"unprotected statuses {getattr(self, '_receiver_status_unprotected_rejections', 0)}"
             )
 
+    def _command_transfer_status_sample(
+        self, status, *, sampled, fresh=None, timestamp_ns
+    ):
+        """Detach the bounded fields needed to explain one command outcome."""
+        status = status if isinstance(status, dict) else {}
+        return {
+            "timestamp_ns": int(timestamp_ns),
+            "sampled": bool(sampled),
+            "fresh": bool(sampled if fresh is None else fresh),
+            "status_version": int(status.get("receiver_status_version", 0) or 0),
+            "receiver_packets": int(status.get("receiver_packets", -1)),
+            "operation_sequence": int(
+                status.get("receiver_operation_sequence", -1)
+            ),
+            "last_processed_command": int(
+                status.get("receiver_last_processed_command", -1)
+            ),
+            "receiver_crc_errors": int(
+                status.get("receiver_crc_errors", 0) or 0
+            ),
+            "receiver_spi_queue_errors": int(
+                status.get("receiver_spi_queue_errors", 0) or 0
+            ),
+            "receiver_display_errors": int(
+                status.get("receiver_display_errors", 0) or 0
+            ),
+            "status_integrity_errors": int(
+                getattr(self, "_receiver_status_integrity_errors", 0)
+            ),
+            "status_unprotected_rejections": int(
+                getattr(self, "_receiver_status_unprotected_rejections", 0)
+            ),
+        }
+
+    def _command_transfer_now_ns(self):
+        return int(getattr(self, "_monotonic_ns", time.monotonic_ns)())
+
+    @staticmethod
+    def _command_transfer_delta(before, after, key):
+        earlier = before.get(key)
+        later = after.get(key)
+        if not isinstance(earlier, int) or not isinstance(later, int):
+            return None
+        if earlier < 0 or later < earlier:
+            return None
+        return later - earlier
+
+    def _classify_command_transfer(self, diagnostic, *, acknowledged=False):
+        """Classify evidence without claiming which physical packet vanished."""
+        prior = diagnostic["prior_status"]
+        samples = diagnostic["status_samples"]
+        fresh = [sample for sample in samples if sample["fresh"]]
+        final = fresh[-1] if fresh else (samples[-1] if samples else prior)
+        latest = samples[-1] if samples else prior
+        expected = diagnostic["expected_operation_sequence"]
+
+        if diagnostic.get("transport_exception"):
+            return "host_transfer_error", "the SPI transfer raised before acknowledgement polling"
+        if diagnostic.get("status_query_exception"):
+            return "status_response_error", "a status query raised while awaiting acknowledgement"
+
+        reset = bool(diagnostic.get("receiver_reset_observed")) or any(
+            sample["fresh"]
+            and (
+                sample["operation_sequence"] < prior["operation_sequence"]
+                or (
+                    prior["receiver_packets"] >= 0
+                    and sample["receiver_packets"] >= 0
+                    and sample["receiver_packets"] < prior["receiver_packets"]
+                )
+            )
+            for sample in samples
+        )
+        if reset:
+            return "receiver_reset", "receiver counters moved to an older epoch"
+
+        crc_delta = self._command_transfer_delta(
+            prior, final, "receiver_crc_errors"
+        )
+        integrity_delta = self._command_transfer_delta(
+            prior, latest, "status_integrity_errors"
+        )
+        unprotected_delta = self._command_transfer_delta(
+            prior, latest, "status_unprotected_rejections"
+        )
+
+        if acknowledged:
+            minimum = int(diagnostic.get("minimum_post_queries", 0) or 0)
+            acknowledged_at = int(
+                diagnostic.get("acknowledged_query_index", 0) or 0
+            )
+            response_loss = bool(
+                integrity_delta
+                or unprotected_delta
+                or any(
+                    sample.get("query_index", 0) >= minimum
+                    and sample.get("query_index", 0) < acknowledged_at
+                    and not sample["sampled"]
+                    for sample in samples
+                )
+            )
+            if response_loss:
+                return (
+                    "acknowledged_after_status_response_loss_or_corruption",
+                    "exact acknowledgement followed missing, stale, or rejected status responses",
+                )
+            delayed = any(
+                sample.get("query_index", 0) >= minimum
+                and sample.get("query_index", 0) < acknowledged_at
+                and sample["fresh"]
+                and sample["operation_sequence"] == prior["operation_sequence"]
+                for sample in samples
+            )
+            if delayed:
+                return (
+                    "delayed_processing",
+                    "a causally fresh post-command status preceded the exact acknowledgement",
+                )
+            if any(
+                sample.get("query_index", 0) >= minimum
+                and sample.get("query_index", 0) < acknowledged_at
+                and not sample["fresh"]
+                for sample in samples
+            ):
+                return (
+                    "acknowledged_after_status_response_loss_or_corruption",
+                    "exact acknowledgement followed status that never became causally fresh",
+                )
+            return "acknowledged", "exact command and operation sequence were observed"
+
+        if crc_delta:
+            return "command_drop_or_corruption", "receiver CRC errors advanced without the expected acknowledgement"
+
+        if not fresh or integrity_delta or unprotected_delta:
+            return "status_response_loss_or_corruption", "no causally fresh trustworthy acknowledgement survived"
+
+        if final["operation_sequence"] >= expected:
+            return "contradictory_acknowledgement", "a fresh status advanced to a different command or sequence"
+        return "ambiguous_no_acknowledgement", "fresh status did not distinguish an unprocessed command from a lost response"
+
+    def _record_command_transfer_diagnostic(self, diagnostic, *, acknowledged=False):
+        outcome, basis = self._classify_command_transfer(
+            diagnostic, acknowledged=acknowledged
+        )
+        self._command_transfer_diagnostic_id = int(
+            getattr(self, "_command_transfer_diagnostic_id", 0)
+        ) + 1
+        diagnostic["diagnostic_id"] = self._command_transfer_diagnostic_id
+        diagnostic["outcome"] = outcome
+        diagnostic["classification_basis"] = basis
+        diagnostic["completed_monotonic_ns"] = self._command_transfer_now_ns()
+        diagnostic["duration_ns"] = max(
+            0,
+            diagnostic["completed_monotonic_ns"]
+            - diagnostic["started_monotonic_ns"],
+        )
+        history = list(getattr(self, "_command_transfer_diagnostics", ()))
+        history.append(copy.deepcopy(diagnostic))
+        self._command_transfer_diagnostics = history[
+            -COMMAND_TRANSFER_DIAGNOSTIC_HISTORY:
+        ]
+
+    def command_transfer_diagnostics(self, *, since_id=0):
+        """Return detached bounded command evidence newer than ``since_id``."""
+        if isinstance(since_id, bool) or not isinstance(since_id, int):
+            raise TypeError("since_id must be an integer")
+        if since_id < 0:
+            raise ValueError("since_id must be non-negative")
+        return [
+            copy.deepcopy(item)
+            for item in getattr(self, "_command_transfer_diagnostics", ())
+            if int(item.get("diagnostic_id", 0)) > since_id
+        ]
+
+    def command_transfer_diagnostic_cursor(self):
+        """Return the newest diagnostic ID without copying retained evidence."""
+        return int(getattr(self, "_command_transfer_diagnostic_id", 0))
+
     def _command_status(
         self, payload, *, command=None, required_status_version=3, storage_operation=False
     ):
@@ -2329,6 +2512,7 @@ class LEDController:
                 raise ValueError("deferred command serialization requires a command ID")
             else:
                 command = self._bounded_uint("command", command, 0xFF)
+            diagnostic_started_ns = self._command_transfer_now_ns()
             # Local rendering shares snapshot locks with the SPI task. Its
             # two receive slots may therefore refill slower than the ordinary
             # query cadence; draining both and immediately sending a mutation
@@ -2374,7 +2558,48 @@ class LEDController:
                 payload = payload_factory()
                 if not payload or int(payload[0]) != command:
                     raise ValueError("deferred serializer returned the wrong command")
-            self._xfer(payload)
+            payload_bytes = len(payload)
+            prior_sample = self._command_transfer_status_sample(
+                prior,
+                sampled=getattr(self, "_last_transfer_status_sampled", False),
+                timestamp_ns=self._command_transfer_now_ns(),
+            )
+            expected_sequence = prior_sequence + 1
+            diagnostic = {
+                "version": 1,
+                "route": {
+                    "bus": getattr(self, "bus", None),
+                    "device": getattr(self, "device", None),
+                    "logical_device": getattr(self, "logical_device_id", None),
+                    "hardware_serial": getattr(self, "_hardware_serial", None),
+                },
+                "command": command,
+                "payload_bytes": payload_bytes,
+                "wire_bytes": (
+                    _aligned_envelope_wire_size(payload_bytes)
+                    if getattr(self, "_transport_envelope_enabled", False)
+                    else payload_bytes + CRC_BYTES
+                ),
+                "required_status_version": required_version,
+                "storage_operation": bool(storage_operation),
+                "causal_readiness": bool(causal_readiness),
+                "started_monotonic_ns": diagnostic_started_ns,
+                "command_sent_monotonic_ns": self._command_transfer_now_ns(),
+                "prior_status": prior_sample,
+                "expected_operation_sequence": expected_sequence,
+                "minimum_post_queries": None,
+                "acknowledged_query_index": None,
+                "status_sample_count": 0,
+                "receiver_reset_observed": False,
+                "status_samples": [],
+            }
+            last_status_packets = prior_sample["receiver_packets"]
+            try:
+                self._xfer(payload)
+            except Exception as exc:
+                diagnostic["transport_exception"] = f"{type(exc).__name__}: {exc}"
+                self._record_command_transfer_diagnostic(diagnostic)
+                raise
             if getattr(self, "_receiver_status_integrity_required", False):
                 required_version = 8
             # The slave has to queue a response before it knows the length of
@@ -2389,8 +2614,9 @@ class LEDController:
             minimum_post_queries = SPI_RESPONSE_QUEUE_DEPTH + (
                 required_version >= 4
             )
+            diagnostic["required_status_version"] = required_version
+            diagnostic["minimum_post_queries"] = minimum_post_queries
             status = None
-            expected_sequence = prior_sequence + 1
             deadline = (
                 time.monotonic() + STORAGE_COMMAND_ACK_TIMEOUT_SECONDS
                 if storage_operation else None
@@ -2415,8 +2641,56 @@ class LEDController:
                         FRESH_STATUS_DRAIN_INTERVAL_SECONDS if causal_readiness
                         else COMMAND_ACK_POLL_INTERVAL_SECONDS
                     )
-                status = self.query_receiver_status()
                 query_index += 1
+                try:
+                    status = self.query_receiver_status()
+                except Exception as exc:
+                    diagnostic["status_query_exception"] = (
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    diagnostic["status_query_exception_index"] = query_index
+                    self._record_command_transfer_diagnostic(diagnostic)
+                    raise
+                sampled = bool(getattr(self, "_last_transfer_status_sampled", False))
+                observed_packets = int(status.get("receiver_packets", -1))
+                fresh = bool(
+                    sampled
+                    and (
+                        observed_packets < 0
+                        or last_status_packets < 0
+                        or observed_packets != last_status_packets
+                    )
+                )
+                sample = self._command_transfer_status_sample(
+                    status,
+                    sampled=sampled,
+                    fresh=fresh,
+                    timestamp_ns=self._command_transfer_now_ns(),
+                )
+                sample["query_index"] = query_index
+                if fresh and observed_packets >= 0:
+                    last_status_packets = observed_packets
+                diagnostic["status_sample_count"] += 1
+                diagnostic["receiver_reset_observed"] = bool(
+                    diagnostic["receiver_reset_observed"]
+                    or (
+                        sample["fresh"]
+                        and (
+                            sample["operation_sequence"]
+                            < prior_sample["operation_sequence"]
+                            or (
+                                prior_sample["receiver_packets"] >= 0
+                                and sample["receiver_packets"] >= 0
+                                and sample["receiver_packets"]
+                                < prior_sample["receiver_packets"]
+                            )
+                        )
+                    )
+                )
+                diagnostic["status_samples"].append(sample)
+                del diagnostic["status_samples"][
+                    :-COMMAND_TRANSFER_DIAGNOSTIC_MAX_SAMPLES
+                ]
                 if storage_operation:
                     if time.monotonic() >= deadline:
                         break
@@ -2433,6 +2707,8 @@ class LEDController:
                     if query_index < minimum_post_queries:
                         continue
                 if int(status.get("receiver_spi_queue_errors", 0) or 0):
+                    diagnostic["receiver_spi_queue_fault"] = True
+                    self._record_command_transfer_diagnostic(diagnostic)
                     raise RuntimeError("receiver SPI queue fault while awaiting command acknowledgement")
                 observed_version = int(
                     status.get("receiver_status_version", 0) or 0
@@ -2449,12 +2725,17 @@ class LEDController:
                     and observed_command == command
                     and observed_sequence == expected_sequence
                 ):
+                    diagnostic["acknowledged_query_index"] = query_index
+                    self._record_command_transfer_diagnostic(
+                        diagnostic, acknowledged=True
+                    )
                     return status
                 if observed_sequence > expected_sequence or (
                     observed_sequence == expected_sequence
                     and observed_command != command
                 ):
                     break
+            self._record_command_transfer_diagnostic(diagnostic)
             raise RuntimeError(
                 f"receiver did not acknowledge command 0x{command:02x} "
                 "with the next operation sequence; last status "
