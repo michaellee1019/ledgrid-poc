@@ -2673,6 +2673,7 @@ class MultiDeviceLEDController:
         receiver_id: int,
         update_kind: int,
         dirty_ranges,
+        maximum_span_pixels: int = MAX_RGBA_PIXELS_PER_BATCH_SPAN,
     ):
         local_start = self.receiver_pixel_offsets[receiver_id]
         local_end = local_start + self.receiver_pixel_counts[receiver_id]
@@ -2695,11 +2696,11 @@ class MultiDeviceLEDController:
                 (
                     start,
                     transport_pixels[
-                        start:start + MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                        start:start + maximum_span_pixels
                     ],
                 )
                 for start in range(
-                    0, len(transport_pixels), MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                    0, len(transport_pixels), maximum_span_pixels
                 )
             ]
 
@@ -2707,7 +2708,7 @@ class MultiDeviceLEDController:
         patches = []
         for start, end in ranges:
             while start < end:
-                patch_end = min(end, start + MAX_RGBA_PIXELS_PER_BATCH_SPAN)
+                patch_end = min(end, start + maximum_span_pixels)
                 patches.append((start, local_pixels[start:patch_end]))
                 start = patch_end
         return patches
@@ -2768,43 +2769,61 @@ class MultiDeviceLEDController:
                 "prior_generation does not match the controller's committed generation"
             )
 
-        per_device_patches = []
-        for index in range(self.num_devices):
-            per_device_patches.append(self._local_overlay_patches(
-                overlay,
-                receiver_id=index,
-                update_kind=update_kind,
-                dirty_ranges=normalized_ranges,
-            ))
-
         # Serialize the complete transaction before the first receiver command.
         # Device methods repeat these checks immediately before I/O; this
         # aggregate preflight prevents malformed later commands from leaving a
         # controller session or staged generation behind.
+        def build_overlay_plan():
+            planned_patches = []
+            semantic_limits = []
+            for index, device in enumerate(self.devices):
+                capacity = getattr(
+                    device, "sparse_overlay_batch_capacity", None
+                )
+                if callable(capacity):
+                    semantic_limit, maximum_span_pixels = capacity()
+                else:
+                    semantic_limit = None
+                    maximum_span_pixels = MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                semantic_limits.append(semantic_limit)
+                planned_patches.append(self._local_overlay_patches(
+                    overlay,
+                    receiver_id=index,
+                    update_kind=update_kind,
+                    dirty_ranges=normalized_ranges,
+                    maximum_span_pixels=maximum_span_pixels,
+                ))
+            for patches, semantic_limit in zip(
+                planned_patches, semantic_limits
+            ):
+                LEDController.serialize_overlay_begin(
+                    controller_session_id=session,
+                    generation=overlay_generation,
+                    prior_generation=previous_generation,
+                    scene_revision=scene_revision,
+                    scene_epoch=scene_epoch,
+                    base_revision=base_revision,
+                    format=OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
+                    update_kind=update_kind,
+                    expected_patches=len(patches),
+                    lease_ms=lease_ms,
+                )
+                batch_fields = {
+                    "controller_session_id": session,
+                    "generation": overlay_generation,
+                    "patches": patches,
+                    "update_kind": update_kind,
+                }
+                if semantic_limit is not None:
+                    batch_fields["maximum_semantic_bytes"] = semantic_limit
+                LEDController.serialize_overlay_patch_batches(**batch_fields)
+            return planned_patches, semantic_limits
+
         if new_session:
             LEDController.serialize_controller_session_begin(
                 controller_session_id=session,
                 desired_revision=scene_revision,
                 authoritative_snapshot_digest=digest,
-            )
-        for patches in per_device_patches:
-            LEDController.serialize_overlay_begin(
-                controller_session_id=session,
-                generation=overlay_generation,
-                prior_generation=previous_generation,
-                scene_revision=scene_revision,
-                scene_epoch=scene_epoch,
-                base_revision=base_revision,
-                format=OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
-                update_kind=update_kind,
-                expected_patches=len(patches),
-                lease_ms=lease_ms,
-            )
-            LEDController.serialize_overlay_patch_batches(
-                controller_session_id=session,
-                generation=overlay_generation,
-                patches=patches,
-                update_kind=update_kind,
             )
         LEDController.serialize_overlay_commit(
             controller_session_id=session,
@@ -2859,6 +2878,8 @@ class MultiDeviceLEDController:
                                 "phase": phase,
                                 "diagnostic": transfer,
                             })
+            per_device_patches = []
+            per_device_semantic_limits = []
             try:
                 statuses = self._receiver_statuses(
                     require_capability=True,
@@ -2904,6 +2925,13 @@ class MultiDeviceLEDController:
                         }
                         return False
 
+                # Status reads above settle transport negotiation. Freeze the
+                # resulting per-route split before the first mutating command.
+                (
+                    per_device_patches,
+                    per_device_semantic_limits,
+                ) = build_overlay_plan()
+
                 if new_session:
                     for index, device in enumerate(self.devices):
                         touched = True
@@ -2942,17 +2970,21 @@ class MultiDeviceLEDController:
                     )
                     self._require_overlay_ack(status, "foreground begin", index)
 
-                for index, (device, patches) in enumerate(zip(
-                    self.devices, per_device_patches
+                for index, (device, patches, semantic_limit) in enumerate(zip(
+                    self.devices,
+                    per_device_patches,
+                    per_device_semantic_limits,
                 )):
                     statuses = command_with_evidence(
                         index,
                         "foreground_patch",
-                        lambda device=device, patches=patches: device.send_overlay_patches(
+                        lambda device=device, patches=patches,
+                        semantic_limit=semantic_limit: device.send_overlay_patches(
                             controller_session_id=session,
                             generation=overlay_generation,
                             patches=patches,
                             update_kind=update_kind,
+                            maximum_semantic_bytes=semantic_limit,
                         ),
                     )
                     for status in statuses:
@@ -3726,6 +3758,10 @@ class MultiDeviceLEDController:
         fec_codewords_sent = 0
         fec_parity_bytes_sent = 0
         fec_data_padding_bytes_sent = 0
+        fec_sparse_packets_sent = 0
+        fec_sparse_codewords_sent = 0
+        fec_sparse_parity_bytes_sent = 0
+        fec_sparse_data_padding_bytes_sent = 0
         crc_bytes_sent = 0
         errors = 0
         receiver_status_devices = 0
@@ -3842,6 +3878,18 @@ class MultiDeviceLEDController:
             )
             fec_data_padding_bytes_sent += int(
                 stats.get('fec_data_padding_bytes_sent', 0) or 0
+            )
+            fec_sparse_packets_sent += int(
+                stats.get('fec_sparse_packets_sent', 0) or 0
+            )
+            fec_sparse_codewords_sent += int(
+                stats.get('fec_sparse_codewords_sent', 0) or 0
+            )
+            fec_sparse_parity_bytes_sent += int(
+                stats.get('fec_sparse_parity_bytes_sent', 0) or 0
+            )
+            fec_sparse_data_padding_bytes_sent += int(
+                stats.get('fec_sparse_data_padding_bytes_sent', 0) or 0
             )
             crc_bytes_sent += int(stats.get('crc_bytes_sent', 0) or 0)
             errors += int(stats.get('errors', 0) or 0)
@@ -4053,6 +4101,12 @@ class MultiDeviceLEDController:
                 'fec_codewords_sent': fec_codewords_sent,
                 'fec_parity_bytes_sent': fec_parity_bytes_sent,
                 'fec_data_padding_bytes_sent': fec_data_padding_bytes_sent,
+                'fec_sparse_packets_sent': fec_sparse_packets_sent,
+                'fec_sparse_codewords_sent': fec_sparse_codewords_sent,
+                'fec_sparse_parity_bytes_sent': fec_sparse_parity_bytes_sent,
+                'fec_sparse_data_padding_bytes_sent': (
+                    fec_sparse_data_padding_bytes_sent
+                ),
                 'crc_bytes_sent': crc_bytes_sent,
                 'errors': errors,
                 'receiver_status_devices': receiver_status_devices,

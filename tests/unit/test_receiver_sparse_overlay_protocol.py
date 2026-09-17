@@ -40,6 +40,7 @@ class FakeSparseSpi:
         corrupt_status_after_command=False,
         reset_on_command=False,
         advance_packets_after_command=False,
+        fec_capable=False,
     ):
         self.max_speed_hz = 20_000_000
         self.mode = 0
@@ -52,6 +53,7 @@ class FakeSparseSpi:
         self.corrupt_status_after_command = corrupt_status_after_command
         self.reset_on_command = reset_on_command
         self.advance_packets_after_command = advance_packets_after_command
+        self.fec_capable = fec_capable
         self.mutation_seen = False
         self.packet_counter = 100
         self.crc_errors = 0
@@ -91,6 +93,15 @@ class FakeSparseSpi:
                 protocol.CAPABILITY_SPARSE_OVERLAY_V1
                 | protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
             )
+        if self.fec_capable:
+            capabilities |= (
+                protocol.CAPABILITY_FEC_ENVELOPE_V2
+                | protocol.CAPABILITY_FEC_ENVELOPE_V3
+                | protocol.CAPABILITY_FEC_ENVELOPE_V4
+                | protocol.CAPABILITY_FEC_ENVELOPE_V5
+                | protocol.CAPABILITY_FEC_ENVELOPE_V6
+                | protocol.CAPABILITY_FEC_ENVELOPE_V7
+            )
         response[64:68] = capabilities.to_bytes(4, "big")
         response[12:16] = self.packet_counter.to_bytes(4, "big")
         response[16:20] = self.crc_errors.to_bytes(4, "big")
@@ -105,8 +116,13 @@ class FakeSparseSpi:
         command = wire[0]
         semantic_length = len(wire) - protocol.CRC_BYTES
         if command == protocol.CMD_ALIGNED_ENVELOPE:
-            semantic_length = int.from_bytes(wire[2:4], "big")
-            command = wire[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
+            if wire[1] == protocol.FEC_ENVELOPE_VERSION:
+                semantic = _decode_clean_v7(wire)
+                semantic_length = len(semantic)
+                command = semantic[0]
+            else:
+                semantic_length = int.from_bytes(wire[2:4], "big")
+                command = wire[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
         status_query = command == protocol.CMD_STATUS_QUERY
         self.packets.append(wire)
         prior = self.queued.pop(0)
@@ -209,6 +225,7 @@ def controller(
     corrupt_status_after_command=False,
     reset_on_command=False,
     advance_packets_after_command=False,
+    fec_capable=False,
 ):
     spi = FakeSparseSpi(
         sparse_capable=sparse_capable,
@@ -219,6 +236,7 @@ def controller(
         corrupt_status_after_command=corrupt_status_after_command,
         reset_on_command=reset_on_command,
         advance_packets_after_command=advance_packets_after_command,
+        fec_capable=fec_capable,
     )
     with mock.patch.object(protocol.spidev, "SpiDev", return_value=spi):
         item = protocol.LEDController(strips=8, leds_per_strip=138)
@@ -239,6 +257,27 @@ def controller(
 
 def zeros(count):
     return np.zeros((count, 4), dtype=np.uint8)
+
+
+def _decode_clean_v7(packet):
+    packet = bytes(packet)
+    codewords = (
+        len(packet) - protocol.FEC_WIRE_HEADER_BYTES
+    ) // protocol.FEC_CODEWORD_BYTES
+    data = bytearray(codewords * protocol.FEC_DATA_BYTES)
+    matrix = protocol.FEC_ENVELOPE_HEADER_BYTES
+    for block in range(codewords):
+        for symbol in range(protocol.FEC_DATA_BYTES):
+            wire_block = (block + symbol) % codewords
+            data[block * protocol.FEC_DATA_BYTES + symbol] = packet[
+                matrix + symbol * codewords + wire_block
+            ]
+    inner_size = int.from_bytes(data[2:4], "big")
+    inner = data[protocol.FEC_ENVELOPE_HEADER_BYTES:
+                 protocol.FEC_ENVELOPE_HEADER_BYTES + inner_size]
+    semantic_size = int.from_bytes(inner[2:4], "big")
+    return bytes(inner[protocol.ALIGNED_ENVELOPE_HEADER_BYTES:
+                       protocol.ALIGNED_ENVELOPE_HEADER_BYTES + semantic_size])
 
 
 class SparseOverlaySerializerTests(unittest.TestCase):
@@ -588,6 +627,108 @@ class SparseOverlaySerializerTests(unittest.TestCase):
 
 
 class SparseOverlayDriverTests(unittest.TestCase):
+    def test_legacy_maximum_single_patch_still_fills_one_wire_transfer(self):
+        item = controller()
+        item.send_overlay_patch(
+            controller_session_id=SESSION,
+            generation=1,
+            start=0,
+            premultiplied_rgba=zeros(
+                protocol.LEGACY_MAX_RGBA_PIXELS_PER_PATCH
+            ),
+        )
+        patch = next(
+            packet for packet in item.spi.packets
+            if packet[0] == protocol.CMD_OVERLAY_PATCH
+        )
+        self.assertEqual(len(patch), protocol.MAX_SPI_TRANSFER)
+
+    def test_negotiated_fec_batch_keeps_exact_ack_and_wire_diagnostic(self):
+        item = controller(fec_capable=True)
+        item._transport_envelope_enabled = True
+        item._fec_transport_requested = True
+        item._fec_transport_enabled = True
+        item._receiver_capabilities |= (
+            protocol.CAPABILITY_SPARSE_OVERLAY_V1
+            | protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+            | protocol.CAPABILITY_FEC_ENVELOPE_V7
+        )
+        status = item.send_overlay_patch_batch(
+            controller_session_id=SESSION,
+            generation=1,
+            spans=[(0, bytes((1, 2, 3, 4)) * 32)],
+        )
+
+        self.assertEqual(
+            status["receiver_last_processed_command"],
+            protocol.CMD_OVERLAY_PATCH_BATCH,
+        )
+        self.assertEqual(status["receiver_operation_sequence"], 1)
+        fec_wires = [
+            packet for packet in item.spi.packets
+            if packet[:2] == b"\x0b\x07"
+        ]
+        self.assertEqual(len(fec_wires), 1)
+        self.assertEqual(
+            _decode_clean_v7(fec_wires[0])[0],
+            protocol.CMD_OVERLAY_PATCH_BATCH,
+        )
+        diagnostic = item.command_transfer_diagnostics()[-1]
+        self.assertEqual(diagnostic["command"], protocol.CMD_OVERLAY_PATCH_BATCH)
+        self.assertEqual(diagnostic["wire_bytes"], len(fec_wires[0]))
+        self.assertEqual(diagnostic["outcome"], "acknowledged")
+        self.assertEqual(item._fec_sparse_packets_sent, 1)
+        self.assertEqual(item._fec_frames_sent, 0)
+
+    def test_negotiated_fec_single_patch_fallback_keeps_preplanned_span_count(self):
+        item = controller(fec_capable=True)
+        item._transport_envelope_enabled = True
+        item._fec_transport_requested = True
+        item._fec_transport_enabled = True
+        item._receiver_capabilities &= ~protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+        statuses = item.send_overlay_patches(
+            controller_session_id=SESSION,
+            generation=1,
+            patches=[(0, zeros(826)), (826, zeros(278))],
+            update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
+        )
+
+        self.assertEqual(len(statuses), 2)
+        fec_wires = [
+            packet for packet in item.spi.packets
+            if packet[:2] == b"\x0b\x07"
+        ]
+        self.assertEqual(len(fec_wires), 2)
+        semantics = [_decode_clean_v7(packet) for packet in fec_wires]
+        self.assertTrue(all(
+            semantic[0] == protocol.CMD_OVERLAY_PATCH
+            for semantic in semantics
+        ))
+        self.assertEqual(
+            [int.from_bytes(semantic[26:28], "big") for semantic in semantics],
+            [0, 826],
+        )
+        self.assertEqual(
+            [int.from_bytes(semantic[28:30], "big") for semantic in semantics],
+            [826, 278],
+        )
+
+    def test_planned_sparse_capacity_fails_before_io_if_negotiation_changes(self):
+        item = controller(fec_capable=True)
+        item._transport_envelope_enabled = True
+        item._fec_transport_requested = True
+        item._fec_transport_enabled = True
+        before = len(item.spi.packets)
+        with self.assertRaisesRegex(RuntimeError, "capacity changed"):
+            item.send_overlay_patches(
+                controller_session_id=SESSION,
+                generation=1,
+                patches=[(0, zeros(1))],
+                update_kind=protocol.OVERLAY_UPDATE_DELTA,
+                maximum_semantic_bytes=protocol.MAX_ALIGNED_SEMANTIC_BYTES,
+            )
+        self.assertEqual(len(item.spi.packets), before)
+
     def test_every_command_uses_queued_exact_ack_and_crc_envelope(self):
         item = controller()
         calls = (

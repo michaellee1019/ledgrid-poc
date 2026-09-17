@@ -55,10 +55,10 @@ PERF-01 passes only when all of the following hold in one observation window:
   their measured p95 critical-stage latency fits `6.67 ms` and CRC, publish-drop,
   SPI-queue, display, and status-miss counters have zero delta;
 - all receivers have actually produced status v7 in the current Host process;
-  receiver 3's received and accepted FEC deltas equal
-  Host FEC-sent/full-frame deltas exactly; uncorrectable, semantic-CRC, and
-  framing deltas are zero, while corrected packet/codeword deltas may be
-  nonzero and must remain internally consistent;
+  receiver 3's received and accepted FEC deltas equal the sum of Host-sent
+  full frames and protected sparse patch packets exactly; the two Host classes
+  retain separate accounting, uncorrectable/semantic-CRC/framing deltas are
+  zero, and corrected packet/codeword deltas remain internally consistent;
 - the complete pair is retained atomically at
   `run_state/activation_qualification_evidence.json` and remains no older than
   the checked-in four-hour evidence-freshness policy.

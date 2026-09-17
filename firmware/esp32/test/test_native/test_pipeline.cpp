@@ -1376,6 +1376,66 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
   }
 }
 
+void test_fec_sparse_batch_dispatch_boundary_is_exact_once_and_fail_closed() {
+  std::vector<std::uint8_t> semantic{
+      static_cast<std::uint8_t>(
+          ledgrid::ReceiverCommand::OverlayPatchBatch),
+      1U};
+  for (std::uint8_t value = 0U; value < 16U; ++value) {
+    semantic.push_back(value);
+  }
+  for (std::size_t index = 0; index < 8U; ++index) {
+    semantic.push_back(index == 7U ? 1U : 0U);
+  }
+  semantic.insert(semantic.end(), {0U, 1U, 0U, 0U, 0U, 1U, 1U, 2U, 3U, 4U});
+  const auto canonical = fec_packet(semantic);
+  const std::size_t codewords =
+      (canonical.size() - ledgrid::kFecWireHeaderBytes) /
+      ledgrid::kFecCodewordBytes;
+  const std::size_t matrix = ledgrid::kFecEnvelopeHeaderBytes;
+  std::array<std::uint8_t, ledgrid::kFecScratchBytes> scratch{};
+  std::size_t dispatches = 0U;
+  const auto decode_at_dispatch_boundary = [&](
+      const std::vector<std::uint8_t>& wire) {
+    ledgrid::ReceiverPacketPayload decoded{};
+    ledgrid::ReceiverPacketDecodeReport report{};
+    if (!ledgrid::decode_receiver_packet_payload(
+            wire.data(), wire.size(), &decoded, &report,
+            scratch.data(), scratch.size())) {
+      TEST_ASSERT_NULL(decoded.data);
+      TEST_ASSERT_EQUAL_UINT32(0, decoded.size);
+      return false;
+    }
+    TEST_ASSERT_TRUE(report.fec_envelope_attempted);
+    TEST_ASSERT_EQUAL_UINT32(semantic.size(), decoded.size);
+    TEST_ASSERT_EQUAL_MEMORY(semantic.data(), decoded.data, semantic.size());
+    ++dispatches;
+    return true;
+  };
+
+  auto corrected = canonical;
+  corrected[fec_rs_wire_offset(matrix, 7U, 0U, codewords)] ^= 0xA5U;
+  TEST_ASSERT_TRUE(decode_at_dispatch_boundary(corrected));
+  TEST_ASSERT_EQUAL_UINT32(1, dispatches);
+
+  auto uncorrectable = canonical;
+  const std::uint8_t errors[] = {0xA5U, 0x3CU, 0x81U, 0x5AU, 0xC3U, 0x7EU};
+  const std::size_t symbols[] = {0U, 10U, 20U, 30U, 40U, 50U};
+  for (const std::size_t block : {0U, 1U}) {
+    for (std::size_t index = 0; index < std::size(errors); ++index) {
+      uncorrectable[fec_rs_wire_offset(
+          matrix, symbols[index], block, codewords)] ^= errors[index];
+    }
+  }
+  TEST_ASSERT_FALSE(decode_at_dispatch_boundary(uncorrectable));
+  TEST_ASSERT_EQUAL_UINT32(1, dispatches);
+
+  auto truncated = canonical;
+  truncated.pop_back();
+  TEST_ASSERT_FALSE(decode_at_dispatch_boundary(truncated));
+  TEST_ASSERT_EQUAL_UINT32(1, dispatches);
+}
+
 void test_fec_outer_parity_covers_the_full_installed_frame_and_fails_closed() {
   std::vector<std::uint8_t> semantic(1U + 8U * 138U * 3U, 0x5A);
   semantic[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
@@ -1691,6 +1751,38 @@ void test_fec_native_decode_benchmark_installed_frame() {
   TEST_ASSERT_EQUAL_UINT32(semantic.size() * kIterations, checksum);
 }
 
+void test_fec_native_decode_benchmark_maximum_sparse_batch() {
+  std::vector<std::uint8_t> semantic(3336U, 0U);
+  semantic[0] = static_cast<std::uint8_t>(
+      ledgrid::ReceiverCommand::OverlayPatchBatch);
+  semantic[1] = 1U;
+  const auto packet = fec_packet(semantic);
+  TEST_ASSERT_EQUAL_UINT32(4088, packet.size());
+  std::array<std::uint8_t, ledgrid::kFecScratchBytes> scratch{};
+  constexpr std::size_t kIterations = 2000;
+  volatile std::size_t checksum = 0;
+  bool all_decoded = true;
+  const auto started = std::chrono::steady_clock::now();
+  for (std::size_t iteration = 0; iteration < kIterations; ++iteration) {
+    ledgrid::ReceiverPacketPayload decoded{};
+    ledgrid::ReceiverPacketDecodeReport report{};
+    all_decoded = ledgrid::decode_receiver_packet_payload(
+        packet.data(), packet.size(), &decoded, &report,
+        scratch.data(), scratch.size()) && all_decoded;
+    checksum += decoded.size + report.corrected_bits;
+  }
+  const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now() - started).count();
+  const double mean_us = static_cast<double>(elapsed) /
+      static_cast<double>(kIterations) / 1000.0;
+  std::printf(
+      "[FEC_BENCH] native 4088-byte maximum sparse decode %.3f us/packet "
+      "(%zu packets)\n",
+      mean_us, kIterations);
+  TEST_ASSERT_TRUE(all_decoded);
+  TEST_ASSERT_EQUAL_UINT32(semantic.size() * kIterations, checksum);
+}
+
 }  // namespace
 
 void setUp() {}
@@ -1724,10 +1816,13 @@ int main(int, char**) {
   RUN_TEST(test_fec_envelope_golden_layout_and_exact_installed_sizes);
   RUN_TEST(test_fec_corrects_header_payload_crc_and_distinct_codeword_bits);
   RUN_TEST(
+      test_fec_sparse_batch_dispatch_boundary_is_exact_once_and_fail_closed);
+  RUN_TEST(
       test_fec_outer_parity_covers_the_full_installed_frame_and_fails_closed);
   RUN_TEST(test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed);
   RUN_TEST(test_status_v7_preserves_v6_and_encodes_exact_fec_counters);
   RUN_TEST(test_fec_runtime_outcome_partition_is_total_and_exclusive);
   RUN_TEST(test_fec_native_decode_benchmark_installed_frame);
+  RUN_TEST(test_fec_native_decode_benchmark_maximum_sparse_batch);
   return UNITY_END();
 }

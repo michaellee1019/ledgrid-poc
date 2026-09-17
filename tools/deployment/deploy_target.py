@@ -3221,6 +3221,25 @@ def _receiver_health_rejection(
             or (not expected_fec and fec_frames != 0)
         ):
             return f"receiver {logical_id} host FEC accounting is inconsistent"
+        sparse_packets = int(status.get("fec_sparse_packets_sent", 0))
+        sparse_codewords = int(status.get("fec_sparse_codewords_sent", 0))
+        sparse_padding = int(status.get("fec_sparse_data_padding_bytes_sent", 0))
+        if (
+            (not expected_fec and any((
+                sparse_packets,
+                sparse_codewords,
+                int(status.get("fec_sparse_parity_bytes_sent", 0)),
+                int(status.get("fec_sparse_data_padding_bytes_sent", 0)),
+            )))
+            or sparse_codewords < 4 * sparse_packets
+            or sparse_codewords > 68 * sparse_packets
+            or sparse_codewords % 4 != 0
+            or int(status.get("fec_sparse_parity_bytes_sent", 0))
+            != 10 * sparse_codewords + 50 * sparse_packets
+            or sparse_padding < 0
+            or sparse_padding > 199 * sparse_packets
+        ):
+            return f"receiver {logical_id} host sparse FEC accounting is inconsistent"
         received = int(status["receiver_fec_packets_received"])
         accepted = int(status["receiver_fec_packets_accepted"])
         corrected_packets = int(status["receiver_fec_corrected_packets"])

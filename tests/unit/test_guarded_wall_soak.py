@@ -121,6 +121,10 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "fec_codewords_sent": 68 * full_frame_total if fec_enabled else 0,
         "fec_parity_bytes_sent": 730 * full_frame_total if fec_enabled else 0,
         "fec_data_padding_bytes_sent": 26 * full_frame_total if fec_enabled else 0,
+        "fec_sparse_packets_sent": 0,
+        "fec_sparse_codewords_sent": 0,
+        "fec_sparse_parity_bytes_sent": 0,
+        "fec_sparse_data_padding_bytes_sent": 0,
         "receiver_operation_sequence": base + frames,
         "receiver_packets": base + frames,
         "receiver_crc_ok_packets": base + frames,
@@ -193,6 +197,10 @@ def _status(elapsed: float) -> dict:
                     item["transport_padding_bytes_sent"] for item in devices
                 ),
                 "fec_frames_sent": sum(item["fec_frames_sent"] for item in devices),
+                "fec_sparse_packets_sent": 0,
+                "fec_sparse_codewords_sent": 0,
+                "fec_sparse_parity_bytes_sent": 0,
+                "fec_sparse_data_padding_bytes_sent": 0,
                 "fec_codewords_sent": sum(item["fec_codewords_sent"] for item in devices),
                 "fec_parity_bytes_sent": sum(item["fec_parity_bytes_sent"] for item in devices),
                 "fec_data_padding_bytes_sent": sum(item["fec_data_padding_bytes_sent"] for item in devices),
@@ -383,6 +391,49 @@ class GuardedWallSoakTests(unittest.TestCase):
             ],
             0,
         )
+
+    def test_sparse_fec_counters_survive_normalization_and_transition(self) -> None:
+        before_status = _status(0.0)
+        after_status = _status(1.0)
+        device = after_status["driver_stats"]["devices"][3]
+        aggregate = after_status["driver_stats"]["aggregate"]
+        increments = {
+            "spi_transfers": 1,
+            "bytes_sent": 248,
+            "semantic_bytes_sent": 40,
+            "transport_envelope_bytes_sent": 16,
+            "transport_padding_bytes_sent": 100,
+            "crc_bytes_sent": 2,
+            "receiver_packets": 1,
+            "receiver_crc_ok_packets": 1,
+            "receiver_status_responses": 1,
+            "fec_sparse_packets_sent": 1,
+            "fec_sparse_codewords_sent": 4,
+            "fec_sparse_parity_bytes_sent": 90,
+            "fec_sparse_data_padding_bytes_sent": 98,
+            "receiver_fec_packets_received": 1,
+            "receiver_fec_packets_accepted": 1,
+        }
+        for field, increment in increments.items():
+            device[field] += increment
+            if field in aggregate:
+                aggregate[field] += increment
+        device["receiver_operation_sequence"] += 1
+
+        before = soak.normalize_sample(
+            before_status, _activation(), elapsed_seconds=0.0,
+            sampled_at=2_000_000_000.0,
+        )
+        after = soak.normalize_sample(
+            after_status, _activation(), elapsed_seconds=1.0,
+            sampled_at=2_000_000_001.0,
+        )
+
+        self.assertEqual(
+            after["devices"][3]["fec_sparse_packets_sent"], 1
+        )
+        self.assertEqual(after["aggregate"]["fec_sparse_codewords_sent"], 4)
+        self.assertEqual(soak.evaluate_transition(before, after), [])
 
     def test_status_v7_observation_survives_later_v3_samples(self) -> None:
         def scheduled_v3(status, _activation_status, _elapsed):

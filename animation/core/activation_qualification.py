@@ -1142,6 +1142,10 @@ _TARGET_FEC_DELTA_FIELDS = (
     "fec_codewords_sent",
     "fec_parity_bytes_sent",
     "fec_data_padding_bytes_sent",
+    "fec_sparse_packets_sent",
+    "fec_sparse_codewords_sent",
+    "fec_sparse_parity_bytes_sent",
+    "fec_sparse_data_padding_bytes_sent",
     "receiver_fec_packets_received",
     "receiver_fec_packets_accepted",
     "receiver_fec_corrected_packets",
@@ -1169,9 +1173,13 @@ def _target_fec_item(
         )
     raw_deltas = _object(payload.get("deltas"), f"{label}.deltas")
     _only(raw_deltas, set(_TARGET_FEC_DELTA_FIELDS), f"{label}.deltas")
+    selected_fields = tuple(
+        field for field in _TARGET_FEC_DELTA_FIELDS
+        if not field.startswith("fec_sparse_") or field in raw_deltas
+    )
     deltas = {
         field: _integer(raw_deltas.get(field), f"{label}.deltas.{field}")
-        for field in _TARGET_FEC_DELTA_FIELDS
+        for field in selected_fields
     }
     if expected_count == 0:
         if any(deltas.values()):
@@ -1191,6 +1199,21 @@ def _target_fec_item(
                 raise QualificationValidationError(
                     f"{label}.deltas.{field} must be {expected}"
                 )
+        sparse_packets = deltas.get("fec_sparse_packets_sent", 0)
+        sparse_codewords = deltas.get("fec_sparse_codewords_sent", 0)
+        sparse_padding = deltas.get("fec_sparse_data_padding_bytes_sent", 0)
+        if (
+            sparse_codewords < 4 * sparse_packets
+            or sparse_codewords > 68 * sparse_packets
+            or sparse_codewords % 4 != 0
+            or deltas.get("fec_sparse_parity_bytes_sent", 0)
+            != 10 * sparse_codewords + 50 * sparse_packets
+            or sparse_padding < 0
+            or sparse_padding > 199 * sparse_packets
+        ):
+            raise QualificationValidationError(
+                f"{label}.deltas sparse FEC accounting is inconsistent"
+            )
         received = deltas["receiver_fec_packets_received"]
         accepted = deltas["receiver_fec_packets_accepted"]
         uncorrectable = deltas["receiver_fec_uncorrectable_packets"]
@@ -1201,14 +1224,14 @@ def _target_fec_item(
                 f"{label}.deltas receiver FEC outcomes do not partition received packets"
             )
         if (
-            received != expected_fec_frames
-            or accepted != expected_fec_frames
+            received != expected_fec_frames + sparse_packets
+            or accepted != expected_fec_frames + sparse_packets
             or uncorrectable
             or semantic_crc
             or framing
         ):
             raise QualificationValidationError(
-                f"{label}.deltas requires one accepted FEC packet per sent frame "
+                f"{label}.deltas requires one accepted FEC packet per sent packet "
                 "with zero terminal faults"
             )
         corrected_packets = deltas["receiver_fec_corrected_packets"]
@@ -1448,8 +1471,8 @@ def _target_transport_evidence(value: Any) -> dict[str, Any]:
                 f"{label}.aggregate.deltas.{field} drifted from receiver sum"
             )
     for field in _TARGET_FEC_DELTA_FIELDS:
-        if aggregate["fec"]["deltas"][field] != sum(
-            device["fec"]["deltas"][field] for device in devices
+        if aggregate["fec"]["deltas"].get(field, 0) != sum(
+            device["fec"]["deltas"].get(field, 0) for device in devices
         ):
             raise QualificationValidationError(
                 f"{label}.aggregate.fec.deltas.{field} drifted from receiver sum"

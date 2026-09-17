@@ -87,6 +87,10 @@ _FEC_DELTA_COUNTERS = (
     "fec_codewords_sent",
     "fec_parity_bytes_sent",
     "fec_data_padding_bytes_sent",
+    "fec_sparse_packets_sent",
+    "fec_sparse_codewords_sent",
+    "fec_sparse_parity_bytes_sent",
+    "fec_sparse_data_padding_bytes_sent",
     "receiver_fec_packets_received",
     "receiver_fec_packets_accepted",
     "receiver_fec_corrected_packets",
@@ -309,9 +313,22 @@ def _full_frame_transport_evidence_item(
                 else int(after.get("fec_transport_enabled") is True)
             ),
             "deltas": {
-                field: _integer(after.get(field), f"final {field}")
-                - _integer(before.get(field), f"initial {field}")
+                field: _integer(
+                    after.get(field, 0) if field.startswith("fec_sparse_")
+                    else after.get(field),
+                    f"final {field}",
+                )
+                - _integer(
+                    before.get(field, 0) if field.startswith("fec_sparse_")
+                    else before.get(field),
+                    f"initial {field}",
+                )
                 for field in _FEC_DELTA_COUNTERS
+                if (
+                    not field.startswith("fec_sparse_")
+                    or field in before
+                    or field in after
+                )
             },
             "final": {
                 "receiver_fec_last_decode_us": _integer(
@@ -473,6 +490,22 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         fec_frames = _integer(
             device.get("fec_frames_sent"), f"receiver {logical_id} FEC frames sent"
         )
+        sparse_packets = _integer(
+            device.get("fec_sparse_packets_sent", 0),
+            f"receiver {logical_id} FEC sparse packets sent",
+        )
+        sparse_codewords = _integer(
+            device.get("fec_sparse_codewords_sent", 0),
+            f"receiver {logical_id} FEC sparse codewords",
+        )
+        sparse_parity = _integer(
+            device.get("fec_sparse_parity_bytes_sent", 0),
+            f"receiver {logical_id} FEC sparse parity bytes",
+        )
+        sparse_padding = _integer(
+            device.get("fec_sparse_data_padding_bytes_sent", 0),
+            f"receiver {logical_id} FEC sparse data padding",
+        )
         expected_codewords = 68 if logical_id == 3 else 0
         if (
             (not expected_fec and fec_frames != 0)
@@ -486,12 +519,31 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
             raise TargetEvidenceError(
                 f"receiver {logical_id} host FEC accounting is inconsistent"
             )
+        if (
+            (not expected_fec and any((sparse_packets, sparse_codewords,
+                                       sparse_parity, sparse_padding)))
+            or sparse_codewords < 4 * sparse_packets
+            or sparse_codewords > 68 * sparse_packets
+            or sparse_codewords % 4 != 0
+            or sparse_parity != 10 * sparse_codewords + 50 * sparse_packets
+            or sparse_padding < 0
+            or sparse_padding > 199 * sparse_packets
+        ):
+            raise TargetEvidenceError(
+                f"receiver {logical_id} host sparse FEC accounting is inconsistent"
+            )
         for field in additive_fields:
             totals[field] += _integer(
-                device.get(field), f"receiver {logical_id} {field}"
+                device.get(field, 0) if field.startswith("fec_sparse_")
+                else device.get(field),
+                f"receiver {logical_id} {field}",
             )
     for field, expected in totals.items():
-        observed = _integer(aggregate.get(field), f"aggregate {field}")
+        observed = _integer(
+            aggregate.get(field, 0) if field.startswith("fec_sparse_")
+            else aggregate.get(field),
+            f"aggregate {field}",
+        )
         if observed != expected:
             raise TargetEvidenceError(
                 f"aggregate {field} drifted from per-receiver total"
@@ -538,7 +590,15 @@ def _require_transport_accounting_delta(
         _integer(after.get("fec_frames_sent"), f"{label} final FEC frames")
         - _integer(before.get("fec_frames_sent"), f"{label} initial FEC frames")
     )
-    if deltas["transport_envelope_bytes_sent"] != 4 * transfers + 12 * fec_frames:
+    fec_sparse_packets = (
+        _integer(after.get("fec_sparse_packets_sent", 0),
+                 f"{label} final sparse FEC packets")
+        - _integer(before.get("fec_sparse_packets_sent", 0),
+                   f"{label} initial sparse FEC packets")
+    )
+    if deltas["transport_envelope_bytes_sent"] != (
+        4 * transfers + 12 * (fec_frames + fec_sparse_packets)
+    ):
         raise TargetEvidenceError(f"{label} envelope accounting is inconsistent")
     if deltas["crc_bytes_sent"] != 2 * transfers:
         raise TargetEvidenceError(f"{label} CRC accounting is inconsistent")
@@ -550,6 +610,10 @@ def _require_transport_accounting_delta(
         + (
             _integer(after.get("fec_parity_bytes_sent"), f"{label} final FEC parity bytes")
             - _integer(before.get("fec_parity_bytes_sent"), f"{label} initial FEC parity bytes")
+            + _integer(after.get("fec_sparse_parity_bytes_sent", 0),
+                       f"{label} final sparse FEC parity bytes")
+            - _integer(before.get("fec_sparse_parity_bytes_sent", 0),
+                       f"{label} initial sparse FEC parity bytes")
         )
     )
     if deltas["bytes_sent"] != expected_wire:
@@ -576,8 +640,16 @@ def _require_fec_delta(
     full_frames: int,
 ) -> None:
     deltas = {
-        field: _integer(after.get(field), f"receiver {logical_id} final {field}")
-        - _integer(before.get(field), f"receiver {logical_id} initial {field}")
+        field: _integer(
+            after.get(field, 0) if field.startswith("fec_sparse_")
+            else after.get(field),
+            f"receiver {logical_id} final {field}",
+        )
+        - _integer(
+            before.get(field, 0) if field.startswith("fec_sparse_")
+            else before.get(field),
+            f"receiver {logical_id} initial {field}",
+        )
         for field in _FEC_DELTA_COUNTERS
     }
     if logical_id != 3:
@@ -597,6 +669,21 @@ def _require_fec_delta(
             raise TargetEvidenceError(
                 f"receiver 3 {field} is {deltas[field]}; expected {expected}"
             )
+    sparse_packets = deltas["fec_sparse_packets_sent"]
+    sparse_codewords = deltas["fec_sparse_codewords_sent"]
+    sparse_padding = deltas["fec_sparse_data_padding_bytes_sent"]
+    if (
+        sparse_codewords < 4 * sparse_packets
+        or sparse_codewords > 68 * sparse_packets
+        or sparse_codewords % 4 != 0
+        or deltas["fec_sparse_parity_bytes_sent"]
+        != 10 * sparse_codewords + 50 * sparse_packets
+        or sparse_padding < 0
+        or sparse_padding > 199 * sparse_packets
+    ):
+        raise TargetEvidenceError(
+            "receiver 3 sparse FEC host accounting is inconsistent"
+        )
     for field in (
         "receiver_fec_uncorrectable_packets",
         "receiver_fec_semantic_crc_errors",
@@ -608,9 +695,10 @@ def _require_fec_delta(
     accepted = deltas["receiver_fec_packets_accepted"]
     corrected_packets = deltas["receiver_fec_corrected_packets"]
     corrected_codewords = deltas["receiver_fec_corrected_codewords"]
-    if received != full_frames or accepted != full_frames:
+    expected_packets = full_frames + sparse_packets
+    if received != expected_packets or accepted != expected_packets:
         raise TargetEvidenceError(
-            "receiver 3 FEC receive/accept deltas do not exactly match sent full frames"
+            "receiver 3 FEC receive/accept deltas do not exactly match sent packets"
         )
     if not 0 <= corrected_packets <= accepted:
         raise TargetEvidenceError("receiver 3 corrected-packet accounting is invalid")

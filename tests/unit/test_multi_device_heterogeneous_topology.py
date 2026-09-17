@@ -305,6 +305,10 @@ class HeterogeneousTopologyTests(unittest.TestCase):
                     "receiver_fec_terminal_baseline_established": True,
                     "receiver_fec_terminal_baseline_invalid": logical_id == 4,
                     "receiver_fec_terminal_counter_resets": int(logical_id == 2),
+                    "fec_sparse_packets_sent": logical_id,
+                    "fec_sparse_codewords_sent": 4 * logical_id,
+                    "fec_sparse_parity_bytes_sent": 90 * logical_id,
+                    "fec_sparse_data_padding_bytes_sent": 3 * logical_id,
                     "full_frame_frames_since_status_sample": 4 + logical_id,
                     "full_frame_max_status_sample_gap": 120 + logical_id,
                     "spidev_buffer_size": 4096 - logical_id,
@@ -330,6 +334,10 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         self.assertEqual(aggregate["receiver_fec_terminal_baselines_established"], 5)
         self.assertEqual(aggregate["receiver_fec_terminal_invalid_baselines"], 1)
         self.assertEqual(aggregate["receiver_fec_terminal_counter_resets"], 1)
+        self.assertEqual(aggregate["fec_sparse_packets_sent"], 10)
+        self.assertEqual(aggregate["fec_sparse_codewords_sent"], 40)
+        self.assertEqual(aggregate["fec_sparse_parity_bytes_sent"], 900)
+        self.assertEqual(aggregate["fec_sparse_data_padding_bytes_sent"], 30)
         self.assertEqual(aggregate["full_frame_frames_since_status_sample"], 8)
         self.assertEqual(aggregate["full_frame_max_status_sample_gap"], 124)
         self.assertEqual(aggregate["spidev_buffer_size"], 4092)

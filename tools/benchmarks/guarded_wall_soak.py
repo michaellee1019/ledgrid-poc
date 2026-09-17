@@ -119,6 +119,10 @@ FEC_COUNTERS = (
     "fec_codewords_sent",
     "fec_parity_bytes_sent",
     "fec_data_padding_bytes_sent",
+    "fec_sparse_packets_sent",
+    "fec_sparse_codewords_sent",
+    "fec_sparse_parity_bytes_sent",
+    "fec_sparse_data_padding_bytes_sent",
     "receiver_fec_packets_received",
     "receiver_fec_packets_accepted",
     "receiver_fec_corrected_packets",
@@ -584,6 +588,27 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
             or fec_padding != 26 * fec_frames
         ):
             failures.append(f"receiver {logical_id} host FEC accounting is inconsistent")
+        sparse_packets = _integer(item.get("fec_sparse_packets_sent"))
+        sparse_codewords = _integer(item.get("fec_sparse_codewords_sent"))
+        sparse_parity = _integer(item.get("fec_sparse_parity_bytes_sent"))
+        sparse_padding = _integer(item.get("fec_sparse_data_padding_bytes_sent"))
+        if (
+            None in (
+                sparse_packets, sparse_codewords, sparse_parity, sparse_padding,
+            )
+            or (not expected_fec and any((
+                sparse_packets, sparse_codewords, sparse_parity, sparse_padding,
+            )))
+            or sparse_codewords < 4 * sparse_packets
+            or sparse_codewords > 68 * sparse_packets
+            or sparse_codewords % 4 != 0
+            or sparse_parity != 10 * sparse_codewords + 50 * sparse_packets
+            or sparse_padding < 0
+            or sparse_padding > 199 * sparse_packets
+        ):
+            failures.append(
+                f"receiver {logical_id} host sparse FEC accounting is inconsistent"
+            )
         corrected_packets = _integer(item.get("receiver_fec_corrected_packets"))
         corrected_codewords = _integer(item.get("receiver_fec_corrected_codewords"))
         if (
@@ -896,10 +921,27 @@ def _transport_delta_failures(
     transfers = deltas["spi_transfers"] or 0
     fec_frames = _counter_delta(before, after, "fec_frames_sent")
     fec_parity = _counter_delta(before, after, "fec_parity_bytes_sent")
-    if fec_frames is None or fec_parity is None or fec_frames < 0 or fec_parity < 0:
+    fec_sparse_packets = _counter_delta(
+        before, after, "fec_sparse_packets_sent"
+    )
+    fec_sparse_parity = _counter_delta(
+        before, after, "fec_sparse_parity_bytes_sent"
+    )
+    if fec_sparse_packets is None:
+        fec_sparse_packets = 0
+    if fec_sparse_parity is None:
+        fec_sparse_parity = 0
+    if any(
+        value is None or value < 0
+        for value in (
+            fec_frames, fec_parity, fec_sparse_packets, fec_sparse_parity
+        )
+    ):
         failures.append(f"{label} FEC wire accounting is unavailable")
         return failures
-    if deltas["transport_envelope_bytes_sent"] != 4 * transfers + 12 * fec_frames:
+    if deltas["transport_envelope_bytes_sent"] != (
+        4 * transfers + 12 * (fec_frames + fec_sparse_packets)
+    ):
         failures.append(f"{label} envelope accounting is inconsistent")
     if deltas["crc_bytes_sent"] != 2 * transfers:
         failures.append(f"{label} CRC accounting is inconsistent")
@@ -909,6 +951,7 @@ def _transport_delta_failures(
         + (deltas["transport_padding_bytes_sent"] or 0)
         + (deltas["crc_bytes_sent"] or 0)
         + fec_parity
+        + fec_sparse_parity
     )
     if deltas["bytes_sent"] != expected_wire:
         failures.append(f"{label} wire-byte accounting is inconsistent")
@@ -937,9 +980,20 @@ def _fec_delta_failures(
     logical_device: int | None,
     expected_frames: int | None,
 ) -> list[str]:
-    deltas = {
-        field: _counter_delta(before, after, field) for field in FEC_COUNTERS
-    }
+    deltas = {}
+    for field in FEC_COUNTERS:
+        delta = _counter_delta(before, after, field)
+        if delta is None and field.startswith("fec_sparse_"):
+            delta = 0
+        deltas[field] = delta
+    for field in (
+        "fec_sparse_packets_sent",
+        "fec_sparse_codewords_sent",
+        "fec_sparse_parity_bytes_sent",
+        "fec_sparse_data_padding_bytes_sent",
+    ):
+        delta = _counter_delta(before, after, field)
+        deltas[field] = 0 if delta is None else delta
     if any(value is None or value < 0 for value in deltas.values()):
         return [f"{label} FEC counters are unavailable or reset"]
     failures: list[str] = []
@@ -949,6 +1003,7 @@ def _fec_delta_failures(
             failures.append(f"{label} emitted or received unconfigured FEC traffic")
         return failures
     frames = deltas["fec_frames_sent"]
+    sparse_packets = deltas["fec_sparse_packets_sent"]
     if expected_frames is not None and frames != expected_frames:
         failures.append(f"{label} FEC sent frames do not match full-frame transfers")
     if (
@@ -957,6 +1012,18 @@ def _fec_delta_failures(
         or deltas["fec_data_padding_bytes_sent"] != 26 * frames
     ):
         failures.append(f"{label} host FEC accounting is inconsistent")
+    sparse_codewords = deltas["fec_sparse_codewords_sent"]
+    sparse_padding = deltas["fec_sparse_data_padding_bytes_sent"]
+    if (
+        sparse_codewords < 4 * sparse_packets
+        or sparse_codewords > 68 * sparse_packets
+        or sparse_codewords % 4 != 0
+        or deltas["fec_sparse_parity_bytes_sent"]
+        != 10 * sparse_codewords + 50 * sparse_packets
+        or sparse_padding < 0
+        or sparse_padding > 199 * sparse_packets
+    ):
+        failures.append(f"{label} host sparse FEC accounting is inconsistent")
     received = deltas["receiver_fec_packets_received"]
     accepted = deltas["receiver_fec_packets_accepted"]
     terminal = (
@@ -966,7 +1033,13 @@ def _fec_delta_failures(
     )
     if received != accepted + terminal:
         failures.append(f"{label} receiver FEC outcomes do not partition received packets")
-    if received <= 0 or received != accepted or terminal != 0:
+    expected_packets = frames + sparse_packets
+    if (
+        received <= 0
+        or received != expected_packets
+        or accepted != expected_packets
+        or terminal != 0
+    ):
         failures.append(
             f"{label} receiver FEC traffic was not accepted without terminal faults"
         )

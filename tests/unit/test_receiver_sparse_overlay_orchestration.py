@@ -20,6 +20,7 @@ from drivers.spi_controller import (
     CAPABILITY_SPARSE_OVERLAY_BATCH_V1,
     CAPABILITY_STATIC_LOCAL_BACKGROUND,
     CAPABILITY_STATUS_V3,
+    LEDController,
     OVERLAY_UPDATE_DELTA,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
 )
@@ -142,6 +143,43 @@ class Device:
             raise OSError("set_all failed")
         self.base_mode = 2
         self.foreground_state = 0
+
+
+class FecDevice(Device):
+    def begin_overlay(self, **fields):
+        self.expected_patches = fields["expected_patches"]
+        self.accepted_patches = 0
+        return super().begin_overlay(**fields)
+
+    def sparse_overlay_batch_capacity(self):
+        return 3338, 826
+
+    def send_overlay_patches(self, *, patches, **fields):
+        materialized = [
+            (start, np.asarray(pixels).copy()) for start, pixels in patches
+        ]
+        semantic_limit = fields.pop("maximum_semantic_bytes", 3338)
+        packets = LEDController.serialize_overlay_patch_batches(
+            patches=materialized,
+            maximum_semantic_bytes=semantic_limit,
+            **fields,
+        )
+        self.calls.append(("patches", fields, materialized))
+        statuses = []
+        for packet in packets:
+            self.accepted_patches += int.from_bytes(packet[26:28], "big")
+            status = self._status("patch")
+            if self.accepted_patches > self.expected_patches:
+                status["receiver_overlay_operation_result"] = 8
+            statuses.append(status)
+        return statuses
+
+    def commit_overlay(self, **fields):
+        if self.accepted_patches != self.expected_patches:
+            status = self._status()
+            status["receiver_overlay_operation_result"] = 8
+            return status
+        return super().commit_overlay(**fields)
 
 
 def controller(devices):
@@ -433,6 +471,44 @@ class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
             self.assertEqual(device.committed_generation, 1)
         self.assertEqual(
             item._local_background_status["foreground_patch_counts"], [2, 2, 2, 2]
+        )
+
+    def test_fec_route_declares_its_resplit_spans_before_staging(self):
+        devices = [Device(0), Device(1), Device(2), FecDevice(3)]
+        item = controller(devices)
+
+        self.assertTrue(item.publish_sparse_overlay(
+            transparent_wall(),
+            controller_session_id=SESSION,
+            generation=1,
+            prior_generation=0,
+            scene_revision=7,
+            scene_epoch=11,
+            base_revision=13,
+            lease_ms=3000,
+            present_at_scene_time_us=17,
+            full_snapshot=True,
+        ))
+
+        aligned_patches = next(
+            call[2] for call in devices[0].calls if call[0] == "patches"
+        )
+        fec_patches = next(
+            call[2] for call in devices[3].calls if call[0] == "patches"
+        )
+        self.assertEqual(
+            [(start, len(data)) for start, data in aligned_patches],
+            [(0, 1014), (1014, 90)],
+        )
+        self.assertEqual(
+            [(start, len(data)) for start, data in fec_patches],
+            [(0, 826), (826, 278)],
+        )
+        begin = next(call[1] for call in devices[3].calls if call[0] == "begin")
+        self.assertEqual(begin["expected_patches"], 2)
+        self.assertEqual(
+            item._local_background_status["foreground_patch_counts"],
+            [2, 2, 2, 2],
         )
 
     def test_fifth_receiver_snapshot_has_one_lane_then_transparent_padding(self):

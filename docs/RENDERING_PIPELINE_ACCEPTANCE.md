@@ -225,9 +225,11 @@ The capacity gate passes only when receiver telemetry shows:
   erasing that sticky proof;
 - CRC-error delta of zero after warm-up;
 - exactly one requested/enabled FEC receiver, logical receiver 3;
-- receiver-3 received and accepted FEC packets match Host-sent full frames,
-  uncorrectable/semantic-CRC/framing deltas stay zero, and correction counters
-  remain internally consistent (nonzero corrections are allowed);
+- receiver-3 received and accepted FEC packets match Host-sent full frames plus
+  protected sparse patch packets, whose variable codeword/parity accounting is
+  retained separately; uncorrectable/semantic-CRC/framing deltas stay zero,
+  and correction counters remain internally consistent (nonzero corrections
+  are allowed);
 - SPI queue-overrun delta of zero;
 - receiver display DMA p95 at or below 4.8 ms;
 - receiver frame-encode p95 at or below 1.0 ms;

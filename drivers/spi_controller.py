@@ -492,6 +492,9 @@ MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
     - OVERLAY_PATCH_BATCH_HEADER_BYTES
     - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
 ) // 4
+FEC_MAX_RGBA_PIXELS_PER_PATCH = (
+    MAX_FEC_SEMANTIC_BYTES - OVERLAY_PATCH_HEADER_BYTES
+) // 4
 LEGACY_MAX_RGBA_PIXELS_PER_PATCH = (
     MAX_SPI_TRANSFER - OVERLAY_PATCH_HEADER_BYTES - CRC_BYTES
 ) // 4
@@ -886,6 +889,10 @@ class LEDController:
         self._fec_codewords_sent = 0
         self._fec_parity_bytes_sent = 0
         self._fec_data_padding_bytes_sent = 0
+        self._fec_sparse_packets_sent = 0
+        self._fec_sparse_codewords_sent = 0
+        self._fec_sparse_parity_bytes_sent = 0
+        self._fec_sparse_data_padding_bytes_sent = 0
         self._writebytes2_supported = None
         self._last_transfer_captured_response = False
         self._last_transfer_status_sampled = False
@@ -993,6 +1000,43 @@ class LEDController:
         buf[:len(payload_view)] = payload_view
         return self._xfer_packet(buf, len(payload_view))
 
+    def _fec_sparse_command_enabled(self, command):
+        """Return whether one pixel-bearing sparse command uses negotiated FEC."""
+        return bool(
+            command in (CMD_OVERLAY_PATCH, CMD_OVERLAY_PATCH_BATCH)
+            and getattr(self, "_transport_envelope_enabled", False)
+            and getattr(self, "_fec_transport_requested", False)
+            and getattr(self, "_fec_transport_enabled", False)
+        )
+
+    def _sparse_transport_semantic_limit(self):
+        if self._fec_sparse_command_enabled(CMD_OVERLAY_PATCH_BATCH):
+            return MAX_FEC_SEMANTIC_BYTES
+        if getattr(self, "_transport_envelope_enabled", False):
+            return MAX_ALIGNED_SEMANTIC_BYTES
+        return MAX_SPI_TRANSFER - CRC_BYTES
+
+    def sparse_overlay_batch_capacity(self):
+        """Return the negotiated semantic and per-span limits for one route."""
+        semantic_limit = self._sparse_transport_semantic_limit()
+        maximum_span_pixels = min(
+            MAX_RGBA_PIXELS_PER_BATCH_SPAN,
+            (
+                semantic_limit
+                - OVERLAY_PATCH_BATCH_HEADER_BYTES
+                - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
+            ) // 4,
+        )
+        return semantic_limit, maximum_span_pixels
+
+    def _command_wire_size(self, command, payload_length):
+        """Return the selected wire size for bounded command diagnostics."""
+        if self._fec_sparse_command_enabled(command):
+            return _fec_envelope_wire_size(payload_length)
+        if getattr(self, "_transport_envelope_enabled", False):
+            return _aligned_envelope_wire_size(payload_length)
+        return payload_length + CRC_BYTES
+
     def _xfer_packet(self, buf, payload_length, *, response_required=True):
         """Finalize and transfer a packet whose CRC storage is preallocated."""
         transport_lock = getattr(self, "_transport_lock", None)
@@ -1006,15 +1050,23 @@ class LEDController:
                 or (payload_length == RECEIVER_STATUS_BYTES_V8
                     and buf[0] == CMD_STATUS_QUERY)
             )
+            fec_sparse_command = bool(
+                payload_length
+                and self._fec_sparse_command_enabled(int(buf[0]))
+            )
             fec_enabled = bool(
                 envelope_enabled
                 and getattr(self, "_fec_transport_requested", False)
                 and getattr(self, "_fec_transport_enabled", False)
-                and buf is getattr(self, "_frame_packet", None)
+                and (
+                    buf is getattr(self, "_frame_packet", None)
+                    or fec_sparse_command
+                )
             )
             maximum_payload = (
-                MAX_ALIGNED_SEMANTIC_BYTES
-                if envelope_enabled
+                MAX_FEC_SEMANTIC_BYTES
+                if fec_enabled
+                else MAX_ALIGNED_SEMANTIC_BYTES if envelope_enabled
                 else MAX_SPI_TRANSFER - CRC_BYTES
             )
             if payload_length < 1 or payload_length > maximum_payload:
@@ -1030,7 +1082,11 @@ class LEDController:
                     reusable = None
                 wire = _encode_fec_envelope(
                     memoryview(buf)[:payload_length], output=reusable,
-                    inner_output=getattr(self, "_aligned_frame_packet", None),
+                    inner_output=(
+                        getattr(self, "_aligned_frame_packet", None)
+                        if buf is getattr(self, "_frame_packet", None)
+                        else None
+                    ),
                 )
                 codewords = (
                     len(wire) - FEC_WIRE_HEADER_BYTES
@@ -1104,20 +1160,36 @@ class LEDController:
             def record_successful_fec_transfer():
                 if not fec_enabled:
                     return
-                self._fec_frames_sent = (
-                    getattr(self, "_fec_frames_sent", 0) + 1
-                )
-                self._fec_codewords_sent = (
-                    getattr(self, "_fec_codewords_sent", 0) + codewords
-                )
-                self._fec_parity_bytes_sent = (
-                    getattr(self, "_fec_parity_bytes_sent", 0)
-                    + fec_parity_bytes
-                )
-                self._fec_data_padding_bytes_sent = (
-                    getattr(self, "_fec_data_padding_bytes_sent", 0)
-                    + fec_data_padding_bytes
-                )
+                if fec_sparse_command:
+                    self._fec_sparse_packets_sent = (
+                        getattr(self, "_fec_sparse_packets_sent", 0) + 1
+                    )
+                    self._fec_sparse_codewords_sent = (
+                        getattr(self, "_fec_sparse_codewords_sent", 0) + codewords
+                    )
+                    self._fec_sparse_parity_bytes_sent = (
+                        getattr(self, "_fec_sparse_parity_bytes_sent", 0)
+                        + fec_parity_bytes
+                    )
+                    self._fec_sparse_data_padding_bytes_sent = (
+                        getattr(self, "_fec_sparse_data_padding_bytes_sent", 0)
+                        + fec_data_padding_bytes
+                    )
+                else:
+                    self._fec_frames_sent = (
+                        getattr(self, "_fec_frames_sent", 0) + 1
+                    )
+                    self._fec_codewords_sent = (
+                        getattr(self, "_fec_codewords_sent", 0) + codewords
+                    )
+                    self._fec_parity_bytes_sent = (
+                        getattr(self, "_fec_parity_bytes_sent", 0)
+                        + fec_parity_bytes
+                    )
+                    self._fec_data_padding_bytes_sent = (
+                        getattr(self, "_fec_data_padding_bytes_sent", 0)
+                        + fec_data_padding_bytes
+                    )
             try:
                 if not response_required and fec_enabled:
                     # Keep protected full frames on the SPI_IOC_MESSAGE path.
@@ -2575,11 +2647,7 @@ class LEDController:
                 },
                 "command": command,
                 "payload_bytes": payload_bytes,
-                "wire_bytes": (
-                    _aligned_envelope_wire_size(payload_bytes)
-                    if getattr(self, "_transport_envelope_enabled", False)
-                    else payload_bytes + CRC_BYTES
-                ),
+                "wire_bytes": self._command_wire_size(command, payload_bytes),
                 "required_status_version": required_version,
                 "storage_operation": bool(storage_operation),
                 "causal_readiness": bool(causal_readiness),
@@ -3382,12 +3450,27 @@ class LEDController:
 
     @classmethod
     def serialize_overlay_patch_batches(
-        cls, *, controller_session_id, generation, patches, update_kind
+        cls, *, controller_session_id, generation, patches, update_kind,
+        maximum_semantic_bytes=MAX_ALIGNED_SEMANTIC_BYTES,
     ):
         """Validate and greedily pack ordered spans into atomic batch packets."""
         kind = cls._bounded_uint("update_kind", update_kind, 0xFF)
         if kind not in (OVERLAY_UPDATE_FULL_SNAPSHOT, OVERLAY_UPDATE_DELTA):
             raise ValueError("update_kind must be full snapshot (1) or delta (2)")
+        semantic_limit = cls._bounded_uint(
+            "maximum_semantic_bytes",
+            maximum_semantic_bytes,
+            MAX_SPI_TRANSFER - CRC_BYTES,
+        )
+        minimum_batch_bytes = (
+            OVERLAY_PATCH_BATCH_HEADER_BYTES
+            + OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
+            + 4
+        )
+        if semantic_limit < minimum_batch_bytes:
+            raise ValueError(
+                "maximum_semantic_bytes cannot contain one overlay pixel"
+            )
         try:
             patch_items = tuple(patches)
         except TypeError as exc:
@@ -3415,7 +3498,15 @@ class LEDController:
                 )
             offset = 0
             while offset < count:
-                span_count = min(MAX_RGBA_PIXELS_PER_BATCH_SPAN, count - offset)
+                maximum_span_pixels = min(
+                    MAX_RGBA_PIXELS_PER_BATCH_SPAN,
+                    (
+                        semantic_limit
+                        - OVERLAY_PATCH_BATCH_HEADER_BYTES
+                        - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
+                    ) // 4,
+                )
+                span_count = min(maximum_span_pixels, count - offset)
                 byte_start = offset * 4
                 byte_end = byte_start + span_count * 4
                 normalized.append((
@@ -3440,7 +3531,7 @@ class LEDController:
             span_bytes = OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES + len(span[1])
             if (
                 packet_spans
-                and packet_bytes + span_bytes > MAX_ALIGNED_SEMANTIC_BYTES
+                and packet_bytes + span_bytes > semantic_limit
             ):
                 packets.append(cls.serialize_overlay_patch_batch(
                     controller_session_id=controller_session_id,
@@ -3510,12 +3601,10 @@ class LEDController:
 
     def send_overlay_patch(self, **kwargs):
         payload = self.serialize_overlay_patch(**kwargs)
-        if (
-            getattr(self, "_transport_envelope_enabled", False)
-            and len(payload) > MAX_ALIGNED_SEMANTIC_BYTES
-        ):
+        semantic_limit = self._sparse_transport_semantic_limit()
+        if len(payload) > semantic_limit:
             raise ValueError(
-                "overlay patch exceeds the aligned transport semantic limit"
+                "overlay patch exceeds the negotiated transport semantic limit"
             )
         return self._overlay_command_status(payload)
 
@@ -3537,12 +3626,10 @@ class LEDController:
                 "receiver has not advertised sparse-overlay batch-v1 support"
             )
         payload = self.serialize_overlay_patch_batch(**kwargs)
-        if (
-            getattr(self, "_transport_envelope_enabled", False)
-            and len(payload) > MAX_ALIGNED_SEMANTIC_BYTES
-        ):
+        semantic_limit = self._sparse_transport_semantic_limit()
+        if len(payload) > semantic_limit:
             raise ValueError(
-                "overlay patch batch exceeds the aligned transport semantic limit"
+                "overlay patch batch exceeds the negotiated transport semantic limit"
             )
         return self._overlay_command_status(payload)
 
@@ -3562,15 +3649,29 @@ class LEDController:
         return status
 
     def send_overlay_patches(
-        self, *, controller_session_id, generation, patches, update_kind
+        self, *, controller_session_id, generation, patches, update_kind,
+        maximum_semantic_bytes=None,
     ):
         """Validate all spans before I/O and acknowledge each atomic batch once."""
         patch_items = tuple(patches)
+        selected_semantic_limit = self._sparse_transport_semantic_limit()
+        if maximum_semantic_bytes is not None:
+            planned_semantic_limit = self._bounded_uint(
+                "maximum_semantic_bytes",
+                maximum_semantic_bytes,
+                MAX_SPI_TRANSFER - CRC_BYTES,
+            )
+            if planned_semantic_limit != selected_semantic_limit:
+                raise RuntimeError(
+                    "sparse-overlay transport capacity changed after planning"
+                )
+            selected_semantic_limit = planned_semantic_limit
         packets = self.serialize_overlay_patch_batches(
             controller_session_id=controller_session_id,
             generation=generation,
             patches=patch_items,
             update_kind=update_kind,
+            maximum_semantic_bytes=selected_semantic_limit,
         )
         if not (
             int(getattr(self, "_receiver_capabilities", 0) or 0)
@@ -3581,11 +3682,12 @@ class LEDController:
             # and materialize every packet before I/O; otherwise an aligned
             # host could stage an early span and only then reject a later
             # legacy-sized span.
-            maximum_pixels = (
-                MAX_RGBA_PIXELS_PER_PATCH
-                if getattr(self, "_transport_envelope_enabled", False)
-                else LEGACY_MAX_RGBA_PIXELS_PER_PATCH
-            )
+            if self._fec_sparse_command_enabled(CMD_OVERLAY_PATCH):
+                maximum_pixels = FEC_MAX_RGBA_PIXELS_PER_PATCH
+            elif getattr(self, "_transport_envelope_enabled", False):
+                maximum_pixels = MAX_RGBA_PIXELS_PER_PATCH
+            else:
+                maximum_pixels = LEGACY_MAX_RGBA_PIXELS_PER_PATCH
             fallback_packets = []
             for start, value in patch_items:
                 rgba, count = self._premultiplied_rgba_bytes(
@@ -4302,6 +4404,18 @@ class LEDController:
             ),
             'fec_data_padding_bytes_sent': getattr(
                 self, '_fec_data_padding_bytes_sent', 0
+            ),
+            'fec_sparse_packets_sent': getattr(
+                self, '_fec_sparse_packets_sent', 0
+            ),
+            'fec_sparse_codewords_sent': getattr(
+                self, '_fec_sparse_codewords_sent', 0
+            ),
+            'fec_sparse_parity_bytes_sent': getattr(
+                self, '_fec_sparse_parity_bytes_sent', 0
+            ),
+            'fec_sparse_data_padding_bytes_sent': getattr(
+                self, '_fec_sparse_data_padding_bytes_sent', 0
             ),
             'full_frame_transfers': getattr(self, '_full_frame_transfers', 0),
             'full_frame_status_transfers': getattr(

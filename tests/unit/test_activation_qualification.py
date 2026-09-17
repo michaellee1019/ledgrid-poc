@@ -820,6 +820,89 @@ class ActivationQualificationTests(unittest.TestCase):
                 with self.assertRaises(QualificationValidationError):
                     normalize_target_qualification_evidence(changed)
 
+    def test_target_transport_accounts_sparse_fec_separately_from_frames(self) -> None:
+        binding_digest = activation_qualification_binding_digest(_binding())
+        transport = _target_transport()
+        sparse_fields = {
+            "fec_sparse_packets_sent": 0,
+            "fec_sparse_codewords_sent": 0,
+            "fec_sparse_parity_bytes_sent": 0,
+            "fec_sparse_data_padding_bytes_sent": 0,
+        }
+        for device in transport["devices"]:
+            device["fec"]["deltas"].update(sparse_fields)
+        receiver = transport["devices"][3]["fec"]["deltas"]
+        receiver.update({
+            "fec_sparse_packets_sent": 2,
+            "fec_sparse_codewords_sent": 8,
+            "fec_sparse_parity_bytes_sent": 180,
+            "fec_sparse_data_padding_bytes_sent": 12,
+        })
+        receiver["receiver_fec_packets_received"] += 2
+        receiver["receiver_fec_packets_accepted"] += 2
+        aggregate = transport["aggregate"]["fec"]["deltas"]
+        for field in sparse_fields:
+            aggregate[field] = sum(
+                device["fec"]["deltas"][field]
+                for device in transport["devices"]
+            )
+        aggregate["receiver_fec_packets_received"] += 2
+        aggregate["receiver_fec_packets_accepted"] += 2
+        captured_at = NOW_MS - 1_000
+        envelope = {
+            "schema": "ledgrid.target-qualification-evidence",
+            "schema_version": 3,
+            "revision": 1,
+            "binding_digest": binding_digest,
+            "captured_at": captured_at,
+            "environment": "Raspberry Pi and exact installed five-receiver wall",
+            "runtime_identity": _target_runtime_identity(),
+            "transport": transport,
+            "evidence": [
+                _evidence("controller_pi", binding_digest, captured_at=captured_at),
+                _evidence(
+                    "receiver", binding_digest, captured_at=captured_at,
+                    transport_digest=canonical_json_sha256(transport),
+                ),
+            ],
+        }
+        normalized = normalize_target_qualification_evidence(envelope)
+        self.assertEqual(
+            normalized["transport"]["aggregate"]["fec"]["deltas"]
+            ["fec_sparse_packets_sent"],
+            2,
+        )
+
+        broken = deepcopy(envelope)
+        broken["transport"]["devices"][3]["fec"]["deltas"][
+            "fec_sparse_parity_bytes_sent"
+        ] += 1
+        broken["transport"]["aggregate"]["fec"]["deltas"][
+            "fec_sparse_parity_bytes_sent"
+        ] += 1
+        broken["evidence"][1]["transport_digest"] = canonical_json_sha256(
+            broken["transport"]
+        )
+        with self.assertRaisesRegex(
+            QualificationValidationError, "sparse FEC accounting"
+        ):
+            normalize_target_qualification_evidence(broken)
+
+        broken = deepcopy(envelope)
+        broken["transport"]["devices"][3]["fec"]["deltas"][
+            "fec_sparse_data_padding_bytes_sent"
+        ] = 399
+        broken["transport"]["aggregate"]["fec"]["deltas"][
+            "fec_sparse_data_padding_bytes_sent"
+        ] = 399
+        broken["evidence"][1]["transport_digest"] = canonical_json_sha256(
+            broken["transport"]
+        )
+        with self.assertRaisesRegex(
+            QualificationValidationError, "sparse FEC accounting"
+        ):
+            normalize_target_qualification_evidence(broken)
+
     def test_target_runtime_identity_and_transport_digest_fail_closed(self) -> None:
         binding_digest = activation_qualification_binding_digest(_binding())
         captured_at = NOW_MS - 1_000
