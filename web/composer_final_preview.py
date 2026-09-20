@@ -237,6 +237,8 @@ class InstalledFinalSceneRuntime:
         if (getattr(self.controller, "strip_count", None), getattr(self.controller, "leds_per_strip", None)) != (33, 138):
             raise ValueError("installed Scene v2 presentation requires a 33x138 controller")
         self.foreground_only = bool(foreground_only)
+        self._inert_base = np.zeros((self.controller.total_leds, 3), dtype=np.uint8)
+        self._inert_base_ready = False
         self._wall_time = datetime.now().astimezone()
         self._project_root = project_root
         self._native: _NativeAuroraPreview | None = None
@@ -280,15 +282,16 @@ class InstalledFinalSceneRuntime:
     ) -> BaseFrame:
         """Supply an inert base only for receiver foreground extraction.
 
-        The resulting RGB frame is not an installed-final preview. Live receiver
-        activation consumes only ``RuntimeFrame.foreground`` and combines it with
-        the separately verified receiver-native background on the receiver.
+        Normally this RGB frame is not an installed-final preview: receiver
+        activation consumes only ``RuntimeFrame.foreground``. The narrow
+        ``render_opaque_full`` path verifies full alpha coverage before using
+        the same composition as final host RGB.
         """
 
-        return BaseFrame(
-            np.zeros((self.controller.total_leds, 3), dtype=np.uint8),
-            changed=True,
-        )
+        changed = not self._inert_base_ready
+        self._inert_base_ready = True
+        return BaseFrame(self._inert_base, changed=changed,
+                         dirty_ranges=None if changed else ())
 
     def render(self, presentation: ScenePresentationContext) -> RuntimeFrame:
         """Render one installed-final frame without mutating publication state."""
@@ -300,7 +303,17 @@ class InstalledFinalSceneRuntime:
             if canonical.identity.digest != self._active_digest:
                 self._runtime.activate(canonical)
                 self._active_digest = canonical.identity.digest
+                self._inert_base_ready = False
             return self._runtime.render_presentation(presentation)
+
+    def render_opaque_full(self, presentation: ScenePresentationContext) -> RuntimeFrame:
+        """Use the inert base as final RGB only with verified full alpha coverage."""
+        if not self.foreground_only:
+            raise ValueError("opaque host-full rendering requires an inert base")
+        frame = self.render(presentation)
+        if frame.foreground is None or not np.all(frame.foreground.pixels[:, 3] == 255):
+            raise ValueError("host-full foreground no longer covers every pixel")
+        return frame
 
     def set_installation_profile(
         self, view: InstallationProfileRuntimeView | None

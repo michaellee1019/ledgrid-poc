@@ -1512,6 +1512,53 @@ class ControllerActivationCoordinator:
         }
 
     @staticmethod
+    def _host_full_receipt_evidence(status: Mapping[str, Any]) -> dict[str, Any] | None:
+        host = status.get("host_full")
+        if not isinstance(host, Mapping):
+            return None
+        receipt = host.get("first_frame_receipt")
+        request_id = receipt.get("request_id") if isinstance(receipt, Mapping) else None
+        if not isinstance(request_id, str):
+            return None
+        return {"host_full_request_id": request_id}
+
+    @staticmethod
+    def _host_full_activation_evidence(
+        status: Mapping[str, Any], scene: Mapping[str, Any],
+        installation_profile_digest: str,
+    ) -> dict[str, Any] | None:
+        if scene.get("schema") != "ledgrid.scene.v2":
+            return None
+        host = status.get("host_full")
+        presentation = status.get("scene")
+        receipt = host.get("first_frame_receipt") if isinstance(host, Mapping) else None
+        digest = _scene_digest(scene)
+        if (status.get("is_running") is not True
+                or not isinstance(presentation, Mapping)
+                or presentation.get("provider_mode") != "host_full_rgb"
+                or not isinstance(host, Mapping)
+                or host.get("scene_digest") != digest
+                or host.get("installation_profile_digest") != installation_profile_digest
+                or not isinstance(receipt, Mapping)
+                or not isinstance(receipt.get("request_id"), str)
+                or not receipt["request_id"].startswith(f"scene-{digest}-")
+                or not isinstance(receipt.get("frame_digest"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", receipt["frame_digest"]) is None
+                or not isinstance(receipt.get("authority_digest"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", receipt["authority_digest"]) is None):
+            return None
+        displayed = receipt.get("displayed_receivers")
+        if (not isinstance(displayed, list) or len(displayed) != 5
+                or {item.get("logical_device") for item in displayed if isinstance(item, Mapping)}
+                != set(range(5))
+                or any(not isinstance(item, Mapping)
+                       or type(item.get("receiver_displayed_sequence")) is not int
+                       or not 0 <= item["receiver_displayed_sequence"] <= 0xFFFFFFFF
+                       for item in displayed)):
+            return None
+        return {"host_full_request_id": receipt["request_id"]}
+
+    @staticmethod
     def _receiver_activation_evidence(
         status: Mapping[str, Any],
         scene: Mapping[str, Any],
@@ -1519,6 +1566,12 @@ class ControllerActivationCoordinator:
         expected_payload_digest: str | None = None,
     ) -> dict[str, Any] | None:
         """Return exact fresh receiver/runtime evidence for one desired scene."""
+
+        host_full = ControllerActivationCoordinator._host_full_activation_evidence(
+            status, scene, installation_profile_digest
+        )
+        if host_full is not None:
+            return host_full
 
         sample = ControllerActivationCoordinator._receiver_publication_evidence(
             status
@@ -1584,6 +1637,10 @@ class ControllerActivationCoordinator:
     def _receiver_evidence_advanced(
         before: Mapping[str, Any] | None, after: Mapping[str, Any]
     ) -> bool:
+        if "host_full_request_id" in after:
+            return after["host_full_request_id"] != (
+                before.get("host_full_request_id") if before is not None else None
+            )
         if before is None:
             return True
         if after["context_revision"] != before.get("context_revision"):
@@ -2154,9 +2211,8 @@ class ControllerActivationCoordinator:
                 record.snapshot = snapshot
                 if self._uses_receiver_runtime(scene):
                     record.receiver_evidence_before = (
-                        self._receiver_publication_evidence(
-                            self._manager_status()
-                        )
+                        self._host_full_receipt_evidence(self._manager_status())
+                        or self._receiver_publication_evidence(self._manager_status())
                     )
                 record.status["rollback"].update(
                     available=True, snapshot_id=snapshot.snapshot_id

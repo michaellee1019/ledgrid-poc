@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -17,6 +18,8 @@ import time
 import unittest
 import uuid
 from unittest.mock import patch
+
+import numpy as np
 
 from animation.core.activation_qualification import canonical_json_sha256
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
@@ -51,6 +54,9 @@ class _Transport(_Controller):
         self.corrupt_next = None
         self.foreground = None
         self.sparse_status = {}
+        self.host_full_failure = None
+        self.host_full_sequence = 0
+        self.receiver_identity_authority_digest = "a" * 64
         self.profile_wall = FakeInstallationProfileWall(capacity_bytes=1024*1024)
 
     def installation_profile_wall(self):
@@ -96,6 +102,24 @@ class _Transport(_Controller):
         stats = super().get_stats()
         stats['aggregate']['local_background'] = dict(self.sparse_status)
         return stats
+
+    def present_displayed_host_full_frame(self, request_id, frame, *, timeout_seconds=5.0):
+        pixels = np.asarray(frame, dtype=np.uint8)
+        self.operations.append(("host_full_display_proof", request_id, pixels.copy()))
+        if self.host_full_failure is not None:
+            failure = self.host_full_failure
+            self.host_full_failure = None
+            raise RuntimeError(f"receiver 3 {failure}")
+        self.host_full_sequence += 1
+        return {
+            "request_id": request_id,
+            "frame_digest": hashlib.sha256(pixels.tobytes()).hexdigest(),
+            "authority_digest": "a" * 64,
+            "displayed_receivers": [
+                {"logical_device": index, "receiver_displayed_sequence": self.host_full_sequence}
+                for index in range(5)
+            ],
+        }
 
 
 class _Channel(LocalControlChannel):
@@ -308,6 +332,85 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertEqual(receipt['phase'], 'active', receipt)
         self.assertEqual(self.manager._receiver_hybrid_status_snapshot()['preview_kind'], 'host_foreground_only')
 
+    def test_twilight_sparkle_uses_checked_host_full_first_display_proof(self):
+        self.globals['output']['brightness'] = 0
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        _, _, receipt = self.activate(scene)
+        self.assertEqual(receipt['phase'], 'active', receipt)
+        self.assertEqual(receipt['observed_identity']['scene_identity']['digest'], canonical_json_sha256(scene))
+        status = self.manager.get_current_status()
+        self.assertEqual(status['scene']['provider_mode'], 'host_full_rgb')
+        self.assertEqual(status['host_full']['scene_digest'], canonical_json_sha256(scene))
+        self.assertEqual(status['host_full']['installation_profile_digest'], self.profile_digest)
+        self.assertEqual(len([op for op in self.controller.operations if op[0] == 'host_full_display_proof']), 1)
+        self.assertFalse(any(op[0] in ('activate', 'publish') for op in self.controller.operations))
+        self.assertEqual(status['brightness'], 0)
+
+    def test_sparkle_with_widget_retains_native_sparse_path(self):
+        scene = get_starter('human_twilight_sparkle')['scene']
+        scene['widgets'] = get_starter('aurora_clock')['scene']['widgets']
+        scene = self.interface._composer_canonical({'origin': 'composer', 'scene': scene}).scene
+        _, _, receipt = self.activate(scene)
+        self.assertEqual(receipt['phase'], 'active', receipt)
+        self.assertTrue(self.manager._receiver_hybrid_mode)
+        self.assertFalse(self.manager._canonical_host_full_mode)
+        self.assertTrue(any(op[0] == 'publish' for op in self.controller.operations))
+        self.assertFalse(any(op[0] == 'host_full_display_proof' for op in self.controller.operations))
+
+    def test_twilight_first_frame_receiver_three_failures_never_become_active(self):
+        _, _, prior = self.activate(self.scene)
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        for failure in ('write failure', 'status-v8 integrity failure', 'display timeout'):
+            with self.subTest(failure=failure):
+                self.controller.host_full_failure = failure
+                _, _, receipt = self.activate(scene)
+                self.assertNotEqual(receipt['phase'], 'active', receipt)
+                self.assertIn(failure, receipt['error'])
+                self.assertEqual(self.manager.get_scene_state(), self.scene)
+                self.assertEqual(receipt['observed_identity'], prior['observed_identity'])
+
+    def test_twilight_streams_cached_rgb_on_output_ticks_and_stops_on_send_failure(self):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        _, _, receipt = self.activate(scene)
+        self.assertEqual(receipt['phase'], 'active', receipt)
+        self.manager.target_fps = 200
+        self.manager._launch_animation_loop = AnimationManager._launch_animation_loop.__get__(self.manager)
+        self.manager._launch_animation_loop()
+        deadline = time.monotonic() + 1.0
+        while len([op for op in self.controller.operations if op[0] == 'set_all']) < 4 and time.monotonic() < deadline:
+            time.sleep(.005)
+        sent = [op[1] for op in self.controller.operations if op[0] == 'set_all']
+        self.assertGreaterEqual(len(sent), 4)
+        np.testing.assert_array_equal(sent[0], sent[1])
+        self.assertGreater(self.manager.frames_presented, 2)
+        self.assertLess(self.manager._canonical_receiver_runtime._runtime._animation.instance.cadence_snapshot()['tick'],
+                        self.manager.frames_presented)
+        original_send = self.controller.set_all_pixels
+        self.controller.set_all_pixels = lambda _pixels: False
+        deadline = time.monotonic() + 1.0
+        while self.manager.is_running and time.monotonic() < deadline:
+            time.sleep(.005)
+        self.assertFalse(self.manager.is_running)
+        self.assertEqual(self.manager.get_current_status()['receiver_last_failure']['operation'], 'host_full_runtime_failure')
+        self.controller.set_all_pixels = original_send
+
+    def test_twilight_failed_display_and_unverified_rollback_never_claim_active(self):
+        self.activate(self.scene)
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        self.controller.host_full_failure = 'display timeout'
+        self.controller.reject_next = True
+        _, _, receipt = self.activate(scene)
+        self.assertEqual(receipt['phase'], 'failed', receipt)
+        self.assertIsNone(receipt['observed_identity'])
+
     def test_scene_state_snapshot_cannot_mutate_active_scene_identity(self):
         _, _, receipt = self.activate(self.scene)
         self.assertEqual(receipt['phase'], 'active', receipt)
@@ -341,7 +444,12 @@ class CanonicalSceneActivationTests(unittest.TestCase):
                 self.assertEqual(receipt['phase'],'active',receipt)
                 self.assertEqual(self.manager.get_scene_state(),candidate)
                 self.assertEqual(receipt['observed_identity']['scene_identity']['digest'],canonical_json_sha256(candidate))
-                self.assertEqual(self.controller.context.canonical_final.scene_digest,canonical_json_sha256(candidate))
+                if item['plugin_id'] == 'sparkle':
+                    self.assertEqual(self.manager.get_current_status()['host_full']['scene_digest'],
+                                     canonical_json_sha256(candidate))
+                else:
+                    self.assertEqual(self.controller.context.canonical_final.scene_digest,
+                                     canonical_json_sha256(candidate))
                 if item['presets']:
                     candidate['animation']['parameters']=item['presets'][0]['params']
                     candidate = self.interface._composer_canonical({'origin':'composer','scene':candidate}).scene

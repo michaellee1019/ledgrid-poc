@@ -1692,7 +1692,8 @@ class MultiDeviceLEDController:
 
     def recover_native_background_to_host(self, colors):
         """Use the universal complete-RGB kill path and prove host ownership."""
-        self.set_all_pixels(colors)
+        if self.set_all_pixels(colors) is False:
+            return False
         with self._controller_lock():
             try:
                 statuses = self._fresh_native_statuses(require_capabilities=False)
@@ -2112,6 +2113,105 @@ class MultiDeviceLEDController:
                 "acknowledged_receivers": acknowledgements,
             }
 
+    def present_displayed_host_full_frame(self, request_id, frame, *, timeout_seconds=5.0):
+        """Take HostFullScene ownership only after a fresh all-five display proof.
+
+        A SET_ALL response can precede the receiver's display task. Sample
+        protected v8 state before the first write and wait for that write's
+        accepted sequence to become the displayed sequence on every receiver.
+        """
+        if not isinstance(request_id, str) or not request_id:
+            raise ValueError("request_id must be non-empty")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        complete_frame = self._canonical_trusted_frame(frame)
+        frame_digest = hashlib.sha256(bytes(
+            channel for pixel in complete_frame for channel in pixel
+        )).hexdigest()
+        with self._controller_lock():
+            identities = self._require_pinned_receipt_roster()
+            before = []
+            for logical_device, device in enumerate(self.devices):
+                status = device.query_causal_receiver_status(required_status_version=8)
+                if status.get("receiver_logical_device") != logical_device or status.get("receiver_status_version") != 8:
+                    raise RuntimeError(f"receiver {logical_device} lacks protected v8 baseline")
+                errors = device.get_stats().get("receiver_status_integrity_errors")
+                fields = ("receiver_frames_accepted", "receiver_frames_displayed",
+                          "receiver_last_accepted_sequence", "receiver_frames_superseded",
+                          "receiver_display_errors")
+                if type(errors) is not int or any(type(status.get(key)) is not int for key in fields):
+                    raise RuntimeError(f"receiver {logical_device} has incomplete display baseline")
+                before.append((status, errors))
+            if self.set_all_pixels(complete_frame) is not True:
+                raise RuntimeError("complete host-full takeover failed on the pinned roster")
+            expected = {}
+            deadline = time.monotonic() + timeout_seconds
+            displayed = {}
+            while len(displayed) != len(self.devices):
+                self._require_pinned_receipt_roster()
+                for logical_device, device in enumerate(self.devices):
+                    if logical_device in displayed:
+                        continue
+                    status = device.query_causal_receiver_status(required_status_version=8)
+                    initial, integrity_errors = before[logical_device]
+                    if (status.get("receiver_status_version") != 8
+                            or status.get("receiver_logical_device") != logical_device
+                            or device.get_stats().get("receiver_status_integrity_errors") != integrity_errors):
+                        raise RuntimeError(f"receiver {logical_device} lost protected status integrity")
+                    if (status.get("receiver_display_errors") != initial["receiver_display_errors"]
+                            or status.get("receiver_frames_superseded") != initial["receiver_frames_superseded"]):
+                        raise RuntimeError(f"receiver {logical_device} reported display error or supersession")
+                    accepted = (initial["receiver_frames_accepted"] + 1) & 0xFFFFFFFF
+                    sequence = (initial["receiver_last_accepted_sequence"] + 1) & 0xFFFFFFFF
+                    if (status.get("receiver_frames_accepted") != accepted
+                            or status.get("receiver_last_accepted_sequence") != sequence
+                            or status.get("receiver_base_mode") != 2):
+                        raise RuntimeError(f"receiver {logical_device} did not accept the exact host-full frame")
+                    expected[logical_device] = sequence
+                    if (status.get("receiver_last_displayed_sequence") == sequence
+                            and status.get("receiver_frames_displayed") ==
+                            (initial["receiver_frames_displayed"] + 1) & 0xFFFFFFFF):
+                        displayed[logical_device] = status
+                    elif status.get("receiver_frames_displayed") != initial["receiver_frames_displayed"]:
+                        raise RuntimeError(f"receiver {logical_device} displayed a different frame")
+                if len(displayed) == len(self.devices):
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("host-full first-frame display proof timed out")
+                time.sleep(0.005)
+            self._require_pinned_receipt_roster()
+            for logical_device, device in enumerate(self.devices):
+                status = device.query_causal_receiver_status(required_status_version=8)
+                initial, integrity_errors = before[logical_device]
+                sequence = expected[logical_device]
+                if (status.get("receiver_status_version") != 8
+                        or status.get("receiver_logical_device") != logical_device
+                        or device.get_stats().get("receiver_status_integrity_errors") != integrity_errors
+                        or status.get("receiver_frames_accepted") !=
+                        (initial["receiver_frames_accepted"] + 1) & 0xFFFFFFFF
+                        or status.get("receiver_last_accepted_sequence") != sequence
+                        or status.get("receiver_frames_displayed") !=
+                        (initial["receiver_frames_displayed"] + 1) & 0xFFFFFFFF
+                        or status.get("receiver_last_displayed_sequence") != sequence
+                        or status.get("receiver_frames_superseded") != initial["receiver_frames_superseded"]
+                        or status.get("receiver_display_errors") != initial["receiver_display_errors"]
+                        or status.get("receiver_base_mode") != 2):
+                    raise RuntimeError(f"receiver {logical_device} lost final displayed-frame proof")
+            self._require_pinned_receipt_roster()
+            return {
+                "request_id": request_id,
+                "frame_digest": frame_digest,
+                "authority_digest": self.receiver_identity_authority_digest,
+                "displayed_receivers": [
+                    {"logical_device": index,
+                     "spi_route": list(identities[index].spi_route),
+                     "hardware_serial": identities[index].hardware_serial,
+                     "firmware_sha256": identities[index].firmware_sha256,
+                     "receiver_displayed_sequence": expected[index]}
+                    for index in range(len(self.devices))
+                ],
+            }
+
     def _trusted_receiver_lane_status(self, logical_device):
         """Return one causally fresh protected-v8 lane-mask status.
 
@@ -2234,11 +2334,13 @@ class MultiDeviceLEDController:
         """Send frame data to a specific device"""
         try:
             if wall_frame_sequence is None:
-                self.devices[device_id].set_all_pixels(colors)
+                accepted = self.devices[device_id].set_all_pixels(colors)
             else:
-                self.devices[device_id].set_all_pixels(
+                accepted = self.devices[device_id].set_all_pixels(
                     colors, wall_frame_sequence=wall_frame_sequence
                 )
+            if accepted is False:
+                return False
             return True
         except Exception as e:
             if self.debug:
@@ -2426,6 +2528,7 @@ class MultiDeviceLEDController:
                 # fallback command is ownership-safe even on receivers that
                 # already accepted SET_ALL.
                 self._stop_local_background_best_effort("set_all_partial_failure")
+            return successful
 
     def _any_receiver_may_be_local(self):
         """Conservatively detect retained local playback after a Pi restart."""

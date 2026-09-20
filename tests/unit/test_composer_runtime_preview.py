@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timedelta
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from web.app import AnimationWebInterface
 from animation.core.manager import AnimationManager
 from animation.core.scene_runtime import ScenePresentationContext
+from animation.core.installation_profile_library import InstallationProfileLibrary
+from animation.core.installation_profile_runtime import InstallationProfileSelection
+from animation.core.installation_profile_topology import INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
+from ipc.scene_contract import normalize_composer_scene
+from web.starter_looks import get_starter
 from web.composer_final_preview import (
     ComposerFinalPreview, InstalledFinalSceneRuntime, NATIVE_AURORA_BUNDLE_DIGEST,
     NATIVE_AURORA_COMPONENT_ID,
@@ -120,6 +128,38 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         self.assertEqual(body["wall_mutations"], 0)
         self.assertEqual(self.wall.commands, [])
         self.assertEqual(self.interface.composer_control.commands, [])
+
+    def test_twilight_opaque_host_full_matches_native_final_with_selected_profile(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        canonical = normalize_composer_scene({
+            "origin": "composer", "scene": get_starter("human_twilight_sparkle")["scene"],
+        }, self.interface.composer_catalog)
+        with tempfile.TemporaryDirectory() as directory:
+            library = InstallationProfileLibrary(Path(directory))
+            published = library.publish((root / "tests/fixtures/installation_profile_v1.bin").read_bytes())
+            selection = InstallationProfileSelection(library, INSTALLED_INSTALLATION_PROFILE_TOPOLOGY)
+            selection.select(published.id)
+            native = InstalledFinalSceneRuntime(self.interface.composer_catalog, root)
+            opaque = InstalledFinalSceneRuntime(self.interface.composer_catalog, root, foreground_only=True)
+            for runtime in (native, opaque):
+                runtime.set_installation_profile(selection.view)
+            wall_time = datetime.fromisoformat("2026-09-19T12:00:00+00:00")
+            native_changed = opaque_changed = 0
+            for index in range(160):
+                context = ScenePresentationContext(canonical, index / 160, wall_time)
+                expected = native.render(context)
+                actual = opaque.render_opaque_full(context)
+                np.testing.assert_array_equal(actual.pixels, expected.pixels)
+                self.assertEqual(actual.basis, canonical.identity)
+                native_changed += expected.changed
+                opaque_changed += actual.changed
+            self.assertEqual(opaque_changed, 17)
+            self.assertGreater(native_changed, opaque_changed)
+            self.assertLess(native_changed, 160)
+            with patch("web.composer_final_preview.ManagedNativeHostPreview", side_effect=AssertionError("opaque full route must not load native preview")):
+                direct = InstalledFinalSceneRuntime(self.interface.composer_catalog, root, foreground_only=True)
+                direct.set_installation_profile(selection.view)
+                self.assertEqual(direct.render_opaque_full(ScenePresentationContext(canonical, 0.0, wall_time)).basis, canonical.identity)
 
     def test_clock_offset_changes_preview_time_without_advancing_the_scene(self) -> None:
         for format_24h, seconds, offset in ((True, True, 360), (False, False, 360),

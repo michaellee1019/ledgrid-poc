@@ -15,6 +15,7 @@ import sys
 import time
 import threading
 import traceback
+from datetime import datetime
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any, List
@@ -342,6 +343,8 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         self._scene_allows_compatibility_components = False
         self._scene_final_presentation_state = self._empty_presentation_state()
         self._receiver_hybrid_mode = False
+        self._canonical_host_full_mode = False
+        self._canonical_host_full_receipt = None
         self._receiver_sparse_publisher: Optional[ReceiverSparsePublisher] = None
         self._receiver_foreground_compositor: Optional[HostForegroundCompositor] = None
         self._receiver_context: Optional[ReceiverPresentationContext] = None
@@ -2565,6 +2568,8 @@ class AnimationManager(CanonicalReceiverSceneMixin):
     def _clear_scene_state(self) -> None:
         self._canonical_receiver_scene = None
         self._canonical_receiver_runtime = None
+        self._canonical_host_full_mode = False
+        self._canonical_host_full_receipt = None
         self._scene_mode = False
         self._scene_background = None
         self._scene_overlay = None
@@ -3553,6 +3558,12 @@ class AnimationManager(CanonicalReceiverSceneMixin):
             status['scene'] = scene_status
         if self._scene_mode:
             status['scene_state'] = self.get_scene_state()
+        if self._canonical_host_full_mode:
+            status['host_full'] = {
+                'scene_digest': self._canonical_receiver_scene.identity.digest,
+                'installation_profile_digest': installation_profile_digest,
+                'first_frame_receipt': copy.deepcopy(self._canonical_host_full_receipt),
+            }
         receiver_status = self._receiver_hybrid_status_snapshot()
         if receiver_status is not None:
             status['receiver_hybrid'] = receiver_status
@@ -3698,7 +3709,8 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         if self._receiver_native_resolved is not None
                         else 'receiver_hybrid'
                     )
-                    if self._receiver_hybrid_mode else 'python_host'
+                    if self._receiver_hybrid_mode else
+                    'host_full_rgb' if self._canonical_host_full_mode else 'python_host'
                 ),
                 'background': {
                     'name': background['name'],
@@ -4657,6 +4669,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
     def render_scene_v2_presentation(
         self, presentation_runtime: Any, canonical: Any, *,
         monotonic_elapsed: float, wall_time: Any,
+        require_opaque_full: bool = False,
     ) -> BaseFrame:
         """Adapt one current Scene v2 presentation into the live host loop.
 
@@ -4666,7 +4679,10 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         """
         from animation.core.scene_runtime import ScenePresentationContext
 
-        render = getattr(presentation_runtime, "render", None)
+        render = getattr(
+            presentation_runtime,
+            "render_opaque_full" if require_opaque_full else "render", None,
+        )
         if not callable(render):
             raise TypeError("presentation_runtime must render Scene v2 contexts")
         set_installation_profile = getattr(
@@ -4831,7 +4847,8 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         pending_present
                     )
                     receiver_hybrid = bool(getattr(self, "_receiver_hybrid_mode", False))
-                    if not self.current_animation and not receiver_hybrid:
+                    host_full = bool(getattr(self, "_canonical_host_full_mode", False))
+                    if not self.current_animation and not receiver_hybrid and not host_full:
                         break
 
                     gen_start = time.perf_counter()
@@ -4839,6 +4856,18 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         frame, transmitted = self._receiver_hybrid_tick(loop_start)
                         changed = transmitted
                         dirty_ranges = None
+                    elif host_full:
+                        canonical = self._canonical_receiver_scene
+                        runtime = self._canonical_receiver_runtime
+                        presented = self.render_scene_v2_presentation(
+                            runtime, canonical,
+                            monotonic_elapsed=max(0.0, loop_start - self.start_time),
+                            wall_time=datetime.now().astimezone(),
+                            require_opaque_full=True,
+                        )
+                        frame, changed, dirty_ranges = (
+                            presented.pixels, presented.changed, None
+                        )
                     elif getattr(self, '_scene_mode', False):
                         frame, changed, dirty_ranges = (
                             self._render_composed_scene_frame(now=loop_start)
@@ -4872,7 +4901,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         # presentation-I/O guard; no host RGB future is submitted.
                         should_present = False
                     else:
-                        should_present = changed or self.frames_presented == 0
+                        should_present = host_full or changed or self.frames_presented == 0
 
                     if pending_present is not None:
                         completed = pending_present
@@ -4912,6 +4941,9 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         self._update_fps_tracking(loop_start)
 
                 except RuntimeError as e:
+                    if getattr(self, "_canonical_host_full_mode", False):
+                        self._fail_canonical_host_full(e)
+                        break
                     if str(e).startswith("cannot schedule new futures after"):
                         # A daemon render loop can overlap the last instant of
                         # interpreter shutdown in short-lived tools/tests.
@@ -4932,6 +4964,9 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                     traceback.print_exc()
                     time.sleep(0.05)
                 except Exception as e:
+                    if getattr(self, "_canonical_host_full_mode", False):
+                        self._fail_canonical_host_full(e)
+                        break
                     if getattr(sys, "is_finalizing", lambda: False)():
                         break
                     if (
@@ -4990,7 +5025,35 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                 try:
                     pending_present.result()
                 except Exception as e:
-                    print(f"✗ Final frame presentation failed: {e}")
+                    if getattr(self, "_canonical_host_full_mode", False):
+                        self._fail_canonical_host_full(e)
+                    else:
+                        print(f"✗ Final frame presentation failed: {e}")
+
+    def _fail_canonical_host_full(self, error: Exception) -> None:
+        """Stop claiming Active after an opaque render or full-frame send failure."""
+        canonical = getattr(self, "_canonical_receiver_scene", None)
+        digest = canonical.identity.digest if canonical is not None else None
+        stop_error = None
+        clear_error = None
+        try:
+            self.stop_animation(clear_leds=False)
+        except Exception as exc:
+            stop_error = str(exc)
+        try:
+            black = np.zeros((self.controller.total_leds, 3), dtype=np.uint8)
+            with self._presentation_io_guard():
+                clearer = getattr(self.controller, "present_displayed_host_full_frame", None)
+                if not callable(clearer):
+                    raise RuntimeError("verified host-full clearing is unavailable")
+                clearer(f"clear-{time.time_ns()}", black)
+        except Exception as exc:
+            clear_error = str(exc)
+        self._receiver_last_failure = {
+            "operation": "host_full_runtime_failure", "scene_digest": digest,
+            "error": str(error), "stop_error": stop_error,
+            "clear_error": clear_error,
+        }
 
     def _presentation_io_guard(self):
         """Serialize controller I/O across timed-out stop/start boundaries."""
@@ -5368,9 +5431,11 @@ class AnimationManager(CanonicalReceiverSceneMixin):
             with self._presentation_io_guard():
                 send_start = time.perf_counter()
                 if use_partial:
-                    self.controller.set_frame(frame, dirty_ranges=dirty_ranges)
+                    accepted = self.controller.set_frame(frame, dirty_ranges=dirty_ranges)
                 else:
-                    self.controller.set_all_pixels(frame)
+                    accepted = self.controller.set_all_pixels(frame)
+                if accepted is False:
+                    raise RuntimeError("controller rejected complete frame presentation")
                 send_duration = time.perf_counter() - send_start
 
                 show_duration = 0.0
