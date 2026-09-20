@@ -3563,6 +3563,18 @@ class AnimationManager(CanonicalReceiverSceneMixin):
             status['host_full'] = {
                 'scene_digest': self._canonical_receiver_scene.identity.digest,
                 'installation_profile_digest': installation_profile_digest,
+                'authority_digest': getattr(
+                    self.controller, 'receiver_identity_authority_digest', None
+                ),
+                'pinned_receivers': [
+                    {
+                        'logical_device': identity.logical_device,
+                        'spi_route': list(identity.spi_route),
+                        'hardware_serial': identity.hardware_serial,
+                        'firmware_sha256': identity.firmware_sha256,
+                    }
+                    for identity in getattr(self.controller, 'receiver_identities', ())
+                ],
                 'first_frame_receipt': copy.deepcopy(self._canonical_host_full_receipt),
             }
         receiver_status = self._receiver_hybrid_status_snapshot()

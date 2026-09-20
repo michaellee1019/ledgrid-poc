@@ -37,6 +37,7 @@ from web.local_control import LocalControlChannel
 from web.scene_look_store import SceneLookStore
 from web.starter_looks import get_starter, list_starters
 from tools.deployment.preserve_deploy_settings import save_status, load_saved_state
+from tools.deployment.receiver_identity_authority import ReceiverIdentity
 from tools.qualification.catalog_live_sweep import (
     animation_components, browser_scene_requests, catalog_cases,
 )
@@ -59,6 +60,15 @@ class _Transport(_Controller):
         self.wall_may_be_nonblack = False
         self.host_full_sequence = 0
         self.receiver_identity_authority_digest = "a" * 64
+        self.receiver_identities = tuple(
+            ReceiverIdentity(
+                logical_device=index,
+                spi_route=((0, index) if index < 2 else (1, index - 2)),
+                hardware_serial=f"02:00:00:00:00:{index:02x}",
+                firmware_sha256=f"{index + 1:x}" * 64,
+            )
+            for index in range(5)
+        )
         self.profile_wall = FakeInstallationProfileWall(capacity_bytes=1024*1024)
 
     def installation_profile_wall(self):
@@ -125,8 +135,14 @@ class _Transport(_Controller):
             "frame_digest": hashlib.sha256(pixels.tobytes()).hexdigest(),
             "authority_digest": "a" * 64,
             "displayed_receivers": [
-                {"logical_device": index, "receiver_displayed_sequence": self.host_full_sequence}
-                for index in range(5)
+                {
+                    "logical_device": identity.logical_device,
+                    "spi_route": list(identity.spi_route),
+                    "hardware_serial": identity.hardware_serial,
+                    "firmware_sha256": identity.firmware_sha256,
+                    "receiver_displayed_sequence": self.host_full_sequence,
+                }
+                for identity in self.receiver_identities
             ],
         }
 
@@ -356,6 +372,23 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertEqual(len([op for op in self.controller.operations if op[0] == 'host_full_display_proof']), 1)
         self.assertFalse(any(op[0] in ('activate', 'publish') for op in self.controller.operations))
         self.assertEqual(status['brightness'], 0)
+
+    def test_checked_twilight_commit_status_is_saveable_without_native_driver(self):
+        self.globals['output']['brightness'] = 0
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        _, _, activation = self.activate(scene)
+        self.assertEqual(activation['phase'], 'active', activation)
+        status = self.manager.get_current_status()
+        self.assertNotIn('receiver_hybrid', status)
+        state_path = self.directory/'host-full-desired.json'
+        save_status(status, self.directory/'presets', state_path)
+        saved = load_saved_state(state_path, provider_policy=self.manager.scene_provider_policy())
+        self.assertEqual(saved['scene'], scene)
+        self.assertEqual(saved['brightness'], 0)
+        self.assertEqual(saved['host_full_expectation']['request_id'],
+                         status['host_full']['first_frame_receipt']['request_id'])
 
     def test_sparkle_with_widget_retains_native_sparse_path(self):
         scene = get_starter('human_twilight_sparkle')['scene']

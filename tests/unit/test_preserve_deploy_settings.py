@@ -1,3 +1,4 @@
+import copy
 import json
 import tempfile
 import threading
@@ -10,7 +11,10 @@ from animation.core.receiver_static_component import (
     COMPILED_RAINBOW_BUNDLE_DIGEST,
     COMPILED_RAINBOW_EXPECTED_PAYLOAD_DIGEST,
 )
-from ipc.scene_contract import SceneProviderPolicy
+from animation.core.activation_qualification import canonical_json_sha256
+from ipc.scene_contract import SceneProviderPolicy, normalize_composer_scene
+from web.composer_final_preview import current_component_catalog
+from web.starter_looks import get_starter
 
 from tools.deployment.preserve_deploy_settings import (
     _expected_restored_vibe,
@@ -144,6 +148,66 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 },
             },
             "driver_stats": {"devices": receiver_devices},
+            "vibe": {"state": cls._vibe("cozy")},
+            "feature_flags": {
+                "receiver_local_background": True,
+                "receiver_sparse_overlay": True,
+                "receiver_native_modules": True,
+            },
+        }
+
+    @staticmethod
+    def _host_full_scene():
+        return normalize_composer_scene(
+            {"origin": "composer", "scene": get_starter("human_twilight_sparkle")["scene"]},
+            current_component_catalog(),
+        ).scene
+
+    @classmethod
+    def _host_full_status(cls, scene=None, *, request_suffix="1" * 32):
+        scene = scene or cls._host_full_scene()
+        digest = canonical_json_sha256(scene)
+        profile = "e" * 64
+        return {
+            "is_running": True,
+            "mode": "scene",
+            "current_animation": "sparkle",
+            "installation_profile_digest": profile,
+            "scene_state": scene,
+            "scene": {"provider_mode": "host_full_rgb"},
+            "host_full": {
+                "scene_digest": digest,
+                "installation_profile_digest": profile,
+                "authority_digest": "a" * 64,
+                "pinned_receivers": [
+                    {
+                        "logical_device": index,
+                        "spi_route": [0 if index < 2 else 1, index if index < 2 else index - 2],
+                        "hardware_serial": f"02:00:00:00:00:{index:02x}",
+                        "firmware_sha256": f"{index + 1:x}" * 64,
+                    }
+                    for index in range(5)
+                ],
+                "first_frame_receipt": {
+                    "request_id": f"scene-{digest}-{request_suffix}",
+                    "frame_digest": "f" * 64,
+                    "authority_digest": "a" * 64,
+                    "displayed_receivers": [
+                        {
+                            "logical_device": index,
+                            "spi_route": [0 if index < 2 else 1, index if index < 2 else index - 2],
+                            "hardware_serial": f"02:00:00:00:00:{index:02x}",
+                            "firmware_sha256": f"{index + 1:x}" * 64,
+                            "receiver_displayed_sequence": 100 + index,
+                        }
+                        for index in range(5)
+                    ],
+                },
+            },
+            "brightness": 77,
+            "animation_speed_scale": 1.2,
+            "target_fps": 180,
+            "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
             "vibe": {"state": cls._vibe("cozy")},
             "feature_flags": {
                 "receiver_local_background": True,
@@ -868,6 +932,191 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 observed[0]["data"]["state"]["scene"]["background"]["provider"],
                 "receiver_native",
             )
+
+    def test_host_full_capture_and_restart_requires_fresh_displayed_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            write_receiver_hybrid_config(root, enabled=True, native_modules_enabled=True)
+            status_path = root / "status.json"
+            control_path = root / "control.json"
+            state_path = root / "state.json"
+            source = self._host_full_status()
+            save_status(source, root / "presets", state_path)
+            persisted = json.loads(state_path.read_text())
+            self.assertNotIn("native_expectation", persisted)
+            self.assertEqual(persisted["scene"], source["scene_state"])
+            self.assertEqual(persisted["output"]["master_brightness"], 77 / 255)
+            self.assertEqual(persisted["output"]["operator_tempo_scale"], 1.2)
+            self.assertEqual(persisted["output"]["target_fps"], 180)
+            self.assertEqual(persisted["host_full_expectation"]["request_id"],
+                             source["host_full"]["first_frame_receipt"]["request_id"])
+            tampered = copy.deepcopy(persisted)
+            tampered["host_full_expectation"]["scene_digest"] = "0" * 64
+            state_path.write_text(json.dumps(tampered))
+            with self.assertRaisesRegex(RuntimeError, "invalid host-full expectation"):
+                load_saved_state(state_path, provider_policy=SceneProviderPolicy(
+                    receiver_local_background=True, receiver_sparse_overlay=True,
+                    receiver_native_modules=True,
+                ))
+            state_path.write_text(json.dumps(persisted))
+            self.assertEqual(load_saved_state(state_path, provider_policy=SceneProviderPolicy(
+                receiver_local_background=True, receiver_sparse_overlay=True,
+                receiver_native_modules=True,
+            ))["scene"],
+                             source["scene_state"])
+            status_path.write_text(json.dumps({"updated_at": 1}))
+            observed = []
+
+            def simulate_controller():
+                time.sleep(0.03)
+                status_path.write_text(json.dumps({"updated_at": time.time()}))
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    if not control_path.exists():
+                        time.sleep(0.01)
+                        continue
+                    command = json.loads(control_path.read_text())
+                    observed.append(command)
+                    restarted = self._host_full_status(request_suffix="2" * 32)
+                    restarted.update({"updated_at": time.time(),
+                                      "last_command_id": command["command_id"]})
+                    status_path.write_text(json.dumps(restarted))
+                    return
+
+            controller = threading.Thread(target=simulate_controller)
+            controller.start()
+            restored = restore(status_path, control_path, state_path, 1, root=root)
+            controller.join()
+            self.assertEqual(restored["scene"], source["scene_state"])
+            self.assertEqual(restored["installation_profile_digest"], "e" * 64)
+            self.assertEqual(observed[0]["action"], "restore_display_state")
+            self.assertEqual(observed[0]["data"]["state"]["output"], persisted["output"])
+
+    def test_host_full_capture_rejects_false_or_mismatched_authority(self):
+        source = self._host_full_status()
+        mutations = (
+            lambda value: value["scene"].update(provider_mode="receiver_native"),
+            lambda value: value.update(mode="idle"),
+            lambda value: value["host_full"].update(scene_digest="0" * 64),
+            lambda value: value["host_full"].update(installation_profile_digest="0" * 64),
+            lambda value: value["host_full"]["first_frame_receipt"].update(authority_digest="0" * 64),
+            lambda value: value["host_full"]["first_frame_receipt"].update(request_id="accepted-only"),
+            lambda value: value["host_full"]["first_frame_receipt"].pop("displayed_receivers"),
+            lambda value: value["host_full"]["first_frame_receipt"]["displayed_receivers"].pop(),
+            lambda value: value["host_full"]["first_frame_receipt"]["displayed_receivers"][3].update(logical_device=2),
+            lambda value: value["host_full"]["first_frame_receipt"]["displayed_receivers"][3].update(
+                spi_route=[0, 0]),
+            lambda value: value["host_full"]["first_frame_receipt"]["displayed_receivers"][3].update(
+                hardware_serial="different"),
+            lambda value: value["host_full"].pop("pinned_receivers"),
+            lambda value: value["scene_state"]["animation"]["parameters"].update(seed=999),
+        )
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            for mutate in mutations:
+                candidate = copy.deepcopy(source)
+                mutate(candidate)
+                with self.subTest(candidate=candidate):
+                    with self.assertRaises(RuntimeError):
+                        save_status(candidate, root / "presets", root / "state.json")
+
+    def test_powered_off_selected_twilight_keeps_scene_and_brightness_zero_without_receipt(self):
+        selected = self._host_full_status()
+        selected.update(is_running=False, current_animation=None, brightness=0)
+        selected.pop("host_full")
+        selected.pop("scene")
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            save_status(selected, root / "presets", root / "state.json")
+            saved = json.loads((root / "state.json").read_text())
+            self.assertFalse(saved["output"]["power"])
+            self.assertEqual(saved["output"]["master_brightness"], 0)
+            self.assertEqual(saved["scene"], selected["scene_state"])
+            self.assertNotIn("host_full_expectation", saved)
+
+    def test_host_full_restore_rejects_stale_receipt_and_native_borrowing(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            write_receiver_hybrid_config(root, enabled=True, native_modules_enabled=True)
+            config = resolve_receiver_hybrid_config(root)
+            source = self._host_full_status()
+            expectation = {"request_id": source["host_full"]["first_frame_receipt"]["request_id"]}
+            restarted = self._host_full_status(request_suffix="2" * 32)
+            self.assertTrue(_restored_scene_proof(
+                restarted, source["scene_state"], config,
+                host_full_expectation=expectation,
+            ))
+            stale = copy.deepcopy(source)
+            self.assertFalse(_restored_scene_proof(
+                stale, source["scene_state"], config,
+                host_full_expectation=expectation,
+            ))
+            for mutate in (
+                lambda value: value["host_full"].pop("first_frame_receipt"),
+                lambda value: value["host_full"]["first_frame_receipt"]["displayed_receivers"][4].update(
+                    receiver_displayed_sequence=None),
+                lambda value: value["host_full"]["pinned_receivers"][2].update(
+                    firmware_sha256="0" * 64),
+                lambda value: value.update(is_running=False),
+            ):
+                candidate = copy.deepcopy(restarted)
+                mutate(candidate)
+                with self.subTest(candidate=candidate):
+                    self.assertFalse(_restored_scene_proof(
+                        candidate, source["scene_state"], config,
+                        host_full_expectation=expectation,
+                    ))
+            native = self._managed_native_status()
+            native["scene"] = {"provider_mode": "host_full_rgb"}
+            native["host_full"] = copy.deepcopy(restarted["host_full"])
+            with self.assertRaisesRegex(RuntimeError, "host-full restoration authority"):
+                save_status(native, root / "presets", root / "native-state.json")
+            self.assertFalse(_restored_scene_proof(
+                native, native["scene_state"], config,
+                native_expectation={"bundle_digest": "a" * 64,
+                                    "payload_digest": "b" * 64,
+                                    "parameter_digest": "c" * 64},
+                host_full_expectation=expectation,
+            ))
+
+    def test_host_full_restart_never_acknowledges_old_receipt_or_wrong_controls(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            write_receiver_hybrid_config(root, enabled=True, native_modules_enabled=True)
+            status_path = root / "status.json"
+            control_path = root / "control.json"
+            state_path = root / "state.json"
+            source = self._host_full_status()
+            save_status(source, root / "presets", state_path)
+            for mutation in ("old_receipt", "wrong_brightness"):
+                with self.subTest(mutation=mutation):
+                    control_path.unlink(missing_ok=True)
+                    status_path.write_text(json.dumps({"updated_at": 1}))
+
+                    def simulate_controller():
+                        time.sleep(0.02)
+                        status_path.write_text(json.dumps({"updated_at": time.time()}))
+                        deadline = time.monotonic() + .5
+                        while time.monotonic() < deadline:
+                            if not control_path.exists():
+                                time.sleep(0.005)
+                                continue
+                            command = json.loads(control_path.read_text())
+                            candidate = self._host_full_status(
+                                request_suffix="1" * 32 if mutation == "old_receipt" else "2" * 32
+                            )
+                            if mutation == "wrong_brightness":
+                                candidate["brightness"] = 0
+                            candidate.update({"updated_at": time.time(),
+                                              "last_command_id": command["command_id"]})
+                            status_path.write_text(json.dumps(candidate))
+                            return
+
+                    controller = threading.Thread(target=simulate_controller)
+                    controller.start()
+                    with self.assertRaisesRegex(RuntimeError, "did not restore desired display"):
+                        restore(status_path, control_path, state_path, .25, root=root)
+                    controller.join()
 
     def test_feature_off_restore_deterministically_uses_recorded_python_fallback(self):
         with tempfile.TemporaryDirectory() as temporary_dir:

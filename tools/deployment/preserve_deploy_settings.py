@@ -288,6 +288,97 @@ def _canonical_persisted_vibe(status: dict[str, Any]) -> dict[str, Any]:
     return state.to_dict()
 
 
+def _verified_host_full_scene(status: dict[str, Any], scene: dict[str, Any]) -> bool:
+    """Recognize only the current pinned, displayed Scene v2 RGB takeover."""
+    from animation.core.activation_qualification import canonical_json_sha256
+    from animation.core.component_catalog import AlphaBehavior
+    from web.composer_final_preview import current_component_catalog
+
+    if (scene.get("schema") != "ledgrid.scene.v2"
+            or scene.get("background", {}).get("provider") != "receiver_native"
+            or scene.get("background", {}).get("component_id") != "native_aurora"
+            or scene.get("animation", {}).get("provider") != "python"
+            or scene.get("animation", {}).get("component_id") != "sparkle"
+            or scene.get("widgets") != []
+            or status.get("is_running") is not True
+            or status.get("mode") != "scene"
+            or status.get("scene_state") != scene
+            or not isinstance(status.get("scene"), dict)
+            or status["scene"].get("provider_mode") != "host_full_rgb"):
+        return False
+    try:
+        descriptor = current_component_catalog().require(
+            provider="python", component_id="sparkle",
+            version=scene["animation"]["version"],
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+    if descriptor.alpha_behavior is not AlphaBehavior.OPAQUE:
+        return False
+    host = status.get("host_full")
+    profile = status.get("installation_profile_digest")
+    digest = canonical_json_sha256(scene)
+    if (not isinstance(host, dict)
+            or host.get("scene_digest") != digest
+            or not isinstance(profile, str)
+            or re.fullmatch(r"[0-9a-f]{64}", profile) is None
+            or host.get("installation_profile_digest") != profile):
+        return False
+    pinned = host.get("pinned_receivers")
+    if (not isinstance(pinned, list) or len(pinned) != 5
+            or not isinstance(host.get("authority_digest"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", host["authority_digest"]) is None):
+        return False
+    receipt = host.get("first_frame_receipt")
+    if not isinstance(receipt, dict):
+        return False
+    request_id = receipt.get("request_id")
+    if (not isinstance(request_id, str)
+            or re.fullmatch(rf"scene-{digest}-[0-9a-f]{{32}}", request_id) is None
+            or receipt.get("authority_digest") != host["authority_digest"]
+            or not all(isinstance(receipt.get(key), str)
+                       and re.fullmatch(r"[0-9a-f]{64}", receipt[key]) is not None
+                       for key in ("frame_digest", "authority_digest"))):
+        return False
+    receivers = receipt.get("displayed_receivers")
+    if not isinstance(receivers, list) or len(receivers) != 5:
+        return False
+    routes = set()
+    serials = set()
+    for index, item in enumerate(receivers):
+        if not isinstance(item, dict) or type(item.get("logical_device")) is not int:
+            return False
+        route = item.get("spi_route")
+        serial = item.get("hardware_serial")
+        firmware = item.get("firmware_sha256")
+        sequence = item.get("receiver_displayed_sequence")
+        if (item["logical_device"] != index
+                or not isinstance(pinned[index], dict)
+                or {key: item.get(key) for key in (
+                    "logical_device", "spi_route", "hardware_serial", "firmware_sha256"
+                )} != pinned[index]
+                or not isinstance(route, list) or len(route) != 2
+                or any(type(value) is not int or value < 0 for value in route)
+                or not isinstance(serial, str) or not serial
+                or not isinstance(firmware, str)
+                or re.fullmatch(r"[0-9a-f]{64}", firmware) is None
+                or type(sequence) is not int or not 0 <= sequence <= 0xFFFFFFFF):
+            return False
+        routes.add(tuple(route))
+        serials.add(serial)
+    return len(routes) == len(serials) == 5
+
+
+def _host_full_output_matches(status: dict[str, Any], state: dict[str, Any]) -> bool:
+    """A restored current host-full Scene must retain its operator controls."""
+    return bool(
+        status.get("brightness") == state["brightness"]
+        and status.get("animation_speed_scale") == state["animation_speed_scale"]
+        and status.get("target_fps") == state["target_fps"]
+        and status.get("plant_modifiers") == state["plant_modifiers"]
+    )
+
+
 def _desired_display_state(
     status: dict[str, Any], scene: dict[str, Any], *, previous: Any = None
 ) -> dict[str, Any]:
@@ -356,6 +447,16 @@ def _desired_display_state(
         # but do not invent or reuse playback evidence for a bundle that is not
         # active.  The next powered activation must establish fresh authority.
         if status.get("is_running"):
+            if (isinstance(status.get("scene"), dict)
+                    and status["scene"].get("provider_mode") == "host_full_rgb"):
+                if not _verified_host_full_scene(status, scene):
+                    raise RuntimeError("Controller status has no verified host-full restoration authority")
+                result["host_full_expectation"] = {
+                    "scene_digest": status["host_full"]["scene_digest"],
+                    "installation_profile_digest": status["host_full"]["installation_profile_digest"],
+                    "request_id": status["host_full"]["first_frame_receipt"]["request_id"],
+                }
+                return result
             receiver_status = status.get("receiver_hybrid")
             driver = (
                 receiver_status.get("driver")
@@ -708,6 +809,22 @@ def _load_desired_display_state(
     target_fps = _positive_int(output.get("target_fps", 200))
     if target_fps is None or target_fps > 200:
         raise RuntimeError("Saved desired display state has invalid target FPS")
+    host_expectation = state.get("host_full_expectation")
+    if host_expectation is not None:
+        from animation.core.activation_qualification import canonical_json_sha256
+        scene_digest = canonical_json_sha256(scene)
+        if (not canonical or not isinstance(host_expectation, dict)
+                or set(host_expectation) != {
+                    "scene_digest", "installation_profile_digest", "request_id"
+                }
+                or host_expectation.get("scene_digest") != scene_digest
+                or host_expectation.get("installation_profile_digest") != digest
+                or not isinstance(host_expectation.get("request_id"), str)
+                or re.fullmatch(
+                    rf"scene-{scene_digest}-[0-9a-f]{{32}}",
+                    host_expectation["request_id"],
+                ) is None):
+            raise RuntimeError("Saved desired display has invalid host-full expectation")
     try:
         modifiers = PlantModifierState.from_payload(state.get("plant_modifiers"))
     except (TypeError, ValueError) as exc:
@@ -800,7 +917,9 @@ def restore(
             status = channel.read_status() or {}
             scene_status = status.get("scene_state")
             scene_background = (
-                scene_status.get("background", {}).get("plugin_id")
+                scene_status.get("background", {}).get(
+                    "plugin_id", scene_status.get("background", {}).get("component_id")
+                )
                 if isinstance(scene_status, dict) else status.get("current_animation")
             )
             power_matches = (
@@ -812,6 +931,10 @@ def restore(
                 and status.get("installation_profile_digest")
                 == state["installation_profile_digest"]
                 and (
+                    not isinstance(state.get("host_full_expectation"), dict)
+                    or _host_full_output_matches(status, state)
+                )
+                and (
                     not state.get("power", True)
                     or (
                         scene_background == animation
@@ -820,6 +943,7 @@ def restore(
                             state["scene"],
                             hybrid_config,
                             native_expectation=state.get("native_expectation"),
+                            host_full_expectation=state.get("host_full_expectation"),
                         )
                     )
                 )
@@ -898,6 +1022,7 @@ def _restored_scene_proof(
     hybrid_config: ReceiverHybridConfig,
     *,
     native_expectation: Any = None,
+    host_full_expectation: Any = None,
 ) -> bool:
     """Require exact desired state and, for native scenes, operational proof."""
 
@@ -906,6 +1031,17 @@ def _restored_scene_proof(
         return True
     if status.get("scene_state") != expected_scene:
         return False
+    if (expected_scene.get("schema") == "ledgrid.scene.v2"
+            and isinstance(status.get("scene"), dict)
+            and status["scene"].get("provider_mode") == "host_full_rgb"):
+        host = status.get("host_full")
+        receipt = host.get("first_frame_receipt") if isinstance(host, dict) else None
+        return bool(
+            isinstance(host_full_expectation, dict)
+            and isinstance(receipt, dict)
+            and receipt.get("request_id") != host_full_expectation.get("request_id")
+            and _verified_host_full_scene(status, expected_scene)
+        )
     if not hybrid_config.enabled:
         return False
     scene_status = status.get("scene")
