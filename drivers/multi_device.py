@@ -2113,75 +2113,101 @@ class MultiDeviceLEDController:
                 "acknowledged_receivers": acknowledgements,
             }
 
-    def _quiescent_host_full_baselines(self, timeout_seconds):
-        """Drain the preceding mailbox frame before taking the +1 proof baseline."""
+    @staticmethod
+    def _protected_host_full_status(device, logical_device, integrity_errors=None):
+        before_errors = device.get_stats().get("receiver_status_integrity_errors")
+        status = device.query_causal_receiver_status(required_status_version=8)
+        after_errors = device.get_stats().get("receiver_status_integrity_errors")
+        fields = ("receiver_frames_accepted", "receiver_frames_displayed",
+                  "receiver_frames_superseded", "receiver_last_accepted_sequence",
+                  "receiver_last_displayed_sequence", "receiver_display_errors",
+                  "receiver_base_mode")
+        if (status.get("receiver_status_version") != 8
+                or status.get("receiver_logical_device") != logical_device
+                or type(before_errors) is not int
+                or before_errors != after_errors
+                or (integrity_errors is not None and after_errors != integrity_errors)
+                or any(type(status.get(key)) is not int or not 0 <= status[key] <= 0xFFFFFFFF
+                       for key in fields)):
+            raise RuntimeError(f"receiver {logical_device} lacks intact protected-v8 display status")
+        return status, after_errors
+
+    def _displayed_host_full_black_barrier(self, timeout_seconds):
+        """Show fresh black; a canceled lifetime read need not balance counts.
+
+        Firmware publishes last_displayed_sequence only after the physical
+        transfer completes. Its single display task cannot subsequently show
+        an older mailbox frame, so the final all-five sample is a safe baseline
+        for the strict next-frame +1 display count.
+        """
+        self._require_pinned_receipt_roster()
+        before = [self._protected_host_full_status(device, index)
+                  for index, device in enumerate(self.devices)]
+        black = np.zeros((self.total_leds, 3), dtype=np.uint8)
+        if self.set_all_pixels(black) is not True:
+            raise RuntimeError("complete host-full black barrier failed on the pinned roster")
         deadline = time.monotonic() + timeout_seconds
-        initial = [None] * len(self.devices)
-        while True:
+        accepted_sequences = {}
+        displayed = {}
+        while len(displayed) != len(self.devices):
             self._require_pinned_receipt_roster()
-            before = []
-            settled = True
-            for logical_device, device in enumerate(self.devices):
-                integrity_before = device.get_stats().get("receiver_status_integrity_errors")
-                status = device.query_causal_receiver_status(required_status_version=8)
-                integrity_after = device.get_stats().get("receiver_status_integrity_errors")
-                fields = ("receiver_frames_accepted", "receiver_frames_displayed",
-                          "receiver_frames_superseded", "receiver_last_accepted_sequence",
-                          "receiver_last_displayed_sequence", "receiver_display_errors",
-                          "receiver_base_mode")
-                if (status.get("receiver_status_version") != 8
-                        or status.get("receiver_logical_device") != logical_device
-                        or type(integrity_before) is not int
-                        or integrity_before != integrity_after
-                        or any(type(status.get(key)) is not int or not 0 <= status[key] <= 0xFFFFFFFF
-                               for key in fields)):
-                    raise RuntimeError(f"receiver {logical_device} lacks intact protected-v8 display baseline")
-                accepted = status["receiver_frames_accepted"]
-                displayed = status["receiver_frames_displayed"]
-                superseded = status["receiver_frames_superseded"]
-                outstanding = (accepted - displayed - superseded) & 0xFFFFFFFF
-                # The pinned firmware has three mailbox slots. More outstanding
-                # frames cannot be explained by a predecessor still displaying.
-                if outstanding > 3:
-                    raise RuntimeError(f"receiver {logical_device} has inconsistent display counters")
-                first = initial[logical_device]
-                if first is None:
-                    initial[logical_device] = (status, integrity_after, outstanding)
-                else:
-                    baseline, errors, initial_outstanding = first
-                    if (integrity_after != errors
-                            or accepted != baseline["receiver_frames_accepted"]
-                            or status["receiver_last_accepted_sequence"] != baseline["receiver_last_accepted_sequence"]
-                            or superseded != baseline["receiver_frames_superseded"]
-                            or status["receiver_display_errors"] != baseline["receiver_display_errors"]
-                            or status["receiver_base_mode"] != baseline["receiver_base_mode"]
-                            or ((displayed - baseline["receiver_frames_displayed"]) & 0xFFFFFFFF) > initial_outstanding):
-                        raise RuntimeError(f"receiver {logical_device} changed or lost display integrity while draining")
-                if outstanding == 0:
-                    if accepted and status["receiver_last_displayed_sequence"] != status["receiver_last_accepted_sequence"]:
-                        # Firmware increments the mailbox display count before
-                        # publishing last_displayed_sequence. A causal status
-                        # sample can land between those two writes.
-                        settled = False
-                else:
-                    if status["receiver_last_displayed_sequence"] == status["receiver_last_accepted_sequence"]:
-                        raise RuntimeError(f"receiver {logical_device} has inconsistent pending sequence")
-                    settled = False
-                before.append((status, integrity_after))
-            if settled:
-                self._require_pinned_receipt_roster()
-                return before
+            for index, device in enumerate(self.devices):
+                if index in displayed:
+                    continue
+                status, errors = self._protected_host_full_status(device, index, before[index][1])
+                baseline = before[index][0]
+                accepted = (baseline["receiver_frames_accepted"] + 1) & 0xFFFFFFFF
+                if status["receiver_display_errors"] != baseline["receiver_display_errors"]:
+                    raise RuntimeError(f"receiver {index} did not safely accept black barrier")
+                if status["receiver_frames_accepted"] == baseline["receiver_frames_accepted"]:
+                    continue
+                if status["receiver_frames_accepted"] != accepted or status["receiver_base_mode"] != 2:
+                    raise RuntimeError(f"receiver {index} did not safely accept black barrier")
+                sequence = status["receiver_last_accepted_sequence"]
+                if sequence == baseline["receiver_last_accepted_sequence"]:
+                    continue  # Accepted-count/sequence status split.
+                prior_sequence = accepted_sequences.setdefault(index, sequence)
+                if sequence != prior_sequence:
+                    raise RuntimeError(f"receiver {index} changed black barrier sequence")
+                displayed_advance = (
+                    status["receiver_frames_displayed"] - baseline["receiver_frames_displayed"]
+                ) & 0xFFFFFFFF
+                # One active read plus the three pinned mailbox slots bound
+                # predecessor completions; a larger jump is not this barrier.
+                if displayed_advance > 4:
+                    raise RuntimeError(f"receiver {index} has impossible black barrier display advance")
+                if status["receiver_last_displayed_sequence"] == sequence and displayed_advance >= 1:
+                    displayed[index] = status
+            if len(displayed) == len(self.devices):
+                break
             if time.monotonic() >= deadline:
-                raise RuntimeError("host-full predecessor display did not quiesce before timeout")
+                raise RuntimeError("host-full black barrier display proof timed out")
             time.sleep(0.005)
+        self._require_pinned_receipt_roster()
+        settled = []
+        for index, device in enumerate(self.devices):
+            status, errors = self._protected_host_full_status(device, index, before[index][1])
+            baseline = before[index][0]
+            if (status["receiver_frames_accepted"] != (baseline["receiver_frames_accepted"] + 1) & 0xFFFFFFFF
+                    or status["receiver_last_accepted_sequence"] != accepted_sequences[index]
+                    or status["receiver_frames_displayed"] != displayed[index]["receiver_frames_displayed"]
+                    or status["receiver_last_displayed_sequence"] != accepted_sequences[index]
+                    or status["receiver_frames_superseded"] != displayed[index]["receiver_frames_superseded"]
+                    or status["receiver_display_errors"] != baseline["receiver_display_errors"]
+                    or status["receiver_base_mode"] != 2):
+                raise RuntimeError(f"receiver {index} lost displayed black barrier proof")
+            settled.append((status, errors))
+        self._require_pinned_receipt_roster()
+        return settled
 
     def present_displayed_host_full_frame(self, request_id, frame, *, timeout_seconds=5.0):
         """Take HostFullScene ownership only after a fresh all-five display proof.
 
-        A SET_ALL response can precede the receiver's display task. Sample
-        protected v8 state only after the predecessor display settles, then
-        wait for this write's exact +1 accepted/displayed sequence on every
-        receiver.
+        A SET_ALL response can precede the receiver's display task. First prove
+        a new black frame completed on every receiver; its accepted
+        sequence need not be the previous host sequence plus one because native
+        output shares that generator. Then prove this frame against the fresh
+        post-black baseline.
         """
         if not isinstance(request_id, str) or not request_id:
             raise ValueError("request_id must be non-empty")
@@ -2193,7 +2219,7 @@ class MultiDeviceLEDController:
         )).hexdigest()
         with self._controller_lock():
             identities = self._require_pinned_receipt_roster()
-            before = self._quiescent_host_full_baselines(timeout_seconds)
+            before = self._displayed_host_full_black_barrier(timeout_seconds)
             if self.set_all_pixels(complete_frame) is not True:
                 raise RuntimeError("complete host-full takeover failed on the pinned roster")
             expected = {}
@@ -2204,22 +2230,29 @@ class MultiDeviceLEDController:
                 for logical_device, device in enumerate(self.devices):
                     if logical_device in displayed:
                         continue
-                    status = device.query_causal_receiver_status(required_status_version=8)
                     initial, integrity_errors = before[logical_device]
-                    if (status.get("receiver_status_version") != 8
-                            or status.get("receiver_logical_device") != logical_device
-                            or device.get_stats().get("receiver_status_integrity_errors") != integrity_errors):
-                        raise RuntimeError(f"receiver {logical_device} lost protected status integrity")
+                    status, _ = self._protected_host_full_status(
+                        device, logical_device, integrity_errors
+                    )
                     if (status.get("receiver_display_errors") != initial["receiver_display_errors"]
                             or status.get("receiver_frames_superseded") != initial["receiver_frames_superseded"]):
                         raise RuntimeError(f"receiver {logical_device} reported display error or supersession")
                     accepted = (initial["receiver_frames_accepted"] + 1) & 0xFFFFFFFF
-                    sequence = (initial["receiver_last_accepted_sequence"] + 1) & 0xFFFFFFFF
-                    if (status.get("receiver_frames_accepted") != accepted
-                            or status.get("receiver_last_accepted_sequence") != sequence
-                            or status.get("receiver_base_mode") != 2):
+                    sequence = status.get("receiver_last_accepted_sequence")
+                    if status.get("receiver_frames_accepted") == initial["receiver_frames_accepted"]:
+                        if (status.get("receiver_frames_displayed") != initial["receiver_frames_displayed"]
+                                or status.get("receiver_last_displayed_sequence") != initial["receiver_last_displayed_sequence"]):
+                            raise RuntimeError(f"receiver {logical_device} displayed before accepting host-full frame")
+                        continue
+                    if status.get("receiver_frames_accepted") != accepted or status.get("receiver_base_mode") != 2:
                         raise RuntimeError(f"receiver {logical_device} did not accept the exact host-full frame")
-                    expected[logical_device] = sequence
+                    if type(sequence) is not int or not 0 <= sequence <= 0xFFFFFFFF:
+                        raise RuntimeError(f"receiver {logical_device} has invalid accepted frame sequence")
+                    if sequence == initial["receiver_last_accepted_sequence"]:
+                        continue  # Accepted count became visible before its sequence.
+                    prior_sequence = expected.setdefault(logical_device, sequence)
+                    if sequence != prior_sequence:
+                        raise RuntimeError(f"receiver {logical_device} changed accepted frame sequence")
                     if (status.get("receiver_last_displayed_sequence") == sequence
                             and status.get("receiver_frames_displayed") ==
                             (initial["receiver_frames_displayed"] + 1) & 0xFFFFFFFF):
@@ -2235,13 +2268,12 @@ class MultiDeviceLEDController:
                 time.sleep(0.005)
             self._require_pinned_receipt_roster()
             for logical_device, device in enumerate(self.devices):
-                status = device.query_causal_receiver_status(required_status_version=8)
                 initial, integrity_errors = before[logical_device]
+                status, _ = self._protected_host_full_status(
+                    device, logical_device, integrity_errors
+                )
                 sequence = expected[logical_device]
-                if (status.get("receiver_status_version") != 8
-                        or status.get("receiver_logical_device") != logical_device
-                        or device.get_stats().get("receiver_status_integrity_errors") != integrity_errors
-                        or status.get("receiver_frames_accepted") !=
+                if (status.get("receiver_frames_accepted") !=
                         (initial["receiver_frames_accepted"] + 1) & 0xFFFFFFFF
                         or status.get("receiver_last_accepted_sequence") != sequence
                         or status.get("receiver_frames_displayed") !=
