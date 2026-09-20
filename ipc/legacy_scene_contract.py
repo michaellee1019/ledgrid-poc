@@ -336,6 +336,35 @@ def build_composer_operations_status(
         if isinstance(latest and latest.get("controller"), Mapping) else None
     )
     phase = latest.get("phase") if latest else None
+    receiver_failure = raw.get("receiver_last_failure")
+    receiver_failure = receiver_failure if isinstance(receiver_failure, Mapping) else {}
+    failure_scene = receiver_failure.get("scene_digest")
+    desired_scene = desired.get("scene_identity") if isinstance(desired, Mapping) else None
+    desired_scene_digest = desired_scene.get("digest") if isinstance(desired_scene, Mapping) else None
+    failure_at = _operations_timestamp_ms(receiver_failure.get("observed_at"))
+    telemetry = latest.get("telemetry") if latest else None
+    receipt_at = _operations_uint(telemetry.get("observed_at")) if isinstance(telemetry, Mapping) else None
+    host_full_failed_after_receipt = bool(
+        receiver_failure.get("operation") == "host_full_runtime_failure"
+        and (desired_scene_digest is None or failure_scene is None
+             or failure_scene == desired_scene_digest)
+        and (failure_at is None or receipt_at is None or failure_at >= receipt_at)
+    )
+    host_full_clear_unverified = bool(
+        host_full_failed_after_receipt
+        and receiver_failure.get("clear_error") is not None
+    )
+    if host_full_clear_unverified:
+        # Stopped playback is not proof of black pixels after a failed clear.
+        observed_power = None
+    receiver_playback = raw.get("receiver_hybrid")
+    receiver_degraded = bool(
+        isinstance(receiver_playback, Mapping)
+        and (receiver_playback.get("degraded") is True
+             or receiver_playback.get("operational") is False
+             or receiver_playback.get("fallback_active") is True
+             or receiver_playback.get("error") not in (None, ""))
+    )
     if freshness == "stale":
         reconciliation_state = "stale"
         reconciliation_reason = "The latest controller observation exceeded its freshness window."
@@ -352,8 +381,18 @@ def build_composer_operations_status(
         reconciliation_state = "diverged"
         reconciliation_reason = "The observed output identity does not match the activation receipt."
     elif phase == "active":
-        reconciliation_state = "current"
-        reconciliation_reason = "The latest activation receipt matches the fresh observed output."
+        if host_full_failed_after_receipt:
+            reconciliation_state = "diverged"
+            reconciliation_reason = "A host-full runtime failure followed the active receipt."
+        elif output_state != "running" or raw.get("mode") in ("idle", "degraded", "failed"):
+            reconciliation_state = "diverged"
+            reconciliation_reason = "The active receipt no longer has running playback in the fresh observation."
+        elif observed_power is False or receiver_degraded:
+            reconciliation_state = "diverged"
+            reconciliation_reason = "The fresh observed playback is degraded despite the active receipt."
+        else:
+            reconciliation_state = "current"
+            reconciliation_reason = "The latest activation receipt matches the fresh observed output."
     else:
         reconciliation_state = "pending"
         reconciliation_reason = "An activation receipt exists but has not reached an active observation."
@@ -366,6 +405,9 @@ def build_composer_operations_status(
     if freshness != "fresh" or session_id is None or state_revision is None:
         power_state = "stale"
         power_reason = "Output power needs a fresh revision-qualified controller observation."
+    elif host_full_clear_unverified:
+        power_state = "failed"
+        power_reason = "Host-full playback stopped, but black clearing was unverified; physical output may remain lit."
     elif phase in {"failed", "timed_out", "rolled_back"}:
         power_state = "failed"
         power_reason = "The latest guarded activation did not leave a current output-power observation."
@@ -449,6 +491,7 @@ def build_composer_operations_status(
     health_states = {receiver_state, performance_state}
     overall = (
         "unavailable" if freshness != "fresh"
+        else "degraded" if host_full_clear_unverified
         else "degraded" if "degraded" in health_states
         else "healthy" if health_states <= {"healthy", "idle"}
         else "unknown"

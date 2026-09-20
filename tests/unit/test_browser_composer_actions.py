@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -235,6 +236,93 @@ class BrowserComposerActionTests(unittest.TestCase):
         # The stale fixture cannot treat its prior readable receiver as fresh.
         self.assertEqual(payload["health"]["receivers"]["missing"], [0, 1])
         self.assertEqual(payload["raw_evidence"]["owner"], "controller_status")
+
+    def test_active_receipt_cannot_outvote_fresh_host_full_runtime_failure(self) -> None:
+        now = time.time()
+        scene_digest = "b" * 64
+        identity = {
+            "scene_identity": {"revision": 2, "digest": scene_digest},
+            "component_identities": [],
+            "global_settings_identity": {"revision": 4, "digest": "c" * 64},
+            "installation_profile_digest": "d" * 64,
+        }
+        active = {
+            "updated_at": now,
+            "is_running": True,
+            "mode": "scene",
+            "controller_session_id": "1" * 32,
+            "controller_state_revision": 7,
+            "active_identity": identity,
+            "latest_activation": {
+                "activation_id": "9e24b8bc-fixture",
+                "phase": "active",
+                "normalized_identity": deepcopy(identity),
+                "controller": {"session_id": "1" * 32},
+                "telemetry": {"complete": True, "fresh": True,
+                              "observed_at": int((now - 200) * 1000)},
+            },
+        }
+        self.channel.status = deepcopy(active)
+        running = self.client.get("/api/v1/composer/operations/status").get_json()
+        self.assertEqual(running["reconciliation"]["state"], "current")
+
+        failed = deepcopy(active)
+        failed.update(is_running=False, mode="idle", receiver_last_failure={
+            "operation": "host_full_runtime_failure",
+            "scene_digest": scene_digest,
+            "error": "complete frame rejected",
+            "stop_error": None,
+            "clear_error": "complete host-full black barrier failed on the pinned roster",
+        })
+        self.channel.status = failed
+        observed = self.client.get("/api/v1/composer/operations/status").get_json()
+        self.assertEqual(observed["observation"]["freshness"], "fresh")
+        self.assertEqual(observed["observation"]["state"], "idle")
+        self.assertEqual(observed["reconciliation"]["receipt_phase"], "active")
+        self.assertEqual(observed["reconciliation"]["state"], "diverged")
+        self.assertIn("host-full runtime failure", observed["reconciliation"]["reason"])
+        self.assertEqual(observed["output_power"]["state"], "failed")
+        self.assertIsNone(observed["output_power"]["observed"])
+        self.assertIn("physical output may remain lit", observed["output_power"]["reason"])
+        self.assertEqual(observed["health"]["state"], "degraded")
+
+        idle_without_marker = deepcopy(failed)
+        idle_without_marker.pop("receiver_last_failure")
+        self.channel.status = idle_without_marker
+        self.assertEqual(self.client.get("/api/v1/composer/operations/status").get_json()[
+            "reconciliation"]["state"], "diverged")
+        verified_clear = deepcopy(failed)
+        verified_clear["receiver_last_failure"]["clear_error"] = None
+        self.channel.status = verified_clear
+        cleared = self.client.get("/api/v1/composer/operations/status").get_json()
+        self.assertEqual(cleared["output_power"]["state"], "off")
+        self.assertEqual(cleared["reconciliation"]["state"], "diverged")
+
+        degraded = deepcopy(active)
+        degraded["receiver_hybrid"] = {"operational": False, "degraded": True}
+        self.channel.status = degraded
+        self.assertEqual(self.client.get("/api/v1/composer/operations/status").get_json()[
+            "reconciliation"]["state"], "diverged")
+
+        recovered = deepcopy(active)
+        recovered["receiver_last_failure"] = deepcopy(failed["receiver_last_failure"])
+        recovered["receiver_last_failure"]["observed_at"] = now
+        recovered["latest_activation"]["telemetry"]["observed_at"] = int((now + 1) * 1000)
+        self.channel.status = recovered
+        self.assertEqual(self.client.get("/api/v1/composer/operations/status").get_json()[
+            "reconciliation"]["state"], "current")
+
+        fresh_failure = deepcopy(active)
+        fresh_failure["receiver_last_failure"] = deepcopy(recovered["receiver_last_failure"])
+        self.channel.status = fresh_failure
+        self.assertEqual(self.client.get("/api/v1/composer/operations/status").get_json()[
+            "reconciliation"]["state"], "diverged")
+
+        pending = deepcopy(active)
+        pending["latest_activation"]["phase"] = "observing"
+        self.channel.status = pending
+        self.assertEqual(self.client.get("/api/v1/composer/operations/status").get_json()[
+            "reconciliation"]["state"], "pending")
 
     def test_stop_uses_checked_activation_and_requires_exact_safe_idle_observation(self) -> None:
         self.assertIn("async function stopOutput()", COMPOSER_SCRIPT)

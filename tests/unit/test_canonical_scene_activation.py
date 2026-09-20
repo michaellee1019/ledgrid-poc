@@ -434,12 +434,15 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertLess(self.manager._canonical_receiver_runtime._runtime._animation.instance.cadence_snapshot()['tick'],
                         self.manager.frames_presented)
         original_send = self.controller.set_all_pixels
+        failure_started_at = time.time()
         self.controller.set_all_pixels = lambda _pixels: False
         deadline = time.monotonic() + 1.0
         while self.manager.is_running and time.monotonic() < deadline:
             time.sleep(.005)
         self.assertFalse(self.manager.is_running)
-        self.assertEqual(self.manager.get_current_status()['receiver_last_failure']['operation'], 'host_full_runtime_failure')
+        failure = self.manager.get_current_status()['receiver_last_failure']
+        self.assertEqual(failure['operation'], 'host_full_runtime_failure')
+        self.assertGreaterEqual(failure['observed_at'], failure_started_at)
         self.controller.set_all_pixels = original_send
 
     def test_twilight_failed_display_and_unverified_rollback_never_claim_active(self):

@@ -5065,7 +5065,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         self._receiver_last_failure = {
             "operation": "host_full_runtime_failure", "scene_digest": digest,
             "error": str(error), "stop_error": stop_error,
-            "clear_error": clear_error,
+            "clear_error": clear_error, "observed_at": time.time(),
         }
 
     def _presentation_io_guard(self):
