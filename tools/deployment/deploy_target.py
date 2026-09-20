@@ -2706,15 +2706,6 @@ def _receiver_health_rejection(
             return f"receiver {logical_id} lacks required firmware capabilities"
         if status.get("transport_envelope_enabled") is not True:
             return f"receiver {logical_id} host aligned transport is not enabled"
-        if (
-            "transport_envelope_negotiation_candidate" not in status
-            or status.get("transport_envelope_negotiation_candidate") is not None
-            or type(status.get("transport_envelope_negotiation_streak")) is not int
-            or status.get("transport_envelope_negotiation_streak") != 0
-            or type(status.get("transport_envelope_negotiation_required")) is not int
-            or status.get("transport_envelope_negotiation_required") != 3
-        ):
-            return f"receiver {logical_id} aligned transport negotiation is not settled"
         expected_fec = logical_id in expected_fec_ids
         if (
             status.get("fec_transport_requested") is not expected_fec
@@ -2724,15 +2715,6 @@ def _receiver_health_rejection(
                 f"receiver {logical_id} FEC selection does not match the "
                 "receiver-3 deployment policy"
             )
-        if (
-            "fec_transport_negotiation_candidate" not in status
-            or status.get("fec_transport_negotiation_candidate") is not None
-            or type(status.get("fec_transport_negotiation_streak")) is not int
-            or status.get("fec_transport_negotiation_streak") != 0
-            or type(status.get("fec_transport_negotiation_required")) is not int
-            or status.get("fec_transport_negotiation_required") != 3
-        ):
-            return f"receiver {logical_id} FEC transport negotiation is not settled"
         fec_counter_fields = (
             "fec_frames_sent", "fec_codewords_sent",
             "fec_parity_bytes_sent", "fec_data_padding_bytes_sent",
@@ -3351,13 +3333,6 @@ def _transport_accounting_evidence(
             logical_id for logical_id, item in sorted(after_by_id.items())
             if item.get("fec_transport_enabled") is True
         ],
-        "negotiation_required": 3,
-        "negotiation_settled": all(
-            item.get("transport_envelope_enabled") is True
-            and item.get("transport_envelope_negotiation_candidate") is None
-            and item.get("transport_envelope_negotiation_streak") == 0
-            for item in after.receiver_statuses
-        ),
         "full_frame_traffic_proven": full_frame_traffic_proven,
         "full_frame_sampling_proven": (
             full_frame_traffic_proven and full_frame_sampling_proven

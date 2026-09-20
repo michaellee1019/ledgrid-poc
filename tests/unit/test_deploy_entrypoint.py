@@ -558,14 +558,8 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 "receiver_status_integrity_errors": 0,
                 "receiver_capabilities": capabilities,
                 "transport_envelope_enabled": True,
-                "transport_envelope_negotiation_candidate": None,
-                "transport_envelope_negotiation_streak": 0,
-                "transport_envelope_negotiation_required": 3,
                 "fec_transport_requested": logical_id == 3,
                 "fec_transport_enabled": logical_id == 3,
-                "fec_transport_negotiation_candidate": None,
-                "fec_transport_negotiation_streak": 0,
-                "fec_transport_negotiation_required": 3,
                 "spi_transfers": transfers,
                 "semantic_bytes_sent": semantic_bytes,
                 "transport_envelope_bytes_sent": (
@@ -1127,7 +1121,6 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(transport_evidence["enabled_devices"], 5)
-                self.assertTrue(transport_evidence["negotiation_settled"])
                 self.assertTrue(transport_evidence["full_frame_traffic_proven"])
                 self.assertTrue(transport_evidence["full_frame_sampling_proven"])
                 self.assertEqual(
@@ -1140,7 +1133,6 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                     ],
                     4096,
                 )
-                self.assertEqual(transport_evidence["negotiation_required"], 3)
                 self.assertEqual(len(transport_evidence["devices"]), 5)
                 self.assertGreater(
                     transport_evidence["aggregate"]["semantic_bytes_sent"]["delta"],
@@ -1529,13 +1521,6 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         disabled[3]["fec_transport_enabled"] = False
         cases.append((disabled, "FEC selection does not match"))
 
-        pending = [dict(item) for item in valid]
-        pending[3].update({
-            "fec_transport_negotiation_candidate": True,
-            "fec_transport_negotiation_streak": 2,
-        })
-        cases.append((pending, "FEC transport negotiation is not settled"))
-
         undersized = [dict(item) for item in valid]
         undersized[3]["spidev_buffer_size"] = 3379
         cases.append((undersized, "below 4088 bytes"))
@@ -1797,42 +1782,42 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         )
         self.assertIn("enabled for 4 receivers; expected 5", reason)
 
-    def test_production_health_requires_settled_three_observation_negotiation(self) -> None:
-        contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
-        for label, mutate in (
-            (
-                "missing",
-                lambda status: status.pop(
-                    "transport_envelope_negotiation_candidate"
-                ),
-            ),
-            (
-                "pending",
-                lambda status: status.update({
-                    "transport_envelope_negotiation_candidate": False,
-                    "transport_envelope_negotiation_streak": 1,
-                }),
-            ),
-            (
-                "wrong requirement",
-                lambda status: status.update({
-                    "transport_envelope_negotiation_required": 2,
-                }),
-            ),
+    def test_current_stats_shape_keeps_receiver_health_guards(self) -> None:
+        contract = self._receiver_contract(NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT)
+        statuses = self._receiver_statuses(version=8, capabilities=0x307FFF)
+        self.assertFalse(any(
+            "negotiation" in key for status in statuses for key in status
+        ))
+
+        def rejection(sample: deploy_target.TargetHealthSample) -> str | None:
+            return deploy_target._receiver_health_rejection(
+                sample,
+                minimum_version=int(contract["minimum_status_version"]),
+                required_capabilities=int(contract["required_capabilities"]),
+                fec_receiver_ids=tuple(contract["fec_receiver_ids"]),
+                expected_devices=tuple(contract["devices"]),
+            )
+
+        self.assertIsNone(rejection(self._health_sample(statuses=statuses)))
+        for field, value, expected in (
+            ("receiver_status_integrity_errors", 1, "status integrity"),
+            ("receiver_capabilities", 0, "lacks required firmware capabilities"),
+            ("transport_envelope_enabled", False, "host aligned transport"),
+            ("receiver_status_responses", 0, "status response evidence"),
+            ("receiver_logical_device", 4, "reported logical identities"),
+            ("receiver_active_strips", 7, "reported receiver_active_strips"),
         ):
-            with self.subTest(label=label):
-                statuses = [dict(item) for item in self._receiver_statuses(
-                    version=8, capabilities=0x3FC00C,
-                )]
-                mutate(statuses[0])
-                reason = deploy_target._receiver_health_rejection(
-                    self._health_sample(statuses=tuple(statuses)),
-                    minimum_version=int(contract["minimum_status_version"]),
-                    required_capabilities=int(contract["required_capabilities"]),
-                    fec_receiver_ids=tuple(contract["fec_receiver_ids"]),
-                    expected_devices=tuple(contract["devices"]),
+            with self.subTest(field=field):
+                changed = [dict(item) for item in statuses]
+                changed[0][field] = value
+                self.assertIn(
+                    expected, rejection(self._health_sample(statuses=tuple(changed)))
                 )
-                self.assertIn("negotiation is not settled", reason)
+        changed = [dict(item) for item in statuses]
+        changed[3]["fec_transport_enabled"] = False
+        self.assertIn(
+            "FEC selection", rejection(self._health_sample(statuses=tuple(changed)))
+        )
 
     def test_production_health_rejects_missing_stalled_and_drifted_transport_traffic(self) -> None:
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
