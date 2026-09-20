@@ -725,9 +725,16 @@ class ControllerActivationCoordinator:
 
     def controller_status(self) -> dict[str, Any]:
         with self._lock:
-            records = [
-                _copy_json(record.status) for record in self._records.values()
-            ]
+            active_records = list(self._records.values())
+            records = [_copy_json(record.status) for record in active_records]
+            latest = active_records[-1] if active_records else None
+            selected_output_power = None
+            if (
+                latest is not None
+                and latest.status["phase"] == "active"
+                and latest.status["normalized_identity"] == self._active_identity
+            ):
+                selected_output_power = latest.command["desired"]["global_settings"]["output"]["power"]
             return {
                 "controller_session_id": self.session_id,
                 "controller_state_revision": self._state_revision,
@@ -741,6 +748,9 @@ class ControllerActivationCoordinator:
                     else _copy_json(self._selected_scene)
                 ),
                 "latest_activation": records[-1] if records else None,
+                # The receipt identity is a digest, not the requested power bit.
+                # Bind this selected intent to the same active record/identity.
+                "selected_output_power": selected_output_power,
                 "activations": records,
             }
 

@@ -734,6 +734,7 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
             coordinator.controller_status()["active_identity"],
             status["observed_identity"],
         )
+        self.assertIs(coordinator.controller_status()["selected_output_power"], False)
 
     def test_guarded_legacy_mutation_rejects_stale_revision_and_expiry(self) -> None:
         manager, coordinator = self.coordinator()
@@ -2251,6 +2252,7 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         self.assertEqual(
             restarted.controller_status()["scene_state"], self.desired_scene
         )
+        self.assertIs(restarted.controller_status()["selected_output_power"], False)
         self.assertFalse(channel.status["rollback"]["available"])
         self.assertFalse(restarted_manager.is_running)
         self.assertEqual(restarted_manager.mutation_count, 0)

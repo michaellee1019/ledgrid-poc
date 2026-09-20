@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -442,8 +443,61 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertFalse(self.manager.is_running)
         failure = self.manager.get_current_status()['receiver_last_failure']
         self.assertEqual(failure['operation'], 'host_full_runtime_failure')
+        self.assertEqual(failure['clear_state'], 'verified')
         self.assertGreaterEqual(failure['observed_at'], failure_started_at)
         self.controller.set_all_pixels = original_send
+
+    def _assert_runtime_black_clear_status(self, *, clear_fails):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        _, _, receipt = self.activate(scene)
+        self.assertEqual(receipt['phase'], 'active', receipt)
+        self.assertTrue(self.channel.read_status()['selected_output_power'])
+        entered = threading.Event()
+        release = threading.Event()
+        original_clear = self.controller.present_displayed_host_full_frame
+
+        def paused_clear(request_id, frame, **kwargs):
+            if not np.any(frame):
+                entered.set()
+                if not release.wait(2):
+                    raise RuntimeError('test black barrier was not released')
+            return original_clear(request_id, frame, **kwargs)
+
+        self.controller.present_displayed_host_full_frame = paused_clear
+        self.controller.host_full_clear_failure = clear_fails
+        worker = threading.Thread(
+            target=self.manager._fail_canonical_host_full,
+            args=(RuntimeError('complete frame rejected'),),
+        )
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2), 'black barrier did not start')
+            pending = self.channel.read_status()
+            self.assertFalse(pending['is_running'])
+            self.assertEqual(pending['receiver_last_failure']['clear_state'], 'pending')
+            observed = self.client.get('/api/v1/composer/operations/status').get_json()
+            self.assertEqual(observed['reconciliation']['state'], 'diverged')
+            self.assertEqual(observed['output_power']['state'], 'pending')
+            self.assertIsNone(observed['output_power']['observed'])
+        finally:
+            release.set()
+            worker.join(2)
+            self.controller.present_displayed_host_full_frame = original_clear
+        self.assertFalse(worker.is_alive())
+        final = self.channel.read_status()['receiver_last_failure']
+        self.assertEqual(final['clear_state'], 'failed' if clear_fails else 'verified')
+        self.assertEqual(final['clear_error'] is not None, clear_fails)
+        observed = self.client.get('/api/v1/composer/operations/status').get_json()
+        self.assertEqual(observed['reconciliation']['state'], 'diverged')
+        self.assertEqual(observed['output_power']['state'], 'failed' if clear_fails else 'off')
+
+    def test_runtime_black_clear_is_unverified_until_displayed(self):
+        self._assert_runtime_black_clear_status(clear_fails=False)
+
+    def test_runtime_black_clear_failure_stays_unverified(self):
+        self._assert_runtime_black_clear_status(clear_fails=True)
 
     def test_twilight_failed_display_and_unverified_rollback_never_claim_active(self):
         self.activate(self.scene)

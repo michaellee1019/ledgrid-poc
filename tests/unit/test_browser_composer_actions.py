@@ -250,6 +250,7 @@ class BrowserComposerActionTests(unittest.TestCase):
             "updated_at": now,
             "is_running": True,
             "mode": "scene",
+            "selected_output_power": True,
             "controller_session_id": "1" * 32,
             "controller_state_revision": 7,
             "active_identity": identity,
@@ -286,17 +287,39 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("physical output may remain lit", observed["output_power"]["reason"])
         self.assertEqual(observed["health"]["state"], "degraded")
 
+        clearing = deepcopy(failed)
+        clearing["receiver_last_failure"].update(clear_state="pending", clear_error=None)
+        self.channel.status = clearing
+        in_progress = self.client.get("/api/v1/composer/operations/status").get_json()
+        self.assertEqual(in_progress["reconciliation"]["state"], "diverged")
+        self.assertEqual(in_progress["output_power"]["state"], "pending")
+        self.assertIsNone(in_progress["output_power"]["observed"])
+
+        failed["receiver_last_failure"]["clear_state"] = "failed"
+
         idle_without_marker = deepcopy(failed)
         idle_without_marker.pop("receiver_last_failure")
         self.channel.status = idle_without_marker
         self.assertEqual(self.client.get("/api/v1/composer/operations/status").get_json()[
             "reconciliation"]["state"], "diverged")
         verified_clear = deepcopy(failed)
+        verified_clear["receiver_last_failure"]["clear_state"] = "verified"
         verified_clear["receiver_last_failure"]["clear_error"] = None
         self.channel.status = verified_clear
         cleared = self.client.get("/api/v1/composer/operations/status").get_json()
         self.assertEqual(cleared["output_power"]["state"], "off")
         self.assertEqual(cleared["reconciliation"]["state"], "diverged")
+
+        safe_idle = deepcopy(active)
+        safe_idle.update(is_running=False, mode="idle", selected_output_power=False)
+        self.channel.status = safe_idle
+        stopped = self.client.get("/api/v1/composer/operations/status").get_json()
+        self.assertEqual(stopped["reconciliation"]["state"], "current")
+        self.assertEqual(stopped["output_power"]["state"], "off")
+        safe_idle["selected_output_power"] = True
+        self.channel.status = safe_idle
+        self.assertEqual(self.client.get("/api/v1/composer/operations/status").get_json()[
+            "reconciliation"]["state"], "diverged")
 
         degraded = deepcopy(active)
         degraded["receiver_hybrid"] = {"operational": False, "degraded": True}

@@ -5047,6 +5047,15 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         """Stop claiming Active after an opaque render or full-frame send failure."""
         canonical = getattr(self, "_canonical_receiver_scene", None)
         digest = canonical.identity.digest if canonical is not None else None
+        failure_at = time.time()
+        # Status may be sampled while the verified black barrier is still
+        # waiting on receivers. Publish uncertainty before stopping the loop.
+        self._receiver_last_failure = {
+            "operation": "host_full_runtime_failure", "scene_digest": digest,
+            "error": str(error), "stop_error": None,
+            "clear_state": "pending", "clear_error": None,
+            "observed_at": failure_at,
+        }
         stop_error = None
         clear_error = None
         try:
@@ -5065,7 +5074,8 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         self._receiver_last_failure = {
             "operation": "host_full_runtime_failure", "scene_digest": digest,
             "error": str(error), "stop_error": stop_error,
-            "clear_error": clear_error, "observed_at": time.time(),
+            "clear_state": "failed" if clear_error is not None else "verified",
+            "clear_error": clear_error, "observed_at": failure_at,
         }
 
     def _presentation_io_guard(self):

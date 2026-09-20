@@ -336,6 +336,9 @@ def build_composer_operations_status(
         if isinstance(latest and latest.get("controller"), Mapping) else None
     )
     phase = latest.get("phase") if latest else None
+    selected_output_power = raw.get("selected_output_power")
+    if not isinstance(selected_output_power, bool):
+        selected_output_power = None
     receiver_failure = raw.get("receiver_last_failure")
     receiver_failure = receiver_failure if isinstance(receiver_failure, Mapping) else {}
     failure_scene = receiver_failure.get("scene_digest")
@@ -352,7 +355,8 @@ def build_composer_operations_status(
     )
     host_full_clear_unverified = bool(
         host_full_failed_after_receipt
-        and receiver_failure.get("clear_error") is not None
+        and (receiver_failure.get("clear_state") in ("pending", "failed")
+             or receiver_failure.get("clear_error") is not None)
     )
     if host_full_clear_unverified:
         # Stopped playback is not proof of black pixels after a failed clear.
@@ -384,12 +388,18 @@ def build_composer_operations_status(
         if host_full_failed_after_receipt:
             reconciliation_state = "diverged"
             reconciliation_reason = "A host-full runtime failure followed the active receipt."
-        elif output_state != "running" or raw.get("mode") in ("idle", "degraded", "failed"):
-            reconciliation_state = "diverged"
-            reconciliation_reason = "The active receipt no longer has running playback in the fresh observation."
-        elif observed_power is False or receiver_degraded:
+        elif receiver_degraded or raw.get("mode") in ("degraded", "failed"):
             reconciliation_state = "diverged"
             reconciliation_reason = "The fresh observed playback is degraded despite the active receipt."
+        elif selected_output_power is False and output_state == "idle" and raw.get("mode") == "idle" and observed_power is False:
+            reconciliation_state = "current"
+            reconciliation_reason = "The power-off activation receipt matches fresh safe-idle output."
+        elif selected_output_power is False or output_state != "running" or raw.get("mode") == "idle":
+            reconciliation_state = "diverged"
+            reconciliation_reason = "The active receipt's requested output power does not match fresh playback."
+        elif observed_power is False:
+            reconciliation_state = "diverged"
+            reconciliation_reason = "The fresh observed power is off despite running playback."
         else:
             reconciliation_state = "current"
             reconciliation_reason = "The latest activation receipt matches the fresh observed output."
@@ -405,6 +415,9 @@ def build_composer_operations_status(
     if freshness != "fresh" or session_id is None or state_revision is None:
         power_state = "stale"
         power_reason = "Output power needs a fresh revision-qualified controller observation."
+    elif host_full_clear_unverified and receiver_failure.get("clear_state") == "pending":
+        power_state = "pending"
+        power_reason = "Host-full playback failed; black clearing is unverified and physical output may remain lit."
     elif host_full_clear_unverified:
         power_state = "failed"
         power_reason = "Host-full playback stopped, but black clearing was unverified; physical output may remain lit."
