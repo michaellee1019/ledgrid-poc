@@ -126,7 +126,9 @@ RECEIVER_FIRMWARE_HEALTH_CAPABILITIES = {
     # features remain additive below that common deployment floor.
     PRODUCTION_FIRMWARE_ENVIRONMENT: (8, 0x3FC00C),
     DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (8, 0x20C0FF),
-    NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (8, 0x20FFFF),
+    # Current firmware advertises the selected v7 FEC envelope, not the
+    # retired v2-v6 compatibility bundle.
+    NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (8, 0x307FFF),
 }
 FINALIZED_FEC_RECEIVER_IDS = (3,)
 FINALIZED_RECEIVER_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))

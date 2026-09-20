@@ -1042,7 +1042,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         cases = (
             (PRODUCTION_FIRMWARE_ENVIRONMENT, 8, 0x3FC00C),
             (DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT, 8, 0x20C0FF),
-            (NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT, 8, 0x20FFFF),
+            (NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT, 8, 0x307FFF),
         )
         for environment, version, capabilities in cases:
             with self.subTest(environment=environment):
