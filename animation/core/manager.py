@@ -345,6 +345,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         self._receiver_hybrid_mode = False
         self._canonical_host_full_mode = False
         self._canonical_host_full_receipt = None
+        self._host_full_first_frame_uncertain = False
         self._receiver_sparse_publisher: Optional[ReceiverSparsePublisher] = None
         self._receiver_foreground_compositor: Optional[HostForegroundCompositor] = None
         self._receiver_context: Optional[ReceiverPresentationContext] = None

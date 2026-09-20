@@ -55,6 +55,8 @@ class _Transport(_Controller):
         self.foreground = None
         self.sparse_status = {}
         self.host_full_failure = None
+        self.host_full_clear_failure = False
+        self.wall_may_be_nonblack = False
         self.host_full_sequence = 0
         self.receiver_identity_authority_digest = "a" * 64
         self.profile_wall = FakeInstallationProfileWall(capacity_bytes=1024*1024)
@@ -106,11 +108,18 @@ class _Transport(_Controller):
     def present_displayed_host_full_frame(self, request_id, frame, *, timeout_seconds=5.0):
         pixels = np.asarray(frame, dtype=np.uint8)
         self.operations.append(("host_full_display_proof", request_id, pixels.copy()))
+        if not np.any(pixels):
+            if self.host_full_clear_failure:
+                raise RuntimeError("receiver 3 black display timeout")
+        else:
+            # Model an accepted first SET_ALL whose display is not proven.
+            self.wall_may_be_nonblack = True
         if self.host_full_failure is not None:
             failure = self.host_full_failure
             self.host_full_failure = None
             raise RuntimeError(f"receiver 3 {failure}")
         self.host_full_sequence += 1
+        self.wall_may_be_nonblack = bool(np.any(pixels))
         return {
             "request_id": request_id,
             "frame_digest": hashlib.sha256(pixels.tobytes()).hexdigest(),
@@ -410,6 +419,38 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         _, _, receipt = self.activate(scene)
         self.assertEqual(receipt['phase'], 'failed', receipt)
         self.assertIsNone(receipt['observed_identity'])
+
+    def test_failed_first_display_requires_verified_black_for_idle_rollback(self):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        self.controller.host_full_failure = 'display timeout after accepted SET_ALL'
+        _, _, receipt = self.activate(scene)
+        self.assertNotEqual(receipt['phase'], 'active', receipt)
+        self.assertEqual(receipt['rollback']['result'], 'succeeded', receipt)
+        self.assertFalse(self.controller.wall_may_be_nonblack)
+        proofs = [op for op in self.controller.operations if op[0] == 'host_full_display_proof']
+        self.assertEqual(len(proofs), 2)
+        self.assertTrue(np.any(proofs[0][2]))
+        self.assertFalse(np.any(proofs[1][2]))
+
+    def test_failed_black_proof_cannot_report_idle_rollback(self):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        self.controller.host_full_failure = 'display timeout after accepted SET_ALL'
+        self.controller.host_full_clear_failure = True
+        _, _, receipt = self.activate(scene)
+        self.assertEqual(receipt['phase'], 'failed', receipt)
+        self.assertEqual(receipt['rollback']['result'], 'failed', receipt)
+        self.assertIn('black display timeout', receipt['rollback']['error'])
+        self.assertTrue(self.controller.wall_may_be_nonblack)
+        self.assertTrue(self.manager._host_full_first_frame_uncertain)
+        self.assertIn('black display timeout',
+                      self.manager.get_current_status()['receiver_last_failure']['clear_error'])
+        proofs = [op for op in self.controller.operations if op[0] == 'host_full_display_proof']
+        self.assertGreaterEqual(len(proofs), 2)
+        self.assertTrue(all(not np.any(op[2]) for op in proofs[1:]))
 
     def test_scene_state_snapshot_cannot_mutate_active_scene_identity(self):
         _, _, receipt = self.activate(self.scene)

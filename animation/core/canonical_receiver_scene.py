@@ -12,6 +12,8 @@ from typing import Any
 import hashlib
 import uuid
 
+import numpy as np
+
 from animation.core.component_catalog import AlphaBehavior
 from animation.core.presentation_contracts import ComponentRef, SceneState, ResolvedVibe, VibeProfile
 from animation.core.receiver_presentation import CanonicalFinalPresentation, ReceiverPresentationContext
@@ -20,6 +22,23 @@ from ipc.scene_contract import normalize_composer_scene
 
 
 class CanonicalReceiverSceneMixin:
+    def _clear_unverified_host_full_frame(self):
+        """Prove black on the pinned roster after a possibly accepted first send."""
+        pixels = np.zeros((self.controller.total_leds, 3), dtype=np.uint8)
+        request_id = f"host-full-clear-{uuid.uuid4().hex}"
+        with self._presentation_io_guard():
+            receipt = self.controller.present_displayed_host_full_frame(request_id, pixels)
+        if (not isinstance(receipt, dict)
+                or receipt.get("request_id") != request_id
+                or receipt.get("frame_digest") != hashlib.sha256(pixels.tobytes()).hexdigest()
+                or receipt.get("authority_digest") != getattr(
+                    self.controller, "receiver_identity_authority_digest", None
+                )
+                or {item.get("logical_device") for item in receipt.get("displayed_receivers", ())}
+                != set(range(5))):
+            raise RuntimeError("host-full black restoration proof is incomplete or misattributed")
+        self._host_full_first_frame_uncertain = False
+
     def _host_full_sparkle_eligible(self, canonical):
         """Only the current opaque, widget-free Sparkle has a hidden base."""
         scene = canonical.scene
@@ -111,6 +130,9 @@ class CanonicalReceiverSceneMixin:
             raise RuntimeError("previous display ownership could not be cleared")
         try:
             with self._presentation_io_guard():
+                # A failed proof may follow an accepted SET_ALL. Until black or
+                # a known prior scene is proven, idle is not a truthful state.
+                self._host_full_first_frame_uncertain = True
                 receipt = self.controller.present_displayed_host_full_frame(
                     request_id, pixels
                 )
@@ -124,13 +146,20 @@ class CanonicalReceiverSceneMixin:
                     != set(range(5))):
                 raise RuntimeError("host-full first-frame proof is incomplete or misattributed")
         except Exception as exc:
+            clear_error = None
+            if self._host_full_first_frame_uncertain:
+                try:
+                    self._clear_unverified_host_full_frame()
+                except Exception as clear_exc:
+                    clear_error = str(clear_exc)
             self._receiver_last_failure = {
                 "operation": "host_full_first_frame", "scene_digest": canonical.identity.digest,
-                "error": str(exc),
+                "error": str(exc), "clear_error": clear_error,
             }
             # The guarded activation coordinator owns exact prior-state rollback.
             # Do not publish this Scene as running after a partial first write.
             raise
+        self._host_full_first_frame_uncertain = False
         self._reset_run_counters()
         with self._scene_state_guard():
             self._canonical_receiver_scene = canonical

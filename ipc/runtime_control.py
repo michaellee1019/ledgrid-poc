@@ -2128,6 +2128,13 @@ class ControllerActivationCoordinator:
                 payload_digest = next((item.get("expected_payload_digest") for item in prior_components if item["slot_id"] == "background"), None)
                 if self._receiver_activation_evidence(self._manager_status(), snapshot.scene, snapshot.installation_profile_digest, payload_digest) is None:
                     raise ControllerActivationError("canonical rollback lacks exact receiver proof")
+                self.manager._host_full_first_frame_uncertain = False
+            elif getattr(self.manager, "_host_full_first_frame_uncertain", False):
+                if snapshot.scene is not None and snapshot.global_settings["output"]["power"]:
+                    raise ControllerActivationError(
+                        "prior scene display is unverified after failed host-full takeover"
+                    )
+                self.manager._clear_unverified_host_full_frame()
             self._active_identity = _copy_json(snapshot.active_identity)
             self._global_settings_revision = snapshot.global_settings["revision"]
             self._state_revision += 1
