@@ -163,6 +163,9 @@ class ReceiverSparsePublisher:
         self._last_operation = "initialized"
         self._last_error: Optional[str] = None
         self._driver_status: dict[str, Any] = {}
+        # Only a complete snapshot or an exact derived delta establishes this
+        # reference. Caller-supplied ranges are not independently verified.
+        self._last_pixels: Optional[np.ndarray] = None
         self._counts = {
             "full_snapshots": 0,
             "delta_generations": 0,
@@ -258,6 +261,25 @@ class ReceiverSparsePublisher:
             prior_end = last
         return tuple(normalized)
 
+    def _derived_dirty_ranges(
+        self, pixels: np.ndarray
+    ) -> Optional[tuple[tuple[int, int], ...]]:
+        """Find every changed pixel, or prefer an authoritative snapshot."""
+        prior = self._last_pixels
+        if prior is None:
+            return None
+        changed = np.any(pixels != prior, axis=1)
+        count = int(np.count_nonzero(changed))
+        if count == 0:
+            return None
+        starts = np.flatnonzero(changed & ~np.r_[False, changed[:-1]])
+        ends = np.flatnonzero(changed & ~np.r_[changed[1:], False]) + 1
+        # Each range adds a four-byte span header to its RGBA payload. A
+        # fragmented delta that costs as much as all pixels is no improvement.
+        if count + len(starts) >= self.total_leds:
+            return None
+        return tuple(zip(starts.tolist(), ends.tolist()))
+
     @staticmethod
     def _make_binding(
         scene_revision: int, scene_epoch: int, base_revision: Optional[int]
@@ -302,6 +324,7 @@ class ReceiverSparsePublisher:
         self._last_error = str(error)
         self._active = False
         self._repair_required = True
+        self._last_pixels = None
 
     def _rotate_session(self, operation: str) -> bytes:
         self._session_id = self._make_session()
@@ -310,6 +333,7 @@ class ReceiverSparsePublisher:
         self._authority_known = True
         self._active = False
         self._repair_required = True
+        self._last_pixels = None
         self._last_lease_at = None
         self._last_repair_at = None
         self._counts["session_rotations"] += 1
@@ -451,6 +475,9 @@ class ReceiverSparsePublisher:
         self._last_success_at = now
         self._last_operation = reason
         self._last_error = None
+        self._last_pixels = (
+            pixels.copy() if full_snapshot or reason == "derived_delta" else None
+        )
         if full_snapshot:
             self._last_repair_at = now
             self._counts["full_snapshots"] += 1
@@ -498,19 +525,27 @@ class ReceiverSparsePublisher:
                 or binding_changed
                 or self._repair_required
                 or repair_due
-                or (changed and dirty_ranges is None)
             )
+            foreground = (
+                self._normalize_pixels(pixels)
+                if full_snapshot or changed else None
+            )
+            derived_ranges = None
+            if changed and dirty_ranges is None and not full_snapshot:
+                derived_ranges = self._derived_dirty_ranges(foreground)
+                full_snapshot = derived_ranges is None
 
             if full_snapshot or changed:
-                foreground = self._normalize_pixels(pixels)
-                ranges = None
-                if not full_snapshot:
-                    ranges = normalized_ranges
+                ranges = None if full_snapshot else (
+                    derived_ranges if derived_ranges is not None
+                    else normalized_ranges
+                )
                 reason = (
                     "initial_snapshot" if self._generation == 0
                     else "binding_snapshot" if binding_changed
                     else "repair_snapshot" if self._repair_required or repair_due
-                    else "changed_snapshot" if dirty_ranges is None
+                    else "changed_snapshot" if full_snapshot
+                    else "derived_delta" if derived_ranges is not None
                     else "delta"
                 )
                 return self._publish_generation(
@@ -609,6 +644,7 @@ class ReceiverSparsePublisher:
             self._ensure_open()
             self._repair_required = True
             self._active = False
+            self._last_pixels = None
             self._last_operation = "repair_requested"
 
     def clear(self) -> bool:
@@ -665,6 +701,7 @@ class ReceiverSparsePublisher:
             self._generation = generation
             self._active = False
             self._repair_required = True
+            self._last_pixels = None
             self._last_operation = "clear"
             self._last_error = None
             self._counts["clears"] += 1

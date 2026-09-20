@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
@@ -286,14 +288,118 @@ class ReceiverSparsePublisherTests(unittest.TestCase):
             )
         self.assertEqual(len(controller.calls), before)
 
-    def test_changed_frame_without_dirty_ranges_falls_back_to_full_snapshot(self):
+    def test_changed_frame_without_dirty_ranges_derives_exact_sparse_delta(self):
+        controller, publisher = self.make_publisher()
+        reused = _pixels()
+        self.assertTrue(publisher.publish(reused, **_fields()))
+        reused[:] = _pixels(2)
+        self.assertTrue(publisher.publish(
+            reused, **_fields(dirty_ranges=None, now=0.5)
+        ))
+        self.assertFalse(controller.calls[-1][2]["full_snapshot"])
+        self.assertEqual(controller.calls[-1][2]["dirty_ranges"], ((0, 1), (2, 3)))
+        self.assertEqual(publisher.get_status()["last_operation"], "derived_delta")
+        reconstructed = controller.calls[0][1].copy()
+        for start, end in controller.calls[-1][2]["dirty_ranges"]:
+            reconstructed[start:end] = reused[start:end]
+        np.testing.assert_array_equal(reconstructed, reused)
+
+    def test_dense_or_untrusted_derived_change_keeps_authoritative_snapshot(self):
         controller, publisher = self.make_publisher()
         self.assertTrue(publisher.publish(_pixels(), **_fields()))
+        dense = np.full((8, 4), (4, 4, 4, 4), dtype=np.uint8)
+        self.assertTrue(publisher.publish(dense, **_fields(dirty_ranges=None, now=0.1)))
+        self.assertTrue(controller.calls[-1][2]["full_snapshot"])
+
+        sparse = dense.copy()
+        sparse[2] = 0
         self.assertTrue(publisher.publish(
-            _pixels(2), **_fields(dirty_ranges=None, now=0.5)
+            sparse, **_fields(dirty_ranges=((2, 3),), now=0.2)
+        ))
+        self.assertTrue(publisher.publish(
+            dense, **_fields(dirty_ranges=None, now=0.3)
         ))
         self.assertTrue(controller.calls[-1][2]["full_snapshot"])
-        self.assertEqual(publisher.get_status()["last_operation"], "changed_snapshot")
+
+    def test_failed_derived_delta_cannot_reuse_its_pixel_reference(self):
+        controller, publisher = self.make_publisher()
+        self.assertTrue(publisher.publish(_pixels(), **_fields()))
+        controller.publish_behavior = "compensated"
+        self.assertFalse(publisher.publish(
+            _pixels(2), **_fields(dirty_ranges=None, now=0.1)
+        ))
+        self.assertFalse(controller.calls[-1][2]["full_snapshot"])
+        self.assertFalse(publisher.get_status()["healthy"])
+        self.assertTrue(publisher.publish(
+            _pixels(2), **_fields(changed=False, dirty_ranges=None, now=0.2)
+        ))
+        self.assertTrue(controller.calls[-1][2]["full_snapshot"])
+        self.assertEqual((controller.calls[-1][2]["prior_generation"],
+                          controller.calls[-1][2]["generation"]), (3, 4))
+
+    def test_twilight_sparkle_canonical_foreground_uses_exact_derived_delta(self):
+        from animation.core.manager import PreviewLEDController
+        from animation.core.scene_runtime import ScenePresentationContext
+        from ipc.scene_contract import normalize_composer_scene
+        from web.composer_final_preview import (
+            InstalledFinalSceneRuntime, NATIVE_AURORA_BUNDLE_DIGEST,
+            current_component_catalog,
+        )
+
+        catalog = current_component_catalog()
+        scene = normalize_composer_scene({"origin": "composer", "scene": {
+            "schema": "ledgrid.scene.v2",
+            "background": {
+                "component_id": "native_aurora", "version": 1,
+                "provider": "receiver_native", "role": "background",
+                "bundle_digest": NATIVE_AURORA_BUNDLE_DIGEST,
+                "parameters": {"gain": .62, "source_fps": 30, "seed": 4201},
+            },
+            "animation": {
+                "component_id": "sparkle", "version": 1,
+                "provider": "python", "role": "animation",
+                "parameters": {"density": .31, "linger": .92,
+                               "twinkle": .82, "night": .14, "seed": 6146},
+            },
+            "widgets": [],
+            "plants": {"effects": {"version": 1, "active": [], "strengths": {}}},
+            "look": {"palette_id": "neutral", "pace": 1.0,
+                     "presentation_brightness": 1.0},
+        }}, catalog)
+        wall_controller = PreviewLEDController(strips=33, leds_per_strip=138)
+        runtime = InstalledFinalSceneRuntime(
+            catalog, Path(__file__).resolve().parents[2],
+            controller=wall_controller, foreground_only=True,
+        )
+        class RecordingWallController(_Controller):
+            total_leds = 33 * 138
+
+        controller, publisher = self.make_publisher(RecordingWallController())
+        wall_time = datetime(2026, 9, 19, tzinfo=timezone.utc)
+        first = runtime.render(ScenePresentationContext(scene, 0.0, wall_time)).foreground
+        self.assertTrue(publisher.publish_frame(
+            first, scene_revision=1, scene_epoch=11, now=0.0,
+            present_at_scene_time_us=0,
+        ))
+        previous = controller.calls[-1][1]
+        second = runtime.render(
+            ScenePresentationContext(scene, 1 / 24, wall_time)
+        ).foreground
+        current = second.pixels.copy()
+        self.assertTrue(second.changed)
+        self.assertIsNone(second.dirty_ranges)
+        self.assertEqual(int(np.count_nonzero(np.any(previous != current, axis=1))), 134)
+        self.assertTrue(publisher.publish_frame(
+            second, scene_revision=1, scene_epoch=11, now=1 / 24,
+            present_at_scene_time_us=41667,
+        ))
+        fields = controller.calls[-1][2]
+        self.assertFalse(fields["full_snapshot"])
+        restored = previous.copy()
+        for start, end in fields["dirty_ranges"]:
+            restored[start:end] = current[start:end]
+        np.testing.assert_array_equal(restored, current)
+        self.assertEqual(publisher.get_status()["counts"]["delta_generations"], 1)
 
     def test_publish_failure_tracks_compensation_generation_then_repairs(self):
         controller, publisher = self.make_publisher()
