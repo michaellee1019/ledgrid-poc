@@ -345,6 +345,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         self._receiver_hybrid_mode = False
         self._canonical_host_full_mode = False
         self._canonical_host_full_receipt = None
+        self._host_full_safe_idle = None
         self._host_full_first_frame_uncertain = False
         self._receiver_sparse_publisher: Optional[ReceiverSparsePublisher] = None
         self._receiver_foreground_compositor: Optional[HostForegroundCompositor] = None
@@ -3577,6 +3578,8 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                 ],
                 'first_frame_receipt': copy.deepcopy(self._canonical_host_full_receipt),
             }
+        if self._host_full_safe_idle is not None:
+            status['host_full_safe_idle'] = copy.deepcopy(self._host_full_safe_idle)
         receiver_status = self._receiver_hybrid_status_snapshot()
         if receiver_status is not None:
             status['receiver_hybrid'] = receiver_status

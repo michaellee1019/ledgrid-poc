@@ -358,7 +358,13 @@ def build_composer_operations_status(
         and (receiver_failure.get("clear_state") in ("pending", "failed")
              or receiver_failure.get("clear_error") is not None)
     )
-    if host_full_clear_unverified:
+    safe_idle = raw.get("host_full_safe_idle")
+    safe_idle = safe_idle if isinstance(safe_idle, Mapping) else {}
+    safe_idle_clear_unverified = bool(
+        raw.get("is_running") is False
+        and safe_idle.get("state") in ("pending", "failed")
+    )
+    if host_full_clear_unverified or safe_idle_clear_unverified:
         # Stopped playback is not proof of black pixels after a failed clear.
         observed_power = None
     receiver_playback = raw.get("receiver_hybrid")
@@ -385,7 +391,10 @@ def build_composer_operations_status(
         reconciliation_state = "diverged"
         reconciliation_reason = "The observed output identity does not match the activation receipt."
     elif phase == "active":
-        if host_full_failed_after_receipt:
+        if safe_idle_clear_unverified:
+            reconciliation_state = "diverged"
+            reconciliation_reason = "Host-full safe-idle black clearing is unverified."
+        elif host_full_failed_after_receipt:
             reconciliation_state = "diverged"
             reconciliation_reason = "A host-full runtime failure followed the active receipt."
         elif receiver_degraded or raw.get("mode") in ("degraded", "failed"):
@@ -415,10 +424,11 @@ def build_composer_operations_status(
     if freshness != "fresh" or session_id is None or state_revision is None:
         power_state = "stale"
         power_reason = "Output power needs a fresh revision-qualified controller observation."
-    elif host_full_clear_unverified and receiver_failure.get("clear_state") == "pending":
+    elif (host_full_clear_unverified and receiver_failure.get("clear_state") == "pending"
+          or safe_idle_clear_unverified and safe_idle.get("state") == "pending"):
         power_state = "pending"
-        power_reason = "Host-full playback failed; black clearing is unverified and physical output may remain lit."
-    elif host_full_clear_unverified:
+        power_reason = "Host-full black clearing is unverified and physical output may remain lit."
+    elif host_full_clear_unverified or safe_idle_clear_unverified:
         power_state = "failed"
         power_reason = "Host-full playback stopped, but black clearing was unverified; physical output may remain lit."
     elif phase in {"failed", "timed_out", "rolled_back"}:
@@ -504,7 +514,7 @@ def build_composer_operations_status(
     health_states = {receiver_state, performance_state}
     overall = (
         "unavailable" if freshness != "fresh"
-        else "degraded" if host_full_clear_unverified
+        else "degraded" if host_full_clear_unverified or safe_idle_clear_unverified
         else "degraded" if "degraded" in health_states
         else "healthy" if health_states <= {"healthy", "idle"}
         else "unknown"

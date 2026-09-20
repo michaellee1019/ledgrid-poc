@@ -22,22 +22,79 @@ from ipc.scene_contract import normalize_composer_scene
 
 
 class CanonicalReceiverSceneMixin:
-    def _clear_unverified_host_full_frame(self):
+    def _clear_unverified_host_full_frame(self, request_id=None):
         """Prove black on the pinned roster after a possibly accepted first send."""
         pixels = np.zeros((self.controller.total_leds, 3), dtype=np.uint8)
-        request_id = f"host-full-clear-{uuid.uuid4().hex}"
+        if request_id is None:
+            request_id = f"host-full-clear-{uuid.uuid4().hex}"
         with self._presentation_io_guard():
             receipt = self.controller.present_displayed_host_full_frame(request_id, pixels)
+        identities = getattr(self.controller, "receiver_identities", ())
+        displayed = receipt.get("displayed_receivers") if isinstance(receipt, dict) else None
         if (not isinstance(receipt, dict)
                 or receipt.get("request_id") != request_id
                 or receipt.get("frame_digest") != hashlib.sha256(pixels.tobytes()).hexdigest()
                 or receipt.get("authority_digest") != getattr(
                     self.controller, "receiver_identity_authority_digest", None
                 )
-                or {item.get("logical_device") for item in receipt.get("displayed_receivers", ())}
-                != set(range(5))):
+                or len(identities) != 5
+                or not isinstance(displayed, list)
+                or len(displayed) != 5
+                or any(
+                    not isinstance(item, dict)
+                    or item.get("logical_device") != index
+                    or item.get("spi_route") != list(identity.spi_route)
+                    or item.get("hardware_serial") != identity.hardware_serial
+                    or item.get("firmware_sha256") != identity.firmware_sha256
+                    or type(item.get("receiver_displayed_sequence")) is not int
+                    or not 0 <= item["receiver_displayed_sequence"] <= 0xFFFFFFFF
+                    for index, (item, identity) in enumerate(zip(displayed, identities))
+                )):
             raise RuntimeError("host-full black restoration proof is incomplete or misattributed")
         self._host_full_first_frame_uncertain = False
+        return receipt
+
+    def stop_canonical_host_full_to_safe_idle(self, activation_id, scene_digest, profile_digest):
+        """Stop HostFullScene and prove a fresh black frame before safe idle."""
+        canonical = getattr(self, "_canonical_receiver_scene", None)
+        prior_idle = getattr(self, "_host_full_safe_idle", None)
+        already_verified_idle = bool(
+            not self.is_running and isinstance(prior_idle, dict)
+            and prior_idle.get("state") == "verified"
+            and prior_idle.get("scene_digest") == scene_digest
+            and prior_idle.get("installation_profile_digest") == profile_digest
+        )
+        if (not already_verified_idle
+                and (not self.is_running or not self._canonical_host_full_mode
+                     or canonical is None or canonical.identity.digest != scene_digest)):
+            raise RuntimeError("host-full safe-idle source Scene/profile changed")
+        if self.get_current_status().get("installation_profile_digest") != profile_digest:
+            raise RuntimeError("host-full safe-idle source Scene/profile changed")
+        request_id = f"safe-idle-{activation_id}"
+        evidence = {
+            "state": "pending", "request_id": request_id,
+            "scene_digest": scene_digest,
+            "installation_profile_digest": profile_digest,
+        }
+        self._host_full_safe_idle = evidence
+        self._host_full_first_frame_uncertain = True
+        try:
+            if not already_verified_idle:
+                prior_thread = self.animation_thread
+                if (self.stop_animation(clear_leds=False) is False
+                        or (prior_thread is not None and prior_thread.is_alive())):
+                    raise RuntimeError("host-full output thread did not stop cleanly")
+            receipt = self._clear_unverified_host_full_frame(request_id)
+        except Exception as exc:
+            self._host_full_safe_idle = {**evidence, "state": "failed", "error": str(exc)}
+            self._receiver_last_failure = {
+                "operation": "host_full_safe_idle_failure",
+                "scene_digest": scene_digest, "error": str(exc),
+                "clear_state": "failed", "clear_error": str(exc),
+            }
+            raise
+        self._host_full_safe_idle = {**evidence, "state": "verified", "receipt": receipt}
+        return receipt
 
     def _host_full_sparkle_eligible(self, canonical):
         """Only the current opaque, widget-free Sparkle has a hidden base."""

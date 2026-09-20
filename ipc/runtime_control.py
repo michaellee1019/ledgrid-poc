@@ -436,6 +436,7 @@ class _ActivationRecord:
     publication_error: str | None = None
     historical: bool = False
     receiver_evidence_before: dict[str, Any] | None = None
+    host_full_safe_idle_required: bool = False
 
 
 class ControllerActivationCoordinator:
@@ -1532,6 +1533,47 @@ class ControllerActivationCoordinator:
             return None
         return {"host_full_request_id": request_id}
 
+    def _host_full_safe_idle_evidence(
+        self, status: Mapping[str, Any], activation_id: str,
+        scene: Mapping[str, Any], profile_digest: str,
+    ) -> bool:
+        """Require this Stop's exact displayed-black proof, not old playback."""
+        evidence = status.get("host_full_safe_idle")
+        controller = getattr(self.manager, "controller", None)
+        identities = getattr(controller, "receiver_identities", ())
+        receipt = evidence.get("receipt") if isinstance(evidence, Mapping) else None
+        displayed = receipt.get("displayed_receivers") if isinstance(receipt, Mapping) else None
+        request_id = f"safe-idle-{activation_id}"
+        total_leds = getattr(controller, "total_leds", None)
+        authority = getattr(controller, "receiver_identity_authority_digest", None)
+        if (status.get("is_running") is not False
+                or status.get("mode") != "idle"
+                or not isinstance(evidence, Mapping)
+                or evidence.get("state") != "verified"
+                or evidence.get("request_id") != request_id
+                or evidence.get("scene_digest") != _scene_digest(scene)
+                or evidence.get("installation_profile_digest") != profile_digest
+                or not isinstance(receipt, Mapping)
+                or receipt.get("request_id") != request_id
+                or type(total_leds) is not int or total_leds <= 0
+                or receipt.get("frame_digest") != hashlib.sha256(bytes(total_leds * 3)).hexdigest()
+                or not isinstance(authority, str)
+                or receipt.get("authority_digest") != authority
+                or len(identities) != 5
+                or not isinstance(displayed, list)
+                or len(displayed) != 5):
+            return False
+        return all(
+            isinstance(item, Mapping)
+            and item.get("logical_device") == index
+            and item.get("spi_route") == list(identity.spi_route)
+            and item.get("hardware_serial") == identity.hardware_serial
+            and item.get("firmware_sha256") == identity.firmware_sha256
+            and type(item.get("receiver_displayed_sequence")) is int
+            and 0 <= item["receiver_displayed_sequence"] <= 0xFFFFFFFF
+            for index, (item, identity) in enumerate(zip(displayed, identities))
+        )
+
     @staticmethod
     def _host_full_activation_evidence(
         status: Mapping[str, Any], scene: Mapping[str, Any],
@@ -1923,7 +1965,7 @@ class ControllerActivationCoordinator:
         activation_id: str,
         inject_faults: bool,
         receiver_profile_noop: bool = False,
-    ) -> None:
+    ) -> bool:
         def boundary(name: str) -> None:
             if inject_faults:
                 self._fault("applying", name, activation_id)
@@ -1952,12 +1994,40 @@ class ControllerActivationCoordinator:
                 )
             if not start_scene(self.manager, dict(scene)):
                 raise ControllerActivationError("manager rejected desired scene")
+            if hasattr(self.manager, "_host_full_safe_idle"):
+                self.manager._host_full_safe_idle = None
             self._selected_scene = _copy_json(scene)
+            host_full_safe_idle = False
         else:
+            current_status = self._manager_status()
+            host_full = current_status.get("host_full")
+            prior_safe_idle = current_status.get("host_full_safe_idle")
+            repeats_host_full_idle = bool(
+                current_status.get("is_running") is False
+                and isinstance(prior_safe_idle, Mapping)
+                and prior_safe_idle.get("state") == "verified"
+                and scene is not None
+                and prior_safe_idle.get("scene_digest") == _scene_digest(scene)
+                and prior_safe_idle.get("installation_profile_digest") == profile_digest
+                and self._current_scene(current_status) == scene
+            )
+            if (current_status.get("is_running") is True and isinstance(host_full, Mapping)) or repeats_host_full_idle:
+                if scene is None or (not repeats_host_full_idle
+                                     and host_full.get("scene_digest") != _scene_digest(scene)):
+                    raise ControllerActivationError("host-full Stop changed the selected Scene")
+                stopper = getattr(self.manager, "stop_canonical_host_full_to_safe_idle", None)
+                if not callable(stopper):
+                    raise ControllerActivationError("verified host-full safe-idle Stop is unavailable")
+                stopper(activation_id, _scene_digest(scene), profile_digest)
+                host_full_safe_idle = True
+            elif self.manager.stop_animation() is False:
+                raise ControllerActivationError("manager rejected desired safe idle")
+            else:
+                host_full_safe_idle = False
             self._selected_scene = None if scene is None else _copy_json(scene)
-            self.manager.stop_animation()
         boundary("scene")
         boundary("complete")
+        return host_full_safe_idle
 
     def _restore_receiver_profile_snapshot(
         self, snapshot: ControllerStateSnapshot
@@ -2043,7 +2113,12 @@ class ControllerActivationCoordinator:
             )
         ):
             return self._derive_active_identity(), False, True
-        if self._uses_receiver_runtime(scene):
+        if record.host_full_safe_idle_required:
+            complete = self._host_full_safe_idle_evidence(
+                status, record.command["activation_id"], scene, profile_digest
+            )
+            fresh = complete
+        elif self._uses_receiver_runtime(scene):
             evidence = self._receiver_activation_evidence(
                 status, scene, profile_digest,
                 next((item.get("expected_payload_digest") for item in record.command["basis"]["components"] if item["slot_id"] == "background"), None),
@@ -2237,7 +2312,7 @@ class ControllerActivationCoordinator:
                 self._check_cancelled(record)
                 self._set_phase(record, "applying")
                 mutation_started = True
-                self._apply_state(
+                record.host_full_safe_idle_required = self._apply_state(
                     scene,
                     globals_state,
                     profile,

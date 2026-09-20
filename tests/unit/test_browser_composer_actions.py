@@ -321,6 +321,22 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/v1/composer/operations/status").get_json()[
             "reconciliation"]["state"], "diverged")
 
+        stop_clearing = deepcopy(safe_idle)
+        stop_clearing["host_full_safe_idle"] = {
+            "state": "pending", "request_id": "safe-idle-stop-fixture",
+            "scene_digest": scene_digest,
+        }
+        self.channel.status = stop_clearing
+        clearing_status = self.client.get("/api/v1/composer/operations/status").get_json()
+        self.assertEqual(clearing_status["output_power"]["state"], "pending")
+        self.assertIsNone(clearing_status["output_power"]["observed"])
+        self.assertEqual(clearing_status["reconciliation"]["state"], "diverged")
+        stop_clearing["host_full_safe_idle"]["state"] = "failed"
+        self.channel.status = stop_clearing
+        failed_status = self.client.get("/api/v1/composer/operations/status").get_json()
+        self.assertEqual(failed_status["output_power"]["state"], "failed")
+        self.assertIsNone(failed_status["output_power"]["observed"])
+
         degraded = deepcopy(active)
         degraded["receiver_hybrid"] = {"operational": False, "degraded": True}
         self.channel.status = degraded

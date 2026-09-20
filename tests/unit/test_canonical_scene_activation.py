@@ -447,6 +447,123 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertGreaterEqual(failure['observed_at'], failure_started_at)
         self.controller.set_all_pixels = original_send
 
+    def test_checked_twilight_stop_requires_displayed_black_safe_idle(self):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        self.globals['output']['brightness'] = 0
+        _, _, running = self.activate(scene)
+        self.assertEqual(running['phase'], 'active', running)
+        self.assertTrue(self.manager.is_running)  # Brightness zero is not power off.
+        self.assertEqual(self.manager.output_brightness, 0)
+        self.globals['output']['power'] = False
+        _, _, stopped = self.activate(scene)
+        self.assertEqual(stopped['phase'], 'active', stopped)
+        self.assertFalse(self.manager.is_running)
+        status = self.channel.read_status()
+        evidence = status['host_full_safe_idle']
+        self.assertEqual(evidence['state'], 'verified')
+        self.assertEqual(evidence['request_id'], f"safe-idle-{stopped['activation_id']}")
+        self.assertEqual(evidence['scene_digest'], canonical_json_sha256(scene))
+        self.assertEqual(evidence['installation_profile_digest'], self.profile_digest)
+        self.assertEqual(len(evidence['receipt']['displayed_receivers']), 5)
+        self.assertTrue(any(op[0] == 'host_full_display_proof'
+                            and op[1] == evidence['request_id']
+                            and not np.any(op[2]) for op in self.controller.operations))
+        observed = self.client.get('/api/v1/composer/operations/status').get_json()
+        self.assertEqual(observed['reconciliation']['state'], 'current')
+        self.assertEqual(observed['output_power']['state'], 'off')
+        _, _, repeated = self.activate(scene)
+        self.assertEqual(repeated['phase'], 'active', repeated)
+        repeated_evidence = self.channel.read_status()['host_full_safe_idle']
+        self.assertEqual(repeated_evidence['request_id'],
+                         f"safe-idle-{repeated['activation_id']}")
+        self.assertNotEqual(repeated_evidence['request_id'], evidence['request_id'])
+
+    def test_checked_twilight_stop_black_failure_never_publishes_off_active(self):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        _, _, running = self.activate(scene)
+        self.assertEqual(running['phase'], 'active', running)
+        self.controller.host_full_clear_failure = True
+        self.globals['output']['power'] = False
+        _, _, stopped = self.activate(scene)
+        self.assertNotEqual(stopped['phase'], 'active', stopped)
+        self.assertIn('black display timeout', stopped['error'])
+        self.assertEqual(stopped['rollback']['result'], 'succeeded', stopped)
+        self.assertTrue(self.manager.is_running)
+        self.assertEqual(self.manager.get_scene_state(), scene)
+        self.assertEqual(self.channel.read_status()['receiver_last_failure']['operation'],
+                         'host_full_safe_idle_failure')
+        observed = self.client.get('/api/v1/composer/operations/status').get_json()
+        self.assertNotEqual(observed['output_power']['state'], 'off')
+        self.assertNotEqual(observed['reconciliation']['state'], 'current')
+
+    def test_checked_twilight_stop_rejects_misidentified_detached_receipt(self):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        _, _, running = self.activate(scene)
+        self.assertEqual(running['phase'], 'active', running)
+        original_status = self.manager.get_current_status
+
+        def misidentified_status():
+            status = original_status()
+            evidence = status.get('host_full_safe_idle')
+            if evidence is not None and evidence['state'] == 'verified':
+                evidence['receipt']['displayed_receivers'][3]['hardware_serial'] = 'wrong-receiver'
+            return status
+
+        self.manager.get_current_status = misidentified_status
+        self.globals['output']['power'] = False
+        _, _, stopped = self.activate(scene)
+        self.assertNotEqual(stopped['phase'], 'active', stopped)
+        self.assertIn('desired activation was not freshly observed', stopped['error'])
+        self.assertEqual(stopped['rollback']['result'], 'succeeded', stopped)
+
+    def test_checked_twilight_stop_failed_clear_and_restore_reports_degraded(self):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        _, _, running = self.activate(scene)
+        self.assertEqual(running['phase'], 'active', running)
+        original_present = self.controller.present_displayed_host_full_frame
+
+        def reject_restore(request_id, frame, **kwargs):
+            if request_id.startswith('scene-'):
+                raise RuntimeError('receiver 3 restore display timeout')
+            return original_present(request_id, frame, **kwargs)
+
+        self.controller.present_displayed_host_full_frame = reject_restore
+        self.controller.host_full_clear_failure = True
+        self.globals['output']['power'] = False
+        _, _, stopped = self.activate(scene)
+        self.assertEqual(stopped['phase'], 'failed', stopped)
+        self.assertEqual(stopped['rollback']['result'], 'failed', stopped)
+        self.assertFalse(self.manager.is_running)
+        observed = self.client.get('/api/v1/composer/operations/status').get_json()
+        self.assertEqual(observed['output_power']['state'], 'failed')
+        self.assertIsNone(observed['output_power']['observed'])
+        self.assertNotEqual(observed['reconciliation']['state'], 'current')
+
+    def test_native_sparse_power_off_keeps_its_receiver_observation_route(self):
+        _, _, running = self.activate(self.scene)
+        self.assertEqual(running['phase'], 'active', running)
+        coordinator = self.channel.activation_coordinator
+        original_evidence = coordinator._receiver_activation_evidence
+        receiver_observations = []
+
+        def observed_native(*args, **kwargs):
+            receiver_observations.append(True)
+            return original_evidence(*args, **kwargs)
+
+        coordinator._receiver_activation_evidence = observed_native
+        self.globals['output']['power'] = False
+        self.activate(self.scene)
+        self.assertTrue(receiver_observations)
+        self.assertNotIn('host_full_safe_idle', self.channel.read_status())
+
     def _assert_runtime_black_clear_status(self, *, clear_fails):
         scene = self.interface._composer_canonical({
             'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],

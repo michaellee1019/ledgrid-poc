@@ -735,6 +735,37 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
             status["observed_identity"],
         )
         self.assertIs(coordinator.controller_status()["selected_output_power"], False)
+        self.assertFalse(hasattr(manager, "_host_full_safe_idle"))
+
+    def test_powered_off_selection_from_idle_does_not_require_host_full_proof(self) -> None:
+        idle_globals = deepcopy(self.initial_globals)
+        idle_globals["output"]["power"] = False
+        manager = _FakeManager(self.catalog, None, idle_globals)
+        coordinator = ControllerActivationCoordinator(manager)
+        powered_off = deepcopy(self.desired_globals)
+        powered_off["output"]["power"] = False
+
+        status = coordinator.activate(self.command(
+            coordinator, globals_state=powered_off
+        ))
+
+        self.assertEqual(status["phase"], "active", status)
+        self.assertFalse(manager.is_running)
+        self.assertIs(coordinator.controller_status()["selected_output_power"], False)
+        self.assertFalse(hasattr(manager, "_host_full_safe_idle"))
+
+    def test_powered_off_activation_rejects_failed_manager_stop(self) -> None:
+        manager, coordinator = self.coordinator()
+        powered_off = deepcopy(self.desired_globals)
+        powered_off["output"]["power"] = False
+        with patch.object(manager, "stop_animation", return_value=False):
+            status = coordinator.activate(self.command(
+                coordinator, globals_state=powered_off
+            ))
+
+        self.assertNotEqual(status["phase"], "active")
+        self.assertIn("manager rejected desired safe idle", status["error"])
+        self.assertIsNot(coordinator.controller_status()["selected_output_power"], False)
 
     def test_guarded_legacy_mutation_rejects_stale_revision_and_expiry(self) -> None:
         manager, coordinator = self.coordinator()
