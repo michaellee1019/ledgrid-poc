@@ -570,6 +570,33 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         for before, after in zip(normalized, normalized[1:]):
             validate_scene_activation_status_transition(before, after)
 
+    def test_scene_switch_does_not_reapply_unchanged_brightness(self) -> None:
+        manager, coordinator = self.coordinator()
+        settings = deepcopy(self.desired_globals)
+        settings["output"]["brightness"] = manager.brightness
+        with patch.object(manager, "set_output_brightness", wraps=manager.set_output_brightness) as setter:
+            status = coordinator.activate(self.command(coordinator, globals_state=settings))
+        self.assertEqual(status["phase"], "active")
+        self.assertEqual(status["requested_identity"], status["observed_identity"])
+        setter.assert_not_called()
+
+    def test_scene_switch_applies_changed_brightness(self) -> None:
+        manager, coordinator = self.coordinator()
+        with patch.object(manager, "set_output_brightness", wraps=manager.set_output_brightness) as setter:
+            status = coordinator.activate(self.command(coordinator))
+        self.assertEqual(status["phase"], "active")
+        setter.assert_called_once_with(self.desired_globals["output"]["brightness"])
+        self.assertEqual(manager.brightness, self.desired_globals["output"]["brightness"])
+
+    def test_compensation_reasserts_brightness_even_when_manager_value_matches(self) -> None:
+        manager, coordinator = self.coordinator()
+        with patch.object(manager, "set_output_brightness", wraps=manager.set_output_brightness) as setter:
+            coordinator._apply_state(
+                self.initial_scene, self.initial_globals, manager.profile,
+                activation_id=str(uuid.uuid4()), inject_faults=False,
+            )
+        setter.assert_called_once_with(self.initial_globals["output"]["brightness"])
+
     def test_success_is_observed_before_active_and_advances_revision(self) -> None:
         history: list[dict] = []
         manager, coordinator = self.coordinator(status_sink=history.append)

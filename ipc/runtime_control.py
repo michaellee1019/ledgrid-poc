@@ -2059,6 +2059,7 @@ class ControllerActivationCoordinator:
         activation_id: str,
         inject_faults: bool,
         receiver_profile_noop: bool = False,
+        reapply_brightness: bool = True,
     ) -> bool:
         def boundary(name: str) -> None:
             if inject_faults:
@@ -2079,7 +2080,13 @@ class ControllerActivationCoordinator:
         boundary("animation_speed_scale")
         self.manager.set_target_fps(output["target_fps"])
         boundary("target_fps")
-        self.manager.set_output_brightness(output["brightness"])
+        current_brightness = self._manager_status().get("brightness")
+        # Prepared Scene changes keep the current output level. Rewriting it
+        # forces five serial receiver CONFIG acknowledgements. Compensation
+        # still reasserts brightness after any partially applied mutation.
+        if (reapply_brightness or type(current_brightness) is not int
+                or current_brightness != output["brightness"]):
+            self.manager.set_output_brightness(output["brightness"])
         boundary("brightness")
         if output["power"]:
             if scene is None:
@@ -2432,6 +2439,7 @@ class ControllerActivationCoordinator:
                     activation_id=activation_id,
                     inject_faults=True,
                     receiver_profile_noop=receiver_profile_noop,
+                    reapply_brightness=False,
                 )
                 self._set_phase(record, "observing")
                 observed = self._observe(
