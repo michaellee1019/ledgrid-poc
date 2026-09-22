@@ -35,7 +35,8 @@ generate-ai-ssh-key key_path=ai_ssh_key:
 deploy:
 	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --health-policy demo-degraded-receiver-3-fec
 
-# Production qualification retains fail-closed health, including receiver 3 FEC.
+# Production qualification retains exact display proof while recording accepted
+# receiver-3 CRC/FEC diagnostics without making them a demo blocker.
 deploy-strict:
 	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --health-policy strict
 
@@ -192,6 +193,17 @@ test-deployment:
 
 # Full local readiness gate.
 preflight: test
+
+# Fast local feedback for a Scene switch correction. The prepared .venv avoids
+# uv dependency resolution on every edit; use test-demo/full canonical coverage
+# once for a relevant deployment batch.
+test-scene-fast:
+	.venv/bin/python -m pytest -q \
+		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_christmas_tree_activates_without_loading_quarantined_hidden_background \
+		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_missing_checked_display_api_rejects_preflight_without_stopping_scene \
+		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_missing_or_wrong_receiver_receipt_rolls_back_exact_prior_state \
+		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_large_rollback_error_still_publishes_terminal_receipt \
+		tests/unit/test_receiver_reset_recovery.py
 
 # Product-demo gate: the accepted current Composer slice plus the deployment
 # path itself.  The broader `just test` aggregate remains available for

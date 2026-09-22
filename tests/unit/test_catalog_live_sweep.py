@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools.qualification.catalog_live_sweep import SweepError, run
+from tools.qualification.catalog_live_sweep import (
+    SweepError, _activate_after_revision_conflict, _counter_deltas, _digest,
+    _is_receiver_three_status_error, _representative_cases,
+    _wait_for_component, run,
+)
 
 
 PROFILE = "a" * 64
@@ -44,6 +51,235 @@ def _scene(component_id: str = "gradient") -> dict:
 
 
 class CatalogLiveSweepTests(unittest.TestCase):
+    def test_active_receipt_waits_for_telemetry_to_observe_new_component(self):
+        old = {"controller": {"current_animation": "christmas_tree"}}
+        new = {"controller": {"current_animation": "sparkle"}}
+        with (
+            patch("tools.qualification.catalog_live_sweep._request_json",
+                  side_effect=[old, new]) as request_json,
+            patch("tools.qualification.catalog_live_sweep.time.sleep"),
+        ):
+            self.assertEqual(
+                _wait_for_component("http://wall.invalid", "sparkle", timeout=5.0),
+                new,
+            )
+            self.assertEqual(request_json.call_count, 2)
+
+    def test_revision_conflict_rechecks_but_other_409_does_not(self):
+        settings = {"revision": 1}
+        conflict = SweepError(
+            'PUT /api/v1/scene returned 409: {"error":"controller state changed '
+            'after Check","code":"activation_conflict"}'
+        )
+        receipt = {"phase": "active"}
+        with (
+            patch("tools.qualification.catalog_live_sweep._settings_at_current_revision",
+                  side_effect=[{"revision": 2}, {"revision": 3}]),
+            patch("tools.qualification.catalog_live_sweep._activate",
+                  side_effect=[conflict, receipt]) as activate,
+        ):
+            self.assertEqual(
+                _activate_after_revision_conflict(
+                    "http://wall.invalid", {"scene": "saved"}, settings,
+                    timeout=5.0,
+                ),
+                receipt,
+            )
+            self.assertEqual(activate.call_args_list[0].args[2]["revision"], 2)
+            self.assertEqual(activate.call_args_list[1].args[2]["revision"], 3)
+        with (
+            patch("tools.qualification.catalog_live_sweep._settings_at_current_revision",
+                  return_value={"revision": 2}),
+            patch("tools.qualification.catalog_live_sweep._activate",
+                  side_effect=SweepError("PUT /api/v1/scene returned 409: wrong identity"))
+                  as activate,
+        ):
+            with self.assertRaisesRegex(SweepError, "wrong identity"):
+                _activate_after_revision_conflict(
+                    "http://wall.invalid", {"scene": "saved"}, settings,
+                    timeout=5.0,
+                )
+            self.assertEqual(activate.call_count, 1)
+
+    def test_representative_cases_keep_opaque_composed_and_saved_look(self):
+        cases = [
+            {"case_id": "default:conway_life", "kind": "default"},
+            {"case_id": "preset:sparkle:quiet", "kind": "preset"},
+            {"case_id": "default:sparkle", "kind": "default"},
+            {"case_id": "look:kept", "kind": "look"},
+        ]
+        self.assertEqual(
+            [case["case_id"] for case in _representative_cases(cases)],
+            ["default:sparkle", "default:conway_life", "look:kept"],
+        )
+        del cases[-1]
+        with self.assertRaisesRegex(SweepError, "saved Look"):
+            _representative_cases(cases)
+
+    def test_accepted_receiver_three_status_noise_remains_visible(self):
+        deltas, failures = _counter_deltas(
+            {3: {"receiver_status_misses": 2}, 2: {"receiver_status_misses": 0}},
+            {3: {"receiver_status_misses": 5}, 2: {"receiver_status_misses": 0}},
+        )
+        self.assertEqual(deltas, {"receiver_3.receiver_status_misses": 3})
+        self.assertEqual(failures, [])
+        self.assertTrue(_is_receiver_three_status_error(
+            "receiver 3 lacks intact protected-v8 display status"
+        ))
+        self.assertFalse(_is_receiver_three_status_error(
+            "receiver 2 lacks intact protected-v8 display status"
+        ))
+
+    def test_interrupt_checkpoint_resumes_only_exact_release_and_starting_scene(self):
+        original = _scene()
+        observation = {
+            "is_running": True,
+            "installation_profile_digest": PROFILE,
+            "active_identity": {
+                "scene_identity": {"revision": 2, "digest": _digest(original)},
+                "global_settings_identity": {"revision": 7},
+            },
+            "vibe": {"state": {
+                "vibe_id": "neutral", "profile_version": 1,
+                "resolved_profile_digest": "e" * 64,
+            }},
+            "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+            "brightness": 128, "animation_speed_scale": .3, "target_fps": 30,
+        }
+        cases = [
+            {"case_id": "default:gradient", "kind": "default",
+             "component_id": "gradient", "scene": original},
+            {"case_id": "preset:gradient:quiet", "kind": "preset",
+             "component_id": "gradient", "scene": original},
+        ]
+        envelopes = [
+            {"case": "first", "components": [{}, {"component_digest": "b" * 64}]},
+            {"case": "second"}, {"case": "original"},
+        ]
+        release = ["release-one"]
+        activated_cases = []
+
+        def request_json(_base, path, *, method="GET", payload=None, headers=None):
+            if path == "/api/v1/composer/bootstrap":
+                return {"components": []}
+            if path == "/api/v1/composer/settings/observed":
+                return deepcopy(observation)
+            if path == "/api/v1/scene":
+                return {"scene": deepcopy(original)}
+            if path.endswith("/gradient/presets"):
+                return {"presets": []}
+            if path == "/api/composer/starters":
+                return {"starters": []}
+            if path == "/api/composer/looks":
+                return {"looks": []}
+            if path == "/api/v1/scene/checks":
+                raise SweepError(
+                    "POST /api/v1/scene/checks returned 400: canonical browser "
+                    "scene animation managed identity is stale"
+                )
+            if path == "/api/v1/composer/operations/telemetry":
+                return {
+                    "controller": {"release_id": release[0],
+                                   "release_consistent": True,
+                                   "current_animation": "gradient"},
+                    "diagnostics": {"driver_stats": {"devices": []}},
+                }
+            raise AssertionError((method, path, payload, headers))
+
+        def activate(_base, candidate, _settings, *, timeout):
+            if candidate["case"] != "original":
+                activated_cases.append(candidate["case"])
+            identity = {"scene_identity": {"digest": _digest(original)}}
+            return {
+                "activation_id": candidate["case"], "phase": "active",
+                "requested_identity": identity, "observed_identity": identity,
+            }
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("tools.qualification.catalog_live_sweep._request_json",
+                  side_effect=request_json),
+            patch("tools.qualification.catalog_live_sweep.animation_components",
+                  return_value=[{"plugin_id": "gradient",
+                                 "parameter_schema": {"seed": {}}}]),
+            patch("tools.qualification.catalog_live_sweep.catalog_cases",
+                  return_value=cases),
+            patch("tools.qualification.catalog_live_sweep.browser_scene_requests",
+                  return_value=envelopes),
+            patch("tools.qualification.catalog_live_sweep._activate",
+                  side_effect=activate),
+            patch("tools.qualification.catalog_live_sweep.time.sleep"),
+        ):
+            checkpoint = Path(directory) / "sweep.json"
+            first = run(
+                "http://wall.invalid", hold=.25, timeout=5.0,
+                physical_wall_authorized=True, checkpoint_path=checkpoint,
+                should_stop=lambda: len(activated_cases) == 1,
+            )
+            self.assertFalse(first["passed"])
+            self.assertEqual(first["passed_count"], 1)
+            self.assertGreaterEqual(first["results"][0]["check_to_display_seconds"], 0)
+            self.assertTrue(json.loads(checkpoint.read_text())["restored"])
+            second = run(
+                "http://wall.invalid", hold=.25, timeout=5.0,
+                physical_wall_authorized=True, checkpoint_path=checkpoint,
+                resume=True,
+            )
+            self.assertTrue(second["passed"])
+            self.assertEqual(second["resumed_count"], 1)
+            self.assertEqual(activated_cases, ["first", "second"])
+            self.assertEqual(len(json.loads(checkpoint.read_text())["results"]), 2)
+            accepted_checkpoint = checkpoint.read_text()
+            saved = json.loads(accepted_checkpoint)
+            del saved["results"][0]["requested_identity"]
+            del saved["results"][0]["observed_identity"]
+            checkpoint.write_text(json.dumps(saved))
+            with self.assertRaisesRegex(SweepError, "invalid completed-case prefix"):
+                run(
+                    "http://wall.invalid", hold=.25, timeout=5.0,
+                    physical_wall_authorized=True, checkpoint_path=checkpoint,
+                    resume=True,
+                )
+            checkpoint.write_text(accepted_checkpoint)
+            observation["installation_profile_digest"] = "f" * 64
+            with self.assertRaisesRegex(SweepError, "does not match this release"):
+                run(
+                    "http://wall.invalid", hold=.25, timeout=5.0,
+                    physical_wall_authorized=True, checkpoint_path=checkpoint,
+                    resume=True,
+                )
+            observation["installation_profile_digest"] = PROFILE
+            with self.assertRaisesRegex(SweepError, "does not match this release"):
+                run(
+                    "http://wall.invalid", hold=2.25, timeout=5.0,
+                    physical_wall_authorized=True, checkpoint_path=checkpoint,
+                    resume=True,
+                )
+            release[0] = "release-two"
+            with self.assertRaisesRegex(SweepError, "does not match this release"):
+                run(
+                    "http://wall.invalid", hold=.25, timeout=5.0,
+                    physical_wall_authorized=True, checkpoint_path=checkpoint,
+                    resume=True,
+                )
+            release[0] = "release-one"
+            observation["active_identity"]["scene_identity"]["digest"] = "0" * 64
+            with self.assertRaisesRegex(SweepError, "differs from the starting Scene"):
+                run(
+                    "http://wall.invalid", hold=.25, timeout=5.0,
+                    physical_wall_authorized=True, checkpoint_path=checkpoint,
+                    resume=True,
+                )
+            observation["active_identity"]["scene_identity"]["digest"] = _digest(original)
+            cases[1]["case_id"] = "preset:gradient:changed"
+            with self.assertRaisesRegex(SweepError, "does not match this release"):
+                run(
+                    "http://wall.invalid", hold=.25, timeout=5.0,
+                    physical_wall_authorized=True, checkpoint_path=checkpoint,
+                    resume=True,
+                )
+            self.assertEqual(activated_cases, ["first", "second"])
+
     def test_physical_run_requires_separate_authorization_before_network_access(self):
         with patch(
             "tools.qualification.catalog_live_sweep._request_json"
@@ -191,6 +427,13 @@ class CatalogLiveSweepTests(unittest.TestCase):
                 "tools.qualification.catalog_live_sweep._activate",
                 side_effect=[candidate_receipt, restored_receipt],
             ) as activate,
+            patch(
+                "tools.qualification.catalog_live_sweep._wait_for_component",
+                side_effect=[
+                    SweepError("telemetry did not observe active gradient"),
+                    {"controller": {"current_animation": "gradient"}},
+                ],
+            ),
             patch("tools.qualification.catalog_live_sweep.time.sleep"),
         ):
             summary = run(
@@ -199,7 +442,7 @@ class CatalogLiveSweepTests(unittest.TestCase):
             )
 
         self.assertFalse(summary["passed"])
-        self.assertIn("telemetry reports", summary["failure"])
+        self.assertIn("telemetry did not observe active", summary["failure"])
         self.assertIsNone(summary["restore_error"])
         self.assertEqual(summary["restored_component"], "gradient")
         self.assertEqual(build_requests.call_args.args[2][-1], original)

@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+import hashlib
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
+import tempfile
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -40,10 +44,142 @@ KNOWN_RECEIVER_COUNTERS = (
     "receiver_fec_semantic_crc_errors",
     "receiver_fec_framing_errors",
 )
+RETRYABLE_RECEIVER_STATUS_ERROR = "receiver 3 lacks intact protected-v8 display status"
 
 
 class SweepError(RuntimeError):
     pass
+
+
+class ActivationTerminalError(SweepError):
+    def __init__(self, receipt: Mapping[str, Any]):
+        self.receipt = dict(receipt)
+        super().__init__(
+            f"activation {receipt.get('activation_id')} ended in "
+            f"{receipt.get('phase')}: {receipt.get('error')}"
+        )
+
+
+def _is_receiver_three_status_error(error: Any) -> bool:
+    return (isinstance(error, str)
+            and RETRYABLE_RECEIVER_STATUS_ERROR in error)
+
+
+def _is_pre_activation_revision_conflict(error: Exception) -> bool:
+    return (type(error) is SweepError
+            and "PUT /api/v1/scene returned 409:" in str(error)
+            and '"code":"activation_conflict"' in str(error)
+            and "controller state changed after Check" in str(error))
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")).hexdigest()
+
+
+def _write_checkpoint(path: Path, value: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (json.dumps(value, sort_keys=True, indent=2, allow_nan=False) + "\n").encode()
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _representative_cases(cases: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    by_id = {case["case_id"]: case for case in cases}
+    try:
+        opaque = by_id["default:sparkle"]
+        composed = by_id["default:conway_life"]
+        saved = next(case for case in cases if case["kind"] == "look")
+    except (KeyError, StopIteration) as exc:
+        raise SweepError(
+            "representative qualification needs Sparkle, Conway Life, and a saved Look"
+        ) from exc
+    return [deepcopy(case) for case in (opaque, composed, saved)]
+
+
+def _checkpoint_basis(
+    *, release_id: str, cases: Sequence[Mapping[str, Any]],
+    browser_scenes: Sequence[Mapping[str, Any]],
+    original_scene: Mapping[str, Any], settings: Mapping[str, Any],
+    installation_profile_digest: str, mode: str, hold: float, timeout: float,
+) -> dict[str, Any]:
+    return {
+        "schema": "ledgrid.catalog-sweep-checkpoint",
+        "schema_version": 2,
+        "mode": mode,
+        "release_id": release_id,
+        "catalog_digest": _digest(cases),
+        "browser_scenes_digest": _digest(browser_scenes),
+        "browser_builder_digest": hashlib.sha256(COMPOSER_JS.read_bytes()).hexdigest(),
+        "installation_profile_digest": installation_profile_digest,
+        "hold_seconds": hold,
+        "activation_timeout_seconds": timeout,
+        "starting_scene_digest": _digest(original_scene),
+        "starting_scene": deepcopy(original_scene),
+        "starting_settings": {key: deepcopy(value) for key, value in settings.items()
+                              if key != "revision"},
+    }
+
+
+def _load_checkpoint(
+    path: Path, *, basis: Mapping[str, Any],
+    cases: Sequence[Mapping[str, Any]],
+    browser_scenes: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SweepError("catalog checkpoint is missing or unreadable") from exc
+    if not isinstance(saved, dict) or any(saved.get(key) != value
+                                             for key, value in basis.items()):
+        raise SweepError("catalog checkpoint does not match this release, catalog, and starting Scene")
+    results = saved.get("results")
+    if (not isinstance(results, list) or len(results) > len(cases)
+            or any(not _valid_checkpoint_result(result, case, candidate)
+                   for result, case, candidate in zip(
+                       results, cases, browser_scenes, strict=False
+                   ))):
+        raise SweepError("catalog checkpoint has an invalid completed-case prefix")
+    return results
+
+
+def _valid_checkpoint_result(
+    result: Any, case: Mapping[str, Any], candidate: Mapping[str, Any],
+) -> bool:
+    if not isinstance(result, dict):
+        return False
+    requested = result.get("requested_identity")
+    observed = result.get("observed_identity")
+    if (result.get("case_id") != case["case_id"]
+            or result.get("phase") != "active"
+            or not isinstance(result.get("activation_id"), str)
+            or not result["activation_id"]
+            or result.get("candidate_digest") != _digest(candidate)
+            or not isinstance(requested, dict)
+            or requested != observed):
+        return False
+    scene_identity = requested.get("scene_identity")
+    return (isinstance(scene_identity, dict)
+            and isinstance(scene_identity.get("digest"), str)
+            and len(scene_identity["digest"]) == 64
+            and all(character in "0123456789abcdef"
+                    for character in scene_identity["digest"])
+            and isinstance(result.get("recoverable_failures"), list))
 
 
 def animation_components(bootstrap: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -272,6 +408,7 @@ def _activate(
     *,
     timeout: float,
 ) -> dict[str, Any]:
+    check_started = time.monotonic()
     checked = _request_json(
         base_url,
         "/api/v1/scene/checks",
@@ -305,11 +442,12 @@ def _activate(
         phase = receipt.get("phase")
         if phase in TERMINAL_PHASES:
             if phase != "active":
-                raise SweepError(
-                    f"activation {activation_id} ended in {phase}: {receipt.get('error')}"
-                )
+                raise ActivationTerminalError(receipt)
             if receipt.get("requested_identity") != receipt.get("observed_identity"):
                 raise SweepError("active receipt did not observe the requested identity")
+            receipt["_check_to_display_seconds"] = round(
+                time.monotonic() - check_started, 2
+            )
             return receipt
         time.sleep(0.2)
     raise SweepError(f"activation {activation_id} did not settle within {timeout:.1f}s")
@@ -346,7 +484,9 @@ def _counter_deltas(
                 # the scene failed to activate or display.  Preserve every
                 # delta for the follow-up rate sweep; only presentation-path
                 # failures stop catalog qualification.
-                if name in HARD_COUNTERS:
+                if name in HARD_COUNTERS and not (
+                    receiver == 3 and name == "receiver_status_misses"
+                ):
                     failures.append(f"receiver {receiver} {name} increased by {delta}")
     return deltas, failures
 
@@ -365,15 +505,39 @@ def _wait_for_component(
         if telemetry.get("controller", {}).get("current_animation") == component_id:
             return telemetry
         time.sleep(0.2)
-    raise SweepError(f"telemetry did not observe restored {component_id!r}")
+    raise SweepError(f"telemetry did not observe active {component_id!r}")
+
+
+def _activate_after_revision_conflict(
+    base_url: str, scene: Mapping[str, Any], captured_settings: Mapping[str, Any],
+    *, timeout: float,
+) -> dict[str, Any]:
+    """Retry a pre-activation revision conflict with a fresh Check and settings revision."""
+    for attempt in range(3):
+        try:
+            return _activate(
+                base_url, scene,
+                _settings_at_current_revision(base_url, captured_settings),
+                timeout=timeout,
+            )
+        except SweepError as exc:
+            if attempt == 2 or not _is_pre_activation_revision_conflict(exc):
+                raise
+    raise AssertionError("unreachable")
 
 
 def run(
     base_url: str, *, hold: float, timeout: float,
     physical_wall_authorized: bool = False,
+    mode: str = "full", checkpoint_path: Path | None = None,
+    resume: bool = False, should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     if not physical_wall_authorized:
         raise SweepError("physical-wall authorization is required before activation")
+    if mode not in {"full", "representative"}:
+        raise ValueError("catalog sweep mode must be full or representative")
+    if resume and checkpoint_path is None:
+        raise SweepError("resuming requires a catalog checkpoint path")
     bootstrap = _request_json(base_url, "/api/v1/composer/bootstrap")
     animations = animation_components(bootstrap)
     observation = _request_json(base_url, "/api/v1/composer/settings/observed")
@@ -423,14 +587,51 @@ def run(
         starters=starters,
         looks=looks,
     )
+    if mode == "representative":
+        cases = _representative_cases(cases)
     browser_scenes = browser_scene_requests(
         bootstrap, observation, [case["scene"] for case in cases] + [original_scene]
     )
     original_browser_scene = browser_scenes[-1]
-    baseline = _device_counters(
-        _request_json(base_url, "/api/v1/composer/operations/telemetry")
+    initial_telemetry = _request_json(
+        base_url, "/api/v1/composer/operations/telemetry"
     )
+    baseline = _device_counters(initial_telemetry)
     results: list[dict[str, Any]] = []
+    resumed_count = 0
+    checkpoint_basis = None
+    if checkpoint_path is not None:
+        controller_status = initial_telemetry.get("controller") or {}
+        release_id = controller_status.get("release_id")
+        if not isinstance(release_id, str) or not release_id:
+            raise SweepError("catalog checkpoint needs an installed release identity")
+        if controller_status.get("release_consistent") is not True:
+            raise SweepError("catalog checkpoint needs a release-consistent controller")
+        observed_scene_digest = ((observation.get("active_identity") or {})
+                                 .get("scene_identity") or {}).get("digest")
+        if observed_scene_digest != _digest(original_scene):
+            raise SweepError("current displayed Scene identity differs from the starting Scene")
+        installation_profile_digest = observation.get("installation_profile_digest")
+        if (not isinstance(installation_profile_digest, str)
+                or len(installation_profile_digest) != 64):
+            raise SweepError("catalog checkpoint needs an installed profile identity")
+        checkpoint_basis = _checkpoint_basis(
+            release_id=release_id, cases=cases, browser_scenes=browser_scenes,
+            original_scene=original_scene, settings=settings,
+            installation_profile_digest=installation_profile_digest,
+            mode=mode, hold=hold, timeout=timeout,
+        )
+        if resume:
+            results = _load_checkpoint(
+                checkpoint_path, basis=checkpoint_basis, cases=cases,
+                browser_scenes=browser_scenes,
+            )
+            resumed_count = len(results)
+        elif checkpoint_path.exists():
+            raise SweepError("catalog checkpoint already exists; resume or choose a new path")
+        _write_checkpoint(checkpoint_path, {
+            **checkpoint_basis, "results": results, "restored": False,
+        })
     failure: str | None = None
     rejection: dict[str, Any] | None = None
     restore_error = None
@@ -461,15 +662,47 @@ def run(
             component["plugin_id"]: component["parameter_schema"]
             for component in animations
         }
-        for case, candidate in zip(cases, browser_scenes[:-1], strict=True):
+        for case, candidate in zip(cases[len(results):],
+                                   browser_scenes[len(results):-1], strict=True):
+            if should_stop is not None and should_stop():
+                failure = "operator interrupted catalog sweep before the next case"
+                break
             started = time.monotonic()
-            current_settings = _settings_at_current_revision(base_url, settings)
-            receipt = _activate(
-                base_url, candidate, current_settings, timeout=timeout
+            prior_identity = (_request_json(
+                base_url, "/api/v1/composer/settings/observed"
+            ).get("active_identity"))
+            recoverable_failures = []
+            activation_started = time.monotonic()
+            try:
+                receipt = _activate_after_revision_conflict(
+                    base_url, candidate, settings, timeout=timeout
+                )
+            except ActivationTerminalError as exc:
+                failed = exc.receipt
+                if not (
+                    failed.get("phase") == "rolled_back"
+                    and failed.get("rollback", {}).get("result") == "succeeded"
+                    and failed.get("telemetry", {}).get("complete") is True
+                    and failed.get("telemetry", {}).get("fresh") is True
+                    and failed.get("observed_identity") == prior_identity
+                    and _is_receiver_three_status_error(failed.get("error"))
+                ):
+                    raise
+                recoverable_failures.append({
+                    "activation_id": failed.get("activation_id"),
+                    "phase": failed.get("phase"),
+                    "error": failed.get("error"),
+                })
+                receipt = _activate_after_revision_conflict(
+                    base_url, candidate, settings, timeout=timeout,
+                )
+            check_to_display_seconds = receipt.get(
+                "_check_to_display_seconds",
+                round(time.monotonic() - activation_started, 2),
             )
             time.sleep(hold)
-            telemetry = _request_json(
-                base_url, "/api/v1/composer/operations/telemetry"
+            telemetry = _wait_for_component(
+                base_url, case["component_id"], timeout=timeout,
             )
             controller = telemetry.get("controller") or {}
             performance = (telemetry.get("diagnostics") or {}).get("performance") or {}
@@ -488,6 +721,7 @@ def run(
                 "kind": case["kind"],
                 "component_id": case["component_id"],
                 "activation_id": receipt["activation_id"],
+                "candidate_digest": _digest(candidate),
                 "phase": receipt["phase"],
                 "requested_identity": receipt["requested_identity"],
                 "observed_identity": receipt["observed_identity"],
@@ -498,18 +732,38 @@ def run(
                 "p95_frame_ms": round(float(performance.get("p95_frame_ms", 0.0)), 3),
                 "deadline_miss_ratio": round(float(performance.get("deadline_miss_ratio", 0.0)), 4),
                 "known_receiver_deltas": deltas,
+                "check_to_display_seconds": check_to_display_seconds,
                 "elapsed_seconds": round(time.monotonic() - started, 2),
+                "recoverable_failures": recoverable_failures,
             }
             results.append(result)
+            if checkpoint_path is not None:
+                _write_checkpoint(checkpoint_path, {
+                    **checkpoint_basis, "results": results, "restored": False,
+                })
             print(json.dumps(result, sort_keys=True), flush=True)
     except Exception as exc:
         failure = f"{type(exc).__name__}: {exc}"
     finally:
         try:
-            restore_settings = _settings_at_current_revision(base_url, settings)
-            restored = _activate(
-                base_url, original_browser_scene, restore_settings, timeout=timeout
-            )
+            for restore_attempt in range(3):
+                try:
+                    restored = _activate_after_revision_conflict(
+                        base_url, original_browser_scene, settings, timeout=timeout,
+                    )
+                    break
+                except ActivationTerminalError as exc:
+                    prior = exc.receipt
+                    if (restore_attempt == 2
+                            or not _is_receiver_three_status_error(prior.get("error"))
+                            or not (
+                                prior.get("phase") == "rolled_back"
+                                and prior.get("rollback", {}).get("result") == "succeeded"
+                                or prior.get("phase") == "failed"
+                                and prior.get("rollback", {}).get("available") is False
+                                and prior.get("controller", {}).get("state_revision_after") is None
+                            )):
+                        raise
             if restored.get("requested_identity") != restored.get("observed_identity"):
                 raise SweepError("restored receipt identity mismatch")
             final_telemetry = _wait_for_component(
@@ -519,6 +773,11 @@ def run(
             )
         except Exception as exc:
             restore_error = f"{type(exc).__name__}: {exc}"
+        if checkpoint_path is not None:
+            _write_checkpoint(checkpoint_path, {
+                **checkpoint_basis, "results": results,
+                "restored": restore_error is None,
+            })
     if final_telemetry is None:
         final_telemetry = _request_json(
             base_url, "/api/v1/composer/operations/telemetry"
@@ -536,6 +795,8 @@ def run(
         "starter_count": len(starters),
         "look_count": len(looks),
         "catalog_count": len(cases),
+        "mode": mode,
+        "resumed_count": resumed_count,
         "passed_count": len(results),
         "truthful_rejection": rejection,
         "passed": (
@@ -553,6 +814,13 @@ def run(
         "receiver_counter_deltas": final_deltas,
         "receiver_counter_failures": final_counter_failures,
         "results": results,
+        "recoverable_failures": [
+            {"case_id": result["case_id"], **failure}
+            for result in results for failure in result["recoverable_failures"]
+        ],
+        "recoverable_failure_count": sum(
+            len(result["recoverable_failures"]) for result in results
+        ),
     }
     return summary
 
@@ -607,6 +875,9 @@ def main() -> None:
     )
     parser.add_argument("--hold", type=float, default=2.25)
     parser.add_argument("--activation-timeout", type=float, default=30.0)
+    parser.add_argument("--mode", choices=("full", "representative"), default="full")
+    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--physical-wall-authorized", action="store_true",
@@ -614,6 +885,8 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.base_url is None:
+        if args.mode != "full" or args.resume or args.checkpoint is not None:
+            parser.error("representative and resumable sweeps require --base-url")
         summary = run_local()
         if args.output is not None:
             args.output.write_text(
@@ -636,12 +909,32 @@ def main() -> None:
             "this command changes physical wall output; pass "
             "--physical-wall-authorized only with explicit authorization"
         )
-    summary = run(
-        args.base_url,
-        hold=max(0.25, args.hold),
-        timeout=max(5.0, args.activation_timeout),
-        physical_wall_authorized=True,
-    )
+    checkpoint_path = args.checkpoint
+    if checkpoint_path is None and args.mode == "full":
+        checkpoint_path = (
+            args.output.with_suffix(".checkpoint.json") if args.output
+            else PROJECT_ROOT / "run_state" / "catalog_live_sweep.checkpoint.json"
+        )
+    stop_requested = False
+
+    def request_stop(_signal_number, _frame):
+        nonlocal stop_requested
+        stop_requested = True
+
+    old_interrupt = signal.signal(signal.SIGINT, request_stop)
+    old_termination = signal.signal(signal.SIGTERM, request_stop)
+    try:
+        summary = run(
+            args.base_url,
+            hold=max(0.25, args.hold),
+            timeout=max(5.0, args.activation_timeout),
+            physical_wall_authorized=True,
+            mode=args.mode, checkpoint_path=checkpoint_path, resume=args.resume,
+            should_stop=lambda: stop_requested,
+        )
+    finally:
+        signal.signal(signal.SIGINT, old_interrupt)
+        signal.signal(signal.SIGTERM, old_termination)
     if args.output is not None:
         args.output.write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n",
@@ -650,7 +943,8 @@ def main() -> None:
     print("CATALOG_LIVE_SWEEP_SUMMARY=" + json.dumps({
         key: summary[key] for key in (
             "animation_count", "preset_count", "starter_count", "look_count",
-            "catalog_count", "passed_count", "passed", "failure",
+            "catalog_count", "passed_count", "mode", "resumed_count",
+            "recoverable_failure_count", "passed", "failure",
             "restore_error", "restored_component", "receiver_counter_deltas",
             "receiver_counter_failures",
         )
