@@ -2870,10 +2870,21 @@ class MultiDeviceLEDController:
     def set_brightness(self, brightness: int):
         """Set global brightness on all devices"""
         with self._controller_lock():
+            # A failed serial update may leave mixed physical levels even when
+            # the manager still reports the previous value. Never reuse it.
+            self._applied_brightness = None
             self.current_brightness = brightness
             for device in self.devices:
                 device.set_brightness(brightness)
-    
+            self._applied_brightness = brightness
+
+    def brightness_is_applied(self, brightness: int) -> bool:
+        """Whether the last whole-wall brightness write completed at this level."""
+        with self._controller_lock():
+            return (type(brightness) is int
+                    and getattr(self, "_applied_brightness", None) == brightness
+                    and self.current_brightness == brightness)
+
     def set_lane_mask(self, lane_mask: int):
         """Apply the same diagnostic lane mask to every device."""
         for device in self.devices:

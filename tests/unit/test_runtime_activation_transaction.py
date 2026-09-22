@@ -574,11 +574,67 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         manager, coordinator = self.coordinator()
         settings = deepcopy(self.desired_globals)
         settings["output"]["brightness"] = manager.brightness
+        manager.controller = SimpleNamespace(
+            brightness_is_applied=lambda level: level == manager.brightness,
+        )
         with patch.object(manager, "set_output_brightness", wraps=manager.set_output_brightness) as setter:
             status = coordinator.activate(self.command(coordinator, globals_state=settings))
         self.assertEqual(status["phase"], "active")
         self.assertEqual(status["requested_identity"], status["observed_identity"])
         setter.assert_not_called()
+
+    def test_scene_switch_repairs_partial_brightness_command(self) -> None:
+        from drivers.multi_device import MultiDeviceLEDController
+
+        manager, coordinator = self.coordinator()
+        initial = manager.brightness
+        wall = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
+        wall.current_brightness = initial
+        wall.devices = []
+        for index in range(5):
+            device = SimpleNamespace(brightness=initial, fail=False)
+            def apply(level, device=device):
+                if device.fail:
+                    raise RuntimeError("receiver CONFIG failed")
+                device.brightness = level
+            device.set_brightness = apply
+            wall.devices.append(device)
+        manager.controller = SimpleNamespace(
+            brightness_is_applied=wall.brightness_is_applied,
+        )
+        original_setter = manager.set_output_brightness
+        def set_brightness(level):
+            wall.set_brightness(level)
+            return original_setter(level)
+        manager.set_output_brightness = set_brightness
+        set_brightness(initial)
+        wall.devices[3].fail = True
+        with self.assertRaisesRegex(RuntimeError, "CONFIG failed"):
+            set_brightness(255)
+        self.assertEqual(manager.brightness, initial)
+        self.assertEqual([d.brightness for d in wall.devices], [255] * 3 + [initial] * 2)
+        # Even another failed attempt at the old level must remain uncertain.
+        with self.assertRaisesRegex(RuntimeError, "CONFIG failed"):
+            set_brightness(initial)
+        self.assertFalse(wall.brightness_is_applied(initial))
+        wall.devices[3].fail = False
+        settings = deepcopy(self.desired_globals)
+        settings["output"]["brightness"] = initial
+        with patch.object(manager, "set_output_brightness", wraps=set_brightness) as setter:
+            status = coordinator.activate(self.command(coordinator, globals_state=settings))
+        self.assertEqual(status["phase"], "active")
+        setter.assert_called_once_with(initial)
+        self.assertEqual([d.brightness for d in wall.devices], [initial] * 5)
+        self.assertTrue(wall.brightness_is_applied(initial))
+
+    def test_scene_switch_reapplies_brightness_without_success_proof(self) -> None:
+        manager, coordinator = self.coordinator()
+        settings = deepcopy(self.desired_globals)
+        settings["output"]["brightness"] = manager.brightness
+        with patch.object(manager, "set_output_brightness", wraps=manager.set_output_brightness) as setter:
+            status = coordinator.activate(self.command(coordinator, globals_state=settings))
+        self.assertEqual(status["phase"], "active")
+        setter.assert_called_once_with(manager.brightness)
 
     def test_scene_switch_applies_changed_brightness(self) -> None:
         manager, coordinator = self.coordinator()

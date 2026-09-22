@@ -2084,8 +2084,13 @@ class ControllerActivationCoordinator:
         # Prepared Scene changes keep the current output level. Rewriting it
         # forces five serial receiver CONFIG acknowledgements. Compensation
         # still reasserts brightness after any partially applied mutation.
+        brightness_is_applied = getattr(
+            getattr(self.manager, "controller", None), "brightness_is_applied", None
+        )
         if (reapply_brightness or type(current_brightness) is not int
-                or current_brightness != output["brightness"]):
+                or current_brightness != output["brightness"]
+                or not callable(brightness_is_applied)
+                or brightness_is_applied(output["brightness"]) is not True):
             self.manager.set_output_brightness(output["brightness"])
         boundary("brightness")
         if output["power"]:
