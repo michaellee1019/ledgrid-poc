@@ -7,6 +7,10 @@ description: Calibrate the ledgrid-poc wall's receiver permutation and host/nati
 
 Measure one coordinate domain at a time, change only the domain proved wrong,
 and retain a fresh direct camera capture from the final configuration.
+Apply AGENTS.md's accepted receiver-3 degradation rule: record its known
+CRC/FEC and protected-status noise without treating that noise alone as a
+failed direction correction or reason to roll back. Keep exact receiver
+identity and displayed-frame proof for any claimed acceptance.
 
 ## Direct Anker capture
 
@@ -86,7 +90,8 @@ gate proportional to the change, and the clean deployment appropriate to the
 changed layer. Repeat the same ramp after the final restart. Accept only when
 every visible broad receiver has the same physical light-to-dark direction, the
 single strip remains at the correct edge, all five identities are readable, and
-error counters remain stable through a fresh measured window.
+healthy-path queue, publish, and display error counters remain stable through a
+fresh measured window. Record accepted receiver-3 CRC/FEC noise separately.
 
 Save the raw frame, a wall-only crop when useful, SHA-256, active release,
 configuration digest, exact diagnostic definition, and what the partial view

@@ -11,7 +11,7 @@
 | Semantic overlap | zero foliage indices in the globe layer |
 | Globe geometry | exactly seven named 8x8 circular regions |
 | Globe alignment | response/glass center error <= 0.75 logical LED per axis |
-| Runtime | no CRC, SPI, publish, or display errors |
+| Runtime | no new SPI queue, publish, or display errors on the healthy paths; record accepted receiver-3 CRC/FEC and protected-status noise without failing an otherwise verified calibration |
 
 ## Closed-loop globe correction
 

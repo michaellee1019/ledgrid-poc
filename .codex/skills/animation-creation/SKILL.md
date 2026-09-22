@@ -16,6 +16,7 @@ For an understood local correction, use the repository's small-fix path. Read th
 - Inspect representative rendered output when appearance changes. Contact sheets and broad palette/geometry matrices belong to family/preset work or changes spanning those axes, not an isolated correction preserving art.
 - Use browser smoke for changed UI wiring, browser-only behavior, loading, or a defect not established by production render tests. Being selectable in Composer does not by itself require browser setup or live-acknowledgement testing. Refresh generated assets when their inputs change.
 - Reuse exact-candidate validation. Prefer an existing regression harness over temporary evidence scripts; do not repeat discovery, benchmarks or a completed family review merely to hand off to another role.
+- On the installed ledgrid-poc wall, apply AGENTS.md's accepted receiver-3 degradation rule. Its known CRC/FEC and protected-status noise is recorded but does not by itself fail an otherwise verified animation or preset or trigger a deployment rollback. Keep the exact displayed-Scene proof for any Active claim. Use focused representative wall checks during iteration; reserve the complete catalog sweep for a separate qualification batch.
 
 ## Establish the outcome
 

@@ -16,6 +16,10 @@ user to estimate pixel offsets.
 Read [references/workflow.md](references/workflow.md) before running commands.
 Also read the repository's `docs/PLANT_WALL_CALIBRATION.md` when present; it is
 the authoritative command-level runbook.
+Apply AGENTS.md's accepted receiver-3 degradation rule to runtime telemetry:
+record its known CRC/FEC and protected-status noise without treating that noise
+alone as a failed calibration or deployment rollback. Still require a fresh
+verified display receipt for each claimed feedback Scene.
 
 ## Workflow
 

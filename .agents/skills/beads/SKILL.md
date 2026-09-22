@@ -26,6 +26,8 @@ Apply [AGENTS.md — Small-fix fast path](../../../AGENTS.md#small-fix-fast-path
 
 Preserve independent acceptance for visible behavior and stronger review for shared contracts/live-state integrity. For a small visible fix, use one focused Sol/medium review of the exact candidate and decisive regression; routine documentation/mechanical edits can be coordinator-reviewed. Browser and benchmark work require the triggers in AGENTS.md. Record checks once against the candidate and reuse them unless relevant code, base, environment, or evidence changes.
 
+For this wall, follow AGENTS.md's accepted receiver-3 degradation rule: record its known CRC/FEC and status noise without creating a demo blocker or recommending a deployment rollback solely for that noise. Keep intact display proof for any claimed Active Scene. Use the focused feedback gate before a full catalog wall sweep; the latter is a separate qualification batch, not an ordinary edit check.
+
 ## Autopilot Startup
 
 Reconcile the four durable local planes plus the live agent tree:
