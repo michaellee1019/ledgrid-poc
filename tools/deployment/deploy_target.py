@@ -2875,10 +2875,11 @@ def _receiver_health_rejection(
             or (
                 not expected_fec
                 and (
-                    received != 0
-                    or any(baseline_terminal.values())
-                    or last_decode_us != 0
-                    or max_decode_us != 0
+                    # Successful lifetime FEC traffic can precede the current
+                    # non-FEC host configuration (for example a stopped probe).
+                    # Keep terminal-error history and timing inconsistencies
+                    # fail-closed; lifetime successful work is not a mode flag.
+                    any(baseline_terminal.values())
                 )
             )
         ):

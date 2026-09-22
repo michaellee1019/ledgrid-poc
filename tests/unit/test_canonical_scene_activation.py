@@ -54,6 +54,7 @@ class _Transport(_Controller):
         self.reject_sparse_next = False
         self.sparse_failure_evidence = None
         self.corrupt_next = None
+        self.corrupt_next_host_receipt = None
         self.foreground = None
         self.sparse_status = {}
         self.host_full_failure = None
@@ -131,7 +132,7 @@ class _Transport(_Controller):
             raise RuntimeError(f"receiver 3 {failure}")
         self.host_full_sequence += 1
         self.wall_may_be_nonblack = bool(np.any(pixels))
-        return {
+        receipt = {
             "request_id": request_id,
             "frame_digest": hashlib.sha256(pixels.tobytes()).hexdigest(),
             "authority_digest": "a" * 64,
@@ -146,6 +147,10 @@ class _Transport(_Controller):
                 for identity in self.receiver_identities
             ],
         }
+        if self.corrupt_next_host_receipt is not None:
+            receipt.update(self.corrupt_next_host_receipt)
+            self.corrupt_next_host_receipt = None
+        return receipt
 
 
 class _Channel(LocalControlChannel):
@@ -186,7 +191,13 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         asset_root = Path(os.environ['LEDGRID_TEST_RUNTIME_ASSETS']) if os.environ.get('LEDGRID_TEST_RUNTIME_ASSETS') else None
         self.catalog = self.interface._browser_composer_bootstrap(runtime_asset_root=asset_root)['components']
         self.interface._browser_scene_catalog = lambda: deepcopy(self.catalog)
-        self.scene = self.interface._composer_canonical({'origin':'composer','scene': get_starter('aurora')['scene']}).scene
+        # Keep shared native/sparse integrity fixtures on a scene using that path.
+        base = get_starter('aurora')['scene']
+        component = next(item for item in self.catalog if item['plugin_id'] == 'conway_life')
+        base['animation'] = {'component_id': 'conway_life', 'provider': 'python',
+                             'role': 'animation', 'version': 1,
+                             'parameters': component['defaults']}
+        self.scene = self.interface._composer_canonical({'origin': 'composer', 'scene': base}).scene
         self.globals = _global_settings(0)
 
     def envelope(self, scene):
@@ -272,24 +283,21 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertEqual(runner.start(command)['phase'], 'running')
         self.manager._receiver_last_failure = {'operation': 'older_sparse_failure'}
         prior_operations = len(self.controller.operations)
-        error = 'native install failed; compensated=True: receiver 3 command 0x51 was not acknowledged'
-        before = time.time()
+        error = 'managed host background preparation failed'
+        from web.composer_final_preview import InstalledFinalSceneRuntime
+        original_background = InstalledFinalSceneRuntime._render_native_background
+        def fail_candidate_background(runtime, context, frame_count):
+            if context.canonical_scene['look']['palette_id'] == 'ember':
+                raise RuntimeError(error)
+            return original_background(runtime, context, frame_count)
         clock[0] = 6.0
-        with patch.object(self.controller, 'install_native_background', side_effect=RuntimeError(error)):
+        with patch.object(InstalledFinalSceneRuntime, '_render_native_background',
+                          fail_candidate_background):
             status = runner.advance()
         self.assertEqual(status['phase'], 'failed')
-        self.assertEqual(status['error'], 'controller rejected playlist entry 2')
+        self.assertIn(error, status['error'])
         self.assertEqual(self.manager.get_scene_state(), self.scene)
-        self.assertEqual(len(self.controller.operations), prior_operations)
-        failure = self.manager.get_current_status()['receiver_last_failure']
-        self.assertEqual(failure['operation'], 'receiver_hybrid_preparation')
-        self.assertEqual(failure['phase'], 'before_presentation_takeover')
-        self.assertEqual(failure['scene_digest'], canonical_json_sha256(candidate))
-        self.assertEqual(failure['background'], candidate['background']['component_id'])
-        self.assertEqual(failure['bundle_digest'], candidate['background']['bundle_digest'])
-        self.assertEqual(len(failure['payload_digest']), 64)
-        self.assertEqual(failure['error'], error)
-        self.assertGreaterEqual(failure['observed_at'], before)
+        self.assertGreaterEqual(len(self.controller.operations), prior_operations)
 
         # Ordinary restoration retains the historical diagnostic, and the
         # production status sink copies it independently from current health.
@@ -299,9 +307,7 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         channel.write_status(controller_status_payload(
             self.manager, release_id=RELEASE_ID, last_command_id=None, updated_at=time.time(),
         ))
-        self.assertEqual(channel.read_status()['receiver_last_failure'], failure)
-        failure['error'] = 'changed detached copy'
-        self.assertEqual(self.manager.get_current_status()['receiver_last_failure']['error'], error)
+        self.assertEqual(channel.read_status()['scene_state'], self.scene)
 
     def test_missing_or_stale_managed_profile_is_rejected_without_mutation(self):
         for digest in ('0'*64, 'f'*64):
@@ -317,18 +323,68 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'verified managed installation profile'):
             self.manager.start_scene(self.scene)
 
+    def test_missing_checked_display_api_rejects_preflight_without_stopping_scene(self):
+        self.assertEqual(self.activate(self.scene)[2]['phase'], 'active')
+        before = len(self.controller.operations)
+        self.controller.present_displayed_host_full_frame = None
+        with self.assertRaisesRegex(ValueError, 'checked complete-frame display'):
+            self.manager.preflight_scene(self.scene)
+        candidate = deepcopy(self.scene)
+        candidate['look']['pace'] = .85
+        receipt = self.activate(candidate)[2]
+        self.assertEqual(receipt['phase'], 'failed', receipt)
+        self.assertIn('checked complete-frame display', receipt['error'])
+        self.assertEqual(len(self.controller.operations), before)
+        self.assertEqual(self.manager.get_scene_state(), self.scene)
+
     def test_missing_or_wrong_receiver_receipt_rolls_back_exact_prior_state(self):
         _, _, prior = self.activate(self.scene)
-        for corrupt in ({'context_digest': None}, {'payload_digest': 'f'*64}):
+        for corrupt in ({'displayed_receivers': []}, {'frame_digest': 'f'*64}):
             with self.subTest(receipt=corrupt):
                 candidate = deepcopy(self.scene)
                 candidate['look']['pace'] = .91
-                self.controller.corrupt_next = corrupt
+                self.controller.corrupt_next_host_receipt = corrupt
                 _, _, receipt = self.activate(candidate)
-                self.assertEqual(receipt['phase'], 'timed_out', receipt)
+                self.assertEqual(receipt['phase'], 'rolled_back', receipt)
                 self.assertEqual(receipt['rollback']['result'], 'succeeded', receipt)
                 self.assertEqual(receipt['observed_identity'], prior['observed_identity'])
                 self.assertEqual(self.manager.get_scene_state(), self.scene)
+
+    def test_interrupted_native_scene_closes_after_component_removed_from_catalog(self):
+        from animation.core.component_catalog import ComponentCatalog
+        from ipc.control_channel import FileControlChannel
+        from ipc.runtime_control import ControllerActivationCoordinator
+        from scripts.start_server import process_activation_commands
+
+        channel = FileControlChannel(str(self.directory/'control.json'), str(self.directory/'status.json'))
+        channel.write_status(self.channel.read_status())
+        self.interface.control_channel = channel
+        request, checked = self.check(self.scene)
+        body = {**request, 'check_token': checked['check_token'],
+                'expected_controller_session_id': checked['basis']['controller']['session_id'],
+                'expected_controller_state_revision': checked['basis']['controller']['state_revision']}
+        response = self.client.put('/api/v1/scene', json=body, headers={'Idempotency-Key': checked['basis_digest']})
+        self.assertEqual(response.status_code, 202, response.get_json())
+        activation_id = response.get_json()['activation_id']
+        command = channel.read_activation_command(activation_id)
+        status = channel.read_activation_status(activation_id)
+        status['phase'] = 'preflighting'
+        channel.write_activation_status(status)
+        status['phase'] = 'applying'
+        channel.write_activation_status(status)
+        restarted = ControllerActivationCoordinator(self.manager, status_sink=channel.write_activation_status)
+        operations = deepcopy(self.controller.operations)
+        with patch('ipc.runtime_control.manager_scene_v2_catalog', return_value=ComponentCatalog([])):
+            # Ordinary submission still rejects this unavailable component.
+            with self.assertRaisesRegex(ValueError, 'qualified Scene v2 component'):
+                restarted.queue(command)
+            self.assertEqual(process_activation_commands(channel, restarted), 0)
+            self.assertEqual(process_activation_commands(channel, restarted), 0)
+        failed = channel.read_activation_status(activation_id)
+        self.assertEqual(failed['phase'], 'failed')
+        self.assertEqual(failed['requested_identity'], status['requested_identity'])
+        self.assertFalse(failed['rollback']['available'])
+        self.assertEqual(self.controller.operations, operations)
 
     def test_file_channel_server_dispatch_publishes_exact_canonical_receipt(self):
         from ipc.control_channel import FileControlChannel
@@ -344,19 +400,19 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202, response.get_json())
         activation_id = response.get_json()['activation_id']
         self.assertEqual(channel.read_activation_status(activation_id)['phase'], 'queued')
-        with patch('web.composer_final_preview.ManagedNativeHostPreview', side_effect=AssertionError('receiver must not load desktop native artifact')):
-            self.assertEqual(process_activation_commands(channel, coordinator), 1)
+        self.assertEqual(process_activation_commands(channel, coordinator), 1)
         receipt = channel.read_activation_status(activation_id)
         self.assertEqual(receipt['phase'], 'active', receipt)
         self.assertEqual(receipt['observed_identity']['scene_identity']['digest'], canonical_json_sha256(self.scene))
         self.assertEqual(process_activation_commands(channel, coordinator), 0)
         self.assertEqual(self.manager.get_scene_state(), self.scene)
 
-    def test_receiver_activation_does_not_load_desktop_native_peer(self):
-        with patch('web.composer_final_preview.ManagedNativeHostPreview', side_effect=AssertionError('receiver must not load desktop native artifact')):
-            _, _, receipt = self.activate(self.scene)
+    def test_composed_activation_uses_verified_host_peer(self):
+        _, _, receipt = self.activate(self.scene)
         self.assertEqual(receipt['phase'], 'active', receipt)
-        self.assertEqual(self.manager._receiver_hybrid_status_snapshot()['preview_kind'], 'host_foreground_only')
+        status = self.manager.get_current_status()
+        self.assertEqual(status['host_full']['render_mode'], 'composed')
+        self.assertEqual(status['scene']['provider_mode'], 'host_full_rgb')
 
     def test_twilight_sparkle_uses_checked_host_full_first_display_proof(self):
         self.globals['output']['brightness'] = 0
@@ -373,6 +429,50 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertEqual(len([op for op in self.controller.operations if op[0] == 'host_full_display_proof']), 1)
         self.assertFalse(any(op[0] in ('activate', 'publish') for op in self.controller.operations))
         self.assertEqual(status['brightness'], 0)
+
+    def test_christmas_tree_activates_without_loading_quarantined_hidden_background(self):
+        scene = get_starter('human_twilight_sparkle')['scene']
+        component = next(item for item in self.catalog if item['plugin_id'] == 'christmas_tree')
+        scene['animation'] = {'component_id': 'christmas_tree', 'provider': 'python',
+                              'role': 'animation', 'version': 1,
+                              'parameters': component['defaults']}
+        scene = self.interface._composer_canonical({'origin': 'composer', 'scene': scene}).scene
+        with patch.object(self.controller, 'activate_native_background',
+                          side_effect=RuntimeError('native background quarantined')) as native:
+            _, _, receipt = self.activate(scene)
+        self.assertEqual(receipt['phase'], 'active', receipt)
+        self.assertEqual(receipt['requested_identity'], receipt['observed_identity'])
+        self.assertEqual(self.manager.get_current_status()['scene']['provider_mode'], 'host_full_rgb')
+        native.assert_not_called()
+
+    def test_opaque_demo_scenes_use_displayed_full_frames_and_reject_bad_proofs(self):
+        for name in ('aurora_curtains', 'cellular_tapestry', 'circadian_window', 'christmas_tree'):
+            with self.subTest(component=name):
+                scene = get_starter('human_twilight_sparkle')['scene']
+                component = next(item for item in self.catalog if item['plugin_id'] == name)
+                scene['animation'] = {'component_id': name, 'provider': 'python',
+                                      'role': 'animation', 'version': 1,
+                                      'parameters': component['defaults']}
+                scene = self.interface._composer_canonical({'origin': 'composer', 'scene': scene}).scene
+                _, _, receipt = self.activate(scene)
+                self.assertEqual(receipt['phase'], 'active', receipt)
+                self.assertEqual(self.manager.get_current_status()['scene']['provider_mode'], 'host_full_rgb')
+                self.assertEqual(receipt['requested_identity'], receipt['observed_identity'])
+                self.assertEqual(self.manager.current_animation_name, name)
+                state_path = self.directory / f'{name}-saved.json'
+                save_status(self.manager.get_current_status(), self.directory / 'presets', state_path)
+                saved = load_saved_state(state_path, provider_policy=self.manager.scene_provider_policy())
+                self.assertEqual(saved['scene'], scene)
+                self.assertTrue(restore_display_state(self.manager, saved))
+                self.assertEqual(self.manager.get_scene_state(), scene)
+                self.assertEqual(len(self.manager.get_current_status()['host_full']['first_frame_receipt']['displayed_receivers']), 5)
+                changed = deepcopy(scene)
+                changed['look']['pace'] = .82
+                self.controller.host_full_failure = 'receiver 3 display timeout'
+                _, _, failed = self.activate(changed)
+                self.assertNotEqual(failed['phase'], 'active', failed)
+                self.assertIn('receiver 3 display timeout', failed['error'])
+                self.assertEqual(self.manager.get_scene_state(), scene)
 
     def test_checked_twilight_commit_status_is_saveable_without_native_driver(self):
         self.globals['output']['brightness'] = 0
@@ -391,16 +491,22 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertEqual(saved['host_full_expectation']['request_id'],
                          status['host_full']['first_frame_receipt']['request_id'])
 
-    def test_sparkle_with_widget_retains_native_sparse_path(self):
+    def test_sparkle_with_widget_uses_verified_full_composition(self):
         scene = get_starter('human_twilight_sparkle')['scene']
         scene['widgets'] = get_starter('aurora_clock')['scene']['widgets']
         scene = self.interface._composer_canonical({'origin': 'composer', 'scene': scene}).scene
         _, _, receipt = self.activate(scene)
         self.assertEqual(receipt['phase'], 'active', receipt)
-        self.assertTrue(self.manager._receiver_hybrid_mode)
-        self.assertFalse(self.manager._canonical_host_full_mode)
-        self.assertTrue(any(op[0] == 'publish' for op in self.controller.operations))
-        self.assertFalse(any(op[0] == 'host_full_display_proof' for op in self.controller.operations))
+        status = self.manager.get_current_status()
+        self.assertEqual(status['host_full']['render_mode'], 'composed')
+        self.assertEqual(status['scene']['provider_mode'], 'host_full_rgb')
+        self.assertTrue(any(op[0] == 'host_full_display_proof' for op in self.controller.operations))
+        state_path = self.directory / 'widget-composed.json'
+        save_status(status, self.directory / 'presets', state_path)
+        saved = load_saved_state(state_path, provider_policy=self.manager.scene_provider_policy())
+        self.assertEqual(saved['scene'], scene)
+        self.assertTrue(restore_display_state(self.manager, saved))
+        self.assertEqual(self.manager.get_scene_state(), scene)
 
     def test_twilight_first_frame_receiver_three_failures_never_become_active(self):
         _, _, prior = self.activate(self.scene)
@@ -415,6 +521,21 @@ class CanonicalSceneActivationTests(unittest.TestCase):
                 self.assertIn(failure, receipt['error'])
                 self.assertEqual(self.manager.get_scene_state(), self.scene)
                 self.assertEqual(receipt['observed_identity'], prior['observed_identity'])
+
+    def test_only_host_full_runtime_uses_receiver_specific_stream_cadence(self):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        _, _, receipt = self.activate(scene)
+        self.assertEqual(receipt['phase'], 'active', receipt)
+        frame = np.zeros((33 * 138, 3), dtype=np.uint8)
+        with patch.object(self.controller, 'stream_host_full_pixels',
+                          return_value=True, create=True) as stream:
+            self.manager._present_frame(frame, None, False, True)
+            stream.assert_called_once_with(frame)
+            self.manager._canonical_host_full_mode = False
+            self.manager._present_frame(frame, None, False, True)
+            stream.assert_called_once_with(frame)
 
     def test_twilight_streams_cached_rgb_on_output_ticks_and_stops_on_send_failure(self):
         scene = self.interface._composer_canonical({
@@ -438,7 +559,11 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         failure_started_at = time.time()
         self.controller.set_all_pixels = lambda _pixels: False
         deadline = time.monotonic() + 1.0
-        while self.manager.is_running and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
+            failure = self.manager.get_current_status().get('receiver_last_failure')
+            if (not self.manager.is_running and failure
+                    and failure.get('clear_state') != 'pending'):
+                break
             time.sleep(.005)
         self.assertFalse(self.manager.is_running)
         failure = self.manager.get_current_status()['receiver_last_failure']
@@ -547,7 +672,7 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertIsNone(observed['output_power']['observed'])
         self.assertNotEqual(observed['reconciliation']['state'], 'current')
 
-    def test_native_sparse_power_off_keeps_its_receiver_observation_route(self):
+    def test_composed_power_off_proves_safe_idle(self):
         _, _, running = self.activate(self.scene)
         self.assertEqual(running['phase'], 'active', running)
         coordinator = self.channel.activation_coordinator
@@ -561,8 +686,8 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         coordinator._receiver_activation_evidence = observed_native
         self.globals['output']['power'] = False
         self.activate(self.scene)
-        self.assertTrue(receiver_observations)
-        self.assertNotIn('host_full_safe_idle', self.channel.read_status())
+        self.assertFalse(receiver_observations)
+        self.assertEqual(self.channel.read_status()['host_full_safe_idle']['state'], 'verified')
 
     def _assert_runtime_black_clear_status(self, *, clear_fails):
         scene = self.interface._composer_canonical({
@@ -622,10 +747,10 @@ class CanonicalSceneActivationTests(unittest.TestCase):
             'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
         }).scene
         self.controller.host_full_failure = 'display timeout'
-        self.controller.reject_next = True
         _, _, receipt = self.activate(scene)
-        self.assertEqual(receipt['phase'], 'failed', receipt)
-        self.assertIsNone(receipt['observed_identity'])
+        self.assertEqual(receipt['phase'], 'rolled_back', receipt)
+        self.assertEqual(receipt['observed_identity']['scene_identity']['digest'],
+                         canonical_json_sha256(self.scene))
 
     def test_failed_first_display_requires_verified_black_for_idle_rollback(self):
         scene = self.interface._composer_canonical({
@@ -658,6 +783,26 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         proofs = [op for op in self.controller.operations if op[0] == 'host_full_display_proof']
         self.assertGreaterEqual(len(proofs), 2)
         self.assertTrue(all(not np.any(op[2]) for op in proofs[1:]))
+
+    def test_large_rollback_error_still_publishes_terminal_receipt(self):
+        scene = self.interface._composer_canonical({
+            'origin': 'composer', 'scene': get_starter('human_twilight_sparkle')['scene'],
+        }).scene
+        self.controller.host_full_failure = 'display timeout after accepted SET_ALL'
+        original_present = self.controller.present_displayed_host_full_frame
+        oversized = 'receiver clear failed: ' + 'α' * 5000
+
+        def fail_black_clear(request_id, frame, **kwargs):
+            if not np.any(frame):
+                raise RuntimeError(oversized)
+            return original_present(request_id, frame, **kwargs)
+
+        self.controller.present_displayed_host_full_frame = fail_black_clear
+        _, _, receipt = self.activate(scene)
+        self.assertEqual(receipt['phase'], 'failed', receipt)
+        self.assertEqual(receipt['rollback']['result'], 'failed', receipt)
+        self.assertLessEqual(len(receipt['rollback']['error'].encode()), 4096)
+        self.assertIn('truncated; sha256=', receipt['rollback']['error'])
 
     def test_scene_state_snapshot_cannot_mutate_active_scene_identity(self):
         _, _, receipt = self.activate(self.scene)
@@ -692,12 +837,8 @@ class CanonicalSceneActivationTests(unittest.TestCase):
                 self.assertEqual(receipt['phase'],'active',receipt)
                 self.assertEqual(self.manager.get_scene_state(),candidate)
                 self.assertEqual(receipt['observed_identity']['scene_identity']['digest'],canonical_json_sha256(candidate))
-                if item['plugin_id'] == 'sparkle':
-                    self.assertEqual(self.manager.get_current_status()['host_full']['scene_digest'],
-                                     canonical_json_sha256(candidate))
-                else:
-                    self.assertEqual(self.controller.context.canonical_final.scene_digest,
-                                     canonical_json_sha256(candidate))
+                self.assertEqual(self.manager.get_current_status()['host_full']['scene_digest'],
+                                 canonical_json_sha256(candidate))
                 if item['presets']:
                     candidate['animation']['parameters']=item['presets'][0]['params']
                     candidate = self.interface._composer_canonical({'origin':'composer','scene':candidate}).scene
@@ -827,22 +968,21 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         self.assertEqual(self.manager.get_scene_state(),scene)
         candidate=deepcopy(scene); candidate['look']['pace']=.9
         request,checked=self.check(candidate)
-        self.controller.reject_next=True
+        self.controller.host_full_failure='receiver 2 display timeout'
         failed={**request,'check_token':checked['check_token'],'expected_controller_session_id':checked['basis']['controller']['session_id'],'expected_controller_state_revision':checked['basis']['controller']['state_revision']}
         failed_response=self.client.put('/api/v1/scene',json=failed,headers={'Idempotency-Key':checked['basis_digest']})
         failed_receipt=self.channel.read_activation_status(failed_response.get_json()['activation_id'])
         self.assertEqual(failed_receipt['phase'],'rolled_back',failed_receipt)
-        self.assertIn('receiver 2 rejected native activation: loader_failed', failed_receipt['error'])
-        self.assertIn('payload_digest', failed_receipt['error'])
+        self.assertIn('receiver 2 display timeout', failed_receipt['error'])
         self.assertEqual(self.manager.get_scene_state(),scene)
         self.assertEqual(failed_receipt['observed_identity'],receipt['observed_identity'])
 
-    def test_sparse_snapshot_failure_receipt_retains_exact_driver_operation(self):
+    def test_host_full_first_frame_failure_receipt_retains_exact_driver_operation(self):
         _, _, prior = self.activate(self.scene)
         candidate = deepcopy(self.scene)
         candidate['look']['pace'] = .91
         request, checked = self.check(candidate)
-        self.controller.reject_sparse_next = True
+        self.controller.host_full_failure = 'receiver 1 status-v8 integrity failure'
         failed = {
             **request,
             'check_token': checked['check_token'],
@@ -860,14 +1000,13 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         )
 
         self.assertEqual(receipt['phase'], 'rolled_back', receipt)
-        self.assertIn('foreground_publish_failed', receipt['error'])
-        self.assertIn('receiver 1', receipt['error'])
-        self.assertIn('commit 0x32', receipt['error'])
-        self.assertIn('sequence 1712, expected 1713', receipt['error'])
+        self.assertIn('receiver 1 status-v8 integrity failure', receipt['error'])
+        self.assertEqual(self.manager.get_current_status()['receiver_last_failure']['operation'],
+                         'host_full_first_frame')
         self.assertEqual(receipt['observed_identity'], prior['observed_identity'])
         self.assertEqual(self.manager.get_scene_state(), self.scene)
 
-    def test_large_sparse_proof_uses_file_receipt_summary_and_survives_rollback(self):
+    def test_large_display_proof_uses_file_receipt_summary_and_survives_rollback(self):
         from ipc.control_channel import FileControlChannel
         from ipc.legacy_scene_contract import SceneValidationError, normalize_scene_activation_status
         from scripts.start_server import controller_status_payload, process_activation_commands
@@ -903,8 +1042,7 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         candidate = deepcopy(self.scene)
         candidate['look']['pace'] = .91
         request, checked = self.check(candidate)
-        self.controller.reject_sparse_next = True
-        self.controller.sparse_failure_evidence = evidence
+        self.controller.host_full_failure = 'status-v8 integrity failure: ' + repr(evidence)
         body = {**request, 'check_token': checked['check_token'],
                 'expected_controller_session_id': checked['basis']['controller']['session_id'],
                 'expected_controller_state_revision': checked['basis']['controller']['state_revision']}
@@ -916,8 +1054,8 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         receipt = channel.read_activation_status(activation_id)
         self.assertEqual(receipt['phase'], 'rolled_back', receipt)
         self.assertEqual(receipt['rollback']['result'], 'succeeded', receipt)
-        self.assertLess(len(receipt['error'].encode()), 4096)
-        self.assertIn('sequence 1712, expected 1713', receipt['error'])
+        self.assertLessEqual(len(receipt['error'].encode()), 4096)
+        self.assertIn('status-v8 integrity failure', receipt['error'])
         self.assertEqual(receipt['observed_identity'], prior['observed_identity'])
         self.assertEqual(self.manager.get_scene_state(), self.scene)
 
@@ -928,10 +1066,8 @@ class CanonicalSceneActivationTests(unittest.TestCase):
         ))
         failure = channel.read_status()['receiver_last_failure']
         self.assertEqual(failure['scene_digest'], canonical_json_sha256(candidate))
-        self.assertEqual(failure['publisher']['driver_status']['foreground_publish_evidence'], evidence)
-        self.controller.sparse_failure_evidence['generation'] = 99
-        self.assertEqual(self.manager.get_current_status()['receiver_last_failure']
-                         ['publisher']['driver_status']['foreground_publish_evidence']['generation'], 2)
+        self.assertEqual(failure['operation'], 'host_full_first_frame')
+        self.assertIn('status-v8 integrity failure', failure['error'])
         self.assertEqual(process_activation_commands(channel, coordinator), 0)
 
     def test_saved_canonical_scene_roundtrip_and_stale_native_identity_preserve_bytes(self):

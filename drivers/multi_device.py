@@ -6,7 +6,6 @@ Controls multiple ESP32 devices via SPI with different CS pins
 
 import hashlib
 import os
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -38,7 +37,6 @@ from drivers.spi_controller import (
     OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
     OVERLAY_UPDATE_DELTA,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
-    SPI_RESPONSE_QUEUE_DEPTH,
     SPI_BUS,
     SPI_MODE,
     SPI_SPEED,
@@ -714,6 +712,86 @@ class MultiDeviceLEDController:
                     + "; ".join(mismatches)
                 )
 
+    def _prepare_receiver_topology(self):
+        """Recover a reset board before a new activation, never inside its ACK.
+
+        Logical identity 255 is the firmware's unconfigured boot state. Repair
+        only that state, on the existing pinned routes, after a protected causal
+        read of the whole wall. A different configured identity is an error.
+        """
+        statuses = [device.query_causal_receiver_status(required_status_version=8)
+                    for device in self.devices]
+        reset_ids = [index for index, status in enumerate(statuses)
+                     if status.get("receiver_logical_device") == 255]
+        if not reset_ids:
+            return
+        self._require_pinned_receipt_roster()
+        required = CAPABILITY_STATUS_CRC32_V8 | CAPABILITY_ALIGNED_ENVELOPE_V1
+        for index, status in enumerate(statuses):
+            if (status.get("receiver_status_version") != 8
+                    or status.get("receiver_status_integrity_verified") is not True
+                    or status.get("receiver_status_integrity_established") is not True
+                    or required & ~int(status.get("receiver_capabilities", 0))
+                    or status.get("receiver_logical_device") not in (index, 255)):
+                raise RuntimeError(
+                    f"receiver {index} cannot prove protected reset recovery authority"
+                )
+        # A board reboot invalidates the old wall-wide presentation proof. Keep
+        # mode flags conservative until the new all-board activation succeeds.
+        self._display_ownership_known = False
+        self._native_background_context = None
+        self._local_background_context_digest = None
+        self._sparse_overlay_session_id = None
+        self._sparse_overlay_generation = 0
+        self._sparse_overlay_snapshot_digest = None
+        for index in reset_ids:
+            device = self.devices[index]
+            expected_config = (
+                self.receiver_strip_counts[index], self.leds_per_strip, index,
+                self.receiver_global_strip_offsets[index],
+                self.reverse_native_strips_by_logical_receiver[index],
+            )
+            actual_config = (
+                device.strip_count, device.leds_per_strip, device.logical_device_id,
+                device.global_strip_offset, device.reverse_native_strip_order,
+            )
+            if actual_config != expected_config:
+                raise RuntimeError(f"receiver {index} configured topology drifted")
+            device._last_acknowledged_sparse_command = None
+            device._presentation_commit_context_cache.clear()
+            self._require_ack(device.configure_acknowledged(), "reset topology", index)
+            brightness = getattr(self, "current_brightness", None)
+            if brightness is None:
+                brightness = getattr(device, "current_brightness", None)
+            if brightness is not None:
+                self._require_ack(device.set_brightness_acknowledged(brightness),
+                                  "reset brightness", index)
+            self._require_ack(
+                device.set_lane_mask_acknowledged(self.receiver_lane_masks[index]),
+                "reset lane mask", index,
+            )
+            phases = getattr(device, "current_stagger_phases", None)
+            if phases is not None:
+                self._require_ack(device.set_stagger_phases_acknowledged(phases),
+                                  "reset stagger phases", index)
+            status = device.query_causal_receiver_status(required_status_version=8)
+            expected_status = {
+                "receiver_status_version": 8,
+                "receiver_logical_device": index,
+                "receiver_active_strips": self.receiver_strip_counts[index],
+                "receiver_leds_per_strip": self.leds_per_strip,
+                "receiver_global_strip_offset": self.receiver_global_strip_offsets[index],
+                "receiver_lane_mask": self.receiver_lane_masks[index],
+            }
+            if phases is not None:
+                expected_status["receiver_stagger_phases"] = phases
+            if (status.get("receiver_status_integrity_verified") is not True
+                    or status.get("receiver_status_integrity_established") is not True
+                    or any(status.get(key) != value
+                           for key, value in expected_status.items())):
+                raise RuntimeError(f"receiver {index} reset topology was not confirmed")
+        self._require_pinned_receipt_roster()
+
     def refresh_receiver_status(self, request_id: str) -> Dict[str, Any]:
         """Clock out and record a fresh serialized status snapshot on every board."""
         if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
@@ -1093,6 +1171,7 @@ class MultiDeviceLEDController:
 
         with self._controller_lock():
             self._require_native_enabled()
+            self._prepare_receiver_topology()
             before = self._fresh_native_statuses()
             snapshots = self._native_snapshots(before)
             report = self._native_capability_report(before)
@@ -1331,6 +1410,7 @@ class MultiDeviceLEDController:
 
         with self._controller_lock():
             self._require_native_enabled()
+            self._prepare_receiver_topology()
             before = self._fresh_native_statuses()
             snapshots = self._native_snapshots(before)
             capability_report = self._native_capability_report(before)
@@ -1692,10 +1772,11 @@ class MultiDeviceLEDController:
 
     def recover_native_background_to_host(self, colors):
         """Use the universal complete-RGB kill path and prove host ownership."""
-        if self.set_all_pixels(colors) is False:
-            return False
         with self._controller_lock():
             try:
+                self._prepare_receiver_topology()
+                if self.set_all_pixels(colors) is False:
+                    return False
                 statuses = self._fresh_native_statuses(require_capabilities=False)
                 for receiver_id, status in enumerate(statuses):
                     if int(status.get("receiver_base_mode", -1)) != 2:
@@ -2113,24 +2194,76 @@ class MultiDeviceLEDController:
                 "acknowledged_receivers": acknowledgements,
             }
 
-    @staticmethod
-    def _protected_host_full_status(device, logical_device, integrity_errors=None):
-        before_errors = device.get_stats().get("receiver_status_integrity_errors")
+    def _protected_host_full_status(self, device, logical_device, integrity_errors=None,
+                                    *, recover_reset=False):
+        def nonempty_integrity_errors():
+            stats = device.get_stats()
+            errors = stats.get("receiver_status_integrity_errors")
+            empty = stats.get("receiver_status_empty_responses", 0)
+            if (type(errors) is not int or type(empty) is not int
+                    or not 0 <= empty <= errors):
+                raise RuntimeError(
+                    f"receiver {logical_device} lacks intact protected-v8 display status"
+                )
+            return errors - empty
+
+        before_errors = nonempty_integrity_errors()
+        # A busy receiver can clock an entirely empty queued response. The
+        # causal query discards it and still requires three distinct protected
+        # v8 snapshots. Keep checksum/malformed failures fatal, including any
+        # observed between this proof's baseline and final confirmation.
         status = device.query_causal_receiver_status(required_status_version=8)
-        after_errors = device.get_stats().get("receiver_status_integrity_errors")
+        if recover_reset and status.get("receiver_logical_device") == 255:
+            self._prepare_receiver_topology()
+            status = device.query_causal_receiver_status(required_status_version=8)
+        after_errors = nonempty_integrity_errors()
         fields = ("receiver_frames_accepted", "receiver_frames_displayed",
                   "receiver_frames_superseded", "receiver_last_accepted_sequence",
                   "receiver_last_displayed_sequence", "receiver_display_errors",
                   "receiver_base_mode")
         if (status.get("receiver_status_version") != 8
                 or status.get("receiver_logical_device") != logical_device
-                or type(before_errors) is not int
                 or before_errors != after_errors
                 or (integrity_errors is not None and after_errors != integrity_errors)
                 or any(type(status.get(key)) is not int or not 0 <= status[key] <= 0xFFFFFFFF
                        for key in fields)):
             raise RuntimeError(f"receiver {logical_device} lacks intact protected-v8 display status")
         return status, after_errors
+
+    def _host_full_receiver3_retry_state(self, frame, deadline):
+        return {
+            "frame": self._split_frame(frame)[3],
+            "deadline": deadline,
+            "wall_sequence": self._logical_wall_frame_sequence - 1,
+            "attempts": 0,
+            "next_at": time.monotonic() + 0.1,
+        }
+
+    def _retry_unaccepted_host_full_receiver3(self, index, baseline, status, retry):
+        """Bounded resend only after a fresh snapshot still proves no acceptance.
+
+        The caller retains its original deadline and exact +1 accepted/displayed
+        counts. A delayed original plus a replay can therefore never qualify as
+        success: two acceptances fail the unchanged proof. No ambiguous ioctl
+        exception is retried, and no other receiver gets a duplicate frame.
+        """
+        now = time.monotonic()
+        if (index != 3 or now < retry["next_at"] or now >= retry["deadline"]
+                or status["receiver_last_accepted_sequence"]
+                != baseline["receiver_last_accepted_sequence"]):
+            return
+        if status.get("receiver_spi_queue_errors", 0):
+            raise RuntimeError("receiver 3 queue fault prevents host-full retry")
+        if retry["attempts"] >= 3:
+            raise RuntimeError("receiver 3 host-full frame retry budget exhausted")
+        self._require_pinned_receipt_roster()
+        if not self._send_to_device(3, retry["frame"], retry["wall_sequence"]):
+            raise RuntimeError("receiver 3 host-full frame retry write failed")
+        retry["attempts"] += 1
+        retry["next_at"] = time.monotonic() + 0.1
+        self._host_full_receiver3_frame_retries = getattr(
+            self, "_host_full_receiver3_frame_retries", 0
+        ) + 1
 
     def _displayed_host_full_black_barrier(self, timeout_seconds):
         """Show fresh black; a canceled lifetime read need not balance counts.
@@ -2141,12 +2274,16 @@ class MultiDeviceLEDController:
         for the strict next-frame +1 display count.
         """
         self._require_pinned_receipt_roster()
-        before = [self._protected_host_full_status(device, index)
+        before = [self._protected_host_full_status(device, index, recover_reset=True)
                   for index, device in enumerate(self.devices)]
         black = np.zeros((self.total_leds, 3), dtype=np.uint8)
         if self.set_all_pixels(black) is not True:
-            raise RuntimeError("complete host-full black barrier failed on the pinned roster")
+            raise RuntimeError(
+                "complete host-full black barrier failed on the pinned roster: "
+                f"{getattr(self, '_last_full_frame_failure', None)}"
+            )
         deadline = time.monotonic() + timeout_seconds
+        retry = self._host_full_receiver3_retry_state(black, deadline)
         accepted_sequences = {}
         displayed = {}
         while len(displayed) != len(self.devices):
@@ -2160,6 +2297,7 @@ class MultiDeviceLEDController:
                 if status["receiver_display_errors"] != baseline["receiver_display_errors"]:
                     raise RuntimeError(f"receiver {index} did not safely accept black barrier")
                 if status["receiver_frames_accepted"] == baseline["receiver_frames_accepted"]:
+                    self._retry_unaccepted_host_full_receiver3(index, baseline, status, retry)
                     continue
                 if status["receiver_frames_accepted"] != accepted or status["receiver_base_mode"] != 2:
                     raise RuntimeError(f"receiver {index} did not safely accept black barrier")
@@ -2224,6 +2362,7 @@ class MultiDeviceLEDController:
                 raise RuntimeError("complete host-full takeover failed on the pinned roster")
             expected = {}
             deadline = time.monotonic() + timeout_seconds
+            retry = self._host_full_receiver3_retry_state(complete_frame, deadline)
             displayed = {}
             while len(displayed) != len(self.devices):
                 self._require_pinned_receipt_roster()
@@ -2243,6 +2382,9 @@ class MultiDeviceLEDController:
                         if (status.get("receiver_frames_displayed") != initial["receiver_frames_displayed"]
                                 or status.get("receiver_last_displayed_sequence") != initial["receiver_last_displayed_sequence"]):
                             raise RuntimeError(f"receiver {logical_device} displayed before accepting host-full frame")
+                        self._retry_unaccepted_host_full_receiver3(
+                            logical_device, initial, status, retry
+                        )
                         continue
                     if status.get("receiver_frames_accepted") != accepted or status.get("receiver_base_mode") != 2:
                         raise RuntimeError(f"receiver {logical_device} did not accept the exact host-full frame")
@@ -2474,6 +2616,19 @@ class MultiDeviceLEDController:
                     print(f"✗ Error partially sending to device {device_id}: {exc}")
 
     def set_all_pixels(self, colors: List[Tuple[int, int, int]]):
+        """Send every receiver, including for strict first-frame display proofs."""
+        return self._set_all_pixels(colors, stream=False)
+
+    def stream_host_full_pixels(self, colors):
+        """Stream the installed demo, limiting accepted receiver-3 load to 15 Hz.
+
+        This applies only after complete host ownership is established. It never
+        skips a first-frame/black proof or changes the other four receivers'
+        cadence. The next receiver-3 update always contains the latest frame.
+        """
+        return self._set_all_pixels(colors, stream=True)
+
+    def _set_all_pixels(self, colors, *, stream):
         """
         Set all pixels across all devices
         
@@ -2481,6 +2636,7 @@ class MultiDeviceLEDController:
             colors: List of (r,g,b) tuples for entire grid
         """
         with self._controller_lock():
+            self._last_full_frame_failure = None
             was_local = self._local_background_active
             was_native = self._native_background_active
             had_sparse_authority = (
@@ -2491,6 +2647,21 @@ class MultiDeviceLEDController:
             device_frames = self._split_frame(colors)
             wall_frame_sequence = self._claim_logical_wall_frame_sequence()
             successful = True
+            dispatch = self._devices_by_bus
+            skip_receiver3 = bool(
+                stream and self.num_devices == 5
+                and self._display_ownership_known
+                and not (was_local or was_native or had_sparse_authority)
+                and time.perf_counter() - getattr(
+                    self, "_host_full_receiver3_last_send_at", float("-inf")
+                ) < 1.0 / 15.0
+            )
+            if skip_receiver3:
+                dispatch = {bus: tuple(i for i in ids if i != 3)
+                            for bus, ids in dispatch.items()}
+                self._host_full_receiver3_frames_skipped = getattr(
+                    self, "_host_full_receiver3_frames_skipped", 0
+                ) + 1
 
             if self._executor is not None:
                 futures = [
@@ -2500,17 +2671,19 @@ class MultiDeviceLEDController:
                         device_frames,
                         wall_frame_sequence,
                     )
-                    for device_ids in self._devices_by_bus.values()
+                    for device_ids in dispatch.values()
                 ]
                 for future in futures:
                     successful = bool(future.result()) and successful
             else:
                 # Keep the same topology-owned per-bus order when bus overlap
                 # is disabled.
-                for device_ids in self._devices_by_bus.values():
+                for device_ids in dispatch.values():
                     successful = self._send_bus_frames(
                         device_ids, device_frames, wall_frame_sequence
                     ) and successful
+            if not skip_receiver3 and self.num_devices == 5:
+                self._host_full_receiver3_last_send_at = time.perf_counter()
             self._logical_frames_sent += 1
             if successful and (
                 was_local or was_native or had_sparse_authority
@@ -2519,10 +2692,12 @@ class MultiDeviceLEDController:
                 try:
                     statuses = []
                     for device in self.devices:
-                        status = None
-                        for _ in range(SPI_RESPONSE_QUEUE_DEPTH):
-                            status = device.query_receiver_status()
-                        statuses.append(status)
+                        # Two queued responses may both predate SET_ALL.
+                        # Require the existing protected, causally fresh drain
+                        # before interpreting the receiver's ownership mode.
+                        statuses.append(device.query_causal_receiver_status(
+                            required_status_version=8
+                        ))
                     versions = [
                         int(status.get("receiver_status_version", 0) or 0)
                         if isinstance(status, dict) else 0
@@ -2548,6 +2723,9 @@ class MultiDeviceLEDController:
                         "operation": "set_all_takeover_verify",
                         "error": str(exc),
                     }
+                    self._last_full_frame_failure = dict(
+                        self._local_background_status
+                    )
             if successful:
                 self._display_ownership_known = True
                 self._local_background_active = False
@@ -4300,6 +4478,13 @@ class MultiDeviceLEDController:
                 ),
                 'crc_bytes_sent': crc_bytes_sent,
                 'errors': errors,
+                'host_full_receiver3_frame_retries': getattr(
+                    self, '_host_full_receiver3_frame_retries', 0
+                ),
+                'host_full_stream_receiver3_max_fps': 15,
+                'host_full_stream_receiver3_frames_skipped': getattr(
+                    self, '_host_full_receiver3_frames_skipped', 0
+                ),
                 'receiver_status_devices': receiver_status_devices,
                 'receiver_lane_masks': receiver_lane_masks,
                 'receiver_stagger_phases': receiver_stagger_phases,

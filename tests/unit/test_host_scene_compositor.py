@@ -120,6 +120,38 @@ class HostSceneCompositorTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             self.compositor.compose(self.base(), (object(),))  # type: ignore[arg-type]
 
+    def test_overlay_validation_keeps_all_alpha_boundaries_and_first_error(self) -> None:
+        pixels = np.empty((256, 4), dtype=np.uint8)
+        pixels[:] = np.arange(256, dtype=np.uint8)[:, None]
+        original = pixels.copy()
+        self.assertIs(OverlayFrame(pixels, revision=1).pixels, pixels)
+        np.testing.assert_array_equal(pixels, original)
+        for channel in range(3):
+            for alpha in range(255):
+                invalid = pixels.copy()
+                invalid[alpha, channel] = alpha + 1
+                with self.assertRaisesRegex(
+                    ValueError, f"pixel {alpha} channel {channel} exceeds alpha {alpha}",
+                ):
+                    OverlayFrame(invalid, revision=1, changed=False)
+        invalid = pixels.copy()
+        invalid[2, 2] = 3
+        invalid[4, 0] = 5
+        with self.assertRaisesRegex(ValueError, "pixel 2 channel 2 exceeds alpha 2"):
+            OverlayFrame(invalid, revision=1)
+
+    def test_opaque_overlay_still_validates_metadata_and_mutated_cached_pixels(self) -> None:
+        pixels = np.full((33 * 138, 4), 255, dtype=np.uint8)
+        frame = OverlayFrame(pixels, revision=1, changed=False)
+        self.assertIs(frame.pixels, pixels)
+        with self.assertRaises(ValueError):
+            OverlayFrame(pixels, revision=-1)
+        with self.assertRaises(ValueError):
+            OverlayFrame(pixels, revision=1, changed=False, dirty_ranges=((0, 1),))
+        pixels[-1, 3] = 254
+        with self.assertRaisesRegex(ValueError, "pixel 4553 channel 0 exceeds alpha 254"):
+            OverlayFrame(pixels, revision=1, changed=False)
+
 
 if __name__ == "__main__":
     unittest.main()

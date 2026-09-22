@@ -161,6 +161,51 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
                 direct.set_installation_profile(selection.view)
                 self.assertEqual(direct.render_opaque_full(ScenePresentationContext(canonical, 0.0, wall_time)).basis, canonical.identity)
 
+    def test_opaque_demo_frames_match_native_composition_with_selected_profile(self) -> None:
+        from copy import deepcopy
+        from web.composer_final_preview import current_component_descriptors
+        root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            library = InstallationProfileLibrary(Path(directory))
+            published = library.publish((root / "tests/fixtures/installation_profile_v1.bin").read_bytes())
+            selection = InstallationProfileSelection(library, INSTALLED_INSTALLATION_PROFILE_TOPOLOGY)
+            selection.select(published.id)
+            for name in ('aurora_curtains', 'cellular_tapestry', 'circadian_window'):
+                with self.subTest(component=name):
+                    scene = get_starter("human_twilight_sparkle")["scene"]
+                    descriptor = next(item for item in current_component_descriptors() if item.component_id == name)
+                    scene['animation'] = {'component_id': name, 'provider': 'python',
+                                          'role': 'animation', 'version': 1,
+                                          'parameters': deepcopy(dict(descriptor.defaults))}
+                    canonical = normalize_composer_scene({'origin': 'composer', 'scene': scene}, self.interface.composer_catalog)
+                    native = InstalledFinalSceneRuntime(self.interface.composer_catalog, root)
+                    opaque = InstalledFinalSceneRuntime(self.interface.composer_catalog, root, foreground_only=True)
+                    for runtime in (native, opaque):
+                        runtime.set_installation_profile(selection.view)
+                    wall_time = datetime.fromisoformat("2026-09-20T12:00:00+00:00")
+                    for index in range(160):
+                        context = ScenePresentationContext(canonical, index / 20, wall_time + timedelta(seconds=index / 20))
+                        expected = native.render(context)
+                        actual = opaque.render_opaque_full(context)
+                        np.testing.assert_array_equal(actual.pixels, expected.pixels)
+                        self.assertEqual(actual.basis, canonical.identity)
+
+    def test_circadian_uses_scene_wall_time_instead_of_machine_clock(self) -> None:
+        from web.composer_final_preview import current_component_descriptors
+        descriptor = next(item for item in current_component_descriptors() if item.component_id == 'circadian_window')
+        scene = get_starter('human_twilight_sparkle')['scene']
+        scene['animation'] = {'component_id': 'circadian_window', 'provider': 'python',
+                              'role': 'animation', 'version': 1,
+                              'parameters': {**dict(descriptor.defaults), 'time_offset': 2.0}}
+        canonical = normalize_composer_scene({'origin': 'composer', 'scene': scene}, self.interface.composer_catalog)
+        runtime = InstalledFinalSceneRuntime(self.interface.composer_catalog, Path(__file__).resolve().parents[2], foreground_only=True)
+        with patch('animation.libraries.procedural_longform.datetime') as machine_clock:
+            machine_clock.now.side_effect = AssertionError('Scene rendering must not sample the machine clock')
+            for elapsed, hour in ((0., 6), (1., 18)):
+                context = ScenePresentationContext(canonical, elapsed, datetime.fromisoformat(f'2026-09-20T{hour:02d}:00:00+00:00'))
+                runtime.render_opaque_full(context)
+                self.assertEqual(runtime._runtime._animation.instance._circadian_hour, hour + 2)
+
     def test_clock_offset_changes_preview_time_without_advancing_the_scene(self) -> None:
         for format_24h, seconds, offset in ((True, True, 360), (False, False, 360),
                                             (True, False, -720), (False, True, 840)):

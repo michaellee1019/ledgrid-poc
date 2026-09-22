@@ -1,7 +1,6 @@
 """Checksummed MISO must precede all status authority and exact native ACKs."""
 from __future__ import annotations
 
-import binascii
 import copy
 import hashlib
 import unittest
@@ -18,6 +17,7 @@ def authority(item):
     return copy.deepcopy({key: value for key, value in vars(item).items()
                           if key != 'spi' and not key.endswith('_lock')
                           and key not in ('_receiver_status_integrity_errors',
+                                          '_receiver_status_empty_responses',
                                           '_receiver_status_unprotected_rejections',
                                           '_receiver_status_integrity_last_failure',
                                           '_receiver_status_current_peer_rejected')})
@@ -85,6 +85,62 @@ class StatusIntegrityTests(unittest.TestCase):
         self.assertTrue(latest['all_zero'])
         self.assertEqual(latest['received_bytes'], 1260)
         self.assertEqual(item.get_stats()['receiver_status_integrity_errors'], 2)
+
+    def test_only_complete_expected_all_zero_status_counts_as_empty(self):
+        item = controller()
+        item._update_receiver_status(status_v8(sequence=191895))
+        before = authority(item)
+        empty = bytes(1260)
+        self.assertFalse(item._update_receiver_status(
+            empty, full_status_expected=True, transfer_bytes=len(empty)))
+        stats = item.get_stats()
+        self.assertEqual(stats['receiver_status_empty_responses'], 1)
+        self.assertEqual(stats['receiver_status_integrity_errors'], 1)
+        self.assertEqual(stats['receiver_status_integrity_last_failure']['reason'],
+                         'invalid_header')
+        self.assertEqual(authority(item), before)
+
+        nonzero_header = bytearray(empty)
+        nonzero_header[0] = 1
+        bad_crc = status_v8(sequence=191896)
+        bad_crc[1248] ^= 1
+        for response, expected_bytes in (
+            (empty[:1251], 1260),       # Truncated status snapshot.
+            (empty[:1252], 1260),       # Snapshot-sized, but short SPI reply.
+            (nonzero_header, 1260),     # Invalid header with nonempty MISO.
+            (bad_crc, len(bad_crc)),    # Full header with bad CRC.
+        ):
+            self.assertFalse(item._update_receiver_status(
+                response, full_status_expected=True,
+                transfer_bytes=expected_bytes))
+            self.assertEqual(item.get_stats()['receiver_status_empty_responses'], 1)
+            self.assertEqual(authority(item), before)
+        self.assertEqual(item.get_stats()['receiver_status_integrity_errors'], 5)
+        self.assertFalse(item._update_receiver_status(
+            empty, full_status_expected=False, transfer_bytes=len(empty)))
+        self.assertEqual(item.get_stats()['receiver_status_empty_responses'], 1)
+
+    def test_empty_response_does_not_satisfy_causal_protected_status(self):
+        item = controller()
+        responses = [bytes(1260)]
+        for packets in (1, 2, 3):
+            response = status_v8(sequence=191895)
+            response[12:16] = packets.to_bytes(4, 'big')
+            responses.append(bytes(checksum_status(response)) + bytes(8))
+
+        def query():
+            response = responses.pop(0)
+            item._last_transfer_status_sampled = item._update_receiver_status(
+                response, full_status_expected=True, transfer_bytes=1260)
+            return item.get_stats()
+
+        with patch.object(item, 'query_receiver_status', side_effect=query):
+            status = item.query_causal_receiver_status(required_status_version=8)
+        self.assertEqual(status['receiver_packets'], 3)
+        self.assertEqual(status['receiver_status_integrity_errors'], 1)
+        self.assertEqual(status['receiver_status_empty_responses'], 1)
+        self.assertTrue(status['receiver_status_integrity_established'])
+        self.assertEqual(responses, [])
 
     def test_invalid_first_complete_packet_cannot_negotiate_transport_or_ownership(self):
         item = controller()

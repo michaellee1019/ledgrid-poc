@@ -1214,6 +1214,10 @@ bool decode_receiver_packet_payload(
   std::uint16_t corrected_codewords = 0;
   std::uint16_t corrected_bits = 0;
   bool outer_parity_unavailable = false;
+  // This fills scratch and verifies the complete inner CRC and outer parity.
+  // A successful check skips every repair below, so scratch stays unchanged.
+  const bool systematic_payload_valid = fec_v5_systematic_payload_valid(
+      packet, codewords, scratch, kFecEnvelopeVersion, true, true);
   {
     const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
     constexpr std::size_t kMaximumCorrections = kFecParityBytes / 2U;
@@ -1223,8 +1227,6 @@ bool decode_receiver_packet_payload(
     // padding, or semantic-CRC damage still enters the bounded RS decoder.
     // Parity-only damage is safe to ignore because it cannot change the
     // authenticated semantic payload.
-    const bool systematic_payload_valid = fec_v5_systematic_payload_valid(
-        packet, codewords, scratch, kFecEnvelopeVersion, true, true);
     std::size_t contiguous_burst_hint = kFecCodewordBytes;
     bool maximum_burst_blocks[kFecMaxCodewords] = {};
     std::uint8_t maximum_burst_syndromes
@@ -1595,13 +1597,14 @@ bool decode_receiver_packet_payload(
        index < semantic_decoded_capacity; ++index) {
     if (scratch[index] != 0U) return false;
   }
-  if (!receiver_packet_crc_valid(inner, inner_wire_size)) {
+  if (!systematic_payload_valid &&
+      !receiver_packet_crc_valid(inner, inner_wire_size)) {
     if (report != nullptr) {
       report->result = ReceiverPacketDecodeResult::FecSemanticCrcError;
     }
     return false;
   }
-  if (!outer_parity_unavailable &&
+  if (!systematic_payload_valid && !outer_parity_unavailable &&
       !fec_outer_parity_valid(scratch, codewords)) {
     // Every ordinary repair must converge on both the canonical inner packet
     // and its outer shard. The sole exception is an uncorrectable outer shard:

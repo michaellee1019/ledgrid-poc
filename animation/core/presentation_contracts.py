@@ -802,9 +802,13 @@ class OverlayFrame:
         _frame_common(self, channels=4)
         _uint64("revision", self.revision)
         alpha = self.pixels[:, 3:4]
-        invalid = np.argwhere(self.pixels[:, :3] > alpha)
-        if invalid.size:
-            pixel, channel = (int(value) for value in invalid[0])
+        # uint8 RGB cannot exceed fully opaque alpha. This common full-scene
+        # case needs only the alpha scan, including on cached output ticks.
+        if np.all(alpha == 255):
+            return
+        invalid = self.pixels[:, :3] > alpha
+        if np.any(invalid):
+            pixel, channel = divmod(int(np.argmax(invalid)), 3)
             raise ValueError(
                 "OverlayFrame pixels must be premultiplied RGBA8; "
                 f"pixel {pixel} channel {channel} exceeds alpha {int(alpha[pixel, 0])}"

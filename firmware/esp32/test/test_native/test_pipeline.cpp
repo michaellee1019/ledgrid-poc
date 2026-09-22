@@ -221,8 +221,17 @@ std::vector<std::uint8_t> fec_rs_packet(
     std::size_t parity_bytes,
     std::size_t codeword_bytes,
     bool diagonal = false,
-    bool outer_parity = false) {
-  const auto inner = aligned_packet(semantic);
+    bool outer_parity = false,
+    bool nonzero_inner_padding = false) {
+  auto inner = aligned_packet(semantic);
+  if (nonzero_inner_padding) {
+    const std::size_t padding_offset =
+        ledgrid::kAlignedEnvelopeHeaderBytes + semantic.size();
+    TEST_ASSERT_LESS_THAN(inner.size() - ledgrid::kAnimationPipelineCrcBytes,
+                          padding_offset);
+    inner[padding_offset] = 0x7E;
+    write_packet_crc(&inner);
+  }
   std::vector<std::uint8_t> protected_bytes(
       ledgrid::kFecEnvelopeHeaderBytes + inner.size(), 0);
   protected_bytes[0] = static_cast<std::uint8_t>(
@@ -1668,6 +1677,23 @@ void test_fec_runtime_outcome_partition_is_total_and_exclusive() {
   }
 }
 
+void test_fec_clean_integrity_does_not_bypass_inner_padding_validation() {
+  const std::vector<std::uint8_t> semantic = {
+      static_cast<std::uint8_t>(ledgrid::ReceiverCommand::Show)};
+  // CRC, RS parity, and outer parity all protect this malformed inner packet.
+  // The final payload decoder must reject its noncanonical aligned padding.
+  const auto packet = fec_rs_packet(
+      semantic, ledgrid::kFecEnvelopeVersion, ledgrid::kFecDataBytes,
+      ledgrid::kFecParityBytes, ledgrid::kFecCodewordBytes, true, true, true);
+  std::array<std::uint8_t, ledgrid::kFecScratchBytes> scratch{};
+  ledgrid::ReceiverPacketPayload decoded{};
+  ledgrid::ReceiverPacketDecodeReport report{};
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      packet.data(), packet.size(), &decoded, &report,
+      scratch.data(), scratch.size()));
+  TEST_ASSERT_TRUE(report.fec_envelope_attempted);
+}
+
 void test_fec_native_decode_benchmark_installed_frame() {
   std::vector<std::uint8_t> semantic(1U + 8U * 138U * 3U, 0x5A);
   semantic[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
@@ -1767,6 +1793,7 @@ int main(int, char**) {
   RUN_TEST(test_status_v7_preserves_v6_and_encodes_exact_fec_counters);
   RUN_TEST(test_fec_runtime_outcome_partition_is_total_and_exclusive);
   RUN_TEST(test_fec_native_decode_benchmark_installed_frame);
+  RUN_TEST(test_fec_clean_integrity_does_not_bypass_inner_padding_validation);
   RUN_TEST(test_fec_native_decode_benchmark_maximum_sparse_batch);
   return UNITY_END();
 }

@@ -406,7 +406,9 @@ class InstalledFinalSceneRuntime:
         if descriptor.component_id == WaveAnimation.COMPONENT_ID:
             return WaveAnimation(controller, parameters)
         if descriptor.component_id == CircadianWindowAnimation.COMPONENT_ID:
-            return CircadianWindowAnimation(controller, parameters)
+            animation = CircadianWindowAnimation(controller, parameters)
+            animation._clock_now = lambda: self._wall_time
+            return animation
         if descriptor.component_id == CloudCanyonAnimation.COMPONENT_ID:
             return CloudCanyonAnimation(controller, parameters)
         if descriptor.component_id == DesertWindAnimation.COMPONENT_ID:

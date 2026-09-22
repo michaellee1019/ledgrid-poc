@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -57,7 +58,8 @@ class _DisplayDevice:
         self.writes = 0
 
     def get_stats(self):
-        return {"receiver_status_integrity_errors": self.integrity_errors}
+        return {"receiver_status_integrity_errors": self.integrity_errors,
+                "receiver_status_empty_responses": getattr(self, "empty_responses", 0)}
 
     def query_causal_receiver_status(self, *, required_status_version):
         if required_status_version != 8:
@@ -165,6 +167,7 @@ def _wall(*, failure=None, display_after=1, predecessor_after=0,
 
     def send(_frame):
         controller.send_count += 1
+        controller._claim_logical_wall_frame_sequence()
         controller.send_nonblack.append(bool(np.any(_frame)))
         controller.pre_send_state = [
             (device.accepted, device.displayed, device.accepted_sequence,
@@ -197,6 +200,87 @@ class HostFullFirstDisplayTests(unittest.TestCase):
         self.assertEqual(wall.send_nonblack, [False, True])
         self.assertGreaterEqual(sum(device.status_queries for device in wall.devices), 25)
         self.assertGreaterEqual(wall.devices[3].polls_after_write, 3)
+
+    def test_receiver_three_dropped_first_frame_retries_without_weakening_exact_proof(self):
+        wall = _wall()
+        receiver = wall.devices[3]
+        write = receiver.write
+        attempts = []
+
+        def drop_first_attempt_at_each_frame():
+            attempts.append(receiver.accepted)
+            if attempts.count(receiver.accepted) == 1:
+                return
+            write()
+
+        receiver.write = drop_first_attempt_at_each_frame
+        proof = wall.present_displayed_host_full_frame("scene-test", self.frame,
+                                                       timeout_seconds=.5)
+        self.assertEqual(len(proof["displayed_receivers"]), 5)
+        self.assertEqual(receiver.accepted, 21)
+        self.assertEqual(receiver.displayed, 21)
+        self.assertEqual(wall._host_full_receiver3_frame_retries, 2)
+        self.assertEqual([device.writes for device in wall.devices], [2] * 5)
+
+    def test_receiver_three_retry_budget_and_double_acceptance_fail_closed(self):
+        for duplicate in (False, True):
+            with self.subTest(duplicate=duplicate):
+                wall = _wall()
+                receiver = wall.devices[3]
+                write = receiver.write
+                attempts = []
+
+                def reject_or_double_accept():
+                    attempts.append(True)
+                    if duplicate and len(attempts) == 2:
+                        write()
+                        write()
+
+                receiver.write = reject_or_double_accept
+                with self.assertRaisesRegex(RuntimeError, "retry budget|safely accept"):
+                    wall.present_displayed_host_full_frame("scene-test", self.frame,
+                                                           timeout_seconds=.6)
+                self.assertLessEqual(len(attempts), 4)
+                self.assertEqual(wall.send_nonblack, [False])
+
+    def test_other_receiver_drop_does_not_use_receiver_three_retry_policy(self):
+        wall = _wall()
+        wall.devices[0].write = lambda: None
+        with self.assertRaisesRegex(RuntimeError, "timed out"):
+            wall.present_displayed_host_full_frame("scene-test", self.frame,
+                                                   timeout_seconds=.12)
+        self.assertEqual(getattr(wall, "_host_full_receiver3_frame_retries", 0), 0)
+        self.assertEqual(wall.send_nonblack, [False])
+
+    def test_empty_queued_responses_before_fresh_status_do_not_erase_display_proof(self):
+        wall = _wall()
+        receiver = wall.devices[3]
+        original_query = receiver.query_causal_receiver_status
+
+        def query_after_empty_response(**kwargs):
+            receiver.integrity_errors += 1
+            receiver.empty_responses = getattr(receiver, "empty_responses", 0) + 1
+            return original_query(**kwargs)
+
+        receiver.query_causal_receiver_status = query_after_empty_response
+        proof = wall.present_displayed_host_full_frame("scene-test", self.frame,
+                                                       timeout_seconds=.1)
+        self.assertEqual(len(proof["displayed_receivers"]), 5)
+        self.assertGreater(receiver.empty_responses, 1)
+        self.assertEqual(receiver.integrity_errors, receiver.empty_responses)
+        self.assertEqual(receiver.displayed_sequence, 303)
+        self.assertEqual(wall.send_nonblack, [False, True])
+
+    def test_empty_status_accounting_cannot_hide_nonempty_corruption(self):
+        for errors, empty in ((1, 0), (1, 2), (1, -1), (1, True)):
+            with self.subTest(errors=errors, empty=empty):
+                wall = _wall(failure="integrity")
+                receiver = wall.devices[3]
+                receiver.integrity_errors = errors
+                receiver.empty_responses = empty
+                with self.assertRaisesRegex(RuntimeError, "protected-v8"):
+                    wall.present_displayed_host_full_frame("scene-test", self.frame,
+                                                           timeout_seconds=.1)
 
     def test_receiver_three_write_integrity_supersession_and_display_timeout_fail(self):
         for failure, expected in (("write", "black barrier failed"),
@@ -271,6 +355,87 @@ class HostFullFirstDisplayTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, expected):
                     wall.present_displayed_host_full_frame("scene-test", self.frame,
                                                            timeout_seconds=.015)
+
+    def test_takeover_uses_post_command_status_instead_of_queued_old_mode(self):
+        wall = _wall()
+        del wall.set_all_pixels
+        wall._executor = None
+        wall._devices_by_bus = {0: (0, 1), 1: (2, 3, 4)}
+        wall._local_background_active = False
+        wall._native_background_active = False
+        wall._sparse_overlay_session_id = None
+        wall._display_ownership_known = False
+        wall.debug = False
+        for device in wall.devices:
+            device.query_receiver_status = mock.Mock(return_value={
+                "receiver_status_version": 8, "receiver_base_mode": 0,
+            })
+            device.query_causal_receiver_status = mock.Mock(
+                wraps=device.query_causal_receiver_status
+            )
+        self.assertIs(wall.set_all_pixels(self.frame), True)
+        for device in wall.devices:
+            device.query_receiver_status.assert_not_called()
+            device.query_causal_receiver_status.assert_called_once_with(
+                required_status_version=8
+            )
+        # A fresh wrong mode or unavailable protected status still fails.
+        for failure in ("wrong_mode", "unavailable"):
+            with self.subTest(failure=failure):
+                wall._display_ownership_known = False
+                receiver = wall.devices[3]
+                if failure == "wrong_mode":
+                    receiver.query_causal_receiver_status = mock.Mock(return_value={
+                        "receiver_status_version": 8, "receiver_base_mode": 0,
+                    })
+                else:
+                    receiver.query_causal_receiver_status = mock.Mock(
+                        side_effect=RuntimeError("protected status unavailable")
+                    )
+                self.assertIs(wall.set_all_pixels(self.frame), False)
+                self.assertFalse(wall._display_ownership_known)
+                self.assertEqual(wall._last_full_frame_failure["operation"],
+                                 "set_all_takeover_verify")
+
+    def test_receiver_three_stream_limit_never_skips_strict_frames_or_other_receivers(self):
+        wall = _wall()
+        del wall.set_all_pixels
+        wall._executor = None
+        wall._devices_by_bus = {0: (0, 1), 1: (2, 3, 4)}
+        wall._local_background_active = False
+        wall._native_background_active = False
+        wall._sparse_overlay_session_id = None
+        wall._display_ownership_known = True
+        wall.debug = False
+        for device in wall.devices:
+            device.set_all_pixels = mock.Mock(wraps=device.set_all_pixels)
+        with mock.patch("drivers.multi_device.time.perf_counter", return_value=0):
+            self.assertIs(wall.stream_host_full_pixels(self.frame), True)
+        with mock.patch("drivers.multi_device.time.perf_counter", return_value=.02):
+            self.assertIs(wall.stream_host_full_pixels(self.frame * 2), True)
+        self.assertEqual([d.set_all_pixels.call_count for d in wall.devices],
+                         [2, 2, 2, 1, 2])
+        # Mandatory proof/black frames bypass the stream cap and reach all five.
+        with mock.patch("drivers.multi_device.time.perf_counter", return_value=.025):
+            self.assertIs(wall.set_all_pixels(self.frame * 3), True)
+        with mock.patch("drivers.multi_device.time.perf_counter", return_value=.04):
+            self.assertIs(wall.stream_host_full_pixels(self.frame * 4), True)
+        with mock.patch("drivers.multi_device.time.perf_counter", return_value=.1):
+            self.assertIs(wall.stream_host_full_pixels(self.frame * 5), True)
+        self.assertEqual([d.set_all_pixels.call_count for d in wall.devices],
+                         [5, 5, 5, 3, 5])
+        self.assertEqual(wall._host_full_receiver3_frames_skipped, 2)
+        np.testing.assert_array_equal(wall.devices[3].set_all_pixels.call_args.args[0],
+                                      np.full((1104, 3), 5, dtype=np.uint8))
+        # Unknown ownership also bypasses the cap before entering HostFullScene.
+        wall._display_ownership_known = False
+        with mock.patch("drivers.multi_device.time.perf_counter", return_value=.11):
+            self.assertIs(wall.stream_host_full_pixels(self.frame), True)
+        self.assertEqual(wall.devices[3].set_all_pixels.call_count, 4)
+        # A due send still propagates failure; throttling does not hide errors.
+        wall.devices[3].reject_write = True
+        with mock.patch("drivers.multi_device.time.perf_counter", return_value=.2):
+            self.assertIs(wall.stream_host_full_pixels(self.frame), False)
 
     def test_ordinary_set_all_returns_false_for_partial_receiver_write(self):
         wall = _wall()

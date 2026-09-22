@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 import hashlib
 import uuid
 
@@ -96,18 +95,17 @@ class CanonicalReceiverSceneMixin:
         self._host_full_safe_idle = {**evidence, "state": "verified", "receipt": receipt}
         return receipt
 
-    def _host_full_sparkle_eligible(self, canonical):
-        """Only the current opaque, widget-free Sparkle has a hidden base."""
+    def _host_full_opaque_eligible(self, canonical):
+        """Use complete RGB when the Animation covers the hidden base."""
         scene = canonical.scene
         animation = scene["animation"]
         background = scene["background"]
-        if (animation["component_id"] != "sparkle"
-                or background["component_id"] != "native_aurora"
+        if (background["component_id"] != "native_aurora"
                 or scene["widgets"]
                 or not callable(getattr(self.controller, "present_displayed_host_full_frame", None))):
             return False
         descriptor = self.scene_v2_component_catalog().require(
-            provider=animation["provider"], component_id="sparkle",
+            provider=animation["provider"], component_id=animation["component_id"],
             version=animation["version"],
         )
         return descriptor.alpha_behavior is AlphaBehavior.OPAQUE
@@ -119,9 +117,8 @@ class CanonicalReceiverSceneMixin:
     def _prepare_canonical_receiver_scene(self, payload, *, installation_profile_digest=None):
         from web.composer_final_preview import InstalledFinalSceneRuntime
         canonical = normalize_composer_scene({"origin": "composer", "scene": payload}, self.scene_v2_component_catalog())
-        error = self._receiver_hybrid_capability_error(managed_native=True)
-        if error:
-            raise ValueError(error)
+        if not callable(getattr(self.controller, "present_displayed_host_full_frame", None)):
+            raise ValueError("canonical Scene requires checked complete-frame display support")
         if not self.feature_flags.receiver_geometry_profile or not all(callable(getattr(self.controller, name, None)) for name in ('installation_profile_wall', 'install_installation_profile')):
             raise ValueError("canonical receiver Scene requires managed receiver geometry support")
         from animation.core.installation_profile_runtime import InstallationProfileSelection
@@ -136,12 +133,23 @@ class CanonicalReceiverSceneMixin:
         native = library.resolve_package(background["component_id"], bundle_digest=background["bundle_digest"])
         ref = ComponentRef(background["component_id"], "receiver_native", resolved_parameters=background["parameters"], bundle_digest=native.bundle_digest, expected_payload_digest=native.payload_digest)
         self._resolve_managed_native(ref)
-        # A separate candidate runtime ensures failed construction cannot touch
-        # any currently playing Animation or Widget.
-        runtime = InstalledFinalSceneRuntime(self.scene_v2_component_catalog(), Path(__file__).resolve().parents[2], controller=self.controller, foreground_only=True)
+        # An opaque Animation needs no rendered Background. Every other Scene
+        # uses the verified host peer and the same final composition as Preview.
+        # A separate candidate cannot touch the currently playing Scene.
+        opaque = self._host_full_opaque_eligible(canonical)
+        runtime = InstalledFinalSceneRuntime(self.scene_v2_component_catalog(), Path(__file__).resolve().parents[2], controller=self.controller, foreground_only=opaque)
         runtime.set_installation_profile(profile)
         from animation.core.scene_runtime import ScenePresentationContext
-        runtime.render(ScenePresentationContext(canonical, 0.0, datetime.now().astimezone()))
+        presentation = ScenePresentationContext(canonical, 0.0, datetime.now().astimezone())
+        if opaque:
+            try:
+                runtime.render_opaque_full(presentation)
+            except ValueError:
+                runtime = InstalledFinalSceneRuntime(self.scene_v2_component_catalog(), Path(__file__).resolve().parents[2], controller=self.controller, foreground_only=False)
+                runtime.set_installation_profile(profile)
+                runtime.render(presentation)
+        else:
+            runtime.render(presentation)
         animation = canonical.scene["animation"]
         transport = SceneState(
             revision=self._next_receiver_context_revision(canonical.identity.revision),
@@ -157,27 +165,14 @@ class CanonicalReceiverSceneMixin:
             self._resolve_scene_state(payload)
 
     def start_canonical_scene(self, payload):
-        from animation.core.scene_runtime import ScenePresentationContext
-
         canonical, runtime, transport = self._prepare_canonical_receiver_scene(payload)
-        if self._host_full_sparkle_eligible(canonical):
-            try:
-                runtime.render_opaque_full(ScenePresentationContext(
-                    canonical, 0.0, datetime.now().astimezone()
-                ))
-            except ValueError:
-                # A non-covering renderer retains the existing native/sparse path.
-                pass
-            else:
-                return self._start_canonical_host_full_scene(canonical, runtime, transport)
-        return self._start_receiver_hybrid_scene(transport, canonical_candidate=(canonical, runtime))
+        return self._start_canonical_host_full_scene(canonical, runtime, transport)
 
     def _start_canonical_host_full_scene(self, canonical, runtime, transport):
         from animation.core.scene_runtime import ScenePresentationContext
 
-        frame = runtime.render_opaque_full(ScenePresentationContext(
-            canonical, 0.0, datetime.now().astimezone()
-        ))
+        render = runtime.render_opaque_full if runtime.foreground_only else runtime.render
+        frame = render(ScenePresentationContext(canonical, 0.0, datetime.now().astimezone()))
         pixels = frame.pixels.copy()
         digest = hashlib.sha256(pixels.tobytes()).hexdigest()
         request_id = f"scene-{canonical.identity.digest}-{uuid.uuid4().hex}"
@@ -236,7 +231,7 @@ class CanonicalReceiverSceneMixin:
             self._scene_compositor = None
             self._active_scene_state = transport
             self.current_animation = None
-            self.current_animation_name = "sparkle"
+            self.current_animation_name = canonical.scene["animation"]["component_id"]
             self.current_animation_hash = canonical.scene["background"]["bundle_digest"]
             self.current_preset = None
             self.frames_presented = 1

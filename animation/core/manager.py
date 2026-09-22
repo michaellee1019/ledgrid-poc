@@ -3562,6 +3562,10 @@ class AnimationManager(CanonicalReceiverSceneMixin):
             status['scene_state'] = self.get_scene_state()
         if self._canonical_host_full_mode:
             status['host_full'] = {
+                'render_mode': (
+                    'opaque' if self._canonical_receiver_runtime.foreground_only
+                    else 'composed'
+                ),
                 'scene_digest': self._canonical_receiver_scene.identity.digest,
                 'installation_profile_digest': installation_profile_digest,
                 'authority_digest': getattr(
@@ -4879,7 +4883,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                             runtime, canonical,
                             monotonic_elapsed=max(0.0, loop_start - self.start_time),
                             wall_time=datetime.now().astimezone(),
-                            require_opaque_full=True,
+                            require_opaque_full=runtime.foreground_only,
                         )
                         frame, changed, dirty_ranges = (
                             presented.pixels, presented.changed, None
@@ -5456,7 +5460,10 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                 return 0.0, 0.0
             with self._presentation_io_guard():
                 send_start = time.perf_counter()
-                if use_partial:
+                streamer = getattr(self.controller, "stream_host_full_pixels", None)
+                if getattr(self, "_canonical_host_full_mode", False) and callable(streamer):
+                    accepted = streamer(frame)
+                elif use_partial:
                     accepted = self.controller.set_frame(frame, dirty_ranges=dirty_ranges)
                 else:
                     accepted = self.controller.set_all_pixels(frame)

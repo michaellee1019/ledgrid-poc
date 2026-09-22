@@ -1114,7 +1114,13 @@
     // accepts it.  While that acknowledgement is failed or pending recovery,
     // keep the Operations pane anchored to the wall observation rather than
     // letting a later local Composer poll imply the desired scene is live.
-    const status = state.wall.activationError ? wallStatus() : (payload.status || payload); state.status = status;
+    const status = {...(state.wall.activationError ? wallStatus() : (payload.status || payload))};
+    if (state.wall.observation) {
+      const observed = wallStatus();
+      // Saved Composer publication is desired state, not proof of wall playback.
+      for (const key of ['connected', 'running', 'armed', 'observed']) status[key] = observed[key];
+    }
+    state.status = status;
     state.revision = Math.max(state.revision || 0, status.revision || 0);
     $('#connectionState').textContent = status.connected ? (status.running ? 'Running' : 'Stopped') : 'Offline';
     $('#observedIdentity').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
@@ -1203,6 +1209,9 @@
         state.publication.scheduled = true;
         queueMicrotask(flushPublication);
       }
+      // Release the visible retry immediately after the publication settles.
+      // Newer queued work still keeps it disabled through renderStatus.
+      renderStatus(state.status || wallStatus());
     }
   }
   function submit(scene, {builtin = false, endpoint = null, requestBody = null, intentToken = null, rememberEdit = false, previous = null, automatic = false} = {}) {

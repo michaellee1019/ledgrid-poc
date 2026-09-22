@@ -8,10 +8,11 @@ premultiplied-RGBA foreground transport before final RGB output.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 import hashlib
 import math
 from types import MappingProxyType
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 

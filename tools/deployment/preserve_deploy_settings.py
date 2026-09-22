@@ -298,8 +298,6 @@ def _verified_host_full_scene(status: dict[str, Any], scene: dict[str, Any]) -> 
             or scene.get("background", {}).get("provider") != "receiver_native"
             or scene.get("background", {}).get("component_id") != "native_aurora"
             or scene.get("animation", {}).get("provider") != "python"
-            or scene.get("animation", {}).get("component_id") != "sparkle"
-            or scene.get("widgets") != []
             or status.get("is_running") is not True
             or status.get("mode") != "scene"
             or status.get("scene_state") != scene
@@ -308,14 +306,19 @@ def _verified_host_full_scene(status: dict[str, Any], scene: dict[str, Any]) -> 
         return False
     try:
         descriptor = current_component_catalog().require(
-            provider="python", component_id="sparkle",
+            provider="python", component_id=scene["animation"]["component_id"],
             version=scene["animation"]["version"],
         )
     except (KeyError, TypeError, ValueError):
         return False
-    if descriptor.alpha_behavior is not AlphaBehavior.OPAQUE:
-        return False
     host = status.get("host_full")
+    render_mode = host.get("render_mode") if isinstance(host, dict) else None
+    if render_mode not in ("opaque", "composed"):
+        return False
+    if render_mode == "opaque" and scene.get("widgets") != []:
+        return False
+    if render_mode == "opaque" and descriptor.alpha_behavior is not AlphaBehavior.OPAQUE:
+        return False
     profile = status.get("installation_profile_digest")
     digest = canonical_json_sha256(scene)
     if (not isinstance(host, dict)

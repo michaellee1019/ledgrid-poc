@@ -731,7 +731,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         host_reversals = (False, False, False, False, False)
         native_reversals = (False, False, True, True, False)
         masks = (255, 255, 255, 255, 255)
-        speeds = (20_000_000,) * 5
+        speeds = (20_000_000, 20_000_000, 20_000_000, 8_000_000, 20_000_000)
         return tuple(
             {
                 "logical_device": logical_id,
@@ -1324,6 +1324,9 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         self.assertEqual(contract["minimum_status_version"], 8)
         self.assertEqual(contract["required_capabilities"], 0x3FC00C)
         self.assertEqual(contract["fec_receiver_ids"], [3])
+        from drivers.led_layout import WALL_RECEIVER_SPI_SPEEDS_HZ
+        self.assertEqual(tuple(item['spi_speed_hz'] for item in contract['devices']),
+                         WALL_RECEIVER_SPI_SPEEDS_HZ)
         validated = deploy_target._validate_receiver_health_contract(
             contract, receivers=5
         )
@@ -1478,6 +1481,18 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             "invalid=True",
             rejection(tuple(invalid_baseline)),
         )
+
+        clean_non_fec_history = [dict(item) for item in valid]
+        clean_non_fec_history[2].update(
+            receiver_fec_packets_received=2854,
+            receiver_fec_packets_accepted=2854,
+            receiver_fec_last_decode_us=1790,
+            receiver_fec_max_decode_us=1823,
+        )
+        self.assertIsNone(rejection(tuple(clean_non_fec_history)))
+        clean_non_fec_history[2]['receiver_fec_last_decode_us'] = 1824
+        self.assertIn('FEC receive accounting is inconsistent',
+                      rejection(tuple(clean_non_fec_history)))
 
         non_fec_history = [dict(item) for item in valid]
         non_fec_history[0]["receiver_fec_packets_received"] = 1

@@ -242,3 +242,94 @@ def test_restart_terminal_publications_survive_all_pending_cache_pressure(setup,
     assert len(restarted._records) <= restarted.max_records
     assert all(channel.read_activation_status(activation_id)['phase'] == 'failed' for activation_id in ids)
     assert manager.mutation_count == 0
+
+
+def interrupted_history(fixture, channel, coordinator):
+    command = fixture.command(coordinator)
+    channel.enqueue_activation(command)
+    status = coordinator._new_status(command)
+    status.update(phase='applying')
+    status['rollback'].update(available=True, snapshot_id='a'*64)
+    channel.write_activation_status(status)
+    return command, status
+
+
+def test_obsolete_interrupted_command_closes_once_without_catalog_or_mutation(setup):
+    fixture, channel, manager, prior = setup
+    command, status = interrupted_history(fixture, channel, prior)
+    restarted = ControllerActivationCoordinator(manager, status_sink=channel.write_activation_status)
+    # Reconciliation must not invoke activation normalization against a new
+    # catalog after a component or native bundle has changed/disappeared.
+    with patch('ipc.runtime_control._normalize_activation_command', side_effect=ValueError('background bundle_digest does not match the catalog')) as normalize:
+        assert process_activation_commands(channel, restarted) == 0
+        assert normalize.call_count == 0
+        settle(channel, restarted)
+    result = channel.read_activation_status(command['activation_id'])
+    assert result['phase'] == 'failed'
+    assert result['controller'] == status['controller']
+    assert result['requested_identity'] == status['requested_identity']
+    assert result['rollback']['snapshot_id'] == 'a'*64
+    assert result['rollback']['available'] is False
+    assert restarted._records[command['activation_id']].historical
+    assert restarted._records[command['activation_id']].snapshot is None
+    assert manager.mutation_count == 0
+    with patch.object(channel, '_strict_json', wraps=channel._strict_json) as reads:
+        settle(channel, restarted)
+        assert reads.call_count == 0
+
+
+@pytest.mark.parametrize('field', ['scene', 'settings', 'profile', 'basis', 'activation_id',
+                                  'command_id', 'requested_identity', 'normalized_identity',
+                                  'session', 'revision', 'schema', 'extra'])
+def test_interrupted_history_rejects_tampered_correspondence(setup, field):
+    fixture, channel, manager, prior = setup
+    command, status = interrupted_history(fixture, channel, prior)
+    if field == 'scene':
+        command['desired']['scene']['revision'] += 1
+    elif field == 'settings':
+        command['desired']['global_settings']['revision'] += 1
+    elif field == 'profile':
+        command['desired']['installation_profile_digest'] = 'f'*64
+    elif field == 'basis':
+        command['basis']['controller']['state_revision'] += 1
+    elif field in ('activation_id', 'command_id'):
+        status[field] = str(uuid.uuid4())
+    elif field in ('requested_identity', 'normalized_identity'):
+        status[field]['scene_identity']['digest'] = 'f'*64
+    elif field == 'session':
+        status['controller']['session_id'] = 'f'*32
+    elif field == 'revision':
+        status['controller']['state_revision_before'] += 1
+    elif field == 'schema':
+        command['schema'] = 'invalid'
+    else:
+        command['extra'] = True
+    restarted = ControllerActivationCoordinator(manager, status_sink=channel.write_activation_status)
+    with pytest.raises((ValueError, fixtures.ControllerActivationConflictError)):
+        restarted.reconcile_durable_nonterminal(command, status)
+    assert restarted.get(command['activation_id']) is None
+    assert manager.mutation_count == 0
+
+
+def test_interrupted_history_closes_despite_unavailable_current_state(setup):
+    fixture, channel, manager, prior = setup
+    command, _ = interrupted_history(fixture, channel, prior)
+    restarted = ControllerActivationCoordinator(manager, status_sink=channel.write_activation_status)
+    with patch.object(restarted, '_manager_status', side_effect=RuntimeError('current component unavailable')):
+        assert process_activation_commands(channel, restarted) == 0
+    assert channel.read_activation_status(command['activation_id'])['phase'] == 'failed'
+    assert manager.mutation_count == 0
+
+
+def test_interrupted_history_publication_failure_keeps_retry_authority(setup):
+    fixture, channel, manager, prior = setup
+    command, _ = interrupted_history(fixture, channel, prior)
+    restarted = ControllerActivationCoordinator(manager, status_sink=channel.write_activation_status)
+    with patch.object(channel, '_atomic_write', side_effect=OSError('disk unavailable')):
+        assert process_activation_commands(channel, restarted) == 0
+        assert restarted.has_pending_publications(command['activation_id'])
+        assert channel.read_activation_status(command['activation_id'])['phase'] == 'applying'
+    settle(channel, restarted)
+    assert channel.read_activation_status(command['activation_id'])['phase'] == 'failed'
+    assert not restarted.has_pending_publications(command['activation_id'])
+    assert manager.mutation_count == 0

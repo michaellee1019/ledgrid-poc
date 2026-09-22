@@ -176,6 +176,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             "scene_state": scene,
             "scene": {"provider_mode": "host_full_rgb"},
             "host_full": {
+                "render_mode": "opaque",
                 "scene_digest": digest,
                 "installation_profile_digest": profile,
                 "authority_digest": "a" * 64,

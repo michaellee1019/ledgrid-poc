@@ -208,6 +208,41 @@ class BrowserPythonBundleTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_built_bundle_loads_and_renders_coverage_tracking_animations(self):
+        script = r'''\
+import pathlib
+import sys
+sys.path.insert(0, sys.argv[1])
+from ledgrid_browser_runtime import BrowserPreviewRuntime
+
+profile = pathlib.Path(sys.argv[2])
+digest = profile.read_bytes()[68:100].hex()
+runtime = BrowserPreviewRuntime()
+runtime.bind_installation_profile_path(str(profile), digest)
+for instance_id, plugin_id, class_name in (
+    ("plant", "plant_glow", "PlantGlowAnimation"),
+    ("flags", "world_flags", "WorldFlagsAnimation"),
+):
+    ready = runtime.initialize(
+        plugin_id, class_name, {"width": 33, "height": 138},
+        instance_id=instance_id, installation_profile_digest=digest,
+    )
+    result = runtime.render(0.0, 0, instance_id=instance_id)
+    assert ready["frameFormat"] == "premultiplied-rgba", ready
+    assert result["frameFormat"] == "premultiplied-rgba", result
+    assert len(runtime.frame_bytes_for(instance_id)) == 33 * 138 * 4
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path = Path(directory) / "runtime.zip"
+            archive_path.write_bytes(build_archive(REPO_ROOT))
+            with zipfile.ZipFile(archive_path) as archive:
+                archive.extractall(directory)
+            completed = subprocess.run(
+                [sys.executable, "-c", script, directory, str(PROFILE_PATH)],
+                cwd=directory, capture_output=True, text=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
     def test_worker_protocol_is_pinned_multi_instance_and_has_no_server_endpoint(self):
         worker = WORKER_PATH.read_text(encoding="utf-8")
         self.assertIn(f"const PYODIDE_VERSION = '{PYODIDE_VERSION}'", worker)

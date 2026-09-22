@@ -348,11 +348,14 @@ class LongformSceneBase(AnimationBase):
         value = 0.025 + haze + body1 * 0.28 + body2 * 0.18 + crest * 0.34 + grains * 0.42
         self.colorize(value, crest * 0.4 + grains)
 
+    def _clock_now(self):
+        return datetime.now().astimezone()
+
     def _current_hour(self, t: float) -> float:
         fixed = float(self.params.get("hour", -1.0))
         if fixed >= 0:
             return (fixed + t * float(self.params.get("time_scale", 1.0)) / 3600.0) % 24.0
-        now = datetime.now().astimezone()
+        now = self._clock_now()
         return (now.hour + now.minute / 60 + now.second / 3600 + float(self.params.get("time_offset", 0.0))) % 24
 
     def _circadian_palette(self):

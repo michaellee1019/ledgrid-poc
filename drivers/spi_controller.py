@@ -865,6 +865,7 @@ class LEDController:
         self._receiver_status_integrity_last_packets = None
         self._receiver_status_last_packets = None
         self._receiver_status_integrity_errors = 0
+        self._receiver_status_empty_responses = 0
         self._receiver_status_integrity_last_failure = None
         self._receiver_status_unprotected_rejections = 0
         self._receiver_status_current_peer_rejected = False
@@ -1249,7 +1250,11 @@ class LEDController:
             logical_id * FULL_FRAME_STATUS_SAMPLE_INTERVAL
             // FULL_FRAME_STATUS_SAMPLE_RECEIVERS
         )
-        return wall_frame_sequence % FULL_FRAME_STATUS_SAMPLE_INTERVAL == phase
+        # A rate-limited receiver can skip every sequence at its shared-wall
+        # phase. Bound the gap using frames actually sent on this route too.
+        return (wall_frame_sequence % FULL_FRAME_STATUS_SAMPLE_INTERVAL == phase
+                or getattr(self, "_full_frame_frames_since_status_sample", 0)
+                >= FULL_FRAME_STATUS_SAMPLE_INTERVAL - 1)
 
     @staticmethod
     def _response_u16(response, offset):
@@ -1483,6 +1488,15 @@ class LEDController:
                     self, "_receiver_status_unprotected_rejections", 0
                 ) + 1
                 self._receiver_status_current_peer_rejected = True
+            elif (full_status_expected
+                  and (transfer_bytes is None or len(response) == transfer_bytes)
+                  and not any(response)):
+                # A full-length, entirely empty MISO reply remains an invalid
+                # status. Count this observed shape separately without making
+                # any untrusted status field authoritative.
+                self._receiver_status_empty_responses = getattr(
+                    self, "_receiver_status_empty_responses", 0
+                ) + 1
             self._record_status_integrity_failure(
                 response,
                 "unsupported_status_version" if legacy else "invalid_header",
@@ -3613,6 +3627,14 @@ class LEDController:
         if self.debug:
             print(f"✓ Brightness set ({level})")
     
+    def set_brightness_acknowledged(self, brightness):
+        """Restore the operator's brightness after reboot with an exact ACK."""
+        level = self._bounded_uint("brightness", brightness, 0xFF)
+        status = self._command_status(bytes((CMD_SET_BRIGHTNESS, level)),
+                                      storage_operation=True)
+        self.current_brightness = level
+        return status
+
     def set_lane_mask(self, lane_mask):
         """Restrict which WS2812 lanes emit edges.
 
@@ -3656,6 +3678,17 @@ class LEDController:
             )
         self._refresh_configuration()
         self._xfer([CMD_SET_STAGGER, value])
+        self.current_stagger_phases = value
+
+    def set_stagger_phases_acknowledged(self, phases):
+        """Restore the configured output timing after a receiver reboot."""
+        value = self._bounded_uint("stagger phases", phases, MAX_STAGGER_PHASES)
+        if value < STAGGER_OFF:
+            raise ValueError("stagger phases are outside the supported range")
+        status = self._command_status(bytes((CMD_SET_STAGGER, value)),
+                                      storage_operation=True)
+        self.current_stagger_phases = value
+        return status
 
     def show(self):
         """Update the LED display"""
@@ -4094,6 +4127,7 @@ class LEDController:
             'receiver_status_integrity_verified': getattr(self, '_receiver_status_integrity_verified', False),
             'receiver_status_integrity_established': getattr(self, '_receiver_status_integrity_established', False),
             'receiver_status_integrity_errors': getattr(self, '_receiver_status_integrity_errors', 0),
+            'receiver_status_empty_responses': getattr(self, '_receiver_status_empty_responses', 0),
             'receiver_status_integrity_last_failure': (
                 dict(self._receiver_status_integrity_last_failure)
                 if getattr(self, '_receiver_status_integrity_last_failure', None) is not None else None

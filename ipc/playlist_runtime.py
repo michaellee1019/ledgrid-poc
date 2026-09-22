@@ -8,6 +8,7 @@ import threading
 import time
 from typing import Any, Callable, Mapping
 
+from ipc.scene_contract import canonical_json_sha256
 from ipc.runtime_control import (
     ControllerCommandConflictError,
     controller_activation_coordinator,
@@ -18,6 +19,8 @@ from ipc.runtime_control import (
 PLAYLIST_COMMAND_SCHEMA = "ledgrid.playlist-command"
 PLAYLIST_STATUS_SCHEMA = "ledgrid.playlist-status"
 PLAYLIST_VERSION = 1
+RETRYABLE_RECEIVER_STATUS_ERROR = "receiver 3 lacks intact protected-v8 display status"
+PLAYLIST_RETRY_WINDOW_SECONDS = 30.0
 
 
 class PlaylistError(RuntimeError):
@@ -111,7 +114,8 @@ class PlaylistRunner:
                 "updated_at": self._wall_clock(), "run_id": None, "request_id": None,
                 "playlist_id": None, "playlist_name": None, "current_index": None,
                 "entry_count": 0, "current_entry": None, "entry_started_at": None,
-                "entry_deadline_at": None, "remaining_seconds": None, "error": None}
+                "entry_deadline_at": None, "remaining_seconds": None, "error": None,
+                "retry_count": 0, "last_recovery_error": None}
 
     def _flush_pending_publication(self) -> bool:
         pending = self._pending_publication
@@ -151,6 +155,96 @@ class PlaylistRunner:
     def _validate_scene(self, scene: Mapping[str, Any]) -> dict[str, Any]:
         return normalize_managed_scene(self.manager, scene)
 
+    def _start_entry_with_verified_recovery(
+        self, scene: Mapping[str, Any], *, entry_index: int,
+        expected_revision: int, session_id: str, operation_id: str,
+    ) -> dict[str, Any]:
+        """Try a complete entry at most twice, with exact restoration first.
+
+        Each attempt owns a separate CAS lease. Releasing the lease after
+        compensation lets a newer manual command win before the second try.
+        """
+        first_snapshot = None
+        retry_count = 0
+        last_recovery_error = None
+        retry_deadline = time.monotonic() + PLAYLIST_RETRY_WINDOW_SECONDS
+        for attempt in range(2):
+            if self.coordinator.session_id != session_id:
+                raise ControllerCommandConflictError("controller session changed during playlist entry")
+            if attempt and time.monotonic() >= retry_deadline:
+                return {"started": False, "snapshot": first_snapshot,
+                        "owned_revision": expected_revision,
+                        "retry_count": retry_count,
+                        "last_recovery_error": last_recovery_error,
+                        "error": "playlist recovery window expired before its single retry"}
+            failure = None
+            restore_error = None
+            with self.coordinator.legacy_mutation_guard(self._guard(expected_revision)) as mutation:
+                prior = self.coordinator.capture_display_snapshot()
+                if first_snapshot is None:
+                    first_snapshot = prior
+                prior_failure = deepcopy(getattr(self.manager, "_receiver_last_failure", None))
+                attempt_started_at = time.time()
+                try:
+                    if not start_scene(self.manager, dict(scene)):
+                        raise PlaylistError(f"controller rejected playlist entry {entry_index + 1}")
+                except Exception as exc:
+                    failure = exc
+                    preparation = getattr(self.manager, "_receiver_last_failure", None)
+                    prepared_without_takeover = (
+                        isinstance(exc, PlaylistError)
+                        and scene.get("schema") == "ledgrid.scene.v2"
+                        and isinstance(preparation, Mapping)
+                        and preparation != prior_failure
+                        and preparation.get("operation") == "receiver_hybrid_preparation"
+                        and preparation.get("phase") == "before_presentation_takeover"
+                        and preparation.get("scene_digest") == canonical_json_sha256(scene)
+                        and isinstance(preparation.get("observed_at"), (int, float))
+                        and preparation["observed_at"] >= attempt_started_at
+                    )
+                    try:
+                        if prepared_without_takeover:
+                            try:
+                                self.coordinator.verify_display_snapshot_unchanged(prior)
+                            except Exception:
+                                # A preparation label never substitutes for
+                                # exact current receiver/display evidence.
+                                self.coordinator.restore_display_snapshot_verified(
+                                    prior, operation_id=operation_id
+                                )
+                        else:
+                            self.coordinator.restore_display_snapshot_verified(
+                                prior, operation_id=operation_id
+                            )
+                    except Exception as exc:
+                        restore_error = exc
+            owned_revision = mutation.resulting_state_revision
+            if owned_revision is None:
+                raise PlaylistError("controller did not report playlist ownership")
+            if failure is None:
+                return {"started": True, "snapshot": first_snapshot,
+                        "owned_revision": owned_revision,
+                        "retry_count": retry_count,
+                        "last_recovery_error": last_recovery_error,
+                        "error": None}
+            last_recovery_error = str(failure)
+            if restore_error is not None:
+                return {"started": False, "snapshot": first_snapshot,
+                        "owned_revision": owned_revision,
+                        "retry_count": retry_count,
+                        "last_recovery_error": last_recovery_error,
+                        "error": f"{failure}; exact restoration failed: {restore_error}"}
+            if (attempt or str(failure) != RETRYABLE_RECEIVER_STATUS_ERROR
+                    or time.monotonic() >= retry_deadline):
+                return {"started": False, "snapshot": first_snapshot,
+                        "owned_revision": owned_revision,
+                        "retry_count": retry_count,
+                        "last_recovery_error": last_recovery_error,
+                        "error": str(failure)}
+            retry_count = 1
+            expected_revision = owned_revision
+        raise AssertionError("playlist entry retry budget was exceeded")
+
     def dispatch(self, raw_command: Any) -> dict[str, Any]:
         """Execute one immutable request once and replay its exact result."""
         command = normalize_playlist_command(raw_command)
@@ -185,23 +279,25 @@ class PlaylistRunner:
                 return self._request_result(command, "rejected", "controller state revision is stale")
             try:
                 entries = [{**entry, "scene": self._validate_scene(entry["scene"])} for entry in command["entries"]]
-                with self.coordinator.legacy_mutation_guard(
-                    self._guard(command["expected_controller_state_revision"])
-                ) as mutation:
-                    # Snapshot capture, first presentation, and ownership revision
-                    # all belong to the same serialized controller mutation.
-                    snapshot = self.coordinator.capture_display_snapshot()
-                    if not start_scene(self.manager, entries[0]["scene"]):
-                        raise PlaylistError("controller rejected playlist entry 1")
-                owned_revision = mutation.resulting_state_revision
-                if owned_revision is None:
-                    raise PlaylistError("controller did not report playlist ownership")
+                transition = self._start_entry_with_verified_recovery(
+                    entries[0]["scene"], entry_index=0,
+                    expected_revision=command["expected_controller_state_revision"],
+                    session_id=command["expected_controller_session_id"],
+                    operation_id=command["run_id"],
+                )
+                if not transition["started"]:
+                    return self._request_result(
+                        command, "rejected", transition["error"],
+                        retry_count=transition["retry_count"],
+                        last_recovery_error=transition["last_recovery_error"],
+                    )
             except (ControllerCommandConflictError, PlaylistError, TypeError, ValueError, RuntimeError) as exc:
                 return self._request_result(command, "rejected", str(exc))
             now = self._clock()
             now_wall = self._wall_clock()
-            self._active = {"command": command, "entries": entries, "snapshot": snapshot,
-                            "index": 0, "owned_revision": owned_revision,
+            self._active = {"command": command, "entries": entries,
+                            "snapshot": transition["snapshot"],
+                            "index": 0, "owned_revision": transition["owned_revision"],
                             "deadline": now + entries[0]["duration_seconds"]}
             return self._publish(
                 phase="running", run_id=command["run_id"], request_id=command["request_id"],
@@ -210,6 +306,8 @@ class PlaylistRunner:
                 entry_started_at=now_wall,
                 entry_deadline_at=now_wall + entries[0]["duration_seconds"],
                 remaining_seconds=entries[0]["duration_seconds"], error=None,
+                retry_count=transition["retry_count"],
+                last_recovery_error=transition["last_recovery_error"],
             )
 
     def stop(self, raw_command: Any) -> dict[str, Any]:
@@ -246,7 +344,7 @@ class PlaylistRunner:
                 if next_index >= len(active["entries"]):
                     snapshot = active["snapshot"]
                     with self.coordinator.legacy_mutation_guard(self._guard(active["owned_revision"])):
-                        self.coordinator.restore_display_snapshot(
+                        self.coordinator.restore_display_snapshot_verified(
                             snapshot, operation_id=active["command"]["run_id"]
                         )
                     self._active = None
@@ -254,15 +352,22 @@ class PlaylistRunner:
                                          current_entry=None, remaining_seconds=0.0,
                                          entry_deadline_at=None, error=None)
                 entry = active["entries"][next_index]
-                with self.coordinator.legacy_mutation_guard(
-                    self._guard(active["owned_revision"])
-                ) as mutation:
-                    if not start_scene(self.manager, entry["scene"]):
-                        raise PlaylistError(f"controller rejected playlist entry {next_index + 1}")
-                if mutation.resulting_state_revision is None:
-                    raise PlaylistError("controller did not report playlist ownership")
+                transition = self._start_entry_with_verified_recovery(
+                    entry["scene"], entry_index=next_index,
+                    expected_revision=active["owned_revision"],
+                    session_id=active["command"]["expected_controller_session_id"],
+                    operation_id=active["command"]["run_id"],
+                )
+                if not transition["started"]:
+                    self._active = None
+                    return self._publish(
+                        phase="failed", remaining_seconds=None,
+                        entry_deadline_at=None, error=transition["error"],
+                        retry_count=self._status["retry_count"] + transition["retry_count"],
+                        last_recovery_error=transition["last_recovery_error"],
+                    )
                 active["index"] = next_index
-                active["owned_revision"] = mutation.resulting_state_revision
+                active["owned_revision"] = transition["owned_revision"]
                 activated_at = self._clock()
                 activated_wall = self._wall_clock()
                 # Compensate polling overshoot, but do not spend the new
@@ -278,13 +383,24 @@ class PlaylistRunner:
                     entry_started_at=activated_wall,
                     entry_deadline_at=activated_wall + remaining,
                     remaining_seconds=remaining, error=None,
+                    retry_count=self._status["retry_count"] + transition["retry_count"],
+                    last_recovery_error=(transition["last_recovery_error"]
+                                         or self._status["last_recovery_error"]),
                 )
-            except (ControllerCommandConflictError, PlaylistError, TypeError, ValueError, RuntimeError) as exc:
+            except ControllerCommandConflictError:
+                self._active = None
+                return self._publish(phase="overridden", remaining_seconds=None,
+                                     entry_deadline_at=None,
+                                     error="Playlist stopped because another controller change took priority.")
+            except (PlaylistError, TypeError, ValueError, RuntimeError) as exc:
                 self._active = None
                 return self._publish(phase="failed", remaining_seconds=None,
                                      entry_deadline_at=None, error=str(exc))
 
-    def _request_result(self, command: Mapping[str, Any], phase: str, error: str | None) -> dict[str, Any]:
+    def _request_result(
+        self, command: Mapping[str, Any], phase: str, error: str | None,
+        *, retry_count: int = 0, last_recovery_error: str | None = None,
+    ) -> dict[str, Any]:
         return {"schema": PLAYLIST_STATUS_SCHEMA, "schema_version": PLAYLIST_VERSION,
                 "phase": phase, "controller_session_id": self.coordinator.session_id,
                 "updated_at": self._wall_clock(), "run_id": command.get("run_id"),
@@ -292,7 +408,9 @@ class PlaylistRunner:
                 "playlist_name": command.get("playlist_name"), "current_index": None,
                 "entry_count": len(command.get("entries", [])), "current_entry": None,
                 "entry_started_at": None, "entry_deadline_at": None,
-                "remaining_seconds": None, "error": error}
+                "remaining_seconds": None, "error": error,
+                "retry_count": retry_count,
+                "last_recovery_error": last_recovery_error}
 
     @staticmethod
     def _entry_summary(entry: Mapping[str, Any]) -> dict[str, Any]:

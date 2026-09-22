@@ -534,6 +534,40 @@ class ControllerActivationCoordinator:
         )
         self._restore_receiver_profile_snapshot(snapshot)
 
+    def restore_display_snapshot_verified(
+        self, snapshot: ControllerStateSnapshot, *, operation_id: str
+    ) -> None:
+        """Restore a playlist snapshot and prove the same state before retrying.
+
+        The caller must hold ``legacy_mutation_guard`` so no other controller
+        mutation can interleave with restoration and its evidence checks.
+        """
+        prior_global_revision = self._global_settings_revision
+        try:
+            self.restore_display_snapshot(snapshot, operation_id=operation_id)
+            self._global_settings_revision = snapshot.global_settings["revision"]
+            self._verify_restored_display_snapshot(snapshot)
+            if self._commit_callback is not None:
+                self._commit_callback()
+        except Exception:
+            self._global_settings_revision = prior_global_revision
+            raise
+
+    def verify_display_snapshot_unchanged(
+        self, snapshot: ControllerStateSnapshot
+    ) -> None:
+        """Prove a rejected preparation left the prior display untouched.
+
+        Unlike restoration, this cannot clear an uncertain first frame. The
+        caller must hold ``legacy_mutation_guard`` and have independent proof
+        that takeover never began.
+        """
+        if getattr(self.manager, "_host_full_first_frame_uncertain", False):
+            raise ControllerActivationError(
+                "prior display is uncertain after attempted takeover"
+            )
+        self._verify_restored_display_snapshot(snapshot)
+
     def set_status_sink(
         self, status_sink: Callable[[dict[str, Any]], None] | None
     ) -> None:
@@ -800,6 +834,17 @@ class ControllerActivationCoordinator:
         self._flush_publications(record, required=required)
         return public
 
+    @staticmethod
+    def _bounded_receipt_error(error: str) -> str:
+        encoded = error.encode("utf-8")
+        if len(encoded) <= 4096:
+            return error
+        suffix = f"… [truncated; sha256={hashlib.sha256(encoded).hexdigest()}]"
+        prefix = encoded[:4096 - len(suffix.encode("utf-8"))].decode(
+            "utf-8", errors="ignore"
+        )
+        return prefix + suffix
+
     def _set_phase(
         self,
         record: _ActivationRecord,
@@ -810,7 +855,7 @@ class ControllerActivationCoordinator:
     ) -> dict[str, Any]:
         record.status["phase"] = phase
         if error is not None:
-            record.status["error"] = error
+            record.status["error"] = self._bounded_receipt_error(error)
         return self._publish(record, required=publication_required)
 
     def _trim_records(self) -> None:
@@ -1142,6 +1187,62 @@ class ControllerActivationCoordinator:
             )
             return self._set_phase(record, "active")
 
+    def _correlate_interrupted_command(self, command_payload, durable):
+        """Bind historical evidence without authorizing its obsolete renderer.
+
+        This validator is only for publishing a failed interrupted receipt. It
+        must never feed queue(), execute(), or active-state restoration.
+        """
+        from ipc.scene_contract import (
+            activation_identity_from_basis,
+            normalize_scene_activation_basis,
+        )
+
+        if (not isinstance(command_payload, Mapping)
+                or set(command_payload) != {
+                    "schema", "schema_version", "activation_id", "check_token_digest",
+                    "basis", "basis_digest", "desired",
+                }
+                or not isinstance(command_payload.get("desired"), Mapping)
+                or set(command_payload["desired"]) != {
+                    "scene", "global_settings", "installation_profile_digest",
+                }):
+            raise ControllerActivationValidationError(
+                "interrupted activation command fields are malformed"
+            )
+        command = _normalize_activation_command_fallback(command_payload)
+        basis = normalize_scene_activation_basis(command["basis"])
+        identity = activation_identity_from_basis(basis)
+        desired = command["desired"]
+        scene = desired["scene"]
+        scene_revision = (2 if scene.get("schema") == "ledgrid.scene.v2"
+                          else scene.get("revision"))
+        if (
+            _canonical_json_sha256(basis) != command["basis_digest"]
+            or _canonical_json_sha256(scene) != basis["host_scene"]["digest"]
+            or scene_revision != basis["host_scene"]["revision"]
+            or _canonical_json_sha256(desired["global_settings"])
+                != basis["global_settings"]["digest"]
+            or desired["global_settings"]["revision"]
+                != basis["global_settings"]["revision"]
+            or desired["installation_profile_digest"]
+                != basis["installation_profile_digest"]
+            or durable["activation_id"] != command["activation_id"]
+            or durable["command_id"] != command["activation_id"]
+            or durable["basis_digest"] != command["basis_digest"]
+            or durable["requested_identity"] != identity
+            or durable["normalized_identity"] != identity
+            or durable["controller"]["session_id"]
+                != basis["controller"]["session_id"]
+            or durable["controller"]["state_revision_before"]
+                != basis["controller"]["state_revision"]
+        ):
+            raise ControllerActivationConflictError(
+                "interrupted activation evidence does not match its checked command"
+            )
+        command["basis"] = basis
+        return command
+
     def reconcile_durable_nonterminal(
         self, command_payload: Any, durable_status_payload: Any
     ) -> dict[str, Any]:
@@ -1152,54 +1253,47 @@ class ControllerActivationCoordinator:
             validate_scene_activation_status_transition,
         )
 
-        command = _normalize_activation_command(
-            command_payload,
-            catalog=manager_component_catalog(self.manager) or None,
-            canonical_catalog=manager_scene_v2_catalog(self.manager),
-            provider_policy=manager_scene_provider_policy(self.manager),
-        )
         durable = normalize_scene_activation_status(durable_status_payload)
         if durable["phase"] in _TERMINAL_ACTIVATION_PHASES:
             return durable
-        if (
-            durable["activation_id"] != command["activation_id"]
-            or durable["basis_digest"] != command["basis_digest"]
-        ):
-            raise ControllerActivationConflictError(
-                "durable activation receipt does not match its command"
-            )
+        command = self._correlate_interrupted_command(command_payload, durable)
 
-        desired = command["desired"]
-        current_status = self._manager_status()
-        current_scene = self._current_scene(current_status)
-        current_globals = self._current_global_settings(
-            current_status, revision=desired["global_settings"]["revision"]
-        )
-        current_profile = self._current_profile_digest(
-            current_status, boundary="nonterminal restart reconciliation"
-        )
-        runtimes = manager_controller_runtime_digests(self.manager)
-        runtimes_match = all(
-            runtimes.get(f"{item['provider']}:{item['component_id']}")
-            == item["controller_runtime_digest"]
-            for item in command["basis"]["components"]
-        )
-        receiver_proven = bool(
-            not self._uses_receiver_runtime(desired["scene"])
-            or self._receiver_activation_evidence(
-                current_status,
-                desired["scene"],
-                desired["installation_profile_digest"],
-                next((item.get("expected_payload_digest") for item in command["basis"]["components"] if item["slot_id"] == "background"), None),
-            ) is not None
-        )
-        desired_is_current = bool(
-            current_scene == desired["scene"]
-            and current_globals == desired["global_settings"]
-            and current_profile == desired["installation_profile_digest"]
-            and runtimes_match
-            and receiver_proven
-        )
+        # Restored-state detail is diagnostic only: unavailable current
+        # components or telemetry cannot renew a dead process's authority.
+        try:
+            desired = command["desired"]
+            current_status = self._manager_status()
+            current_scene = self._current_scene(current_status)
+            current_globals = self._current_global_settings(
+                current_status, revision=desired["global_settings"]["revision"]
+            )
+            current_profile = self._current_profile_digest(
+                current_status, boundary="nonterminal restart reconciliation"
+            )
+            runtimes = manager_controller_runtime_digests(self.manager)
+            runtimes_match = all(
+                runtimes.get(f"{item['provider']}:{item['component_id']}")
+                == item["controller_runtime_digest"]
+                for item in command["basis"]["components"]
+            )
+            receiver_proven = bool(
+                not self._uses_receiver_runtime(desired["scene"])
+                or self._receiver_activation_evidence(
+                    current_status,
+                    desired["scene"],
+                    desired["installation_profile_digest"],
+                    next((item.get("expected_payload_digest") for item in command["basis"]["components"] if item["slot_id"] == "background"), None),
+                ) is not None
+            )
+            desired_is_current = bool(
+                current_scene == desired["scene"]
+                and current_globals == desired["global_settings"]
+                and current_profile == desired["installation_profile_digest"]
+                and runtimes_match
+                and receiver_proven
+            )
+        except Exception:
+            desired_is_current = False
         terminal = _copy_json(durable)
         terminal["phase"] = "failed"
         terminal["error"] = (
@@ -2165,6 +2259,44 @@ class ControllerActivationCoordinator:
                 )
             self._sleep(self.observation_interval)
 
+    def _verify_restored_display_snapshot(
+        self, snapshot: ControllerStateSnapshot
+    ) -> None:
+        current = self._snapshot(
+            receiver_profile_noop=snapshot.receiver_profile_noop
+        )
+        if (
+            current.scene != snapshot.scene
+            or current.global_settings != snapshot.global_settings
+            or current.installation_profile_digest
+            != snapshot.installation_profile_digest
+        ):
+            raise ControllerActivationError(
+                "post-rollback controller snapshot differs from prior state"
+            )
+        if (snapshot.scene is not None
+                and snapshot.scene.get("schema") == "ledgrid.scene.v2"
+                and snapshot.global_settings["output"]["power"]):
+            prior_components = snapshot.active_identity.get("component_identities", [])
+            payload_digest = next((
+                item.get("expected_payload_digest") for item in prior_components
+                if item["slot_id"] == "background"
+            ), None)
+            if self._receiver_activation_evidence(
+                self._manager_status(), snapshot.scene,
+                snapshot.installation_profile_digest, payload_digest,
+            ) is None:
+                raise ControllerActivationError(
+                    "canonical rollback lacks exact receiver proof"
+                )
+            self.manager._host_full_first_frame_uncertain = False
+        elif getattr(self.manager, "_host_full_first_frame_uncertain", False):
+            if snapshot.scene is not None and snapshot.global_settings["output"]["power"]:
+                raise ControllerActivationError(
+                    "prior scene display is unverified after failed host-full takeover"
+                )
+            self.manager._clear_unverified_host_full_frame()
+
     def _rollback(
         self,
         record: _ActivationRecord,
@@ -2196,30 +2328,7 @@ class ControllerActivationCoordinator:
             self._restore_receiver_profile_snapshot(snapshot)
             prior_global_revision = self._global_settings_revision
             self._global_settings_revision = snapshot.global_settings["revision"]
-            current = self._snapshot(
-                receiver_profile_noop=snapshot.receiver_profile_noop
-            )
-            if (
-                current.scene != snapshot.scene
-                or current.global_settings != snapshot.global_settings
-                or current.installation_profile_digest
-                != snapshot.installation_profile_digest
-            ):
-                raise ControllerActivationError(
-                    "post-rollback controller snapshot differs from prior state"
-                )
-            if snapshot.scene is not None and snapshot.scene.get("schema") == "ledgrid.scene.v2" and snapshot.global_settings["output"]["power"]:
-                prior_components = snapshot.active_identity.get("component_identities", [])
-                payload_digest = next((item.get("expected_payload_digest") for item in prior_components if item["slot_id"] == "background"), None)
-                if self._receiver_activation_evidence(self._manager_status(), snapshot.scene, snapshot.installation_profile_digest, payload_digest) is None:
-                    raise ControllerActivationError("canonical rollback lacks exact receiver proof")
-                self.manager._host_full_first_frame_uncertain = False
-            elif getattr(self.manager, "_host_full_first_frame_uncertain", False):
-                if snapshot.scene is not None and snapshot.global_settings["output"]["power"]:
-                    raise ControllerActivationError(
-                        "prior scene display is unverified after failed host-full takeover"
-                    )
-                self.manager._clear_unverified_host_full_frame()
+            self._verify_restored_display_snapshot(snapshot)
             self._active_identity = _copy_json(snapshot.active_identity)
             self._global_settings_revision = snapshot.global_settings["revision"]
             self._state_revision += 1
@@ -2242,7 +2351,9 @@ class ControllerActivationCoordinator:
             )
             if "prior_global_revision" in locals():
                 self._global_settings_revision = prior_global_revision
-            record.status["rollback"].update(result="failed", error=str(exc))
+            record.status["rollback"].update(
+                result="failed", error=self._bounded_receipt_error(str(exc))
+            )
             # A failed rollback invalidates every outstanding Check even though
             # the desired activation never became active.
             self._state_revision += 1
@@ -2274,7 +2385,9 @@ class ControllerActivationCoordinator:
                     "Activation %s rollback persistence failed",
                     record.command["activation_id"],
                 )
-                record.status["rollback"].update(result="failed", error=str(exc))
+                record.status["rollback"].update(
+                    result="failed", error=self._bounded_receipt_error(str(exc))
+                )
                 return False
         return True
 

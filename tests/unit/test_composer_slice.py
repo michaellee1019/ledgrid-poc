@@ -772,6 +772,7 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
                 "document.addEventListener('visibilitychange'"
             )
         ]
+        status_renderer = script[script.index("function renderStatus") : script.index("  function updateHistoryActions")]
         javascript = r"""
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
@@ -815,15 +816,27 @@ async function requestJson(url) {
   if (url.includes('/settings/observed')) return {target_fps: 150};
   return {connected: true, running: true, armed: true};
 }
-const nodes = {'#targetFps': {value: '150'}, '#liveAction': {disabled: false}, '#operationMessage': {textContent: ''}};
+class Node {
+  constructor() { this.disabled = false; this.children = []; }
+  replaceChildren() { this.children = []; }
+  append(child) { this.children.push(child); }
+  addEventListener(type, listener) { this.listener = listener; }
+}
+const nodes = Object.fromEntries([
+  '#connectionState', '#observedIdentity', '#desiredIdentity', '#sceneRevision',
+  '#sceneIdentity', '#saveState', '#liveAction', '#wallActivationFailure', '#operationMessage',
+].map(selector => [selector, new Node()]));
+nodes['#targetFps'] = {value: '150'};
 const context = {
   assert, state, draft, fetch, guardedWallActivation, requestJson, queueMicrotask,
   structuredClone, api: '/api/composer', clientId: 'phone', stats, control,
-  queuedActivationStarted, releaseQueuedActivation,
+  queuedActivationStarted, releaseQueuedActivation, nodes,
   $: (selector) => nodes[selector],
   boundedTargetFps: (value) => Number(value), newUuid: () => `id-${stats.publicationPosts + 1}`,
   beginIntent: () => ++state.intent, intentIsCurrent: (intent) => intent === state.intent,
-  remember() {}, syncComponentPresetUI() {}, schedulePreview() {}, renderStatus(payload) { state.status = payload.status || payload; },
+  remember() {}, syncComponentPresetUI() {}, schedulePreview() {},
+  identity: () => '-',
+  document: {createTextNode: text => ({textContent: text}), createElement: () => new Node()},
   wallStatus: () => state.status, stopOutputNow: async () => {}, syncFrameRateObservation() {}, acknowledgeUndo: async () => {},
 };
 const run = vm.runInNewContext(source + `
@@ -834,6 +847,14 @@ const run = vm.runInNewContext(source + `
     assert.equal(state.wall.retryBlocked, true);
     assert.equal(state.wall.dirty, true);
     assert.deepEqual(state.scene, draft);
+    assert.equal(nodes['#wallActivationFailure'].children[1].disabled, false,
+      'settled failure must enable the visible retry before any status poll');
+    state.publication.queued = {kind: 'publish'};
+    renderStatus(state.status);
+    assert.equal(nodes['#wallActivationFailure'].children[1].disabled, true,
+      'a newer queued intent must keep the retry disabled');
+    state.publication.queued = null;
+    renderStatus(state.status);
     for (let poll = 0; poll < 3; poll += 1) await refreshStatus();
     assert.equal(stats.publicationPosts, 1, 'terminal failure must stay single-shot across polls');
     assert.equal(stats.activationAttempts, 1);
@@ -878,7 +899,7 @@ const run = vm.runInNewContext(source + `
 Promise.resolve(run).catch((error) => { console.error(error); process.exitCode = 1; });
 """
         completed = subprocess.run(
-            ["node", "-e", javascript, publication + refresh],
+            ["node", "-e", javascript, status_renderer + publication + refresh],
             check=False,
             capture_output=True,
             text=True,
@@ -973,7 +994,17 @@ vm.runInNewContext(source + `
   renderStatus({connected: true, running: true, armed: true, current: {revision: 8, digest: 'b'.repeat(64)}, desired: {revision: 8, digest: 'b'.repeat(64)}, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
   assert.equal(nodes['#wallActivationFailure'].hidden, true);
   assert.equal(nodes['#wallActivationFailure'].children.length, 0);
-  assert.equal(nodes['#observedIdentity'].textContent, 'r8 · ' + 'b'.repeat(64));
+  assert.equal(nodes['#observedIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
+  state.wall.observation.is_running = false;
+  renderStatus({connected: true, running: true, armed: true, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
+  assert.equal(nodes['#connectionState'].textContent, 'Stopped');
+  assert.equal(nodes['#liveAction'].disabled, true);
+  assert.equal(state.status.observed, null);
+  state.wall.observation.is_running = true;
+  renderStatus({connected: true, running: false, armed: false, observed: null, revision: 8});
+  assert.equal(nodes['#connectionState'].textContent, 'Running');
+  assert.equal(nodes['#liveAction'].disabled, false);
+  assert.equal(nodes['#observedIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
 `, context);
 """
         completed = subprocess.run(

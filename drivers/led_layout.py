@@ -25,14 +25,14 @@ WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (1, 2),
 )
 
-# Every installed route retains the established 20 MHz clock. FEC v7 contains
-# one otherwise-uncorrectable receiver-3 codeword without reducing the normal
-# cross-controller parallel dispatch schedule.
+# The accepted demo tolerates receiver 3's throughput limit. Its 20 MHz link
+# corrupts traffic and can latch a command-queue fault; the bounded installed
+# probe was clean at 8 MHz. Keep the other four routes at their existing speed.
 WALL_RECEIVER_SPI_SPEEDS_HZ = (
     20_000_000,
     20_000_000,
     20_000_000,
-    20_000_000,
+    8_000_000,
     20_000_000,
 )
 

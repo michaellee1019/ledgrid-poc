@@ -283,6 +283,16 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         self.assertEqual(len(due_by_frame), 5)
         self.assertTrue(all(len(receivers) == 1 for receivers in due_by_frame.values()))
 
+    def test_skipping_shared_wall_phase_cannot_starve_status_sampling(self):
+        item = _controller(envelope=True)
+        item.logical_device_id = 3
+        item._full_frame_frames_since_status_sample = 0
+        self.assertFalse(item._full_frame_status_response_required(1))
+        item._full_frame_frames_since_status_sample = (
+            protocol.FULL_FRAME_STATUS_SAMPLE_INTERVAL - 1
+        )
+        self.assertTrue(item._full_frame_status_response_required(1))
+
     def test_single_receiver_default_sequence_remains_monotonic_and_validated(self):
         item = _controller(envelope=True)
         self.assertEqual(item._claim_full_frame_sequence(None), 0)

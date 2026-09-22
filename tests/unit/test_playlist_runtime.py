@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import time
 import uuid
+
+import pytest
 
 from ipc.control_channel import FileControlChannel
 from ipc.playlist_runtime import PlaylistRunner
@@ -82,6 +85,315 @@ def test_thirty_entry_schedule_is_finite_and_restores_exact_starting_state():
     assert manager.scene == initial
     assert manager.brightness == 200
     assert manager.target_fps == 120
+
+
+def test_receiver_three_partial_transition_restores_before_single_retry(monkeypatch):
+    import ipc.playlist_runtime as runtime
+
+    manager, coordinator, initial = fixture()
+    clock = Clock()
+    second = deepcopy(initial)
+    second["background"]["parameter_overrides"]["speed"] = .91
+    runner = PlaylistRunner(manager, coordinator, clock=clock, wall_clock=clock)
+    assert runner.start(command(coordinator, [initial, second], [1, 8]))["phase"] == "running"
+    original_start = runtime.start_scene
+    attempts = []
+
+    def partial_first_start(manager, scene):
+        attempts.append(deepcopy(manager.scene))
+        clock.advance(3)
+        if len(attempts) == 1:
+            manager.scene = deepcopy(scene)
+            manager.is_running = False
+            raise RuntimeError(runtime.RETRYABLE_RECEIVER_STATUS_ERROR)
+        return original_start(manager, scene)
+
+    monkeypatch.setattr(runtime, "start_scene", partial_first_start)
+    clock.advance(1)
+    result = runner.advance()
+    assert result["phase"] == "running"
+    assert result["current_index"] == 1
+    assert result["retry_count"] == 1
+    assert result["last_recovery_error"] == runtime.RETRYABLE_RECEIVER_STATUS_ERROR
+    assert len(attempts) == 2
+    assert attempts[1] == initial  # The second attempt saw the exact prior Scene.
+    assert manager.scene == second
+    assert result["remaining_seconds"] == 8
+    assert result["entry_deadline_at"] == clock() + 8
+
+
+@pytest.mark.parametrize("failure", [
+    "receiver 2 lacks intact protected-v8 display status",
+    "receiver 3 reported display error or supersession",
+    "complete host-full black barrier failed",
+])
+def test_other_transition_failures_restore_without_retry(monkeypatch, failure):
+    import ipc.playlist_runtime as runtime
+
+    manager, coordinator, initial = fixture()
+    second = deepcopy(initial)
+    second["background"]["parameter_overrides"]["speed"] = .91
+    clock = Clock()
+    runner = PlaylistRunner(manager, coordinator, clock=clock)
+    runner.start(command(coordinator, [initial, second], [1, 8]))
+    attempts = []
+
+    def fail_after_mutation(manager, scene):
+        attempts.append(1)
+        manager.scene = deepcopy(scene)
+        manager.is_running = False
+        raise RuntimeError(failure)
+
+    monkeypatch.setattr(runtime, "start_scene", fail_after_mutation)
+    clock.advance(1)
+    result = runner.advance()
+    assert result["phase"] == "failed"
+    assert result["error"] == failure
+    assert result["retry_count"] == 0
+    assert len(attempts) == 1
+    assert manager.scene == initial
+    assert manager.is_running is True
+
+
+def test_receiver_three_retry_exhaustion_restores_prior_scene(monkeypatch):
+    import ipc.playlist_runtime as runtime
+
+    manager, coordinator, initial = fixture()
+    second = deepcopy(initial)
+    second["background"]["parameter_overrides"]["speed"] = .91
+    clock = Clock()
+    runner = PlaylistRunner(manager, coordinator, clock=clock)
+    runner.start(command(coordinator, [initial, second], [1, 8]))
+    attempts = []
+
+    def fail_after_mutation(manager, scene):
+        attempts.append(1)
+        manager.scene = deepcopy(scene)
+        raise RuntimeError(runtime.RETRYABLE_RECEIVER_STATUS_ERROR)
+
+    monkeypatch.setattr(runtime, "start_scene", fail_after_mutation)
+    clock.advance(1)
+    result = runner.advance()
+    assert result["phase"] == "failed"
+    assert result["retry_count"] == 1
+    assert len(attempts) == 2
+    assert manager.scene == initial
+    assert runner.advance()["phase"] == "failed"
+    assert len(attempts) == 2
+
+
+def test_failed_compensation_blocks_receiver_three_retry(monkeypatch):
+    import ipc.playlist_runtime as runtime
+
+    manager, coordinator, initial = fixture()
+    second = deepcopy(initial)
+    second["background"]["parameter_overrides"]["speed"] = .91
+    clock = Clock()
+    runner = PlaylistRunner(manager, coordinator, clock=clock)
+    runner.start(command(coordinator, [initial, second], [1, 8]))
+    attempts = []
+
+    def fail_after_mutation(manager, scene):
+        attempts.append(1)
+        manager.scene = deepcopy(scene)
+        raise RuntimeError(runtime.RETRYABLE_RECEIVER_STATUS_ERROR)
+
+    def failed_restore(*_args, **_kwargs):
+        raise RuntimeError("restored frame could not be proven")
+
+    monkeypatch.setattr(runtime, "start_scene", fail_after_mutation)
+    monkeypatch.setattr(coordinator, "restore_display_snapshot_verified", failed_restore)
+    clock.advance(1)
+    result = runner.advance()
+    assert result["phase"] == "failed"
+    assert "exact restoration failed" in result["error"]
+    assert result["retry_count"] == 0
+    assert len(attempts) == 1
+
+
+def test_false_return_after_partial_mutation_restores_without_retry(monkeypatch):
+    import ipc.playlist_runtime as runtime
+
+    manager, coordinator, initial = fixture()
+    second = deepcopy(initial)
+    second["background"]["parameter_overrides"]["speed"] = .91
+    clock = Clock()
+    runner = PlaylistRunner(manager, coordinator, clock=clock)
+    runner.start(command(coordinator, [initial, second], [1, 8]))
+    attempts = []
+
+    def reject_after_mutation(manager, scene):
+        attempts.append(1)
+        manager.scene = deepcopy(scene)
+        manager.is_running = False
+        return False
+
+    monkeypatch.setattr(runtime, "start_scene", reject_after_mutation)
+    clock.advance(1)
+    result = runner.advance()
+    assert result["phase"] == "failed"
+    assert result["error"] == "controller rejected playlist entry 2"
+    assert result["retry_count"] == 0
+    assert len(attempts) == 1
+    assert manager.scene == initial
+    assert manager.is_running is True
+
+
+def test_stale_preparation_marker_never_skips_restoration(monkeypatch):
+    import ipc.playlist_runtime as runtime
+    from ipc.scene_contract import canonical_json_sha256
+
+    manager, coordinator, _initial = fixture()
+    scene = {"schema": "ledgrid.scene.v2", "background": {}}
+    manager._receiver_last_failure = {
+        "operation": "receiver_hybrid_preparation",
+        "phase": "before_presentation_takeover",
+        "scene_digest": canonical_json_sha256(scene),
+        "observed_at": time.time(),
+    }
+    restores = []
+    original_restore = coordinator.restore_display_snapshot_verified
+
+    def recorded_restore(snapshot, *, operation_id):
+        restores.append(operation_id)
+        return original_restore(snapshot, operation_id=operation_id)
+
+    monkeypatch.setattr(runtime, "start_scene", lambda *_args: False)
+    monkeypatch.setattr(coordinator, "restore_display_snapshot_verified", recorded_restore)
+    monkeypatch.setattr(
+        coordinator, "verify_display_snapshot_unchanged",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("stale marker was trusted")),
+    )
+    runner = PlaylistRunner(manager, coordinator)
+    result = runner._start_entry_with_verified_recovery(
+        scene, entry_index=0, expected_revision=coordinator.state_revision,
+        session_id=coordinator.session_id, operation_id="stale-marker-test",
+    )
+    assert result["started"] is False
+    assert result["retry_count"] == 0
+    assert restores == ["stale-marker-test"]
+
+
+def test_canonical_verified_restore_rejects_missing_receiver_proof(monkeypatch):
+    manager, coordinator, initial = fixture()
+    prior = coordinator.capture_display_snapshot()
+    canonical = {"schema": "ledgrid.scene.v2"}
+    snapshot = replace(
+        prior, scene=canonical,
+        active_identity={"component_identities": [{
+            "slot_id": "background", "expected_payload_digest": "f" * 64,
+        }]},
+    )
+    monkeypatch.setattr(coordinator, "restore_display_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(coordinator, "_snapshot", lambda **_kwargs: snapshot)
+    monkeypatch.setattr(coordinator, "_receiver_activation_evidence", lambda *_args: None)
+    with pytest.raises(RuntimeError, match="canonical rollback lacks exact receiver proof"):
+        with coordinator.legacy_mutation_guard():
+            coordinator.restore_display_snapshot_verified(snapshot, operation_id="test")
+
+
+def test_verified_restore_rejects_nonmatching_snapshot(monkeypatch):
+    manager, coordinator, initial = fixture()
+    snapshot = coordinator.capture_display_snapshot()
+    other = deepcopy(initial)
+    other["background"]["parameter_overrides"]["speed"] = .91
+    monkeypatch.setattr(coordinator, "restore_display_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        coordinator, "_snapshot",
+        lambda **_kwargs: replace(snapshot, scene=other),
+    )
+    with pytest.raises(RuntimeError, match="post-rollback controller snapshot differs"):
+        with coordinator.legacy_mutation_guard():
+            coordinator.restore_display_snapshot_verified(snapshot, operation_id="test")
+
+
+def test_first_playlist_entry_retries_after_verified_receiver_three_recovery(monkeypatch):
+    import ipc.playlist_runtime as runtime
+
+    manager, coordinator, initial = fixture()
+    next_scene = deepcopy(initial)
+    next_scene["background"]["parameter_overrides"]["speed"] = .91
+    original_start = runtime.start_scene
+    attempts = []
+
+    def fail_once(manager, scene):
+        attempts.append(deepcopy(manager.scene))
+        if len(attempts) == 1:
+            manager.scene = deepcopy(scene)
+            raise RuntimeError(runtime.RETRYABLE_RECEIVER_STATUS_ERROR)
+        return original_start(manager, scene)
+
+    monkeypatch.setattr(runtime, "start_scene", fail_once)
+    runner = PlaylistRunner(manager, coordinator)
+    result = runner.start(command(coordinator, [next_scene], [8]))
+    assert result["phase"] == "running"
+    assert result["retry_count"] == 1
+    assert attempts == [initial, initial]
+    assert manager.scene == next_scene
+
+
+def test_completion_requires_verified_restoration(monkeypatch):
+    manager, coordinator, initial = fixture()
+    next_scene = deepcopy(initial)
+    next_scene["background"]["parameter_overrides"]["speed"] = .91
+    clock = Clock()
+    runner = PlaylistRunner(manager, coordinator, clock=clock)
+    assert runner.start(command(coordinator, [next_scene], [1]))["phase"] == "running"
+    calls = []
+
+    def reject_unverified_completion(*_args, **_kwargs):
+        calls.append(1)
+        raise RuntimeError("restored display proof is absent")
+
+    monkeypatch.setattr(coordinator, "restore_display_snapshot_verified", reject_unverified_completion)
+    clock.advance(1)
+    result = runner.advance()
+    assert result["phase"] == "failed"
+    assert result["error"] == "restored display proof is absent"
+    assert calls == [1]
+
+
+def test_manual_mutation_between_restore_and_retry_wins(monkeypatch):
+    import contextlib
+    import ipc.playlist_runtime as runtime
+
+    manager, coordinator, initial = fixture()
+    second = deepcopy(initial)
+    second["background"]["parameter_overrides"]["speed"] = .91
+    clock = Clock()
+    runner = PlaylistRunner(manager, coordinator, clock=clock)
+    runner.start(command(coordinator, [initial, second], [1, 8]))
+    original_start = runtime.start_scene
+    attempts = []
+
+    def fail_once(manager, scene):
+        attempts.append(1)
+        if len(attempts) == 1:
+            manager.scene = deepcopy(scene)
+            raise RuntimeError(runtime.RETRYABLE_RECEIVER_STATUS_ERROR)
+        return original_start(manager, scene)
+
+    original_guard = coordinator.legacy_mutation_guard
+    inject = True
+
+    @contextlib.contextmanager
+    def manual_after_guard(*args, **kwargs):
+        nonlocal inject
+        with original_guard(*args, **kwargs) as mutation:
+            yield mutation
+        if inject:
+            inject = False
+            with original_guard():
+                manager.set_output_brightness(17)
+
+    monkeypatch.setattr(runtime, "start_scene", fail_once)
+    monkeypatch.setattr(coordinator, "legacy_mutation_guard", manual_after_guard)
+    clock.advance(1)
+    result = runner.advance()
+    assert result["phase"] == "overridden"
+    assert len(attempts) == 1
+    assert manager.brightness == 17
+    assert manager.scene == initial
 
 
 def test_slow_transition_does_not_consume_entry_dwell(monkeypatch):
