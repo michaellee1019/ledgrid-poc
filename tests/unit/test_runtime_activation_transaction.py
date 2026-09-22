@@ -584,6 +584,8 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         setter.assert_not_called()
 
     def test_scene_switch_repairs_partial_brightness_command(self) -> None:
+        # Install the portable SPI fixture before loading the production driver.
+        from tests.unit import test_firmware_host_phase3a_protocol  # noqa: F401
         from drivers.multi_device import MultiDeviceLEDController
 
         manager, coordinator = self.coordinator()
