@@ -49,7 +49,7 @@ for (const mode of ['collapsed', 'expanded', 'denied']) {
   assert.equal(focus,2);assert.equal(scroll,2);assert.equal(search.value,'Twilight');
   assert.equal(JSON.stringify(state),original,'browsing does not alter Scene, query or history');
   assert.equal(heading.children[0].attributes['aria-expanded'],'true');
-  if(mode!=='denied')assert.equal(JSON.parse(saved).expanded.scenes,true);
+  if(mode==='expanded')assert.equal(JSON.parse(saved).expanded.scenes,true);
   assert.equal(context.window.ComposerPanelLayout.expand('unknown'),false);
 }
 '''
@@ -156,19 +156,14 @@ function environment({save,run}){
         result = subprocess.run(['node', '-e', runner, source], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_workspace_is_a_wrapping_panel_grid(self) -> None:
-        self.assertIn('data-layout="responsive-panels"', self.html)
-        self.assertIn(
-            "grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr))",
-            self.css,
-        )
-        self.assertIn(".inspector-dock, .control-workspace, .inspectors { display: contents; }", self.css)
-        self.assertNotIn("dock-resizer", self.html)
-        for selector, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", self.css):
-            if any(panel in selector for panel in (".desktop-workspace", ".library-pane", ".preview-pane", ".operations-pane", ".gallery", ".inspector")):
-                self.assertNotIn("position: sticky", declarations)
-        self.assertNotIn("--inspector-width", self.css)
-        self.assertLess(self.html.index("Global scene"), self.html.index("Background"))
+    def test_workspace_bounds_independent_regions(self) -> None:
+        self.assertIn('data-view="browse"', self.html)
+        for view in ('browse', 'edit', 'playlists'):
+            self.assertIn(f'data-workspace-view="{view}"', self.html)
+        self.assertIn('grid-template-rows: auto minmax(0, 1fr) auto', self.css)
+        self.assertIn('overflow-y: auto; overscroll-behavior: contain', self.css)
+        self.assertIn('ledgrid.composer.workspace.v1', self.layout)
+        self.assertNotIn('dock-resizer', self.html)
 
     def test_every_user_panel_has_a_stable_collapsed_preference(self) -> None:
         for panel_id in (
@@ -179,7 +174,7 @@ function environment({save,run}){
             self.assertIn(f"['{panel_id}',", self.layout)
         self.assertIn("ledgrid.composer.compact-panels.v2", self.layout)
         self.assertIn("value.version !== 2", self.layout)
-        self.assertIn("[id, false]", self.layout)
+        self.assertIn("[id, pinned.has(id)]", self.layout)
         self.assertIn("value.expanded[id] === true", self.layout)
         self.assertIn("localStorage.removeItem(preferenceKey)", self.layout)
         self.assertIn("ledgrid.composer.constrained-docks.v1", self.layout)
@@ -200,8 +195,8 @@ function environment({save,run}){
         self.assertIn("owns no Scene data", self.layout)
 
     def test_operations_header_keeps_stop_and_short_status_visible(self) -> None:
-        heading_start = self.html.index('<div class="pane-heading"><div><p class="eyebrow">Operations</p>')
-        heading_end = self.html.index("</div>\n      <details id=\"secondaryOperations\"", heading_start)
+        heading_start = self.html.index('<div class="pane-heading"><div><p class="eyebrow">Wall output</p>')
+        heading_end = self.html.index('<div class="scene-save-controls">', heading_start)
         heading = self.html[heading_start:heading_end]
         for element_id in ("saveState", "connectionState", "liveAction", "wallActivationFailure"):
             self.assertIn(f'id="{element_id}"', heading)
