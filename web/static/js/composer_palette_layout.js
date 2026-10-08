@@ -172,6 +172,7 @@
   document.querySelectorAll('[data-workspace-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.workspaceView)));
   document.querySelectorAll('[data-browse-view]').forEach(button => button.addEventListener('click', () => browse(button.dataset.browseView)));
   document.querySelector('#openScene').addEventListener('click', () => { setView('browse'); browse('saved'); document.querySelector('#librarySearch').focus(); });
+  document.querySelector('#browsePlaylistAdd').addEventListener('click', () => { document.querySelector('#playlistAdd').click(); setView('playlists'); });
   document.querySelector('#playlistBrowse').addEventListener('click', () => { setView('browse'); browse('animations'); document.querySelector('#gallerySearch').focus(); });
   let preference = {};
   try { preference = JSON.parse(window.localStorage.getItem(navigationKey)) || {}; }

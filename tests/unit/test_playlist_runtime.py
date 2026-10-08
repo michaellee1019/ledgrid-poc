@@ -830,3 +830,23 @@ def test_manual_mutation_immediately_after_transition_guard_stops_playlist_befor
     assert status["phase"] == "overridden"
     assert manager.brightness == 17
     assert manager.scene == second
+
+
+def test_next_entry_comes_from_active_snapshot_and_clears_on_completion():
+    manager, coordinator, initial = fixture()
+    clock = Clock()
+    published = []
+    runner = PlaylistRunner(manager, coordinator, clock=clock, wall_clock=clock,
+                            status_sink=published.append)
+    requested = command(coordinator, [initial, initial], [1, 1])
+    result = runner.start(requested)
+    assert result["next_entry"]["label"] == "Scene 2"
+    requested["entries"][1]["label"] = "Edited after start"
+    assert runner.status()["next_entry"]["label"] == "Scene 2"
+    assert published[-1]["next_entry"]["entry_id"] == result["next_entry"]["entry_id"]
+    clock.advance(1)
+    assert runner.advance()["next_entry"] is None
+    clock.advance(1)
+    assert runner.advance()["phase"] == "completed"
+    assert runner.status()["next_entry"] is None
+    assert manager.scene == initial

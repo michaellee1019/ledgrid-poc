@@ -67,11 +67,14 @@ for (const mode of ['collapsed', 'expanded', 'denied']) {
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 let release;
+let selected = 'Aurora';
+let captured;
 const status={textContent:'',dataset:{}}, button={disabled:false};
 const state={wall:{bootstrap:null,observation:null},playlist:{entries:[],saving:false},library:{},selection:null};
 const context={state,newUuid:()=> 'entry-1',
-  sceneFromControls:()=>({schema:'ledgrid.scene.v2'}),
-  browserSceneForWall:(scene)=>{assert(state.wall.bootstrap);assert(state.wall.observation);return {scene};},
+  structuredClone,
+  sceneFromControls:()=>({schema:'ledgrid.scene.v2',selected}),
+  browserSceneForWall:(scene)=>{assert(state.wall.bootstrap);assert(state.wall.observation);captured = scene; return {scene};},
   renderPlaylist:()=>{},
   refreshWallStatus:()=>new Promise(resolve=>{release=()=>{state.wall.bootstrap={ready:true};state.wall.observation={ready:true};resolve();};}),
   $:(selector)=>selector==='#playlistAdd'?button:selector==='#playlistStatus'?status:{value:'',selectedOptions:[{textContent:'Aurora'}]},
@@ -82,7 +85,9 @@ vm.runInNewContext(process.argv[1]+';this.add=addCurrentSceneToPlaylist;',contex
   await Promise.resolve();
   assert.equal(button.disabled,true);
   assert.equal(state.playlist.entries.length,0);
+  selected = 'Fireworks';
   release(); await adding;
+  assert.equal(captured.selected, 'Aurora', 'Add captures click-time Scene despite delayed bootstrap');
   assert.equal(state.playlist.entries.length,1);
   assert.equal(state.playlist.entries[0].duration_seconds,60);
   assert.equal(button.disabled,false);

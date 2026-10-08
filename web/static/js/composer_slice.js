@@ -1580,9 +1580,11 @@
     const button = $('#playlistAdd');
     try {
       if (state.playlist.saving) throw new Error('Wait for the playlist save to finish before editing.');
-      button.disabled = true; $('#playlistStatus').textContent = 'Loading the current wall Scene…'; $('#playlistStatus').dataset.state = 'running';
+      const selectedScene = structuredClone(sceneFromControls());
+      const selectedLabel = currentPlaylistEntryLabel();
+      button.disabled = true; $('#playlistStatus').textContent = 'Adding the selected Scene…'; $('#playlistStatus').dataset.state = 'running';
       if (!state.wall.bootstrap || !state.wall.observation) await refreshWallStatus({preserveAuthored: true});
-      state.playlist.entries.push({entry_id: newUuid(), label: currentPlaylistEntryLabel(), duration_seconds: 60, scene: browserSceneForWall(sceneFromControls())});
+      state.playlist.entries.push({entry_id: newUuid(), label: selectedLabel, duration_seconds: 60, scene: browserSceneForWall(selectedScene)});
       renderPlaylist(); $('#playlistStatus').textContent = 'Added the current Scene.'; delete $('#playlistStatus').dataset.state;
     } catch (error) { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }
     finally { button.disabled = state.playlist.saving; }
@@ -1655,10 +1657,10 @@
       if (!status || status.phase === 'idle') { $('#playlistStatus').textContent = 'No playlist running.'; delete $('#playlistStatus').dataset.state; return; }
       if (status.phase === 'running') {
         const remaining = Math.max(0, Math.ceil(Number(status.remaining_seconds) || 0));
-        $('#playlistStatus').textContent = `Item ${Number(status.current_index) + 1}/${status.entry_count} · ${status.current_entry?.label || 'Scene'} · ${remaining}s remaining`;
+        $('#playlistStatus').textContent = `Item ${Number(status.current_index) + 1}/${status.entry_count} · ${status.current_entry?.label || 'Scene'} · ${remaining}s remaining · ${status.next_entry ? `Next: ${status.next_entry.label}` : status.next_entry === null ? 'Final item; starting Scene restores afterward' : 'Next entry unavailable'}`;
         $('#playlistStatus').dataset.state = 'running'; state.playlist.runId = status.run_id; return;
       }
-      const messages = {completed: 'Playlist complete. Starting Scene restored.', stopped: 'Playlist stopped.', overridden: 'Playlist stopped by a manual change.', rejected: status.error || 'Playlist start was rejected.', failed: status.error || 'Playlist failed.'};
+      const messages = {completed: 'Playlist complete. Starting Scene restored.', stopped: 'Playlist stopped.', overridden: 'Live editing took over. Playlist ended.', rejected: status.error || 'Playlist start was rejected.', failed: status.error || 'Playlist failed.'};
       $('#playlistStatus').textContent = messages[status.phase] || `Playlist ${status.phase}.`; $('#playlistStatus').dataset.state = ['rejected','failed'].includes(status.phase) ? 'error' : status.phase;
       if (['completed','stopped','overridden','rejected','failed'].includes(status.phase) && status.run_id === state.playlist.runId) state.playlist.runId = null;
     } catch (error) {

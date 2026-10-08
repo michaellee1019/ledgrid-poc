@@ -113,7 +113,7 @@ class PlaylistRunner:
                 "phase": "idle", "controller_session_id": self.coordinator.session_id,
                 "updated_at": self._wall_clock(), "run_id": None, "request_id": None,
                 "playlist_id": None, "playlist_name": None, "current_index": None,
-                "entry_count": 0, "current_entry": None, "entry_started_at": None,
+                "entry_count": 0, "current_entry": None, "next_entry": None, "entry_started_at": None,
                 "entry_deadline_at": None, "remaining_seconds": None, "error": None,
                 "retry_count": 0, "last_recovery_error": None}
 
@@ -135,6 +135,13 @@ class PlaylistRunner:
 
     def _publish(self, **updates: Any) -> dict[str, Any]:
         self._status = {**self._status, **updates, "updated_at": self._wall_clock()}
+        # Project the immutable active run, never the editable saved definition.
+        next_entry = None
+        if self._status.get("phase") == "running" and self._active is not None:
+            next_index = self._active["index"] + 1
+            if next_index < len(self._active["entries"]):
+                next_entry = self._entry_summary(self._active["entries"][next_index])
+        self._status["next_entry"] = next_entry
         payload = deepcopy(self._status)
         self._pending_publication = deepcopy(payload)
         self._flush_pending_publication()
