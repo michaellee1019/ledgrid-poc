@@ -536,10 +536,12 @@ const nodes = {'#undoScene': new Node(), '#redoScene': new Node(), '#operationMe
 const state = {history: [], redo: [], scene: {revision: 2}, dirty: false};
 const context = {
   assert, nodes, state, structuredClone, $: (selector) => nodes[selector],
+  boundedTargetFps: (value) => Math.max(1, Math.min(200, Math.round(Number(value) || 200))),
+  syncTargetFps() {},
   applyScene(scene) { state.scene = structuredClone(scene); },
   submit() { return Promise.resolve(); },
 };
-const run = vm.runInNewContext(process.argv[1] + `
+const run = vm.runInNewContext('let authoredTargetFps = 200; let controlEditSessions = new WeakMap(); let historyGeneration = 0;\n' + process.argv[1] + `
   ;(async () => {
     updateHistoryActions();
     assert.equal(nodes['#undoScene'].disabled, true);
@@ -584,6 +586,191 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
             ["node", "-e", javascript, history], check=False, capture_output=True, text=True
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_live_control_event_sequences_publish_each_change_and_group_undo(self) -> None:
+        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+        source = "\n".join(
+            (
+                script[
+                    script.index("function sameLocalParameters") : script.index(
+                        "function componentLabel"
+                    )
+                ],
+                script[
+                    script.index("function beginControlEdit") : script.index(
+                        "function finiteControlValue"
+                    )
+                ],
+                script[
+                    script.index("function finiteControlValue") : script.index(
+                        "function normalControlValue"
+                    )
+                ],
+                script[
+                    script.index("function decorateExactNumber") : script.index(
+                        "function decorateText"
+                    )
+                ],
+                script[
+                    script.index("function updateHistoryActions") : script.index(
+                        "async function flushPublication"
+                    )
+                ],
+                script[
+                    script.index("async function edit") : script.index(
+                        "async function loadFireworksPresets"
+                    )
+                ],
+                script[
+                    script.index("async function rewind") : script.index(
+                        "function isNativeTextEditingTarget"
+                    )
+                ],
+            )
+        )
+        javascript = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const nodes = {
+  '#undoScene': {disabled: null}, '#redoScene': {disabled: null},
+  '#operationMessage': {textContent: ''}, '#targetFps': {value: '200'},
+};
+const state = {
+  history: [], redo: [], scene: {value: 0, text: '', enabled: false}, dirty: false,
+  publication: {queued: null, inFlight: null}, lastControl: null,
+};
+const controls = {scene: structuredClone(state.scene)};
+const published = [];
+let failNext = false;
+const context = {
+  assert, nodes, state, controls, published, structuredClone,
+  $: (selector) => nodes[selector],
+  defaultScene: () => ({value: 0, text: '', enabled: false}),
+  boundedTargetFps: (value) => Math.max(1, Math.min(200, Math.round(Number(value) || 200))),
+  sceneFromControls: () => structuredClone(controls.scene),
+  beginIntent() { state.intent = (state.intent || 0) + 1; return state.intent; },
+  intentIsCurrent(intent) { return intent === state.intent; },
+  syncWidgetDisclosure() {},
+  syncTargetFps(value) { nodes['#targetFps'].value = String(value); },
+  applyScene(scene) { state.scene = structuredClone(scene); controls.scene = structuredClone(scene); },
+};
+const run = vm.runInNewContext(`
+let authoredTargetFps = 200;
+let controlEditSessions = new WeakMap();
+let historyGeneration = 0;
+const semanticControls = [];
+const exactPublished = [];
+function addControlMeta() {}
+function dispatchSemanticEdit(control) { exactPublished.push(control.value); }
+${process.argv[1]}
+async function submit(scene, options = {}) {
+  if (options.rememberEdit) remember(options.previous || historySnapshot());
+  if (failNext) { failNext = false; throw new Error('Rejected input'); }
+  state.scene = structuredClone(scene);
+  authoredTargetFps = boundedTargetFps(nodes['#targetFps'].value);
+  published.push({scene: structuredClone(scene), targetFps: authoredTargetFps});
+  return {};
+}
+function reset(scene = {value: 0, text: '', enabled: false}, targetFps = 200) {
+  state.scene = structuredClone(scene); controls.scene = structuredClone(scene);
+  state.history = []; state.redo = []; state.dirty = false; state.lastControl = null;
+  nodes['#targetFps'].value = String(targetFps); nodes['#operationMessage'].textContent = '';
+  authoredTargetFps = targetFps; published.length = 0; failNext = false;
+}
+;(async () => {
+  const speed = {id: 'sceneSpeed'};
+  reset(); beginControlEdit(speed);
+  for (const value of [1, 2, 3]) { controls.scene.value = value; await edit({target: speed}); }
+  await edit({target: speed});
+  finishControlEdit(speed);
+  assert.equal(published.map(item => item.scene.value).join(','), '1,2,3');
+  assert.equal(state.history.length, 1); assert.equal(state.history[0].scene.value, 0);
+  await rewind('undo');
+  assert.equal(state.scene.value, 0); assert.equal(published.at(-1).scene.value, 0);
+  await rewind('redo');
+  assert.equal(state.scene.value, 3); assert.equal(published.at(-1).scene.value, 3);
+
+  const target = nodes['#targetFps'];
+  reset(); beginControlEdit(target); target.value = '120';
+  await edit({target}); await edit({target}); finishControlEdit(target);
+  assert.equal(published.length, 1); assert.equal(published[0].targetFps, 120);
+  assert.equal(state.history.length, 1); assert.equal(state.history[0].targetFps, 200);
+  await rewind('undo');
+  assert.equal(target.value, '200'); assert.equal(published.at(-1).targetFps, 200);
+
+  const text = {id: 'asciiPhrase'};
+  reset(); beginControlEdit(text);
+  for (const value of ['H', 'HI', 'HIC']) { controls.scene.text = value; await edit({target: text}); }
+  await edit({target: text}); finishControlEdit(text);
+  assert.equal(published.map(item => item.scene.text).join(','), 'H,HI,HIC');
+  assert.equal(state.history.length, 1); await rewind('undo'); assert.equal(state.scene.text, '');
+
+  const checkbox = {id: 'clockEnabled'};
+  reset(); controls.scene.enabled = true; await edit({target: checkbox}); await edit({target: checkbox});
+  assert.equal(published.length, 1); assert.equal(state.history.length, 1);
+
+  reset(); controls.scene.value = 9; failNext = true; await edit({target: speed});
+  assert.equal(state.scene.value, 0); assert.equal(controls.scene.value, 0);
+  assert.equal(state.history.length, 0); assert.equal(nodes['#operationMessage'].textContent, 'Rejected input');
+
+  reset();
+  for (let value = 1; value <= 40; value += 1) { controls.scene.value = value; await edit({target: checkbox}); }
+  const cappedHistory = JSON.stringify(state.history); const cappedRedo = JSON.stringify(state.redo);
+  controls.scene.value = 41; failNext = true; await edit({target: checkbox});
+  assert.equal(JSON.stringify(state.history), cappedHistory); assert.equal(JSON.stringify(state.redo), cappedRedo);
+  assert.equal(state.scene.value, 40); await rewind('undo'); assert.equal(state.scene.value, 39);
+
+  reset(); controls.scene.value = 1; await edit({target: checkbox}); await rewind('undo');
+  const redoBeforeFailure = JSON.stringify(state.redo);
+  controls.scene.value = 2; failNext = true; await edit({target: checkbox});
+  assert.equal(JSON.stringify(state.redo), redoBeforeFailure); assert.equal(state.scene.value, 0);
+
+  reset(); beginControlEdit(text); controls.scene.text = 'H'; await edit({target: text});
+  clearHistory(); controls.scene.text = 'HI'; await edit({target: text});
+  assert.equal(state.history.length, 1); assert.equal(state.history[0].scene.text, 'H');
+  controls.scene.text = 'HIC'; await edit({target: text}); assert.equal(state.history.length, 1);
+
+  class ExactControl {
+    constructor(value) { this.value = value; this.listeners = {}; this.attributes = {}; }
+    addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); }
+    setAttribute(name, value) { this.attributes[name] = value; }
+    removeAttribute(name) { delete this.attributes[name]; }
+    dispatch(type) {
+      let stopped = false;
+      const event = {stopImmediatePropagation() { stopped = true; }};
+      for (const listener of this.listeners[type] || []) { listener(event); if (stopped) break; }
+    }
+  }
+  const exact = new ExactControl('7'); decorateExactNumber({}, exact);
+  exact.value = '42'; exact.dispatch('input');
+  assert.equal(exactPublished.join(','), '42'); assert.equal(exact.attributes['aria-invalid'], undefined);
+  exact.value = ''; exact.dispatch('input');
+  assert.equal(exactPublished.join(','), '42'); assert.equal(exact.attributes['aria-invalid'], 'true');
+  exact.dispatch('blur'); assert.equal(exact.value, '42');
+
+  reset(); controls.scene.value = 1; await edit({target: checkbox});
+  controls.scene.value = 2; failNext = true;
+  const rejectedDuringInvalidation = edit({target: checkbox}); clearHistory(); await rejectedDuringInvalidation;
+  assert.equal(state.history.length, 0); assert.equal(state.redo.length, 0);
+  assert.equal(state.scene.value, 1); assert.equal(controls.scene.value, 1);
+})()
+`, context);
+Promise.resolve(run).catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+        completed = subprocess.run(
+            ["node", "-e", javascript, source], check=False, capture_output=True, text=True
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("wireLiveRange($('#sceneSpeed')", script)
+        self.assertIn("wireLiveRange($('#targetFps')", script)
+        self.assertIn("['#asciiPhrase', '#emojiText']", script)
+        self.assertIn("intentIsCurrent(intentToken)", script)
+        self.assertEqual(
+            script.count("control.addEventListener('input', () => dispatchSemanticEdit(control))"),
+            2,
+        )
+        save_source = script[script.index("async function save(as)") : script.index("async function rewind")]
+        self.assertNotIn("submit(", save_source)
 
     def test_save_feedback_is_local_accessible_and_survives_status_polling(self) -> None:
         html = Path("web/templates/composer.html").read_text(encoding="utf-8")

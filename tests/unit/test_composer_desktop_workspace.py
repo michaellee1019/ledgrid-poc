@@ -103,7 +103,7 @@ vm.runInNewContext(process.argv[1]+';this.add=addCurrentSceneToPlaylist;',contex
     def test_playlist_start_stop_and_status_responses_follow_latest_intent(self) -> None:
         source = self.script[
             self.script.index('function newPlaylistStartIntent()'):
-            self.script.index('\n\n  function wire()')
+            self.script.index('\n  function wireLiveRange(')
         ]
         runner = r'''
 const assert = require('node:assert/strict');
@@ -221,7 +221,7 @@ function environment({save,run}){
             self.assertEqual(self.html.count(f'id="{element_id}"'), 1)
         self.assertIn('width="33" height="138"', self.html)
         self.assertIn("pace: number('#sceneSpeed')", self.script)
-        self.assertIn("$('#sceneSpeed').addEventListener('input', edit)", self.script)
+        self.assertIn("wireLiveRange($('#sceneSpeed'), (event) => { syncSceneSpeed(number('#sceneSpeed')); edit(event); })", self.script)
         self.assertIn("aspect-ratio: 33 / 138", self.css)
 
 

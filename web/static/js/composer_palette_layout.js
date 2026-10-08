@@ -127,6 +127,7 @@
   performance.append(document.querySelector('.target-fps-control'), document.querySelector('.actual-fps'));
   motion.querySelector('.panel-content').append(performance);
   const save = document.querySelector('.scene-save-controls');
+  save.prepend(document.querySelector('#saveState'));
   dock.prepend(save);
   root.append(operations);
   const undoRow = document.querySelector('#undoScene').parentElement;

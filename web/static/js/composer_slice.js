@@ -74,7 +74,7 @@
     // authored.  The queued entry carries that exact target to activation.
     if (state.wall.dirty || state.publication.queued || state.publication.afterStop || state.publication.inFlight) return;
     const observedTarget = Number(observation?.target_fps);
-    if (Number.isFinite(observedTarget) && observedTarget > 0) syncTargetFps(observedTarget);
+    if (Number.isFinite(observedTarget) && observedTarget > 0) authoredTargetFps = syncTargetFps(observedTarget);
   }
   const plantOptics = Object.freeze([
     {id: 'illuminate', label: 'Illuminate', enabled: '#plantIlluminateEnabled', strength: '#plantIlluminateStrength', value: '#plantIlluminateValue'},
@@ -293,6 +293,9 @@
     });
   }
   const semanticControls = [];
+  let controlEditSessions = new WeakMap();
+  let historyGeneration = 0;
+  let authoredTargetFps = null;
   const PALETTE_SWATCHES = Object.freeze({
     mist: ['#172034', '#7193c7', '#e2efff'], neutral: ['#151515', '#777', '#eee'],
     spectrum: ['#d6275c', '#36c5f0', '#f6d743'], ember: ['#2a0c07', '#e0522d', '#ffca70'],
@@ -300,6 +303,14 @@
   function semanticScope() { return [...document.querySelectorAll('.inspectors .inspector')]; }
   function isSemanticControl(control) { return control.matches('input:not([type="hidden"]), select, textarea') && !control.dataset.semanticInstrument; }
   function dispatchSemanticEdit(control, previous = null) { void edit({target: control}, previous); }
+  function beginControlEdit(control) {
+    if (!controlEditSessions.has(control)) controlEditSessions.set(control, {previous: historySnapshot(), remembered: false});
+  }
+  function finishControlEdit(control) { controlEditSessions.delete(control); }
+  function finishControlEditAfterEvent(control) {
+    const session = controlEditSessions.get(control);
+    setTimeout(() => { if (controlEditSessions.get(control) === session) finishControlEdit(control); }, 0);
+  }
   function finiteControlValue(control) { return String(control.value).trim() !== '' && Number.isFinite(Number(control.value)); }
   function normalControlValue(control, value) {
     let next = Number(value); const min = Number(control.min); const max = Number(control.max); const step = Number(control.step);
@@ -330,24 +341,19 @@
     if (control.min === '' || control.max === '') return;
     const range = document.createElement('input'); range.type = 'range'; range.className = 'semantic-range'; range.min = control.min; range.max = control.max; range.step = control.step && control.step !== 'any' ? control.step : '0.01'; range.setAttribute('aria-label', `${controlLabelText(label)} adjustment`);
     const wrap = document.createElement('span'); wrap.className = 'semantic-number'; control.classList.add('semantic-exact'); control.before(wrap); wrap.append(range, control);
-    const record = {kind: 'number', control, range, lastValue: control.value, dragPrevious: null, dragChanged: false}; semanticControls.push(record);
-    const commitRangeGesture = () => {
-      if (!record.dragPrevious) return;
-      const previous = record.dragPrevious; const changed = record.dragChanged; record.dragPrevious = null; record.dragChanged = false;
-      if (!changed) return;
-      dispatchSemanticEdit(control, previous);
-    };
-    range.addEventListener('pointerdown', () => { record.dragPrevious = structuredClone(state.scene || defaultScene()); record.dragChanged = false; });
-    range.addEventListener('pointerup', () => { const gesture = record.dragPrevious; setTimeout(() => { if (record.dragPrevious === gesture) commitRangeGesture(); }, 0); });
-    range.addEventListener('pointercancel', commitRangeGesture);
-    range.addEventListener('change', commitRangeGesture);
+    const record = {kind: 'number', control, range, lastValue: control.value}; semanticControls.push(record);
+    range.addEventListener('pointerdown', () => beginControlEdit(control));
+    range.addEventListener('keydown', () => beginControlEdit(control));
+    range.addEventListener('pointerup', () => finishControlEditAfterEvent(control));
+    range.addEventListener('pointercancel', () => finishControlEditAfterEvent(control));
+    range.addEventListener('keyup', () => finishControlEditAfterEvent(control));
+    range.addEventListener('change', () => finishControlEditAfterEvent(control));
     range.addEventListener('input', () => {
       const value = normalControlValue(control, range.value); if (value == null) return; const changed = String(value) !== control.value; control.value = String(value); record.lastValue = control.value;
-      if (record.dragPrevious) { record.dragChanged ||= changed; state.dirty = true; schedulePreview(); }
-      else dispatchSemanticEdit(control);
+      if (changed) dispatchSemanticEdit(control);
     });
     const protect = (event) => { if (finiteControlValue(control)) { control.removeAttribute('aria-invalid'); record.lastValue = control.value; range.value = control.value; return; } control.setAttribute('aria-invalid', 'true'); event.stopImmediatePropagation(); };
-    control.addEventListener('input', protect); control.addEventListener('change', protect); control.addEventListener('blur', () => { if (!finiteControlValue(control)) control.value = record.lastValue; });
+    control.addEventListener('input', protect); control.addEventListener('input', () => dispatchSemanticEdit(control)); control.addEventListener('change', protect); control.addEventListener('blur', () => { if (!finiteControlValue(control)) control.value = record.lastValue; });
     if (isSeedControl(control)) {
       const randomize = document.createElement('button'); randomize.type = 'button'; randomize.className = 'semantic-randomize'; randomize.textContent = 'Randomize';
       randomize.addEventListener('click', () => { const min = Math.ceil(Number(control.min)); const max = Math.floor(Number(control.max)); const bytes = new Uint32Array(1); crypto.getRandomValues(bytes); control.value = String(min + (bytes[0] % Math.max(1, max - min + 1))); range.value = control.value; record.lastValue = control.value; dispatchSemanticEdit(control); });
@@ -380,10 +386,17 @@
   function decorateExactNumber(label, control) {
     const record = {kind: 'exact', control, lastValue: control.value}; semanticControls.push(record);
     const protect = (event) => { if (finiteControlValue(control)) { control.removeAttribute('aria-invalid'); record.lastValue = control.value; return; } control.setAttribute('aria-invalid', 'true'); event.stopImmediatePropagation(); };
-    control.addEventListener('input', protect); control.addEventListener('change', protect); control.addEventListener('blur', () => { if (!finiteControlValue(control)) control.value = record.lastValue; });
+    control.addEventListener('input', protect); control.addEventListener('input', () => dispatchSemanticEdit(control)); control.addEventListener('change', protect); control.addEventListener('blur', () => { if (!finiteControlValue(control)) control.value = record.lastValue; });
     addControlMeta(label, control);
   }
-  function decorateText(label, control) { control.classList.add('semantic-text'); addControlMeta(label, control); }
+  function decorateText(label, control) {
+    control.classList.add('semantic-text'); addControlMeta(label, control);
+    if (!['asciiPhrase', 'emojiText'].includes(control.id)) return;
+    control.addEventListener('focus', () => beginControlEdit(control));
+    control.addEventListener('beforeinput', () => beginControlEdit(control));
+    control.addEventListener('change', () => finishControlEditAfterEvent(control));
+    control.addEventListener('blur', () => finishControlEditAfterEvent(control));
+  }
   function installSemanticControls() {
     semanticScope().forEach((scope) => scope.querySelectorAll('input,select,textarea').forEach((control) => {
       if (!isSemanticControl(control)) return; control.dataset.semanticInstrument = 'true'; control.dataset.semanticDefault = control.type === 'checkbox' ? String(control.checked) : control.value;
@@ -662,22 +675,16 @@
   function renderPlantOpticsStatus() { /* Compact rows carry their own current state. */ }
   function wirePlantOptic(optic) {
     const strength = $(optic.strength);
-    const record = {previous: null, changed: false};
-    const commit = () => {
-      if (!record.previous) return;
-      const previous = record.previous; const changed = record.changed;
-      record.previous = null; record.changed = false;
-      if (changed) dispatchSemanticEdit(strength, previous);
-    };
     $(optic.enabled).addEventListener('change', (event) => { syncPlantOpticControl(optic); edit(event); });
-    strength.addEventListener('pointerdown', () => { record.previous = structuredClone(state.scene || defaultScene()); record.changed = false; });
-    strength.addEventListener('pointerup', () => { const gesture = record.previous; setTimeout(() => { if (record.previous === gesture) commit(); }, 0); });
-    strength.addEventListener('pointercancel', commit);
-    strength.addEventListener('change', commit);
+    strength.addEventListener('pointerdown', () => beginControlEdit(strength));
+    strength.addEventListener('keydown', () => beginControlEdit(strength));
+    strength.addEventListener('pointerup', () => finishControlEditAfterEvent(strength));
+    strength.addEventListener('pointercancel', () => finishControlEditAfterEvent(strength));
+    strength.addEventListener('keyup', () => finishControlEditAfterEvent(strength));
+    strength.addEventListener('change', (event) => { syncPlantOpticControl(optic); edit(event); finishControlEditAfterEvent(strength); });
     strength.addEventListener('input', (event) => {
       syncPlantOpticControl(optic);
-      if (!record.previous) { edit(event); return; }
-      record.changed = true; state.dirty = true; schedulePreview();
+      edit(event);
     });
   }
   function applyPlantOptics(next) {
@@ -1085,7 +1092,7 @@
     state.revision = Math.max(state.revision || 0, status.revision || 0);
     $('#connectionState').textContent = status.connected ? (status.running ? 'Running' : 'Stopped') : 'Offline';
     $('#observedIdentity').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
-    $('#sceneIdentity').textContent = identity(status.current); $('#saveState').textContent = state.dirty ? 'Unsaved changes' : (state.selection?.kind === 'look' ? 'Saved look' : 'Current scene');
+    $('#sceneIdentity').textContent = identity(status.current); $('#saveState').textContent = state.dirty ? 'Unsaved changes' : (state.selection?.kind === 'look' ? 'Saved scene' : 'Not saved');
     const live = Boolean(status.running && status.armed);
     $('#liveAction').textContent = live ? 'Stop output' : 'Stopped';
     $('#liveAction').disabled = !live || state.wall.activating;
@@ -1136,7 +1143,7 @@
     $('#redoScene').disabled = state.redo.length === 0;
   }
   function clearHistory() {
-    state.history = []; state.redo = []; updateHistoryActions();
+    state.history = []; state.redo = []; controlEditSessions = new WeakMap(); historyGeneration += 1; updateHistoryActions();
   }
   async function acknowledgeUndo(revision) {
     clearHistory();
@@ -1144,7 +1151,13 @@
     renderStatus(result.status || result);
   }
   function schedulePreview() { const generation = ++state.previewGeneration; const candidate = sceneFromControls(); state.scene = candidate; previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
-  function remember(previous) { state.history.push(previous); if (state.history.length > 40) state.history.shift(); state.redo = []; updateHistoryActions(); }
+  function historySnapshot(scene = state.scene || defaultScene(), targetFps = authoredTargetFps ?? boundedTargetFps($('#targetFps').value)) {
+    return {scene: structuredClone(scene), targetFps: boundedTargetFps(targetFps)};
+  }
+  function normalizeHistoryEntry(entry) {
+    return entry?.scene && Number.isFinite(entry.targetFps) ? historySnapshot(entry.scene, entry.targetFps) : historySnapshot(entry);
+  }
+  function remember(previous) { state.history.push(normalizeHistoryEntry(previous)); if (state.history.length > 40) state.history.shift(); state.redo = []; updateHistoryActions(); }
   async function flushPublication() {
     state.publication.scheduled = false;
     if (state.publication.inFlight || !state.publication.queued) return;
@@ -1210,6 +1223,7 @@
     state.scene = scene; state.wall.dirty = true; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
     const sceneSnapshot = structuredClone(scene);
     const targetFps = boundedTargetFps($('#targetFps').value);
+    authoredTargetFps = targetFps;
     const requestEndpoint = endpoint || (builtin ? '/built-ins/open' : '/scene');
     const body = requestBody || (builtin ? {scene: sceneSnapshot, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence} : {origin: 'composer', scene: sceneSnapshot, client_id: clientId, mutation_id: newUuid(), client_sequence: ++state.sequence});
     return new Promise((resolve, reject) => {
@@ -1232,7 +1246,32 @@
     if (!state.scene || state.wall.activating || state.publication.queued || state.publication.afterStop || state.publication.inFlight) return Promise.resolve({coalesced: true});
     return submit(structuredClone(state.scene)).catch((error) => { $('#operationMessage').textContent = error.message; });
   }
-  async function edit(event, priorScene = null) { state.lastControl = event?.target?.id || null; if (state.lastControl === 'clockEnabled' || state.lastControl === 'emojiEnabled') syncWidgetDisclosure(); const previous = priorScene || structuredClone(state.scene || defaultScene()); const next = sceneFromControls(); state.dirty = true; try { await submit(next, {rememberEdit: true, previous}); } catch (error) { if (!state.publication.queued && !state.publication.inFlight) { state.scene = previous; applyScene(previous); } $('#operationMessage').textContent = error.message; } }
+  async function edit(event, priorScene = null) {
+    const control = event?.target || null;
+    state.lastControl = control?.id || null;
+    if (state.lastControl === 'clockEnabled' || state.lastControl === 'emojiEnabled') syncWidgetDisclosure();
+    if (control && ['asciiPhrase', 'emojiText'].includes(control.id) && !controlEditSessions.has(control)) beginControlEdit(control);
+    const rollback = historySnapshot();
+    const next = sceneFromControls();
+    const targetFps = boundedTargetFps($('#targetFps').value);
+    if (sameLocalParameters(next, state.scene) && targetFps === authoredTargetFps) return;
+    const session = control && controlEditSessions.get(control);
+    const rememberEdit = !session || !session.remembered;
+    const previous = session?.previous || (priorScene ? historySnapshot(priorScene, rollback.targetFps) : rollback);
+    if (session) session.remembered = true;
+    const historyBefore = state.history.slice(); const redoBefore = state.redo.slice(); const editHistoryGeneration = historyGeneration;
+    const intentToken = beginIntent();
+    state.dirty = true;
+    try { await submit(next, {intentToken, rememberEdit, previous}); }
+    catch (error) {
+      if (intentIsCurrent(intentToken) && !state.publication.queued && !state.publication.inFlight) {
+        if (historyGeneration === editHistoryGeneration) { state.history = historyBefore; state.redo = redoBefore; }
+        if (session && rememberEdit) session.remembered = false;
+        state.scene = rollback.scene; authoredTargetFps = rollback.targetFps; syncTargetFps(rollback.targetFps); applyScene(rollback.scene); updateHistoryActions();
+      }
+      $('#operationMessage').textContent = error.message;
+    }
+  }
   async function loadFireworksPresets() {
     try {
       const response = await fetch(`${api}/components/fireworks/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
@@ -1478,7 +1517,7 @@
     feedback.textContent = message; feedback.dataset.state = stateName; feedback.hidden = false;
   }
   function focusSceneName() {
-    $('#secondaryOperations').open = true;
+    const secondary = $('#secondaryOperations'); if (secondary) secondary.open = true;
     $('#sceneName').focus({preventScroll: true});
   }
   async function save(as) {
@@ -1497,7 +1536,16 @@
       await loadLibrary(); state.dirty = false; $('#saveState').textContent = 'Saved'; saveFeedback(`Saved ${state.selection?.name || name}.`, 'success');
     } catch (error) { saveFeedback(error.message || 'This scene could not be saved. Try again.', 'error'); }
   }
-  async function rewind(direction) { const source = direction === 'undo' ? state.history : state.redo; const next = source.pop(); if (!next) { updateHistoryActions(); return; } const opposite = direction === 'undo' ? state.redo : state.history; opposite.push(structuredClone(state.scene)); updateHistoryActions(); state.dirty = true; applyScene(next); try { await submit(next); } catch (error) { $('#operationMessage').textContent = error.message; } }
+  async function rewind(direction) {
+    const source = direction === 'undo' ? state.history : state.redo;
+    const entry = source.pop();
+    if (!entry) { updateHistoryActions(); return; }
+    const next = normalizeHistoryEntry(entry);
+    const opposite = direction === 'undo' ? state.redo : state.history;
+    opposite.push(historySnapshot()); updateHistoryActions(); state.dirty = true;
+    authoredTargetFps = next.targetFps; syncTargetFps(next.targetFps); applyScene(next.scene);
+    try { await submit(next.scene); } catch (error) { $('#operationMessage').textContent = error.message; }
+  }
   function isNativeTextEditingTarget(target) { return Boolean(target?.closest?.('input, textarea, [contenteditable]:not([contenteditable="false"])')); }
   function handleSceneHistoryShortcut(event) {
     if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z' || isNativeTextEditingTarget(event.target)) return;
@@ -1670,12 +1718,20 @@
     }
   }
 
+  function wireLiveRange(control, publish) {
+    control.addEventListener('pointerdown', () => beginControlEdit(control));
+    control.addEventListener('keydown', () => beginControlEdit(control));
+    control.addEventListener('pointerup', () => finishControlEditAfterEvent(control));
+    control.addEventListener('pointercancel', () => finishControlEditAfterEvent(control));
+    control.addEventListener('keyup', () => finishControlEditAfterEvent(control));
+    control.addEventListener('input', publish);
+    control.addEventListener('change', (event) => { publish(event); finishControlEditAfterEvent(control); });
+  }
   function wire() {
     ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiLineSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
     [...pixelChaseSelectors, ...plantGlowSelectors, ...Object.values(mediaControls).flat()].forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
-    $('#sceneSpeed').addEventListener('input', edit);
-    $('#targetFps').addEventListener('input', edit);
-    $('#targetFps').addEventListener('change', edit);
+    wireLiveRange($('#sceneSpeed'), (event) => { syncSceneSpeed(number('#sceneSpeed')); edit(event); });
+    wireLiveRange($('#targetFps'), (event) => { syncTargetFps($('#targetFps').value); edit(event); });
     $('#resetSceneSpeed').addEventListener('click', () => { syncSceneSpeed(DEFAULT_SCENE_PACE); edit({target: $('#sceneSpeed')}); });
     ['#clockFormat','#clockSeconds','#clockTimeOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
     ['#clockAcross','#clockOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
@@ -1685,7 +1741,7 @@
     Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave')).forEach((selector) => $(selector).addEventListener('input', edit));
     // Phrase editing is the ASCII instrument itself: publish each real text
     // input so the Preview and live remix visibly answer while typing.
-    ['#asciiPhrase'].forEach((selector) => $(selector).addEventListener('input', edit));
+    ['#asciiPhrase', '#emojiText'].forEach((selector) => $(selector).addEventListener('input', edit));
     plantOptics.forEach(wirePlantOptic);
     $('#removeEmoji').addEventListener('click', async () => { const next = structuredClone(state.scene || defaultScene()); next.widgets = next.widgets.filter((widget) => widget.component?.component_id !== 'emoji_arranger'); state.lastControl = 'removeEmoji'; try { await submit(next, {rememberEdit: true}); applyScene(next); } catch (error) { $('#operationMessage').textContent = error.message; } });
     $('#scenePreview').addEventListener('pointerdown', triggerInstrumentAtPointer);
@@ -1700,7 +1756,7 @@
     $('#playlistStop').addEventListener('click', () => { void stopPlaylist(); });
     document.addEventListener('keydown', handleSceneHistoryShortcut);
   }
-  installPixelChaseControls(); installPlantGlowControls(); installMediaControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); updateHistoryActions(); applyScene(defaultScene());
+  installPixelChaseControls(); installPlantGlowControls(); installMediaControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); updateHistoryActions(); applyScene(defaultScene()); authoredTargetFps = boundedTargetFps($('#targetFps').value);
   if (![...$('#animationChoice').options].some((option) => option.value === 'snake')) $('#animationChoice').append(new Option('Snake Garden', 'snake'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'canopy_cup')) $('#animationChoice').append(new Option('Canopy Cup', 'canopy_cup'));
   if (![...$('#animationChoice').options].some((option) => option.value === 'maze_chase')) $('#animationChoice').append(new Option('Maze Chase', 'maze_chase'));
