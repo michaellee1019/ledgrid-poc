@@ -392,9 +392,9 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         html = self.client.get("/").get_data(as_text=True)
         script = (self.interface.project_root / "web" / "static" / "js" / "composer_slice.js").read_text(encoding="utf-8")
         preview = html[html.index('class="preview-pane'):html.index('class="control-workspace')]
-        self.assertIn("Installed final", preview)
+        self.assertIn("Live view", preview)
         self.assertIn('id="scenePreview"', preview)
-        self.assertIn("Installed final Scene preview", preview)
+        self.assertIn("Current Scene preview", preview)
         self.assertIn("new window.ComposerPreviewScheduler", script)
         self.assertIn("previewScheduler.start()", script)
         self.assertIn("`${api}/preview`", script)

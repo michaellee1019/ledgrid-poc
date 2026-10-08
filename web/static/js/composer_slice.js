@@ -323,7 +323,7 @@
     const defaults = controlDefault(control); if (defaults == null) return;
     const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'semantic-reset'; reset.textContent = 'Reset'; reset.setAttribute('aria-label', `Reset ${controlLabelText(label)} to default`);
     reset.addEventListener('click', () => { control.value = defaults; control.checked = defaults === 'true'; syncSemanticControls(); dispatchSemanticEdit(control); });
-    const meta = document.createElement('small'); meta.className = 'semantic-default'; meta.textContent = `Default ${defaults}`;
+    const meta = document.createElement('small'); meta.className = 'semantic-default'; meta.textContent = `Default ${defaults}`; reset.title = `Reset to ${defaults}`;
     label.append(meta, reset);
   }
   function decorateNumeric(label, control) {
@@ -440,6 +440,9 @@
     });
   }
   function buildControlDisclosure(componentId) {
+    // Live inputs must keep their focus and open disclosure while updating.
+    const existing = document.querySelector('.control-disclosure');
+    if (existing?.dataset.componentId === componentId) return;
     clearControlDisclosure();
     const selectors = allComponentControlSelectors(componentId);
     const host = disclosureHost(componentId);
@@ -447,10 +450,12 @@
     const controls = selectors.map((selector) => ({selector, label: $(selector)?.closest('label')})).filter(({label}) => label);
     if (!controls.length) return;
     const advanced = new Set(advancedControlSuffixes[componentId] || selectors.filter((selector) => /seed|offset|path|diagnostic|runtime/i.test(selector)));
-    const primaryLabels = controls.filter(({selector}) => !advanced.has(selector)).map(({label}) => label);
-    const advancedLabels = controls.filter(({selector}) => advanced.has(selector)).map(({label}) => label);
+    const primaryControls = controls.filter(({selector}) => !advanced.has(selector)).slice(0, 4);
+    const primaryLabels = primaryControls.map(({label}) => label);
+    const advancedLabels = controls.filter(control => !primaryControls.includes(control)).map(({label}) => label);
     const disclosure = document.createElement('section');
     disclosure.className = 'control-disclosure';
+    disclosure.dataset.componentId = componentId;
     disclosure.setAttribute('aria-label', `${componentLabel(componentId)} controls`);
     const primary = document.createElement('div');
     primary.className = 'primary-control-grid';
@@ -903,7 +908,7 @@
   const previewScheduler = new window.ComposerPreviewScheduler({
     request: preview,
     isVisible: () => !document.hidden,
-    onFrame: (body) => { drawFrame(body.frame); $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Installed final runtime frame.'; placementWarning(body.widget_placements || {}); },
+    onFrame: (body) => { drawFrame(body.frame); $('#previewIdentity').textContent = identity(body.basis); $('#previewStatus').textContent = 'Current Scene preview.'; placementWarning(body.widget_placements || {}); },
     onError: (error) => { $('#previewStatus').textContent = error.message || 'Preview could not render.'; if (error.previewUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); },
   });
   const paletteForVibe = Object.freeze({quiet: 'mist', neutral: 'neutral', vivid: 'spectrum', celebration: 'spectrum', cozy: 'ember'});

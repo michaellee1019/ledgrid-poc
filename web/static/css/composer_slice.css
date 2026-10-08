@@ -243,3 +243,25 @@ dialog li { margin: .5rem 0; }
   .gallery-select { padding-right: 44px; }
   .gallery-favorite { min-width: 44px; min-height: 44px; }
 }
+
+/* Artistic controls lead; exact values and optional settings remain reachable. */
+body { font-size: 14px; }
+.inspector { padding: .75rem; border-color: #29434a88; box-shadow: none; border-radius: 6px; }
+.inspector .eyebrow { display: none; }
+.inspector h2 { font-size: 1rem; }
+label, .semantic-palette, .semantic-choice { font-size: .88rem; }
+.semantic-control { padding: .65rem; border: 0; background: #102025; }
+.semantic-default { display: none; }
+.semantic-reset { opacity: .75; }
+.semantic-control:hover .semantic-reset, .semantic-control:focus-within .semantic-reset { opacity: 1; }
+.semantic-number { margin-top: .35rem; }
+.semantic-control > .semantic-palettes, .semantic-control > .semantic-choices { margin-top: .5rem; }
+.global-scene-controls { background: #17302d; }
+.preview-pane .status-line { line-height: 1.4; }
+@media (max-width: 760px) {
+  .semantic-reset { position: static; justify-self: end; margin-top: .15rem; }
+  .field-grid { grid-template-columns: minmax(0, 1fr); }
+  .final-optic-row { grid-template-columns: minmax(0, 1fr) 3rem; }
+  .final-optic-row .switch { grid-column: 1 / -1; }
+  .scene-speed-control input { min-height: 44px; }
+}
