@@ -1142,6 +1142,33 @@
     $('#operationMessage').textContent = state.authoredValidationError || state.wall.activationError || status.last_error || (live
       ? (status.current ? (state.wall.dirty ? 'Publishing the newest valid edit.' : 'Live · every valid edit applies automatically.') : 'Live · choose or edit a scene to begin output.')
       : 'Output stopped · change any control or choose a scene to resume automatically.');
+    // Names come only from the controller observation, never the selected card
+    // or desired Scene. Keep the last observation distinct during an outage.
+    const playbackTitle = $('#operations-title');
+    const playbackHint = $('#playbackHint');
+    if (playbackTitle && playbackHint) {
+      const observed = state.wall.observation;
+      const active = observed?.active_identity;
+      const components = active?.component_identities || [];
+      const component = components.find(item => item.slot_id === 'animation')
+        || components.find(item => item.slot_id === 'known_python_fallback')
+        || components.find(item => item.slot_id === 'background');
+      const componentId = active?.scene_identity?.digest ? component?.component_id : null;
+      const entry = state.gallery?.entries?.find(item => item.component_id === componentId);
+      const name = entry?.name || (componentId ? componentId.replaceAll('_', ' ') : 'Verified scene');
+      const offline = state.wall.statusUnavailable || !status.connected;
+      const pending = Boolean(state.wall.activating || state.publication.queued || state.publication.afterStop || state.publication.inFlight);
+      playbackTitle.textContent = offline ? 'Wall unavailable' : live ? `Playing · ${name}` : 'Output stopped';
+      playbackHint.textContent = offline
+        ? 'Cannot confirm current output. Reconnecting automatically.'
+        : state.wall.activationError ? 'Update failed. The requested scene is not confirmed; retry below.'
+        : state.authoredValidationError ? 'Edit needs attention. The previous output is unchanged.'
+        : pending ? 'Updating the wall… Showing the last confirmed output.'
+        : live ? 'Selections and adjustments update the wall immediately.'
+        : 'Choose a scene or adjust a control to resume live output.';
+      $('#connectionState').textContent = offline ? 'Offline' : pending ? 'Updating…' : live ? 'Live' : 'Stopped';
+    }
+
   }
   function updateHistoryActions() {
     $('#undoScene').disabled = state.history.length === 0;
@@ -1732,11 +1759,12 @@
         requestJson('/api/v1/composer/settings/observed'),
       ]);
       state.wall.observation = observation;
+      state.wall.statusUnavailable = false;
       syncFrameRateObservation(observation);
       renderStatus(status);
       if (status.undo_invalidated) await acknowledgeUndo(status.undo_invalidation_revision);
       if (status.connected && state.wall.dirty && state.scene && !state.wall.retryBlocked && !state.publication.queued && !state.publication.afterStop && !state.publication.inFlight) await submit(state.scene, {intentToken: state.intent, automatic: true});
-    } catch (error) { renderStatus({...state.status, last_error: error.message}); }
+    } catch (error) { state.wall.statusUnavailable = true; renderStatus({...state.status, last_error: error.message}); }
     finally { state.refreshInFlight = false; }
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });

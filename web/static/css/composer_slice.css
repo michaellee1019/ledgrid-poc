@@ -223,3 +223,6 @@ dialog li { margin: .5rem 0; }
   .operations-summary { justify-content: flex-start; }
   .browse-tabs .button { flex: 1 1 auto; }
 }
+
+.operations-pane #operations-title { white-space: normal; overflow-wrap: anywhere; font-size: 1rem; }
+.operations-pane #playbackHint { max-width: 48rem; font-size: .8rem; }
