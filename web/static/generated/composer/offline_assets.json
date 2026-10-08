@@ -1,5 +1,5 @@
 {
-  "cacheVersion": "g-53a032b89561452fffc0",
+  "cacheVersion": "g-e3beeaf2486a6061f993",
   "capturedAssets": [
     "/composer"
   ],
@@ -25,18 +25,18 @@
       "url": "/static/css/composer.css"
     },
     {
-      "bytes": 11374,
-      "sha256": "86f7b3f2fedf530a29a96829635ddc78f4819b353e2a4efba53f300982ed105b",
+      "bytes": 11423,
+      "sha256": "25a28bdd88f241c1f498565cf932c321d962294e1132b7662cc400a5bace6aec",
       "url": "/static/generated/composer/aurora_curtains_native.wasm"
     },
     {
       "bytes": 543823,
-      "sha256": "afd17daa2d437e84ed32310ae7acaeeb6f8ac54dad2b8406befff286d5e78c64",
+      "sha256": "2c9bba24fe07c1a5d810e84a2569ae4930244092684350e1f7654c9459c64ca0",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
-      "bytes": 1351,
-      "sha256": "10a099becb8bbe7f454c7116ac344aeb4d0af28cac7f9bad0578b735120fde6c",
+      "bytes": 1400,
+      "sha256": "797f77f226f9727026b9cacff2ae257095a45b3e7502d20b60b425b05aa8057d",
       "url": "/static/generated/composer/compiled_rainbow.wasm"
     },
     {
@@ -50,13 +50,13 @@
       "url": "/static/generated/composer/ledgrid_python_runtime.zip"
     },
     {
-      "bytes": 11602,
-      "sha256": "844e39d7f5f27a4b3894a1998ea1058c3e6ee4a9024bca4ae6f85a806e8221b8",
+      "bytes": 11651,
+      "sha256": "2b9b49cf78fd150fe455f3d11a6df018877f09b7060d848cd7748dd926395b46",
       "url": "/static/generated/composer/native_aurora.wasm"
     },
     {
       "bytes": 1538,
-      "sha256": "9e73d5503cb5c651b1fad96b7adb7210f0a66d823626666e996b6cd84e2477f1",
+      "sha256": "040db13714d39e6ed5494d3e8a1c113081db708fb554052abe79dccb3461846d",
       "url": "/static/generated/composer/service_worker_config.v1.js"
     },
     {
@@ -120,7 +120,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "g-bb52aa3fe83d13bf0486",
+  "previousCacheVersion": "g-53a032b89561452fffc0",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",
