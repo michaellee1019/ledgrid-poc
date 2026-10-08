@@ -11,8 +11,8 @@ class ComposerStartupIntentTests(unittest.TestCase):
         javascript = r"""
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-async function run({editAt, ok=true, current=false}) {
-  const state = {intent:0, scene:null, dirty:false};
+async function run({editAt, ok=true, current=false, selected=false, running=false, unavailable=false}) {
+  const state = {intent:0, scene:null, dirty:false, wall:{observation:null}};
   let applied=[], submitted=[], recovered=0;
   const newer = {animation:{component_id:'aurora_curtains'}};
   const old = {animation:{component_id:'cellular_tapestry'}};
@@ -20,7 +20,7 @@ async function run({editAt, ok=true, current=false}) {
   const context = {
     state, api:'/api/composer', clientId:'test', encodeURIComponent,
     intentIsCurrent:intent=>intent===state.intent,
-    refreshStatus:async()=>{if(editAt==='status') edit();},
+    refreshStatus:async()=>{state.wall.statusUnavailable=unavailable;state.wall.observation=unavailable?null:{is_running:running,active_identity:{scene_identity:selected?{digest:'a'.repeat(64)}:null}};if(editAt==='status') edit();},
     fetch:async()=>({ok,json:async()=>{
       if(editAt==='recovery') edit();
       return {recovery:{scene:old},status:{current},error:'Old recovery failed'};
@@ -39,7 +39,7 @@ async function run({editAt, ok=true, current=false}) {
     assert.equal(recovered,0);
   } else {
     assert.equal(state.scene,old); assert.deepEqual(applied,[old]);
-    assert.equal(submitted.length,current?0:1);
+    assert.equal(submitted.length,(current||selected||unavailable)?0:1);
   }
 }
 (async()=>{
@@ -48,6 +48,10 @@ async function run({editAt, ok=true, current=false}) {
   await run({editAt:'recovery',ok:false});
   await run({});
   await run({current:true});
+  await run({selected:true});
+  await run({selected:true,running:true});
+  await run({selected:true,unavailable:true});
+  await run({unavailable:true});
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
         result = subprocess.run(['node', '-e', javascript, source], capture_output=True, text=True, timeout=15)

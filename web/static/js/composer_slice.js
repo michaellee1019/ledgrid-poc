@@ -1807,9 +1807,10 @@
       state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null;
       state.dirty = false; applyScene(state.scene);
     } else { applyScene(defaultScene()); state.scene = defaultScene(); state.dirty = false; }
-    // Seed an empty server once. Reloading a deliberately stopped current
-    // scene does not restart it; the next real edit does that automatically.
-    if (!body.status?.current) await submit(state.scene);
+    // The legacy Composer may be empty after restart while the canonical wall
+    // still has a selected Scene. Hydration must not republish that Scene or
+    // restart stopped output. Only seed a genuinely empty installation.
+    if (!body.status?.current && state.wall.observation && !state.wall.statusUnavailable && !state.wall.observation.active_identity?.scene_identity?.digest) await submit(state.scene);
   }
   renderPlaylist();
   hydrateCurrentScene().then(() => Promise.all([loadLibrary(), loadGallery(), loadPlaylists(), refreshPlaylistStatus()])).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'pixel_chase', 'plant_glow', ...mediaIds, 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) { refreshStatus(); refreshPlaylistStatus(); } }, 1000); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });

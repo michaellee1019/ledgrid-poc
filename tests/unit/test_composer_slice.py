@@ -510,7 +510,7 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         self.assertIn("status: {connected: true, running: true, armed: true", script)
         self.assertIn("publication: {queued: null, afterStop: null, inFlight: null, scheduled: false}", script)
         self.assertIn("replacement?.resolve({coalesced: true});", script)
-        self.assertIn("if (!body.status?.current) await submit(state.scene);", script)
+        self.assertIn("if (!body.status?.current && state.wall.observation && !state.wall.statusUnavailable && !state.wall.observation.active_identity?.scene_identity?.digest) await submit(state.scene);", script)
         self.assertIn("try { await guardedWallActivation(entry.scene, true, entry.targetFps); }", script)
         self.assertNotIn("activateWall", script)
         self.assertNotIn("queueOperatorSpeed", script)
