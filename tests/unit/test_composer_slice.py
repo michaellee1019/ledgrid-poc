@@ -189,19 +189,17 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertEqual(self.interface.working_draft.get(), before_draft)
         self.assertEqual(self.interface.composer_control.commands, before_commands)
 
-    def test_gallery_uses_fixed_inert_preview_cache_and_single_live_publisher(self) -> None:
+    def test_gallery_uses_shipped_catalog_previews_and_single_live_publisher(self) -> None:
         script = Path('web/static/js/composer_slice.js').read_text(encoding='utf-8')
         css = Path('web/static/css/composer_slice.css').read_text(encoding='utf-8')
         html = self.client.get('/').get_data(as_text=True)
         for element_id in ('gallerySearch', 'galleryGrid', 'galleryDetail'):
             self.assertIn(f'id="{element_id}"', html)
         self.assertNotIn('galleryMore', html)
-        self.assertIn("const GALLERY_FIXED_PREVIEW", script)
-        self.assertIn("preview(galleryScene(entry), GALLERY_FIXED_PREVIEW)", script)
-        self.assertIn("function stableGalleryJson", script)
-        self.assertIn("scene: galleryScene(entry)", script)
-        self.assertIn("const GALLERY_THUMBNAIL_CONCURRENCY = 3", script)
-        self.assertIn("new IntersectionObserver", script)
+        self.assertIn('generated/gallery/previews.js', html)
+        self.assertIn('window.ComposerGalleryPreviews?.[entry.component_id]', script)
+        self.assertIn("image.loading = 'lazy'", script)
+        self.assertNotIn('preview(galleryScene(entry)', script)
         self.assertNotIn("GALLERY_PAGE_SIZE", script)
         self.assertNotIn("galleryMore", script)
         self.assertGreaterEqual(css.count("aspect-ratio: 33 / 138"), 4)
@@ -253,13 +251,13 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
     def test_gallery_detail_follows_the_selected_row_and_ignores_stale_presets(self) -> None:
         script = Path('web/static/js/composer_slice.js').read_text(encoding='utf-8')
         detail_code = script[
-            script.index('function placeGalleryDetail'):script.index('async function selectGalleryEntry')
+            script.index('function galleryThumbnail'):script.index('async function selectGalleryEntry')
         ]
         javascript = r'''
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const makeElement = (tag = 'div') => ({
-  tag, className: '', dataset: {}, children: [], hidden: false, textContent: '',
+  tag, className: '', classList: {add() {}}, dataset: {}, children: [], hidden: false, textContent: '',
   setAttribute(key, value) { this[key] = value; },
   append(...nodes) { this.children.push(...nodes); },
   replaceChildren(...nodes) { this.children = nodes; },
@@ -292,10 +290,10 @@ context.show({key: 'late', component_id: 'late', name: 'Late', description: '', 
 pending[1]({ok: true, json: async () => ({presets: [{name: 'Late preset', parameters: {}}]})});
 setImmediate(() => {
   setImmediate(() => {
-    assert.equal(detail.children[3].children[0].textContent, 'Late preset');
+    assert.equal(detail.children[4].children[0].textContent, 'Late preset');
     pending[0]({ok: true, json: async () => ({presets: [{name: 'Stale early preset', parameters: {}}]})});
     setImmediate(() => setImmediate(() => {
-      assert.equal(detail.children[3].children[0].textContent, 'Late preset', 'stale presets cannot replace the newest detail');
+      assert.equal(detail.children[4].children[0].textContent, 'Late preset', 'stale presets cannot replace the newest detail');
     }));
   });
 });

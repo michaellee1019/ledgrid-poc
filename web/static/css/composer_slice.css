@@ -226,3 +226,20 @@ dialog li { margin: .5rem 0; }
 
 .operations-pane #operations-title { white-space: normal; overflow-wrap: anywhere; font-size: 1rem; }
 .operations-pane #playbackHint { max-width: 48rem; font-size: .8rem; }
+
+.gallery-select { grid-template-columns: 2.25rem minmax(0, 1fr); gap: .65rem; padding: .5rem 2.25rem .5rem .5rem; min-height: 10rem; }
+.gallery-thumb, .gallery-thumb-unavailable { inline-size: 2.25rem; }
+.gallery-card-title { font-size: .88rem; }
+.gallery-card-description { font-size: .75rem; line-height: 1.35; -webkit-line-clamp: 3; }
+.gallery-card-meta { font-size: .7rem; }
+.gallery-favorite { min-width: 32px; min-height: 32px; font-size: 1.15rem; }
+.gallery-detail { grid-template-columns: 3rem minmax(0, 1fr); padding: .65rem; }
+.gallery-detail-thumb { inline-size: 3rem; grid-column: 1; grid-row: 1 / span 4; }
+.gallery-detail h3, .gallery-detail p, .gallery-preset-list { grid-column: 2; }
+.gallery-detail h3 { font-size: 1rem; }
+.gallery-detail p { font-size: .8rem; }
+.gallery-preset-list .button { min-height: 44px; font-size: .8rem; }
+@media (max-width: 760px) {
+  .gallery-select { padding-right: 44px; }
+  .gallery-favorite { min-width: 44px; min-height: 44px; }
+}

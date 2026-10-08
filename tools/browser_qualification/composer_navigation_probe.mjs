@@ -13,6 +13,7 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(url);
     await page.waitForSelector('.gallery-select');
+    await page.waitForFunction(() => document.querySelector('#sceneIdentity').textContent.startsWith('r'));
     const writes = [];
     page.on('request', request => {if (request.method() !== 'GET' && !new URL(request.url()).pathname.endsWith('/preview')) writes.push(request.url());});
     const sceneBefore = await page.locator('#sceneIdentity').textContent();

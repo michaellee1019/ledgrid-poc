@@ -22,7 +22,7 @@
   const clientId = newUuid();
   const state = { status: {connected: true, running: true, armed: true, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
     scene: null, history: [], redo: [], sequence: 0, intent: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
-    gallery: {entries: [], digest: null, query: '', filter: 'all', favorites: new Set(), thumbnails: new Map(), detail: null, detailToken: 0, thumbnailObserver: null, thumbnailQueue: [], thumbnailQueued: new Set(), thumbnailActive: 0},
+    gallery: {entries: [], digest: null, query: '', filter: 'all', favorites: new Set(), detail: null, detailToken: 0},
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
@@ -506,10 +506,6 @@
       widgets: [], plants: {effects: {version: 1, active: [], strengths: {}}},
       look: {palette_id: $('#previewPalette').value, pace: number('#sceneSpeed'), presentation_brightness: number('#sceneLuminance')} };
   }
-  const GALLERY_FIXED_PREVIEW = Object.freeze({monotonic_elapsed: 17, wall_time: '2026-01-01T12:00:00+00:00'});
-  // Gallery membership is complete on first render.  Only the inert preview
-  // work waits for a card to approach the viewport.
-  const GALLERY_THUMBNAIL_CONCURRENCY = 3;
   const GALLERY_FAVORITES_KEY = 'ledgrid-composer-gallery-favorites-v1';
   function readGalleryFavorites() {
     try { return new Set(JSON.parse(window.localStorage.getItem(GALLERY_FAVORITES_KEY) || '[]').filter((key) => typeof key === 'string')); }
@@ -535,63 +531,24 @@
     if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableGalleryJson(value[key])}`).join(',')}}`;
     return JSON.stringify(value);
   }
-  function galleryThumbnailKey(entry) {
-    // The preview endpoint renders this resolved Scene, not merely the
-    // catalog item.  Include every Scene-owned rendering input so a changed
-    // background, Look, widget, or plant optic cannot reuse an old thumbnail.
-    return stableGalleryJson({scene: galleryScene(entry), preview: GALLERY_FIXED_PREVIEW, catalog: state.gallery.digest, entry: entry.key});
-  }
-  async function drawGalleryThumbnail(canvas, entry) {
-    const key = galleryThumbnailKey(entry);
-    canvas.__galleryThumbnailKey = key;
-    let result = state.gallery.thumbnails.get(key);
-    if (!result) {
-      result = preview(galleryScene(entry), GALLERY_FIXED_PREVIEW).then((body) => body.frame);
-      state.gallery.thumbnails.set(key, result);
-    }
-    try {
-      const frame = await result;
-      if (state.gallery.thumbnails.get(key) !== result) return;
-      // Keep the shared promise stable while replacement canvases await it.
-      if (canvas.__galleryThumbnailKey !== key) return;
-      drawFrameIntoCanvas(canvas, frame);
-      canvas.setAttribute('aria-label', `${entry.name} representative 33 by 138 preview`);
-    } catch (_) {
-      state.gallery.thumbnails.delete(key);
-      if (canvas.__galleryThumbnailKey !== key) return;
-      const unavailable = document.createElement('span'); unavailable.className = 'gallery-thumb-unavailable'; unavailable.textContent = 'Preview unavailable'; unavailable.setAttribute('aria-label', `${entry.name} preview unavailable`); canvas.replaceWith(unavailable);
-    }
-  }
-  function pumpGalleryThumbnails() {
-    while (state.gallery.thumbnailActive < GALLERY_THUMBNAIL_CONCURRENCY && state.gallery.thumbnailQueue.length) {
-      const {canvas, entry} = state.gallery.thumbnailQueue.shift();
-      state.gallery.thumbnailQueued.delete(canvas);
-      state.gallery.thumbnailActive += 1;
-      drawGalleryThumbnail(canvas, entry).finally(() => { state.gallery.thumbnailActive -= 1; pumpGalleryThumbnails(); });
-    }
-  }
-  function queueGalleryThumbnail(canvas, entry) {
-    if (state.gallery.thumbnailQueued.has(canvas)) return;
-    state.gallery.thumbnailQueued.add(canvas);
-    state.gallery.thumbnailQueue.push({canvas, entry});
-    pumpGalleryThumbnails();
-  }
-  function scheduleGalleryThumbnails(cards) {
-    state.gallery.thumbnailObserver?.disconnect();
-    state.gallery.thumbnailQueue = [];
-    state.gallery.thumbnailQueued.clear();
-    if (typeof IntersectionObserver !== 'function') {
-      cards.forEach(({canvas, entry}) => queueGalleryThumbnail(canvas, entry));
-      return;
-    }
-    const observer = new IntersectionObserver((observations) => observations.forEach((observation) => {
-      if (!observation.isIntersecting) return;
-      observer.unobserve(observation.target);
-      const card = cards.find(({canvas}) => canvas === observation.target);
-      if (card) queueGalleryThumbnail(card.canvas, card.entry);
-    }), {rootMargin: '500px 0px'});
-    state.gallery.thumbnailObserver = observer;
-    cards.forEach(({canvas}) => observer.observe(canvas));
+  function galleryThumbnail(entry) {
+    // Catalog illustrations stay legible independently of the current Look,
+    // widgets, or stopped wall. Browser caching also survives grid rebuilds.
+    const image = document.createElement('img');
+    image.className = 'gallery-thumb'; image.width = 33; image.height = 138;
+    image.alt = `${entry.name} representative catalog preview`;
+    image.title = 'Catalog example. The main Preview shows your current Scene settings.';
+    image.loading = 'lazy'; image.decoding = 'async';
+    const unavailable = () => {
+      const label = document.createElement('span'); label.className = 'gallery-thumb-unavailable';
+      label.textContent = 'Preview unavailable'; label.setAttribute('aria-label', `${entry.name} preview unavailable`);
+      return label;
+    };
+    image.addEventListener('error', () => image.replaceWith(unavailable()), {once: true});
+    const url = window.ComposerGalleryPreviews?.[entry.component_id];
+    if (url) image.src = url;
+    else return unavailable();
+    return image;
   }
   function placeGalleryDetail(entry) {
     const detail = $('#galleryDetail');
@@ -618,7 +575,8 @@
     const description = document.createElement('p'); description.textContent = entry.description;
     const status = document.createElement('p'); status.className = 'gallery-card-meta'; status.textContent = entry.available ? `${entry.preset_count} preset${entry.preset_count === 1 ? '' : 's'} · live selection` : 'Unavailable on this Composer';
     const presets = document.createElement('div'); presets.className = 'gallery-preset-list'; presets.setAttribute('aria-label', `${entry.name} presets`);
-    detail.append(heading, description, status, presets);
+    const illustration = galleryThumbnail(entry); illustration.classList.add('gallery-detail-thumb');
+    detail.append(illustration, heading, description, status, presets);
     state.gallery.detail = entry.key;
     const detailToken = ++state.gallery.detailToken;
     placeGalleryDetail(entry);
@@ -661,20 +619,19 @@
     const grid = $('#galleryGrid'); const entries = galleryEntries();
     const detail = $('#galleryDetail');
     grid.replaceChildren();
-    const cards = [];
     entries.forEach((entry) => {
       const card = document.createElement('div'); card.className = 'gallery-card'; card.dataset.galleryKey = entry.key; card.setAttribute('role', 'listitem');
       const select = document.createElement('button'); select.type = 'button'; select.className = 'gallery-select'; select.setAttribute('aria-current', String(state.scene?.animation?.component_id === entry.component_id)); select.disabled = !entry.available;
-      const canvas = document.createElement('canvas'); canvas.className = 'gallery-thumb'; canvas.width = 33; canvas.height = 138; canvas.setAttribute('aria-label', `${entry.name} preview loading`);
+      const thumbnail = galleryThumbnail(entry);
       const copy = document.createElement('span'); copy.className = 'gallery-card-copy';
       const title = document.createElement('span'); title.className = 'gallery-card-title'; title.textContent = entry.name;
       const description = document.createElement('span'); description.className = 'gallery-card-description'; description.textContent = entry.description;
       const meta = document.createElement('span'); meta.className = 'gallery-card-meta'; meta.textContent = entry.available ? `${entry.preset_count} presets · available` : 'Unavailable';
-      copy.append(title, description, meta); select.append(canvas, copy);
+      copy.append(title, description, meta); select.append(thumbnail, copy);
       select.addEventListener('click', () => { showGalleryDetail(entry); selectGalleryEntry(entry); });
       const favorite = document.createElement('button'); favorite.type = 'button'; favorite.className = 'gallery-favorite'; favorite.setAttribute('aria-label', `Favorite ${entry.name}`); favorite.setAttribute('aria-pressed', String(state.gallery.favorites.has(entry.key))); favorite.textContent = state.gallery.favorites.has(entry.key) ? '★' : '☆';
       favorite.addEventListener('click', (event) => { event.stopPropagation(); if (state.gallery.favorites.has(entry.key)) state.gallery.favorites.delete(entry.key); else state.gallery.favorites.add(entry.key); writeGalleryFavorites(); renderGallery(); });
-      card.append(select, favorite); grid.append(card); cards.push({canvas, entry});
+      card.append(select, favorite); grid.append(card);
     });
     // The detail lives in this grid; retain its node across card rebuilds so
     // current preset requests and event handlers keep their attached target.
@@ -682,7 +639,6 @@
     const detailEntry = entries.find((entry) => entry.key === state.gallery.detail);
     if (detailEntry) placeGalleryDetail(detailEntry);
     else $('#galleryDetail').hidden = true;
-    scheduleGalleryThumbnails(cards);
     $('#galleryCount').textContent = `${entries.length} animation${entries.length === 1 ? '' : 's'}`;
     $('#galleryEmpty').hidden = entries.length > 0;
   }

@@ -1,0 +1,2100 @@
+{
+  "entries": {
+    "ascii_drop": {
+      "elapsed": 6.5,
+      "file": "ascii_drop-124275b4c5acd3b5.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "ascii_drop",
+          "parameters": {
+            "density": 0.45,
+            "fall_speed": 13.0,
+            "phrase": "HELLO",
+            "seed": 8088,
+            "story": "terminal"
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "124275b4c5acd3b59d8abf95e6f081a1c65b1a0e62451d560ac9f7c5977a57c2"
+    },
+    "aurora_curtains": {
+      "elapsed": 8.0,
+      "file": "aurora_curtains-5273097f3ba5df04.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "aurora_curtains",
+          "parameters": {
+            "curtain_density": 0.56,
+            "fold_depth": 0.58,
+            "glow_intensity": 0.62,
+            "seed": 4201,
+            "source_fps": 30.0
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "5273097f3ba5df040daab2b4fd62827ad83adb8e4f0c8e5403e9617a5198cefc"
+    },
+    "canopy_cup": {
+      "elapsed": 5.0,
+      "file": "canopy_cup-6b04829f9ca2f286.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "canopy_cup",
+          "parameters": {
+            "course_difficulty": 1.0,
+            "enemy_density": 0.55,
+            "powerup_rate": 0.6,
+            "qualifying_heats": 7,
+            "rivalry": 0.55,
+            "seed": 4242,
+            "show_hud": true,
+            "world_theme": "tournament"
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "6b04829f9ca2f28606df765dba11ebb59384c252aca56716125257476f0223ab"
+    },
+    "cellular_tapestry": {
+      "elapsed": 78.0,
+      "file": "cellular_tapestry-344d5b0f67690e20.png",
+      "preset": "showcase",
+      "scene": {
+        "animation": {
+          "component_id": "cellular_tapestry",
+          "parameters": {
+            "background_level": 0.16,
+            "density": 0.85,
+            "motion": 0.8,
+            "mutation": 0.035,
+            "row_interval": 0.28,
+            "rule": 30,
+            "seed": 2802,
+            "wrap": true
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "344d5b0f67690e20facaa2a80fd34fa73801ea0d3707b3a197cbca41f072e8b4"
+    },
+    "christmas_tree": {
+      "elapsed": 5.0,
+      "file": "christmas_tree-6bde4d973cdb2adc.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "christmas_tree",
+          "parameters": {
+            "season": "classic",
+            "seed": 1225,
+            "snowfall": 0.35,
+            "tree_height": 58,
+            "twinkle_hz": 1.0
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "6bde4d973cdb2adcb3bb700695005cf12bdcff1477b287f92238d01d70113684"
+    },
+    "circadian_window": {
+      "elapsed": 5.0,
+      "file": "circadian_window-596c4cded393a4bd.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "circadian_window",
+          "parameters": {
+            "background": "soft",
+            "background_level": 0.18,
+            "density": 0.5,
+            "hour": -1.0,
+            "mood": "natural",
+            "motion": 0.35,
+            "render_fps": 24,
+            "seed": 29001,
+            "time_offset": 0.0,
+            "time_scale": 1.0
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "596c4cded393a4bd783cb59c15fd0609bfce258a9c2241f1883e08b4c7de6cf7"
+    },
+    "cloud_canyon": {
+      "elapsed": 8.0,
+      "file": "cloud_canyon-203a0466ef4d2883.png",
+      "preset": "daylight-canyon",
+      "scene": {
+        "animation": {
+          "component_id": "cloud_canyon",
+          "parameters": {
+            "background": "radiant",
+            "background_level": 0.96,
+            "density": 0.7,
+            "mood": "daylight",
+            "motion": 0.44,
+            "seed": 4327,
+            "source_fps": 28.0
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "203a0466ef4d2883e37861093c9c0c4949a1172283a5ff6722cec7642bac19ee"
+    },
+    "conway_life": {
+      "elapsed": 6.5,
+      "file": "conway_life-e2057b4910da4e01.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "conway_life",
+          "parameters": {
+            "generations_per_second": 5.0,
+            "initial_density": 0.14,
+            "rule": "B3/S23",
+            "seed": 1971,
+            "seed_cells": []
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "e2057b4910da4e01c916ba4c98ec655321f94ed053d10b6d3bbf6800ccd66156"
+    },
+    "cyclic_reef": {
+      "elapsed": 5.0,
+      "file": "cyclic_reef-6346762908de8e46.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "cyclic_reef",
+          "parameters": {
+            "boundary_glow": 0.55,
+            "grazers": 8,
+            "mutation": 0.002,
+            "pace": 1.0,
+            "seed": 13100,
+            "species_count": 5,
+            "takeover_threshold": 2,
+            "topology": "wrap"
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "6346762908de8e46d81913b6620f90bab5ac18b79dd6f6b2d844fdd588f6c07c"
+    },
+    "desert_wind": {
+      "elapsed": 5.0,
+      "file": "desert_wind-21db625d87c9e3a1.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "desert_wind",
+          "parameters": {
+            "background": "soft",
+            "background_level": 0.18,
+            "density": 0.5,
+            "mood": "ochre",
+            "motion": 0.35,
+            "render_fps": 24,
+            "seed": 8001
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "21db625d87c9e3a10207fa8c1fe1360f3098ff9414278c0f91b8f12c34a64879"
+    },
+    "emoji": {
+      "elapsed": 6.5,
+      "file": "emoji-4ac1c58940928ffc.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "emoji",
+          "parameters": {
+            "face": "smile",
+            "mood": "golden",
+            "pulse_hz": 0.8,
+            "scale": 1.0,
+            "seed": 2026
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "4ac1c58940928ffcfb79b3aec99aa26f46e4c437b451fed14792bd465e53fdd3"
+    },
+    "firefly_synchrony": {
+      "elapsed": 7.5,
+      "file": "firefly_synchrony-5e2f8666009689ca.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "firefly_synchrony",
+          "parameters": {
+            "coupling_radius": 8.0,
+            "meadow_glow": 0.12,
+            "population": 100,
+            "pulse_softness": 0.5,
+            "seed": 7319,
+            "synchrony": 0.85,
+            "wandering": 0.55
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "5e2f8666009689ca0a658e88beac676b8db31e42cb2703de242ff0ff4c9d6543"
+    },
+    "fireworks": {
+      "elapsed": 7.5,
+      "file": "fireworks-b4617228f3db42c0.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "fireworks",
+          "parameters": {
+            "burst_size": 0.29,
+            "burst_style": "mixed",
+            "crackle": 0.24,
+            "gravity": 0.38,
+            "launch_cadence": 1.15,
+            "seed": 1776,
+            "shell_population": 54,
+            "trails": 0.72,
+            "twinkle": 0.35
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "b4617228f3db42c065bd65ebb18c3de805a4bfa999df169320b1d9ea4fc2f3db"
+    },
+    "flame_burst": {
+      "elapsed": 8.0,
+      "file": "flame_burst-d6cd02ec89aaf31e.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "flame_burst",
+          "parameters": {
+            "ember_linger": 0.45,
+            "flare_size": 0.42,
+            "flicker": 0.35,
+            "ignition_cadence": 0.9,
+            "seed": 6201
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "d6cd02ec89aaf31e7997a0f3af4a1cb1f5fce5eba469a89f75bd54f9699b62e8"
+    },
+    "flow_field_silk": {
+      "elapsed": 8.0,
+      "file": "flow_field_silk-43166eca55029d73.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "flow_field_silk",
+          "parameters": {
+            "background_level": 0.14,
+            "density": 0.5,
+            "motion": 0.52,
+            "persistence": 0.8,
+            "seed": 1901,
+            "turbulence": 0.35
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "43166eca55029d730b7f3f3cad3dc54f26066a4088070f0acdf9b92a34093751"
+    },
+    "fluid_tank": {
+      "elapsed": 5.0,
+      "file": "fluid_tank-b70a1f0b9ccc8030.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "fluid_tank",
+          "parameters": {
+            "bubble_lift": 0.42,
+            "current": 0.35,
+            "flow_rate": 0.72,
+            "seed": 6211,
+            "surface_energy": 0.38
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "b70a1f0b9ccc8030b44494778fc3bc5cc3e0ca80f68bfe9bb9dc7c41922b37a2"
+    },
+    "frostwork": {
+      "elapsed": 30.0,
+      "file": "frostwork-d85927888de70313.png",
+      "preset": "showcase",
+      "scene": {
+        "animation": {
+          "component_id": "frostwork",
+          "parameters": {
+            "background_level": 0.14,
+            "density": 0.78,
+            "melt_cycle": 0.75,
+            "motion": 0.68,
+            "seed": 1402,
+            "temperature": 0.55
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "d85927888de7031304e6c300e61f8347e0c1d9d044a7d1c355cc2a28aa7ed42d"
+    },
+    "gif_animation": {
+      "elapsed": 5.0,
+      "file": "gif_animation-bd5934d521e7cec9.png",
+      "preset": "axolotl-bubble-column",
+      "scene": {
+        "animation": {
+          "component_id": "gif_animation",
+          "parameters": {
+            "fit_mode": "stretch",
+            "flip_y": true,
+            "gif_name": "axolotl-bubble-column.gif",
+            "playback_speed": 1.0
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "bd5934d521e7cec9e5cf9143522bc35b95158fcf9c427552cd80eab18b7c855a"
+    },
+    "gradient": {
+      "elapsed": 7.0,
+      "file": "gradient-c9471b5958f3be70.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "gradient",
+          "parameters": {
+            "direction": "vertical",
+            "drift": 0.22,
+            "motion": 0.72,
+            "seed": 6101
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "c9471b5958f3be701f7c066a43c549749afa59ab3a49f9595af8579852a765d1"
+    },
+    "lava_lamp": {
+      "elapsed": 5.0,
+      "file": "lava_lamp-c104218d8c286d21.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "lava_lamp",
+          "parameters": {
+            "blob_count": 7,
+            "blob_scale": 1.0,
+            "glow": 0.58,
+            "heat": 0.72,
+            "interaction_radius": 8.0,
+            "interaction_strength": 1.0,
+            "seed": 1977,
+            "turbulence": 0.24,
+            "viscosity": 0.68
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "c104218d8c286d216f128caa38c8e9328587c70c5e6d6a2599f499cc58fa4981"
+    },
+    "living_ecosystem": {
+      "elapsed": 8.0,
+      "file": "living_ecosystem-e6a2b79e60bb0350.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "living_ecosystem",
+          "parameters": {
+            "background_level": 0.22,
+            "canopy_density": 0.58,
+            "density": 0.62,
+            "migration": 0.55,
+            "motion": 0.55,
+            "mutation": 0.1,
+            "night_life": 0.42,
+            "predator_pressure": 0.38,
+            "seed": 7319
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "e6a2b79e60bb0350196bcbf3bdfcab94b4f8aa584dcfc080e83e636d7c1b5dcc"
+    },
+    "living_stained_glass": {
+      "elapsed": 8.0,
+      "file": "living_stained_glass-3c9a01f8a9945233.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "living_stained_glass",
+          "parameters": {
+            "background_level": 0.18,
+            "density": 0.52,
+            "lead_width": 0.3,
+            "light_direction": 0.4,
+            "motion": 0.34,
+            "seed": 2201
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "3c9a01f8a9945233105105d59dcb5d40e27c05649b30d9c08d6d6616894568c7"
+    },
+    "maze_chase": {
+      "elapsed": 7.0,
+      "file": "maze_chase-2e1c011a8f493b56.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "maze_chase",
+          "parameters": {
+            "chase_cadence_hz": 9.0,
+            "difficulty": 0.82,
+            "render_fps": 60.0,
+            "seed": 1980,
+            "show_ai_targets": false
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "2e1c011a8f493b561c60531a8a45a64918ae07b87c7e9a2dedc19f291e84e0df"
+    },
+    "moonlit_fog_banks": {
+      "elapsed": 8.0,
+      "file": "moonlit_fog_banks-d66016152558f515.png",
+      "preset": "silver-halo",
+      "scene": {
+        "animation": {
+          "component_id": "moonlit_fog_banks",
+          "parameters": {
+            "background": "soft",
+            "background_level": 0.18,
+            "density": 0.75,
+            "mood": "predawn",
+            "motion": 0.5,
+            "render_fps": 30,
+            "seed": 7102
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "d66016152558f515b46e2cf1f36ece57ec7574670f2488f0e2d0876b69c1873c"
+    },
+    "night_train_windows": {
+      "elapsed": 5.5,
+      "file": "night_train_windows-b3d8258c9ecebc2f.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "night_train_windows",
+          "parameters": {
+            "route": "sleeper",
+            "seed": 1984,
+            "star_density": 0.35,
+            "travel_speed": 1.0,
+            "window_glow": 0.65
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "b3d8258c9ecebc2f948bb865a46898889edf358da4a97f0d55687590c6a23a78"
+    },
+    "physarum_network": {
+      "elapsed": 8.0,
+      "file": "physarum_network-37b0125fe0f8979f.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "physarum_network",
+          "parameters": {
+            "agent_count": 700,
+            "background_level": 0.16,
+            "branching": 0.75,
+            "density": 0.6,
+            "diffusion": 0.62,
+            "motion": 0.58,
+            "nutrient_layout": "constellation",
+            "pulse_visibility": 0.4,
+            "seed": 10101
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "37b0125fe0f8979fb32ffff9c7923253cb1f0478443f3b834119a9c0d8d29930"
+    },
+    "pinball": {
+      "elapsed": 5.5,
+      "file": "pinball-114b4175d1e893c9.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "pinball",
+          "parameters": {
+            "chaos": 0.72,
+            "render_fps": 100.0,
+            "seed": 95,
+            "table_tick_hz": 40.5
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "114b4175d1e893c942af94176abc8cb7ab2fcb03bc2d4b4f8456cd06cc91957f"
+    },
+    "pixel_chase": {
+      "elapsed": 5.0,
+      "file": "pixel_chase-0f40406e60fa5483.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "pixel_chase",
+          "parameters": {
+            "color_cycle_speed": 0.2,
+            "pixel_count": 3,
+            "pixels_per_second": 120.0,
+            "tail_length": 4,
+            "tail_style": "fade"
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "0f40406e60fa5483a57db39657ace858cd8a2f484607d597f72d74f5f3b1bd2c"
+    },
+    "pixel_quest": {
+      "elapsed": 5.0,
+      "file": "pixel_quest-9922af356f86b11e.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "pixel_quest",
+          "parameters": {
+            "difficulty": 1.0,
+            "quest_cadence_hz": 12.0,
+            "render_fps": 45.0,
+            "seed": 1986,
+            "show_hud": true
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "9922af356f86b11eb6192e51262a59ded4a26a30a8998a052a4987b0464e35c0"
+    },
+    "plant_glow": {
+      "elapsed": 6.5,
+      "file": "plant_glow-4e1cd5a9f1668c1c.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "plant_glow",
+          "parameters": {
+            "breath_depth": 0.24,
+            "breath_speed": 0.18,
+            "foliage_intensity": 1.0,
+            "globe_intensity": 1.0,
+            "glow_falloff": 1.4,
+            "glow_radius": 2,
+            "glow_strength": 0.72,
+            "shimmer": 0.1
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "4e1cd5a9f1668c1c8633ddfa404ee2f94079827744bde4cc24bd6bf4c20f1d8a"
+    },
+    "quasicrystal_bloom": {
+      "elapsed": 8.0,
+      "file": "quasicrystal_bloom-024ef62f3415d737.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "quasicrystal_bloom",
+          "parameters": {
+            "background_level": 0.16,
+            "density": 0.56,
+            "motion": 0.42,
+            "seed": 2701,
+            "spatial_scale": 2.4,
+            "symmetry": 10,
+            "warp": 0.18
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "024ef62f3415d7372b904938a72ebb8b1959c0061ff48b863a6da7c723445996"
+    },
+    "rain_on_glass": {
+      "elapsed": 7.0,
+      "file": "rain_on_glass-7a88663f7afbcfa6.png",
+      "preset": "pastel-sunshower",
+      "scene": {
+        "animation": {
+          "component_id": "rain_on_glass",
+          "parameters": {
+            "background": "luminous",
+            "background_level": 0.96,
+            "density": 0.68,
+            "mood": "pastel",
+            "motion": 0.72,
+            "seed": 4127,
+            "source_fps": 32.0
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "7a88663f7afbcfa66cdf64c6d72702121bffeb34f0e692ab1b49b69a9563de8b"
+    },
+    "rainbow": {
+      "elapsed": 7.5,
+      "file": "rainbow-04dc948021b944c4.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "rainbow",
+          "parameters": {
+            "bands": 1.4,
+            "direction": 1,
+            "seed": 6102,
+            "travel": 0.65
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "04dc948021b944c478585a1af8a8e0f20fe7a60042581266185eda75f4afe9e5"
+    },
+    "reaction_diffusion_garden": {
+      "elapsed": 40.0,
+      "file": "reaction_diffusion_garden-37efd92c9baee95f.png",
+      "preset": "showcase",
+      "scene": {
+        "animation": {
+          "component_id": "reaction_diffusion_garden",
+          "parameters": {
+            "background_level": 0.28,
+            "color_by_age": 0.5,
+            "density": 1.45,
+            "edge_glow": 1.15,
+            "growth_rate": 1.35,
+            "morphology": "coral",
+            "motion": 1.2,
+            "perturbation_interval": 18.0,
+            "seed": 9102,
+            "seeding_mode": "scattered"
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "37efd92c9baee95fb6e212b37ec5a6d231aba872a0955b62daad05a8e71e8f47"
+    },
+    "snake": {
+      "elapsed": 8.0,
+      "file": "snake-a503ed714baab98e.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "snake",
+          "parameters": {
+            "background": "void",
+            "food_count": 5,
+            "glow": 0.55,
+            "growth_per_food": 3,
+            "initial_length": 7,
+            "max_length": 180,
+            "move_cadence": 9.0,
+            "obstacles": "none",
+            "ruleset": "wrap",
+            "seed": 1976,
+            "snake_count": 3,
+            "trail_decay": 2.5,
+            "trails": 0.72,
+            "visual_style": "rainbow"
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "a503ed714baab98e533a64c1dcbe7b5936933f30ed2170f4a2b0046915971143"
+    },
+    "solid": {
+      "elapsed": 5.0,
+      "file": "solid-b0c1d918b2931365.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "solid",
+          "parameters": {
+            "breath": 0.0,
+            "glow": 0.68,
+            "seed": 6103
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "b0c1d918b2931365178ce5fc14a1eb30adaf163d27887798870834c6b0fa4f92"
+    },
+    "sparkle": {
+      "elapsed": 5.0,
+      "file": "sparkle-fb18701db1d448cc.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "sparkle",
+          "parameters": {
+            "density": 0.2,
+            "linger": 0.65,
+            "night": 0.08,
+            "seed": 6104,
+            "twinkle": 0.72
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "fb18701db1d448cc66b1b9cf5397d71c558e952018dfab7c372b4095fa44d906"
+    },
+    "tetris": {
+      "elapsed": 30.0,
+      "file": "tetris-ffc38768ceffb48b.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "tetris",
+          "parameters": {
+            "bot_imperfection": 0.18,
+            "fall_rate": 3.0,
+            "high_density_render_fps": 150.0,
+            "render_fps": 150.0,
+            "seed": 4201,
+            "smooth_drop": true,
+            "smooth_drop_max_pieces": 32,
+            "smooth_drop_strength": 0.6,
+            "tetromino_count": 5
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "ffc38768ceffb48bd52881b46a4e0d229ed5dd872385b5dc29995fd74d6c2bc6"
+    },
+    "tidal_bioluminescence": {
+      "elapsed": 8.0,
+      "file": "tidal_bioluminescence-697dd8546d396330.png",
+      "preset": "showcase",
+      "scene": {
+        "animation": {
+          "component_id": "tidal_bioluminescence",
+          "parameters": {
+            "background": "soft",
+            "background_level": 0.18,
+            "density": 0.92,
+            "mood": "violet",
+            "motion": 1.2,
+            "seed": 4522,
+            "source_fps": 40.0
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "697dd8546d3963303a3485f65a295b858291b6f29ace286bdb36538bfc107a2d"
+    },
+    "waterfall_veil": {
+      "elapsed": 6.5,
+      "file": "waterfall_veil-0a50b7b160956506.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "waterfall_veil",
+          "parameters": {
+            "background": "soft",
+            "background_level": 0.18,
+            "density": 0.46,
+            "mood": "garden",
+            "motion": 0.42,
+            "seed": 4401,
+            "source_fps": 30.0
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "0a50b7b16095650677acbf715aaa96335dd99407c839546223c3f83ee94fefae"
+    },
+    "wave": {
+      "elapsed": 5.0,
+      "file": "wave-40a08b2e61f07dac.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "wave",
+          "parameters": {
+            "axis": "vertical",
+            "direction": 1,
+            "frequency": 2.0,
+            "seed": 6105,
+            "shape": 0.8,
+            "travel": 0.45
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "40a08b2e61f07dac58e99ad845a45e31b612bd464bbb86acec51a691b501857c"
+    },
+    "wind_in_the_reeds": {
+      "elapsed": 6.5,
+      "file": "wind_in_the_reeds-f1aa6053873c5764.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "wind_in_the_reeds",
+          "parameters": {
+            "background_level": 0.18,
+            "density": 0.58,
+            "gustiness": 0.55,
+            "motes": 0.45,
+            "motion": 0.5,
+            "season": "late_summer",
+            "seed": 6101,
+            "silhouette_strength": 0.5,
+            "stem_density": 1.0,
+            "wind": 0.65
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "f1aa6053873c5764b9bdceef7f73dc2b644edfc421a7d5dccc30cda13b0f8759"
+    },
+    "world_flags": {
+      "elapsed": 7.0,
+      "file": "world_flags-f643ebd89912986a.png",
+      "preset": null,
+      "scene": {
+        "animation": {
+          "component_id": "world_flags",
+          "parameters": {
+            "country": "USA",
+            "display_mode": "parade",
+            "flag_height": 21,
+            "flip_horizontal": false,
+            "flip_vertical": true,
+            "gap": 3,
+            "scroll_pixels_per_second": 7.0
+          },
+          "provider": "python",
+          "role": "animation",
+          "version": 1
+        },
+        "background": {
+          "bundle_digest": "cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2",
+          "component_id": "native_aurora",
+          "parameters": {
+            "gain": 0.12,
+            "seed": 4201,
+            "source_fps": 30
+          },
+          "provider": "receiver_native",
+          "role": "background",
+          "version": 1
+        },
+        "look": {
+          "pace": 1.0,
+          "palette_id": "spectrum",
+          "presentation_brightness": 1.4
+        },
+        "plants": {
+          "effects": {
+            "active": [],
+            "strengths": {},
+            "version": 1
+          }
+        },
+        "schema": "ledgrid.scene.v2",
+        "widgets": []
+      },
+      "sha256": "f643ebd89912986aa4b9055d8f8823aedd41668a512b0770fc8ec909f0867bf0"
+    }
+  },
+  "fps": 30,
+  "wall_time": "2026-01-01T12:00:00+00:00",
+  "warmup_seconds": 8
+}

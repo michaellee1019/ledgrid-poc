@@ -1,4 +1,4 @@
-"""Exercise real Gallery drawing across asynchronous grid replacements."""
+"""Gallery images remain visible across grid rebuilds without render requests."""
 from pathlib import Path
 import subprocess
 
@@ -29,7 +29,7 @@ const context = {
   $: selector => ({'#galleryGrid':grid,'#galleryDetail':detail.parent ? detail : null,'#galleryCount':count,'#galleryEmpty':empty})[selector],
   galleryEntries:()=>entries,
   window:{matchMedia:()=>layout}, document:{createElement:()=>new Element()},
-  scheduleGalleryThumbnails(){},
+  galleryThumbnail:()=>new Element(),
 };
 vm.runInNewContext(process.argv[1] + ';this.render=renderGallery;installGalleryLayoutListener();',context);
 context.render(); context.render();
@@ -49,55 +49,37 @@ assert.equal(detail.hidden,false); assert.equal(detail.parent,grid);
     assert "window.addEventListener('online', refreshStatus);\n  installGalleryLayoutListener();" in source
 
 
-def test_pending_thumbnail_repaints_every_replacement_canvas():
+def test_catalog_images_survive_scene_changes_and_report_missing_assets():
     source = Path('web/static/js/composer_slice.js').read_text()
-    drawing = source[source.index('function stableGalleryJson'):source.index('function showGalleryDetail')]
+    drawing = source[source.index('function galleryThumbnail'):source.index('function placeGalleryDetail')]
     runner = r'''
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const state = {gallery: {digest:'catalog', thumbnails: new Map()}, background: {gain:.5}};
-const pending = [];
-let requests = 0;
-const context = {state, GALLERY_FIXED_PREVIEW:{},
-  galleryScene: entry => ({background: state.background, animation: entry}),
-  preview: () => { requests++; return new Promise(resolve => pending.push(resolve)); },
-  drawFrameIntoCanvas: (canvas, frame) => { canvas.frame = frame; },
+class Element {
+  setAttribute(key, value) { this[key] = value; }
+  addEventListener(event, callback) { this[event] = callback; }
+  replaceWith(node) { this.replacement = node; }
+}
+const context = {
+  window:{ComposerGalleryPreviews:{sparkle:'/static/generated/gallery/sparkle-hash.png'}},
+  document:{createElement:()=>new Element()},
+  state:{scene:{look:{presentation_brightness:0, pace:0}}},
+  preview:()=>{ throw new Error('Gallery must not queue simulation renders'); },
 };
-const makeCanvas = () => ({setAttribute(key, value) { this[key] = value; }});
-vm.runInNewContext(process.argv[1] + '; this.draw = drawGalleryThumbnail;', context);
-(async () => {
-  const entry = {key:'sparkle', name:'Sparkle', parameters:{seed:1}};
-  const detached = makeCanvas(), attached = makeCanvas(), replacedAgain = makeCanvas();
-  const work = [context.draw(detached, entry), context.draw(attached, entry), context.draw(replacedAgain, entry)];
-  assert.equal(requests, 1);
-  const frame = {pixels:'real-frame'};
-  pending.shift()({frame});
-  await Promise.all(work);
-  for (const canvas of [detached, attached, replacedAgain]) {
-    assert.equal(canvas.frame, frame, 'every canvas awaiting the same frame must paint');
-    assert.match(canvas['aria-label'], /representative/);
-  }
-  const cached = makeCanvas(); await context.draw(cached, entry);
-  assert.equal(cached.frame, frame); assert.equal(requests, 1);
-  // A completion from an explicitly invalidated cache cannot paint stale data.
-  state.gallery.thumbnails.clear();
-  const stale = makeCanvas(); const old = context.draw(stale, entry);
-  state.gallery.thumbnails.clear();
-  const fresh = makeCanvas(); const current = context.draw(fresh, entry);
-  pending.shift()({frame:{pixels:'stale'}}); await old;
-  assert.equal(stale.frame, undefined);
-  pending.shift()({frame}); await current; assert.equal(fresh.frame, frame);
-  const unchanged = context.draw(makeCanvas(), entry);
-  assert.equal(requests, 3, 'matching Scene inputs reuse the resolved frame');
-  const altered = context.draw(makeCanvas(), {...entry, parameters:{seed:2}});
-  assert.equal(requests, 4, 'a changed animation default must use a new cache key');
-  await unchanged;
-  pending.shift()({frame}); await altered;
-  state.background = {gain:.8};
-  const changedBackground = context.draw(makeCanvas(), entry);
-  assert.equal(requests, 5, 'a changed resolved Scene background must use a new cache key');
-  pending.shift()({frame}); await changedBackground;
-})().catch(error => { console.error(error); process.exitCode = 1; });
+vm.runInNewContext(process.argv[1] + ';this.thumbnail=galleryThumbnail;', context);
+const entry={component_id:'sparkle',name:'Sparkle'};
+const first=context.thumbnail(entry);
+assert.equal(first.src,context.window.ComposerGalleryPreviews.sparkle);
+assert.equal(first.width,33); assert.equal(first.height,138);
+assert.equal(first.loading,'lazy'); assert.match(first.alt,/representative catalog/);
+context.state.scene.look={presentation_brightness:1.7,pace:2};
+const replacement=context.thumbnail(entry);
+assert.equal(replacement.src,first.src,'same cacheable image survives Scene edits and grid rebuilds');
+first.error();
+assert.equal(first.replacement.textContent,'Preview unavailable');
+assert.equal(first.replacement['aria-label'],'Sparkle preview unavailable');
+const missing=context.thumbnail({component_id:'missing',name:'Missing'});
+assert.equal(missing.textContent,'Preview unavailable');
 '''
     result = subprocess.run(['node', '-e', runner, drawing], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

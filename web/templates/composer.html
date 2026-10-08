@@ -27,7 +27,7 @@
       <section class="gallery" aria-labelledby="gallery-title" data-panel-id="gallery">
         <div class="pane-heading"><div><p class="eyebrow">Animation catalog</p><h2 id="gallery-title">Gallery</h2></div><output id="galleryCount" class="gallery-count" aria-live="polite">Loading…</output></div>
         <label class="gallery-search">Search animations <input id="gallerySearch" type="search" placeholder="Search the Gallery"></label>
-        <div class="gallery-filters" role="group" aria-label="Gallery collection"><button class="button text active" data-gallery-filter="all" type="button">All</button><button class="button text" data-gallery-filter="favorites" type="button">Favorites</button></div>
+        <div class="gallery-filters" hidden role="group" aria-label="Gallery collection"><button class="button text active" data-gallery-filter="all" type="button">All</button><button class="button text" data-gallery-filter="favorites" type="button">Favorites</button></div>
         <div id="galleryGrid" class="gallery-grid" role="list" aria-label="Available animations"></div>
         <p id="galleryEmpty" class="empty" hidden>No animations match this search.</p>
         <section id="galleryDetail" class="gallery-detail" aria-live="polite" hidden></section>
@@ -89,6 +89,7 @@
 <dialog id="readinessDialog" aria-labelledby="readiness-title"><h2 id="readiness-title">Live update needs attention</h2><p id="readinessMessage">Resolve these items, then try another edit.</p><ul id="readinessList"></ul><button class="button primary" data-dialog-close type="button">Close</button></dialog>
 <dialog id="checkDialog" aria-labelledby="check-title"><h2 id="check-title">Scene check</h2><p id="checkMessage"></p><dl id="checkDetails"></dl><button class="button primary" data-dialog-close type="button">Close</button></dialog>
 <script src="{{ url_for('static', filename='js/composer_preview_scheduler.js', v=shell_version) }}"></script>
+<script src="{{ url_for('static', filename='generated/gallery/previews.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_slice.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_palette_layout.js', v=shell_version) }}"></script>
 <script src="{{ url_for('static', filename='js/composer_shell.js', v=shell_version) }}"></script>

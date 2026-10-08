@@ -8,7 +8,7 @@ class ComposerActivationObservationTests(unittest.TestCase):
     def test_real_publication_queue_waits_for_status_and_retains_timeout_fence(self):
         script = Path('web/static/js/composer_slice.js').read_text()
         source = '\n'.join((
-            script[script.index('function stableGalleryJson'):script.index('function galleryThumbnailKey')],
+            script[script.index('function stableGalleryJson'):script.index('function galleryThumbnail')],
             script[script.index('async function flushPublication'):script.index('function submit(')],
             script[script.index('async function waitForExactActivation'):script.index('async function stopOutputNow')],
         ))
@@ -111,7 +111,7 @@ const entry = name => ({scene: {name}, targetFps: 150, endpoint: '/scene', body:
     def test_terminal_rollback_fences_newest_intent_without_retrying_failure(self):
         script = Path('web/static/js/composer_slice.js').read_text()
         source = '\n'.join((
-            script[script.index('function stableGalleryJson'):script.index('function galleryThumbnailKey')],
+            script[script.index('function stableGalleryJson'):script.index('function galleryThumbnail')],
             script[script.index('async function flushPublication'):script.index('function submit(')],
             script[script.index('async function waitForExactActivation'):script.index('async function stopOutputNow')],
         ))

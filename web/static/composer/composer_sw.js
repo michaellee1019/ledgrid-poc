@@ -5,6 +5,7 @@ const SHELL = [
   '/static/css/composer_slice.css?v=composer-shell-v25',
   '/static/js/composer_preview_scheduler.js?v=composer-shell-v25',
   '/static/js/composer_slice.js?v=composer-shell-v25',
+  '/static/generated/gallery/previews.js?v=composer-shell-v25',
   '/static/js/composer_palette_layout.js?v=composer-shell-v25',
   '/static/js/composer_shell.js?v=composer-shell-v25',
   '/static/composer/manifest.webmanifest?v=composer-shell-v25',

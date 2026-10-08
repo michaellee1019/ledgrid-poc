@@ -2693,8 +2693,8 @@ class AnimationWebInterface:
         packet, not plugin discovery.  Test and calibration renderers are not
         in that packet, so they cannot leak into an operator-facing chooser.
         This reader never touches the working draft, library, live adapter, or
-        wall channel; thumbnail rendering remains a separate explicit inert
-        preview request from the browser.
+        wall channel; thumbnails are shipped catalog illustrations generated
+        through the inert production renderer.
         """
         entries: List[Dict[str, Any]] = []
         for descriptor in self.composer_catalog.descriptors:
