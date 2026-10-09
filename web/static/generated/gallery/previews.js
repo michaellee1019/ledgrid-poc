@@ -44,3 +44,352 @@ window.ComposerGalleryPreviews = Object.freeze({
   "wind_in_the_reeds": "/static/generated/gallery/wind_in_the_reeds-f1aa6053873c5764.png",
   "world_flags": "/static/generated/gallery/world_flags-f643ebd89912986a.png"
 });
+window.ComposerPresetPreviews = Object.freeze({
+  "ascii_drop": {
+    "amber-terminal": "/static/generated/gallery/ascii_drop-amber-terminal-61a5bd9e93e6da0a.png",
+    "cyan-datastream": "/static/generated/gallery/ascii_drop-cyan-datastream-715ea57e6da4eedf.png",
+    "love-letter": "/static/generated/gallery/ascii_drop-love-letter-2d8ad297d0e40ac7.png",
+    "matrix-rain": "/static/generated/gallery/ascii_drop-matrix-rain-8803b66445ce631f.png",
+    "maximum-overflow": "/static/generated/gallery/ascii_drop-maximum-overflow-4791102c8b5e1203.png"
+  },
+  "aurora_curtains": {
+    "night": "/static/generated/gallery/aurora_curtains-night-851867b4d6926561.png",
+    "quiet": "/static/generated/gallery/aurora_curtains-quiet-fed19ca4184de639.png",
+    "showcase": "/static/generated/gallery/aurora_curtains-showcase-a61d861b28a7537b.png",
+    "solar-morning": "/static/generated/gallery/aurora_curtains-solar-morning-cc5d7055fbcf8f9b.png"
+  },
+  "canopy_cup": {
+    "barrel-temple-climb": "/static/generated/gallery/canopy_cup-barrel-temple-climb-6722b4eb3307c4f9.png",
+    "championship-speedrun": "/static/generated/gallery/canopy_cup-championship-speedrun-66b092d9235fe5db.png",
+    "cinematic-no-hud": "/static/generated/gallery/canopy_cup-cinematic-no-hud-eec2219525839002.png",
+    "fern-gully-flutter": "/static/generated/gallery/canopy_cup-fern-gully-flutter-e6985b935eaad318.png",
+    "impossible-valley-relay": "/static/generated/gallery/canopy_cup-impossible-valley-relay-777b406d7b7627f7.png",
+    "neon-vine-night": "/static/generated/gallery/canopy_cup-neon-vine-night-28fbd8f28d900ccb.png",
+    "plant-uprising": "/static/generated/gallery/canopy_cup-plant-uprising-5733a69a90ad8c63.png",
+    "power-up-pandemonium": "/static/generated/gallery/canopy_cup-power-up-pandemonium-beb6aff51e59bc59.png",
+    "seven-realm-grand-prix": "/static/generated/gallery/canopy_cup-seven-realm-grand-prix-6b04829f9ca2f286.png",
+    "storybook-slow-motion": "/static/generated/gallery/canopy_cup-storybook-slow-motion-a4e2bf0b57900ee6.png",
+    "sunset-crystal-falls": "/static/generated/gallery/canopy_cup-sunset-crystal-falls-80cc421fa674c594.png",
+    "webline-rooftops": "/static/generated/gallery/canopy_cup-webline-rooftops-40d0291e75ed4689.png"
+  },
+  "cellular_tapestry": {
+    "night": "/static/generated/gallery/cellular_tapestry-night-071a2801298baef8.png",
+    "quiet": "/static/generated/gallery/cellular_tapestry-quiet-a3622eab5a0e389e.png",
+    "showcase": "/static/generated/gallery/cellular_tapestry-showcase-344d5b0f67690e20.png"
+  },
+  "christmas_tree": {
+    "blizzard-lights": "/static/generated/gallery/christmas_tree-blizzard-lights-81cc4c075b50ef73.png",
+    "classic-christmas": "/static/generated/gallery/christmas_tree-classic-christmas-f1002d3e2465bfd4.png",
+    "quiet-snowfall": "/static/generated/gallery/christmas_tree-quiet-snowfall-0fc690dacd2ed772.png",
+    "tiny-tree-party": "/static/generated/gallery/christmas_tree-tiny-tree-party-e8f7474a42e3eee1.png"
+  },
+  "circadian_window": {
+    "day-in-a-minute": "/static/generated/gallery/circadian_window-day-in-a-minute-969b312807ffa84c.png",
+    "midnight-window": "/static/generated/gallery/circadian_window-midnight-window-a07b9ca212425243.png",
+    "pastel-noon": "/static/generated/gallery/circadian_window-pastel-noon-dbdd5e71571758cb.png",
+    "quiet-real-time": "/static/generated/gallery/circadian_window-quiet-real-time-d5cd6842701688c3.png"
+  },
+  "cloud_canyon": {
+    "daylight-canyon": "/static/generated/gallery/cloud_canyon-daylight-canyon-203a0466ef4d2883.png",
+    "night": "/static/generated/gallery/cloud_canyon-night-063b39c8a4598f4d.png",
+    "quiet": "/static/generated/gallery/cloud_canyon-quiet-51c01cf5df465247.png",
+    "showcase": "/static/generated/gallery/cloud_canyon-showcase-a82f4f892c759dde.png"
+  },
+  "conway_life": {
+    "arcade-afterlife": "/static/generated/gallery/conway_life-arcade-afterlife-9c74ae50116088b0.png",
+    "aurora-garden": "/static/generated/gallery/conway_life-aurora-garden-8e6ac1e48cbbed26.png",
+    "bioluminescent-tide": "/static/generated/gallery/conway_life-bioluminescent-tide-8bbe9ac19016fdc6.png",
+    "chaos": "/static/generated/gallery/conway_life-chaos-f6fc4e13edd34031.png",
+    "classic-green": "/static/generated/gallery/conway_life-classic-green-e2057b4910da4e01.png",
+    "deep-space-acorn": "/static/generated/gallery/conway_life-deep-space-acorn-a41c017ae7a6dd09.png",
+    "earth-cities": "/static/generated/gallery/conway_life-earth-cities-db6e0388b6d78dac.png",
+    "gosper-foundry": "/static/generated/gallery/conway_life-gosper-foundry-28ce7709faa5233b.png",
+    "ice-crystal": "/static/generated/gallery/conway_life-ice-crystal-5704ad22d9c22e9d.png",
+    "maximum-chaos": "/static/generated/gallery/conway_life-maximum-chaos-bce4504c0dbd2f60.png",
+    "neon-glider-storm": "/static/generated/gallery/conway_life-neon-glider-storm-b4eeb899cc9c8d75.png",
+    "oscillator-orchard": "/static/generated/gallery/conway_life-oscillator-orchard-a67d98e58b0a1c08.png",
+    "pulsar-observatory": "/static/generated/gallery/conway_life-pulsar-observatory-89b672a104b0c488.png",
+    "r-pentomino-laboratory": "/static/generated/gallery/conway_life-r-pentomino-laboratory-98641ae1cad0e615.png",
+    "solar-embers": "/static/generated/gallery/conway_life-solar-embers-1f8cfb5b80010082.png",
+    "synthwave-sunset": "/static/generated/gallery/conway_life-synthwave-sunset-fcd024ea7f43009b.png"
+  },
+  "cyclic_reef": {
+    "fancy-coral": "/static/generated/gallery/cyclic_reef-fancy-coral-9857ec3033abd3ac.png",
+    "night": "/static/generated/gallery/cyclic_reef-night-a7595a337a1c20de.png",
+    "quiet": "/static/generated/gallery/cyclic_reef-quiet-15a7ffe864ee8028.png",
+    "showcase": "/static/generated/gallery/cyclic_reef-showcase-4a279a314cf0c39e.png"
+  },
+  "desert_wind": {
+    "candlelit-dunes": "/static/generated/gallery/desert_wind-candlelit-dunes-82fbdea36bfec05e.png",
+    "martian-saltation": "/static/generated/gallery/desert_wind-martian-saltation-7fd5313ab8619e34.png",
+    "quiet-ochre": "/static/generated/gallery/desert_wind-quiet-ochre-3debe199e692f12d.png",
+    "violet-night-dunes": "/static/generated/gallery/desert_wind-violet-night-dunes-16c0fdd1bafc4f9e.png"
+  },
+  "emoji": {
+    "golden-smile": "/static/generated/gallery/emoji-golden-smile-c96e9faec2c0e8cc.png",
+    "ice-heart": "/static/generated/gallery/emoji-ice-heart-c0d13e5003862206.png",
+    "neon-grin": "/static/generated/gallery/emoji-neon-grin-d6dd4b43206eaab9.png",
+    "valentine-heart": "/static/generated/gallery/emoji-valentine-heart-555150d44bc85607.png"
+  },
+  "firefly_synchrony": {
+    "lantern-meadow": "/static/generated/gallery/firefly_synchrony-lantern-meadow-f307ad7b696f7a37.png",
+    "night": "/static/generated/gallery/firefly_synchrony-night-bd7c7ab38e476c0b.png",
+    "quiet": "/static/generated/gallery/firefly_synchrony-quiet-c77788705933c570.png",
+    "showcase": "/static/generated/gallery/firefly_synchrony-showcase-fafa1bacae20a6e3.png"
+  },
+  "fireworks": {
+    "golden-willows": "/static/generated/gallery/fireworks-golden-willows-c9abeee16ccc9a1c.png",
+    "grand-finale": "/static/generated/gallery/fireworks-grand-finale-f62b88f705529d11.png",
+    "neon-crackle": "/static/generated/gallery/fireworks-neon-crackle-26fec9ba4fd9e8d3.png",
+    "patriotic-salute": "/static/generated/gallery/fireworks-patriotic-salute-e2d27ccb18ee9dd9.png",
+    "quiet-sparklers": "/static/generated/gallery/fireworks-quiet-sparklers-f3a3968aa8971161.png"
+  },
+  "flame_burst": {
+    "afterburner": "/static/generated/gallery/flame_burst-afterburner-d79abb5240ed13d5.png",
+    "campfire-bloom": "/static/generated/gallery/flame_burst-campfire-bloom-1c9d7872ef95095b.png",
+    "off-center-comet": "/static/generated/gallery/flame_burst-off-center-comet-b2e587ac05ca9fe3.png",
+    "rapid-ignition": "/static/generated/gallery/flame_burst-rapid-ignition-23f2f8adf2a83994.png",
+    "solar-pulse": "/static/generated/gallery/flame_burst-solar-pulse-88cacd089018cfdd.png"
+  },
+  "flow_field_silk": {
+    "night": "/static/generated/gallery/flow_field_silk-night-bfdf32f30a1b5ab4.png",
+    "quiet": "/static/generated/gallery/flow_field_silk-quiet-1b35324aeff6ce22.png",
+    "showcase": "/static/generated/gallery/flow_field_silk-showcase-61d0544c91c1c3bd.png"
+  },
+  "fluid_tank": {
+    "bubble-column": "/static/generated/gallery/fluid_tank-bubble-column-00b6f1944c39af9b.png",
+    "caustic-laboratory": "/static/generated/gallery/fluid_tank-caustic-laboratory-fb577872fc148709.png",
+    "flash-flood": "/static/generated/gallery/fluid_tank-flash-flood-50dadee5a392f187.png",
+    "quiet-aquarium": "/static/generated/gallery/fluid_tank-quiet-aquarium-69bd1f06d21b5b54.png",
+    "she_cute": "/static/generated/gallery/fluid_tank-she_cute-5ecc5169ef29c446.png",
+    "storm-tank": "/static/generated/gallery/fluid_tank-storm-tank-4001fb66238adda2.png"
+  },
+  "frostwork": {
+    "night": "/static/generated/gallery/frostwork-night-052c679c9241f64e.png",
+    "pastel-daybreak": "/static/generated/gallery/frostwork-pastel-daybreak-0f8f22bf08ad2a12.png",
+    "quiet": "/static/generated/gallery/frostwork-quiet-63459670af048ba5.png",
+    "showcase": "/static/generated/gallery/frostwork-showcase-d85927888de70313.png"
+  },
+  "gif_animation": {
+    "axolotl-bubble-column": "/static/generated/gallery/gif_animation-axolotl-bubble-column-bd5934d521e7cec9.png",
+    "balloon-blobs": "/static/generated/gallery/gif_animation-balloon-blobs-f0a4a5fa96b12d89.png",
+    "bumblebee-garden": "/static/generated/gallery/gif_animation-bumblebee-garden-a4bb3c40c6f4da3b.png",
+    "cactus-bloom-dance": "/static/generated/gallery/gif_animation-cactus-bloom-dance-211933ab90d58f2e.png",
+    "campfire-ghost-stories": "/static/generated/gallery/gif_animation-campfire-ghost-stories-ba7795c7c2a62ec3.png",
+    "coral-fish-friends": "/static/generated/gallery/gif_animation-coral-fish-friends-cff8fccea7ada4be.png",
+    "cotton-candy-clouds": "/static/generated/gallery/gif_animation-cotton-candy-clouds-526ff365da9c5464.png",
+    "cozy-shelf-naps": "/static/generated/gallery/gif_animation-cozy-shelf-naps-fb880352fbaaa882.png",
+    "cozy-window-cats": "/static/generated/gallery/gif_animation-cozy-window-cats-3f799dd9db0b8637.png",
+    "cupcake-sprinkle-party": "/static/generated/gallery/gif_animation-cupcake-sprinkle-party-229892ef383a591b.png",
+    "curtain-cat-watch": "/static/generated/gallery/gif_animation-curtain-cat-watch-1c9b677eb4e467ca.png",
+    "firefly-bottle": "/static/generated/gallery/gif_animation-firefly-bottle-fec0cef732a2d36e.png",
+    "frog-pond-ripple": "/static/generated/gallery/gif_animation-frog-pond-ripple-b042bbfd2976b2f0.png",
+    "grape-bounce": "/static/generated/gallery/gif_animation-grape-bounce-cc13292649e16c29.png",
+    "happy-star-fall": "/static/generated/gallery/gif_animation-happy-star-fall-4fe265d5dc75f20e.png",
+    "hydrangea-rain": "/static/generated/gallery/gif_animation-hydrangea-rain-dd4c3df60bdf7671.png",
+    "jellyfish-lanterns": "/static/generated/gallery/gif_animation-jellyfish-lanterns-fe8ffc03492496fb.png",
+    "jolly-slime-stack": "/static/generated/gallery/gif_animation-jolly-slime-stack-65522aaf2888d85c.png",
+    "koi-ribbon": "/static/generated/gallery/gif_animation-koi-ribbon-3c9bd77e9bae39cf.png",
+    "lantern-tree": "/static/generated/gallery/gif_animation-lantern-tree-b2d629ae4f20d56c.png",
+    "moon-bunny-meadow": "/static/generated/gallery/gif_animation-moon-bunny-meadow-6d3bfa8c0ed947aa.png",
+    "moonlit-ducks": "/static/generated/gallery/gif_animation-moonlit-ducks-2125b7d8c6eac59d.png",
+    "mushroom-village": "/static/generated/gallery/gif_animation-mushroom-village-783af7b0e813970c.png",
+    "peach-orchard": "/static/generated/gallery/gif_animation-peach-orchard-e44c4786b9687485.png",
+    "penguin-ice-fishing": "/static/generated/gallery/gif_animation-penguin-ice-fishing-f9694aa4a78c7540.png",
+    "planet-parade": "/static/generated/gallery/gif_animation-planet-parade-96e2453bf7556379.png",
+    "pocket-rocket": "/static/generated/gallery/gif_animation-pocket-rocket-3424cf8d31a94bd6.png",
+    "shy-ghost-parade": "/static/generated/gallery/gif_animation-shy-ghost-parade-51cf0b8328765dc6.png",
+    "sleepy-bat-cave": "/static/generated/gallery/gif_animation-sleepy-bat-cave-b6c2c963c5e9891a.png",
+    "snails-after-rain": "/static/generated/gallery/gif_animation-snails-after-rain-aedddc262355acc7.png",
+    "sunflower-hamsters": "/static/generated/gallery/gif_animation-sunflower-hamsters-2b9fb6ee754fb046.png",
+    "tiny-robot-patrol": "/static/generated/gallery/gif_animation-tiny-robot-patrol-3791f87783581fae.png"
+  },
+  "gradient": {
+    "arctic-horizon": "/static/generated/gallery/gradient-arctic-horizon-15325ab9600967ab.png",
+    "ember-shift": "/static/generated/gallery/gradient-ember-shift-fc9f6b9d390ce605.png",
+    "forest-dawn": "/static/generated/gallery/gradient-forest-dawn-3bb4908d5a189ee7.png",
+    "hypercolor-scan": "/static/generated/gallery/gradient-hypercolor-scan-0370004b38c895cb.png",
+    "miami-sunset": "/static/generated/gallery/gradient-miami-sunset-dbea43c9b6cefc33.png"
+  },
+  "lava_lamp": {
+    "bowl-bumpers": "/static/generated/gallery/lava_lamp-bowl-bumpers-c703ccb0f207a5d8.png",
+    "bowl-emitter": "/static/generated/gallery/lava_lamp-bowl-emitter-ec5a59221f7e1e38.png",
+    "busy-bubbles": "/static/generated/gallery/lava_lamp-busy-bubbles-095216a5fda3445d.png",
+    "classic-amber": "/static/generated/gallery/lava_lamp-classic-amber-cee5b16f354e017f.png",
+    "cotton-candy": "/static/generated/gallery/lava_lamp-cotton-candy-6be99a8efb77bb24.png",
+    "foliage-refraction": "/static/generated/gallery/lava_lamp-foliage-refraction-4f4dbfd160a999a2.png",
+    "habitat-pools": "/static/generated/gallery/lava_lamp-habitat-pools-183a65e4773343e0.png",
+    "night": "/static/generated/gallery/lava_lamp-night-0c75b93491ef0a55.png",
+    "ocean-blue": "/static/generated/gallery/lava_lamp-ocean-blue-1c6f36fc732909ba.png",
+    "quiet": "/static/generated/gallery/lava_lamp-quiet-98071db380a69b8c.png",
+    "ruby-vintage": "/static/generated/gallery/lava_lamp-ruby-vintage-b73a2def99a9ac01.png",
+    "seven-bowl-portals": "/static/generated/gallery/lava_lamp-seven-bowl-portals-45d268e4bf19ae75.png",
+    "showcase": "/static/generated/gallery/lava_lamp-showcase-7a5998563424a3fd.png",
+    "slow-giants": "/static/generated/gallery/lava_lamp-slow-giants-26e750bf094042df.png",
+    "solar-flare": "/static/generated/gallery/lava_lamp-solar-flare-a6be8e7052c16eb2.png",
+    "stormy-wax": "/static/generated/gallery/lava_lamp-stormy-wax-571da4e8cf0b9b96.png",
+    "toxic-lime": "/static/generated/gallery/lava_lamp-toxic-lime-62d7897e5649c3d7.png",
+    "violet-glass": "/static/generated/gallery/lava_lamp-violet-glass-b2753e06caf2f6b7.png"
+  },
+  "living_ecosystem": {
+    "autumn-mosaic": "/static/generated/gallery/living_ecosystem-autumn-mosaic-0dabe3aa3ca86112.png",
+    "bioluminescent-exoplanet": "/static/generated/gallery/living_ecosystem-bioluminescent-exoplanet-17e89411bf2da33b.png",
+    "boreal-night": "/static/generated/gallery/living_ecosystem-boreal-night-707a048ba465fcc8.png",
+    "golden-hour": "/static/generated/gallery/living_ecosystem-golden-hour-d8038cb02db2bbcb.png",
+    "midnight-fireflies": "/static/generated/gallery/living_ecosystem-midnight-fireflies-bcd641280dbe4d68.png",
+    "neon-microverse": "/static/generated/gallery/living_ecosystem-neon-microverse-06758a93d96ec6c4.png",
+    "serengeti-migration": "/static/generated/gallery/living_ecosystem-serengeti-migration-39229f4f40f5038b.png",
+    "synthetic-gene-lab": "/static/generated/gallery/living_ecosystem-synthetic-gene-lab-542625427b57d4b9.png",
+    "temperate-wetland": "/static/generated/gallery/living_ecosystem-temperate-wetland-4f11906d9c02ead0.png"
+  },
+  "living_stained_glass": {
+    "aurora-transept": "/static/generated/gallery/living_stained_glass-aurora-transept-401afa0dd9a24fc2.png",
+    "candlelight-mosaic": "/static/generated/gallery/living_stained_glass-candlelight-mosaic-30be8617182c5b85.png",
+    "daylight-rose": "/static/generated/gallery/living_stained_glass-daylight-rose-5103904dff3edd04.png",
+    "night": "/static/generated/gallery/living_stained_glass-night-fec63116b4fb9d9e.png",
+    "pastel-chapel": "/static/generated/gallery/living_stained_glass-pastel-chapel-dd6958417f3411de.png",
+    "quiet": "/static/generated/gallery/living_stained_glass-quiet-dda2616b3c118da1.png",
+    "showcase": "/static/generated/gallery/living_stained_glass-showcase-4eaafe22dd74eb75.png",
+    "synthwave-basilica": "/static/generated/gallery/living_stained_glass-synthwave-basilica-97ec2580bfe8f162.png"
+  },
+  "maze_chase": {
+    "classic-chase": "/static/generated/gallery/maze_chase-classic-chase-94ac7b3c6303e027.png",
+    "family-maze": "/static/generated/gallery/maze_chase-family-maze-663667c45455a1f8.png",
+    "hunter-vision": "/static/generated/gallery/maze_chase-hunter-vision-7410b6e17637ad41.png",
+    "midnight-pursuit": "/static/generated/gallery/maze_chase-midnight-pursuit-8937c9a9ede4812d.png",
+    "nightmare-tunnel": "/static/generated/gallery/maze_chase-nightmare-tunnel-020093bfb9766326.png"
+  },
+  "moonlit_fog_banks": {
+    "aurora-morning-fog": "/static/generated/gallery/moonlit_fog_banks-aurora-morning-fog-16696002575a2699.png",
+    "quiet-banks": "/static/generated/gallery/moonlit_fog_banks-quiet-banks-8090dc192ff217d7.png",
+    "silver-halo": "/static/generated/gallery/moonlit_fog_banks-silver-halo-d66016152558f515.png",
+    "sleeping-ridge": "/static/generated/gallery/moonlit_fog_banks-sleeping-ridge-420103589ea68441.png"
+  },
+  "night_train_windows": {
+    "ember-express": "/static/generated/gallery/night_train_windows-ember-express-2768d17147ff4486.png",
+    "moonlit-berth": "/static/generated/gallery/night_train_windows-moonlit-berth-6a9a86966d121b6c.png",
+    "quiet-sleeper": "/static/generated/gallery/night_train_windows-quiet-sleeper-8388adcdb3275d0e.png",
+    "synthwave-commuter": "/static/generated/gallery/night_train_windows-synthwave-commuter-3020e23682840829.png"
+  },
+  "physarum_network": {
+    "night": "/static/generated/gallery/physarum_network-night-879a54464f5a9006.png",
+    "quiet": "/static/generated/gallery/physarum_network-quiet-a55ecf6cc6ed9e99.png",
+    "showcase": "/static/generated/gallery/physarum_network-showcase-0604294b5a05d39a.png",
+    "synthwave-mycelium": "/static/generated/gallery/physarum_network-synthwave-mycelium-6d68af050ab7bafb.png"
+  },
+  "pinball": {
+    "midnight-attract": "/static/generated/gallery/pinball-midnight-attract-c0dd3121a3930152.png",
+    "multiball-mayhem": "/static/generated/gallery/pinball-multiball-mayhem-51010c8ef7bf2b43.png",
+    "neon-casino": "/static/generated/gallery/pinball-neon-casino-4060ee871cac10f8.png",
+    "slow-motion-replay": "/static/generated/gallery/pinball-slow-motion-replay-6d8f8db575995533.png",
+    "tournament-table": "/static/generated/gallery/pinball-tournament-table-60ade922eda2fd1b.png"
+  },
+  "pixel_chase": {
+    "comet-trails": "/static/generated/gallery/pixel_chase-comet-trails-42368f299843556f.png",
+    "prismatic-relay": "/static/generated/gallery/pixel_chase-prismatic-relay-d9f1ea5f18eaa10b.png",
+    "steady-lanterns": "/static/generated/gallery/pixel_chase-steady-lanterns-d6273311d153ce07.png"
+  },
+  "pixel_quest": {
+    "cinematic-no-hud": "/static/generated/gallery/pixel_quest-cinematic-no-hud-8ea9cfc7f76a2c42.png",
+    "heroic-adventure": "/static/generated/gallery/pixel_quest-heroic-adventure-9922af356f86b11e.png",
+    "scenic-journey": "/static/generated/gallery/pixel_quest-scenic-journey-8debac7c142262a1.png",
+    "speedrun": "/static/generated/gallery/pixel_quest-speedrun-3b7db4ce0c4aecdb.png"
+  },
+  "plant_glow": {
+    "canopy-pulse": "/static/generated/gallery/plant_glow-canopy-pulse-4e1cd5a9f1668c1c.png",
+    "fine-veins": "/static/generated/gallery/plant_glow-fine-veins-48c67738563b4cb7.png",
+    "globe-constellation": "/static/generated/gallery/plant_glow-globe-constellation-028bbb32512c7e41.png",
+    "soft-moss": "/static/generated/gallery/plant_glow-soft-moss-1587f849fd826be7.png"
+  },
+  "quasicrystal_bloom": {
+    "daylight-prism": "/static/generated/gallery/quasicrystal_bloom-daylight-prism-8769670d47d640fe.png",
+    "night": "/static/generated/gallery/quasicrystal_bloom-night-2a4bc0b1ebe22f4e.png",
+    "quiet": "/static/generated/gallery/quasicrystal_bloom-quiet-e75683fb56a42714.png",
+    "showcase": "/static/generated/gallery/quasicrystal_bloom-showcase-d96172d8cd6cf700.png"
+  },
+  "rain_on_glass": {
+    "night": "/static/generated/gallery/rain_on_glass-night-c1f4c01e3f22af6c.png",
+    "pastel-sunshower": "/static/generated/gallery/rain_on_glass-pastel-sunshower-7a88663f7afbcfa6.png",
+    "quiet": "/static/generated/gallery/rain_on_glass-quiet-6faf59c2f41aabe4.png",
+    "showcase": "/static/generated/gallery/rain_on_glass-showcase-fc5f48d8a31404a3.png"
+  },
+  "rainbow": {
+    "classic-spectrum": "/static/generated/gallery/rainbow-classic-spectrum-38c95c6cb410a6d8.png",
+    "hyperspectrum": "/static/generated/gallery/rainbow-hyperspectrum-fc5133bfcc786e2b.png",
+    "pastel-drift": "/static/generated/gallery/rainbow-pastel-drift-fcf6abac83b333f0.png",
+    "reverse-prism": "/static/generated/gallery/rainbow-reverse-prism-036e53ace9ca8f62.png"
+  },
+  "reaction_diffusion_garden": {
+    "aurora-conservatory": "/static/generated/gallery/reaction_diffusion_garden-aurora-conservatory-8b3dc186343086b9.png",
+    "night": "/static/generated/gallery/reaction_diffusion_garden-night-65e227b184c0aa7c.png",
+    "quiet": "/static/generated/gallery/reaction_diffusion_garden-quiet-af3247c8d5018d10.png",
+    "showcase": "/static/generated/gallery/reaction_diffusion_garden-showcase-37efd92c9baee95f.png"
+  },
+  "snake": {
+    "classic-orchard": "/static/generated/gallery/snake-classic-orchard-5df4a4b134f7adfd.png",
+    "comet-garden": "/static/generated/gallery/snake-comet-garden-300b997f7691e2cf.png",
+    "electric-hive": "/static/generated/gallery/snake-electric-hive-77e4f812a4620136.png",
+    "fire-serpents": "/static/generated/gallery/snake-fire-serpents-7286a316922404dc.png",
+    "ice-labyrinth": "/static/generated/gallery/snake-ice-labyrinth-a7db09e77073a4c1.png",
+    "koi-at-midnight": "/static/generated/gallery/snake-koi-at-midnight-738b25ef32a38474.png",
+    "neon-duel": "/static/generated/gallery/snake-neon-duel-ac6db71481b6b929.png",
+    "portal-bloom": "/static/generated/gallery/snake-portal-bloom-47372a77f732614c.png",
+    "prism-switchbacks": "/static/generated/gallery/snake-prism-switchbacks-5a319873ca174119.png",
+    "rainbow-river": "/static/generated/gallery/snake-rainbow-river-27661916f2feb43e.png"
+  },
+  "solid": {
+    "deep-ocean": "/static/generated/gallery/solid-deep-ocean-1f418ded71152543.png",
+    "forest-breath": "/static/generated/gallery/solid-forest-breath-835c6d9029ebf8e4.png",
+    "rose-quartz": "/static/generated/gallery/solid-rose-quartz-0b1a60cc9afdf799.png",
+    "ultraviolet-pulse": "/static/generated/gallery/solid-ultraviolet-pulse-152febabdc6ca839.png",
+    "warm-linen": "/static/generated/gallery/solid-warm-linen-d81322298adf0901.png"
+  },
+  "sparkle": {
+    "candlelight": "/static/generated/gallery/sparkle-candlelight-0f6d74555862d589.png",
+    "confetti-storm": "/static/generated/gallery/sparkle-confetti-storm-0731dcb46d410fce.png",
+    "diamond-dust": "/static/generated/gallery/sparkle-diamond-dust-7bd4b89dc933e9a4.png",
+    "emerald-fireflies": "/static/generated/gallery/sparkle-emerald-fireflies-9c9c744db8b797f0.png",
+    "starlight": "/static/generated/gallery/sparkle-starlight-bcff19594f215186.png",
+    "twilight-sparkle": "/static/generated/gallery/sparkle-twilight-sparkle-bf25eae061638586.png"
+  },
+  "tetris": {
+    "avalanche-factory": "/static/generated/gallery/tetris-avalanche-factory-17630d181584b455.png",
+    "classic-quartet": "/static/generated/gallery/tetris-classic-quartet-d725fd0566e7e3df.png",
+    "cooperative-swarm": "/static/generated/gallery/tetris-cooperative-swarm-970e93098bdaa0b0.png",
+    "impossible-shift": "/static/generated/gallery/tetris-impossible-shift-8ca74b8383b1146e.png",
+    "solo-zen": "/static/generated/gallery/tetris-solo-zen-0c8ad7442d6620f1.png"
+  },
+  "tidal_bioluminescence": {
+    "night": "/static/generated/gallery/tidal_bioluminescence-night-68033b40b2428722.png",
+    "quiet": "/static/generated/gallery/tidal_bioluminescence-quiet-8de22f163b034b8b.png",
+    "showcase": "/static/generated/gallery/tidal_bioluminescence-showcase-697dd8546d396330.png"
+  },
+  "waterfall_veil": {
+    "night": "/static/generated/gallery/waterfall_veil-night-6a71ea4abd3e0479.png",
+    "quiet": "/static/generated/gallery/waterfall_veil-quiet-009235f75f8cb6f9.png",
+    "showcase": "/static/generated/gallery/waterfall_veil-showcase-142a5f436a7dc3fe.png"
+  },
+  "wave": {
+    "chill_raining_fish_tank": "/static/generated/gallery/wave-chill_raining_fish_tank-ac7f75a41dbb9eec.png",
+    "emerald-breath": "/static/generated/gallery/wave-emerald-breath-b808140e35b4cb05.png",
+    "moonlit-tide": "/static/generated/gallery/wave-moonlit-tide-2530dc2a64e86cf3.png",
+    "solar-radio": "/static/generated/gallery/wave-solar-radio-916a71a197325a05.png",
+    "synthwave-ribbons": "/static/generated/gallery/wave-synthwave-ribbons-a47cf554bf071022.png",
+    "ultraviolet-static": "/static/generated/gallery/wave-ultraviolet-static-cac7234672564997.png"
+  },
+  "wind_in_the_reeds": {
+    "night": "/static/generated/gallery/wind_in_the_reeds-night-5b376b71acc5578a.png",
+    "quiet": "/static/generated/gallery/wind_in_the_reeds-quiet-187a0ec82b24dfcd.png",
+    "showcase": "/static/generated/gallery/wind_in_the_reeds-showcase-0acaf10f79bdf844.png"
+  },
+  "world_flags": {
+    "brazil-festival": "/static/generated/gallery/world_flags-brazil-festival-59a22e61a768e935.png",
+    "grand-banners": "/static/generated/gallery/world_flags-grand-banners-749ffc9c780aeb9e.png",
+    "japan-rising-sun": "/static/generated/gallery/world_flags-japan-rising-sun-31a06ee4e3d831bb.png",
+    "mini-banner-rush": "/static/generated/gallery/world_flags-mini-banner-rush-5e04f4fdf7f9d552.png",
+    "reverse-parade": "/static/generated/gallery/world_flags-reverse-parade-08ebcd7ece39e480.png",
+    "stars-and-stripes": "/static/generated/gallery/world_flags-stars-and-stripes-c34478f81e28cae3.png",
+    "ukraine-solidarity": "/static/generated/gallery/world_flags-ukraine-solidarity-904bf9d394744712.png",
+    "world-parade": "/static/generated/gallery/world_flags-world-parade-f643ebd89912986a.png"
+  }
+});

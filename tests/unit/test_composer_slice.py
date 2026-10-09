@@ -290,10 +290,10 @@ context.show({key: 'late', component_id: 'late', name: 'Late', description: '', 
 pending[1]({ok: true, json: async () => ({presets: [{name: 'Late preset', parameters: {}}]})});
 setImmediate(() => {
   setImmediate(() => {
-    assert.equal(detail.children[4].children[0].textContent, 'Late preset');
+    assert.equal(detail.children[4].children[0]['aria-label'], 'Late preset');
     pending[0]({ok: true, json: async () => ({presets: [{name: 'Stale early preset', parameters: {}}]})});
     setImmediate(() => setImmediate(() => {
-      assert.equal(detail.children[4].children[0].textContent, 'Late preset', 'stale presets cannot replace the newest detail');
+      assert.equal(detail.children[4].children[0]['aria-label'], 'Late preset', 'stale presets cannot replace the newest detail');
     }));
   });
 });

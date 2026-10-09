@@ -239,6 +239,10 @@ dialog li { margin: .5rem 0; }
 .gallery-detail h3 { font-size: 1rem; }
 .gallery-detail p { font-size: .8rem; }
 .gallery-preset-list .button { min-height: 44px; font-size: .8rem; }
+.gallery-detail .gallery-preset-list { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .4rem; }
+.gallery-preset-list .gallery-preset { display: flex; align-items: center; gap: .6rem; padding: .5rem; min-width: 0; text-align: left; white-space: normal; }
+.gallery-preset > .gallery-thumb, .gallery-preset > .gallery-thumb-unavailable { flex: 0 0 2rem; inline-size: 2rem; }
+.gallery-preset > span:last-child { overflow-wrap: anywhere; }
 @media (max-width: 760px) {
   .gallery-select { padding-right: 44px; }
   .gallery-favorite { min-width: 44px; min-height: 44px; }

@@ -1,17 +1,17 @@
-const CACHE_NAME = 'composer-shell-v26';
+const CACHE_NAME = 'composer-shell-v27';
 const ROOT_SHELL = '/';
 const SHELL = [
   ROOT_SHELL,
-  '/static/css/composer_slice.css?v=composer-shell-v26',
-  '/static/js/composer_preview_scheduler.js?v=composer-shell-v26',
-  '/static/js/composer_slice.js?v=composer-shell-v26',
-  '/static/generated/gallery/previews.js?v=composer-shell-v26',
-  '/static/js/composer_palette_layout.js?v=composer-shell-v26',
-  '/static/js/composer_shell.js?v=composer-shell-v26',
-  '/static/composer/manifest.webmanifest?v=composer-shell-v26',
-  '/static/icons/composer-180.png?v=composer-shell-v26',
-  '/static/composer/icon.svg?v=composer-shell-v26',
-  '/static/composer/offline.html?v=composer-shell-v26',
+  '/static/css/composer_slice.css?v=composer-shell-v27',
+  '/static/js/composer_preview_scheduler.js?v=composer-shell-v27',
+  '/static/js/composer_slice.js?v=composer-shell-v27',
+  '/static/generated/gallery/previews.js?v=composer-shell-v27',
+  '/static/js/composer_palette_layout.js?v=composer-shell-v27',
+  '/static/js/composer_shell.js?v=composer-shell-v27',
+  '/static/composer/manifest.webmanifest?v=composer-shell-v27',
+  '/static/icons/composer-180.png?v=composer-shell-v27',
+  '/static/composer/icon.svg?v=composer-shell-v27',
+  '/static/composer/offline.html?v=composer-shell-v27',
 ];
 
 self.addEventListener('install', (event) => event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL))));
@@ -30,7 +30,7 @@ self.addEventListener('fetch', (event) => {
   const request = event.request; const url = new URL(request.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith('/api/') || request.method !== 'GET') return;
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(async () => (await caches.match(ROOT_SHELL)) || caches.match('/static/composer/offline.html?v=composer-shell-v26')));
+    event.respondWith(fetch(request).catch(async () => (await caches.match(ROOT_SHELL)) || caches.match('/static/composer/offline.html?v=composer-shell-v27')));
     return;
   }
   const shellKey = `${url.pathname}${url.search}`;

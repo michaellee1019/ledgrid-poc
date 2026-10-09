@@ -61,7 +61,7 @@ class Element {
   replaceWith(node) { this.replacement = node; }
 }
 const context = {
-  window:{ComposerGalleryPreviews:{sparkle:'/static/generated/gallery/sparkle-hash.png'}},
+  window:{ComposerGalleryPreviews:{sparkle:'/static/generated/gallery/sparkle-hash.png'}, ComposerPresetPreviews:{sparkle:{quiet:'/static/generated/gallery/sparkle-quiet.png',dense:'/static/generated/gallery/sparkle-dense.png'}}},
   document:{createElement:()=>new Element()},
   state:{scene:{look:{presentation_brightness:0, pace:0}}},
   preview:()=>{ throw new Error('Gallery must not queue simulation renders'); },
@@ -80,6 +80,13 @@ assert.equal(first.replacement.textContent,'Preview unavailable');
 assert.equal(first.replacement['aria-label'],'Sparkle preview unavailable');
 const missing=context.thumbnail({component_id:'missing',name:'Missing'});
 assert.equal(missing.textContent,'Preview unavailable');
+const quiet=context.thumbnail(entry,{preset_id:'quiet',name:'Quiet'});
+const dense=context.thumbnail(entry,{preset_id:'dense',name:'Dense'});
+assert.notEqual(quiet.src,dense.src);
+assert.notEqual(quiet.src,first.src);
+assert.equal(quiet.loading,'lazy');
+assert.equal(context.thumbnail(entry,{preset_id:'absent',name:'Absent'}).textContent,'Preview unavailable');
+quiet.error(); assert.equal(quiet.replacement['aria-label'],'Quiet preview unavailable');
 '''
     result = subprocess.run(['node', '-e', runner, drawing], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

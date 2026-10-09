@@ -549,21 +549,22 @@
     if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableGalleryJson(value[key])}`).join(',')}}`;
     return JSON.stringify(value);
   }
-  function galleryThumbnail(entry) {
+  function galleryThumbnail(entry, preset = null) {
     // Catalog illustrations stay legible independently of the current Look,
     // widgets, or stopped wall. Browser caching also survives grid rebuilds.
     const image = document.createElement('img');
     image.className = 'gallery-thumb'; image.width = 33; image.height = 138;
-    image.alt = `${entry.name} representative catalog preview`;
+    const name = preset ? preset.name : entry.name;
+    image.alt = `${name} representative catalog preview`;
     image.title = 'Catalog example. The main Preview shows your current Scene settings.';
     image.loading = 'lazy'; image.decoding = 'async';
     const unavailable = () => {
       const label = document.createElement('span'); label.className = 'gallery-thumb-unavailable';
-      label.textContent = 'Preview unavailable'; label.setAttribute('aria-label', `${entry.name} preview unavailable`);
+      label.textContent = 'Preview unavailable'; label.setAttribute('aria-label', `${name} preview unavailable`);
       return label;
     };
     image.addEventListener('error', () => image.replaceWith(unavailable()), {once: true});
-    const url = window.ComposerGalleryPreviews?.[entry.component_id];
+    const url = preset ? window.ComposerPresetPreviews?.[entry.component_id]?.[preset.preset_id] : window.ComposerGalleryPreviews?.[entry.component_id];
     if (url) image.src = url;
     else return unavailable();
     return image;
@@ -605,7 +606,10 @@
       if (state.gallery.detail !== entry.key || state.gallery.detailToken !== detailToken) return;
       presets.replaceChildren();
       (body.presets || []).forEach((preset) => {
-        const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name;
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary gallery-preset'; button.title = preset.description || preset.name;
+        button.setAttribute('aria-label', preset.name);
+        const label = document.createElement('span'); label.textContent = preset.name;
+        button.append(galleryThumbnail(entry, preset), label);
         button.addEventListener('click', () => selectGalleryEntry(entry, preset)); presets.append(button);
       });
       if (!presets.childElementCount) presets.textContent = 'No authored presets.';

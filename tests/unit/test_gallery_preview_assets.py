@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 import pytest
 
-from tools.generate_gallery_previews import OUTPUT, catalog_scene, render_thumbnail
+from tools.generate_gallery_previews import OUTPUT, catalog_scene, render_thumbnail, preset_catalog
 from web.composer_final_preview import current_component_catalog
 
 
@@ -59,3 +59,40 @@ def test_gallery_assets_are_included_in_fast_deployments():
     root = Path(__file__).resolve().parents[2]
     for path in OUTPUT.iterdir():
         assert _include_fast(PurePosixPath(path.relative_to(root)))
+
+
+def test_all_authored_presets_have_parameter_specific_previews():
+    catalog = current_component_catalog()
+    descriptors = {d.component_id: d for d in catalog.descriptors if d.role.value == "animation"}
+    presets = preset_catalog(catalog)
+    manifest = json.loads((OUTPUT / "manifest.json").read_text())
+    script = (OUTPUT / "previews.js").read_text()
+    for component_id, descriptor in descriptors.items():
+        choices = presets.choices(component_id)
+        entries = manifest["presets"][component_id]
+        assert set(entries) == {choice["preset_id"] for choice in choices}
+        for choice in choices:
+            entry = entries[choice["preset_id"]]
+            assert entry["scene"] == catalog_scene(descriptor, choice)
+            path = OUTPUT / entry["file"]
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == entry["sha256"]
+            assert entry["file"] in script
+            with Image.open(path) as image:
+                assert image.size == (33, 138)
+                # Midnight presets deliberately remain dim; do not brighten
+                # them into misleading thumbnails just to match other art.
+                assert np.asarray(image).max() > 0
+    pinball = manifest["presets"]["pinball"]
+    assert len({entry["sha256"] for entry in pinball.values()}) == len(pinball)
+
+
+def test_pinball_preset_preview_reproduces_resolved_scene():
+    catalog = current_component_catalog()
+    descriptor = next(d for d in catalog.descriptors if d.component_id == "pinball")
+    presets = preset_catalog(catalog)
+    choice = presets.choices("pinball")[0]
+    data, scene, elapsed = render_thumbnail(descriptor, catalog, choice)
+    entry = json.loads((OUTPUT / "manifest.json").read_text())["presets"]["pinball"][choice["preset_id"]]
+    assert data == (OUTPUT / entry["file"]).read_bytes()
+    assert scene["animation"]["parameters"] == json.loads(json.dumps(choice["parameters"]))
+    assert elapsed == entry["elapsed"]
