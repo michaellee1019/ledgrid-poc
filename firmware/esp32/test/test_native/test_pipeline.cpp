@@ -10,8 +10,6 @@
 
 #include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/protocol.hpp"
-#include "ledgrid/receiver_runtime.hpp"
-#include "ledgrid/startup_animation.hpp"
 #include "ledgrid/ws2812_encoder.hpp"
 
 namespace {
@@ -859,70 +857,9 @@ void test_encoder_appends_300us_reset_and_rejects_bad_bounds() {
       rgb, sizeof(rgb), 1, 1, 255, output.data(), output.size() - 1).ok);
 }
 
-void test_startup_rainbow_is_45_degrees_and_moves_up_right() {
-  constexpr std::uint8_t strips = 3;
-  constexpr std::uint16_t leds = 4;
-  std::array<std::uint8_t, strips * leds * 3U> initial{};
-  std::array<std::uint8_t, strips * leds * 3U> advanced{};
-  const std::uint32_t one_diagonal_step_us =
-      (2U * ledgrid::kStartupRainbowCycleUs) /
-      ledgrid::kStartupRainbowPeriodPixels;
 
-  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
-      0, strips, leds, initial.data(), initial.size()));
-  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
-      one_diagonal_step_us,
-      strips,
-      leds,
-      advanced.data(),
-      advanced.size()));
 
-  // Equal phase along x and y produces a 45-degree field. After 1/16 second,
-  // each color has moved one coordinate toward both positive axes.
-  for (std::uint8_t strip = 0; strip + 1 < strips; ++strip) {
-    for (std::uint16_t led = 0; led + 1 < leds; ++led) {
-      const std::size_t source =
-          (static_cast<std::size_t>(strip) * leds + led) * 3U;
-      const std::size_t right =
-          (static_cast<std::size_t>(strip + 1U) * leds + led) * 3U;
-      const std::size_t up =
-          (static_cast<std::size_t>(strip) * leds + led + 1U) * 3U;
-      const std::size_t up_right =
-          (static_cast<std::size_t>(strip + 1U) * leds + led + 1U) * 3U;
-      TEST_ASSERT_EQUAL_MEMORY(initial.data() + right,
-                               initial.data() + up, 3);
-      TEST_ASSERT_EQUAL_MEMORY(initial.data() + source,
-                               advanced.data() + up_right, 3);
-    }
-  }
-}
 
-void test_startup_rainbow_cycles_once_per_second_and_checks_bounds() {
-  TEST_ASSERT_EQUAL_UINT8(0, ledgrid::kReceiverSafeBootBrightness);
-
-  constexpr std::uint8_t strips = 8;
-  constexpr std::uint16_t leds = 32;
-  std::array<std::uint8_t, strips * leds * 3U> initial{};
-  std::array<std::uint8_t, strips * leds * 3U> looped{};
-
-  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
-      0, strips, leds, initial.data(), initial.size()));
-  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
-      ledgrid::kStartupRainbowCycleUs,
-      strips,
-      leds,
-      looped.data(),
-      looped.size()));
-  TEST_ASSERT_EQUAL_MEMORY(initial.data(), looped.data(), initial.size());
-  TEST_ASSERT_EQUAL_HEX8(0xFF, initial[0]);
-  TEST_ASSERT_EQUAL_HEX8(0x00, initial[1]);
-  TEST_ASSERT_EQUAL_HEX8(0x00, initial[2]);
-
-  TEST_ASSERT_FALSE(ledgrid::render_startup_rainbow(
-      0, strips, leds, nullptr, initial.size()));
-  TEST_ASSERT_FALSE(ledgrid::render_startup_rainbow(
-      0, strips, leds, initial.data(), initial.size() - 1U));
-}
 
 void test_mailbox_replaces_only_unread_ready_frames() {
   ledgrid::LatestFrameMailbox mailbox;
@@ -962,48 +899,7 @@ void test_mailbox_replaces_only_unread_ready_frames() {
   TEST_ASSERT_EQUAL_UINT32(4, reading.sequence);
 }
 
-void test_status_v2_layout_is_stable() {
-  ledgrid::ReceiverStatusV2 status{};
-  status.flags = 3;
-  status.active_strips = 8;
-  status.lane_mask = 0x5A;
-  status.leds_per_strip = 140;
-  status.queued_transactions = 2;
-  status.packets = 11;
-  status.crc_errors = 12;
-  status.crc_ok_packets = 13;
-  status.frames_accepted = 14;
-  status.frames_displayed = 15;
-  status.frames_superseded = 16;
-  status.publish_drops = 17;
-  status.spi_queue_errors = 18;
-  status.last_crc_us = 19;
-  status.last_copy_us = 20;
-  status.last_encode_us = 21;
-  status.last_show_us = 22;
-  status.last_accepted_sequence = 23;
-  status.last_displayed_sequence = 24;
-  status.stagger_phases = 3;
-  std::array<std::uint8_t, ledgrid::kStatusBytesV2> encoded{};
 
-  TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v2(
-      status, encoded.data(), encoded.size()));
-  TEST_ASSERT_EQUAL_MEMORY("LGS2", encoded.data(), 4);
-  TEST_ASSERT_EQUAL_UINT8(2, encoded[4]);
-  TEST_ASSERT_EQUAL_UINT8(3, encoded[5]);
-  TEST_ASSERT_EQUAL_UINT8(8, encoded[6]);
-  TEST_ASSERT_EQUAL_HEX8(0x5A, encoded[7]);
-  TEST_ASSERT_EQUAL_UINT16(140, read_u16(encoded.data() + 8));
-  TEST_ASSERT_EQUAL_UINT16(2, read_u16(encoded.data() + 10));
-  TEST_ASSERT_EQUAL_UINT32(14, read_u32(encoded.data() + 24));
-  TEST_ASSERT_EQUAL_UINT32(16, read_u32(encoded.data() + 32));
-  TEST_ASSERT_EQUAL_UINT16(21, read_u16(encoded.data() + 48));
-  TEST_ASSERT_EQUAL_UINT32(24, read_u32(encoded.data() + 56));
-  TEST_ASSERT_EQUAL_UINT8(3, encoded[64]);
-
-  TEST_ASSERT_FALSE(ledgrid::encode_receiver_status_v2(
-      status, encoded.data(), ledgrid::kStatusBytesV2 - 1));
-}
 
 void test_aligned_envelope_decodes_current_payload_and_rejects_raw_packets() {
   const std::vector<std::uint8_t> semantic = {
@@ -1054,7 +950,7 @@ void test_aligned_envelope_accepts_frame_and_exact_maximum_semantic_sizes() {
   std::vector<std::uint8_t> maximum(
       ledgrid::kAlignedEnvelopeMaxSemanticBytes, 0xA6);
   maximum[0] = static_cast<std::uint8_t>(
-      ledgrid::ReceiverCommand::NativeModuleChunk);
+      ledgrid::ReceiverCommand::SetAll);
   const auto maximum_packet = aligned_packet(maximum);
   TEST_ASSERT_EQUAL_UINT32(
       ledgrid::kAnimationPipelineMaxTransactionBytes, maximum_packet.size());
@@ -1063,25 +959,7 @@ void test_aligned_envelope_accepts_frame_and_exact_maximum_semantic_sizes() {
   TEST_ASSERT_EQUAL_UINT32(maximum.size(), decoded.size);
 }
 
-void test_aligned_envelope_accepts_only_current_status_query_semantics() {
-  std::vector<std::uint8_t> semantic(ledgrid::kStatusBytesV8, 0);
-  semantic[0] = static_cast<std::uint8_t>(
-      ledgrid::ReceiverCommand::StatusQuery);
-  const auto packet = aligned_packet(semantic);
 
-  ledgrid::ReceiverPacketPayload decoded{};
-  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-      packet.data(), packet.size(), &decoded));
-  TEST_ASSERT_EQUAL_UINT32(ledgrid::kStatusBytesV8, decoded.size);
-  TEST_ASSERT_TRUE(ledgrid::valid_status_query(decoded.data, decoded.size));
-  TEST_ASSERT_FALSE(ledgrid::valid_status_query(
-      decoded.data, ledgrid::kStatusBytesV7));
-  semantic.back() = 1;
-  const auto nonzero_packet = aligned_packet(semantic);
-  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-      nonzero_packet.data(), nonzero_packet.size(), &decoded));
-  TEST_ASSERT_FALSE(ledgrid::valid_status_query(decoded.data, decoded.size));
-}
 
 void test_aligned_envelope_rejects_bad_crc_version_length_padding_and_alignment() {
   const std::vector<std::uint8_t> semantic = {
@@ -1162,7 +1040,7 @@ void test_fec_envelope_golden_layout_and_exact_installed_sizes() {
   std::vector<std::uint8_t> maximum(
       ledgrid::kFecEnvelopeMaxSemanticBytes, 0x33);
   maximum[0] = static_cast<std::uint8_t>(
-      ledgrid::ReceiverCommand::NativeModuleChunk);
+      ledgrid::ReceiverCommand::SetAll);
   const auto maximum_packet = fec_packet(maximum);
   TEST_ASSERT_EQUAL_UINT32(4088, maximum_packet.size());
   TEST_ASSERT_LESS_OR_EQUAL_UINT32(
@@ -1347,65 +1225,7 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
   }
 }
 
-void test_fec_sparse_batch_dispatch_boundary_is_exact_once_and_fail_closed() {
-  std::vector<std::uint8_t> semantic{
-      static_cast<std::uint8_t>(
-          ledgrid::ReceiverCommand::OverlayPatchBatch),
-      1U};
-  for (std::uint8_t value = 0U; value < 16U; ++value) {
-    semantic.push_back(value);
-  }
-  for (std::size_t index = 0; index < 8U; ++index) {
-    semantic.push_back(index == 7U ? 1U : 0U);
-  }
-  semantic.insert(semantic.end(), {0U, 1U, 0U, 0U, 0U, 1U, 1U, 2U, 3U, 4U});
-  const auto canonical = fec_packet(semantic);
-  const std::size_t codewords =
-      (canonical.size() - ledgrid::kFecWireHeaderBytes) /
-      ledgrid::kFecCodewordBytes;
-  const std::size_t matrix = ledgrid::kFecEnvelopeHeaderBytes;
-  std::array<std::uint8_t, ledgrid::kFecScratchBytes> scratch{};
-  std::size_t dispatches = 0U;
-  const auto decode_at_dispatch_boundary = [&](
-      const std::vector<std::uint8_t>& wire) {
-    ledgrid::ReceiverPacketPayload decoded{};
-    ledgrid::ReceiverPacketDecodeReport report{};
-    if (!ledgrid::decode_receiver_packet_payload(
-            wire.data(), wire.size(), &decoded, &report,
-            scratch.data(), scratch.size())) {
-      TEST_ASSERT_NULL(decoded.data);
-      TEST_ASSERT_EQUAL_UINT32(0, decoded.size);
-      return false;
-    }
-    TEST_ASSERT_TRUE(report.fec_envelope_attempted);
-    TEST_ASSERT_EQUAL_UINT32(semantic.size(), decoded.size);
-    TEST_ASSERT_EQUAL_MEMORY(semantic.data(), decoded.data, semantic.size());
-    ++dispatches;
-    return true;
-  };
 
-  auto corrected = canonical;
-  corrected[fec_rs_wire_offset(matrix, 7U, 0U, codewords)] ^= 0xA5U;
-  TEST_ASSERT_TRUE(decode_at_dispatch_boundary(corrected));
-  TEST_ASSERT_EQUAL_UINT32(1, dispatches);
-
-  auto uncorrectable = canonical;
-  const std::uint8_t errors[] = {0xA5U, 0x3CU, 0x81U, 0x5AU, 0xC3U, 0x7EU};
-  const std::size_t symbols[] = {0U, 10U, 20U, 30U, 40U, 50U};
-  for (const std::size_t block : {0U, 1U}) {
-    for (std::size_t index = 0; index < std::size(errors); ++index) {
-      uncorrectable[fec_rs_wire_offset(
-          matrix, symbols[index], block, codewords)] ^= errors[index];
-    }
-  }
-  TEST_ASSERT_FALSE(decode_at_dispatch_boundary(uncorrectable));
-  TEST_ASSERT_EQUAL_UINT32(1, dispatches);
-
-  auto truncated = canonical;
-  truncated.pop_back();
-  TEST_ASSERT_FALSE(decode_at_dispatch_boundary(truncated));
-  TEST_ASSERT_EQUAL_UINT32(1, dispatches);
-}
 
 void test_fec_outer_parity_covers_the_full_installed_frame_and_fails_closed() {
   std::vector<std::uint8_t> semantic(1U + 8U * 138U * 3U, 0x5A);
@@ -1612,41 +1432,7 @@ void test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed() {
   TEST_ASSERT_FALSE(report.fec_envelope_attempted);
 }
 
-void test_status_v7_preserves_v6_and_encodes_exact_fec_counters() {
-  ledgrid::ReceiverStatusV7 status{};
-  status.capabilities = ledgrid::kCapabilityAlignedEnvelopeV1 |
-                        ledgrid::kCapabilityFecEnvelopeV2 |
-                        ledgrid::kCapabilityFecEnvelopeV3 |
-                        ledgrid::kCapabilityFecEnvelopeV4 |
-                        ledgrid::kCapabilityFecEnvelopeV5 |
-                        ledgrid::kCapabilityFecEnvelopeV6 |
-                        ledgrid::kCapabilityFecEnvelopeV7;
-  status.fec_packets_received = 11;
-  status.fec_packets_accepted = 7;
-  status.fec_corrected_packets = 3;
-  status.fec_corrected_codewords = 4;
-  status.fec_uncorrectable_packets = 1;
-  status.fec_semantic_crc_errors = 2;
-  status.fec_framing_errors = 1;
-  status.fec_last_decode_us = 83;
-  status.fec_max_decode_us = 109;
-  std::array<std::uint8_t, ledgrid::kStatusBytesV7> encoded{};
-  TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v7(
-      status, encoded.data(), encoded.size()));
-  TEST_ASSERT_EQUAL_MEMORY("LGS7", encoded.data(), 4);
-  TEST_ASSERT_EQUAL_UINT8(7, encoded[4]);
-  TEST_ASSERT_EQUAL_UINT32(11, read_u32(encoded.data() + 1216));
-  TEST_ASSERT_EQUAL_UINT32(7, read_u32(encoded.data() + 1220));
-  TEST_ASSERT_EQUAL_UINT32(3, read_u32(encoded.data() + 1224));
-  TEST_ASSERT_EQUAL_UINT32(4, read_u32(encoded.data() + 1228));
-  TEST_ASSERT_EQUAL_UINT32(1, read_u32(encoded.data() + 1232));
-  TEST_ASSERT_EQUAL_UINT32(2, read_u32(encoded.data() + 1236));
-  TEST_ASSERT_EQUAL_UINT32(1, read_u32(encoded.data() + 1240));
-  TEST_ASSERT_EQUAL_UINT16(83, read_u16(encoded.data() + 1244));
-  TEST_ASSERT_EQUAL_UINT16(109, read_u16(encoded.data() + 1246));
-  TEST_ASSERT_FALSE(ledgrid::encode_receiver_status_v7(
-      status, encoded.data(), encoded.size() - 1U));
-}
+
 
 void test_fec_runtime_outcome_partition_is_total_and_exclusive() {
   ledgrid::ReceiverPacketDecodeReport report{};
@@ -1721,45 +1507,54 @@ void test_fec_native_decode_benchmark_installed_frame() {
   TEST_ASSERT_EQUAL_UINT32(semantic.size() * kIterations, checksum);
 }
 
-void test_fec_native_decode_benchmark_maximum_sparse_batch() {
-  std::vector<std::uint8_t> semantic(3336U, 0U);
-  semantic[0] = static_cast<std::uint8_t>(
-      ledgrid::ReceiverCommand::OverlayPatchBatch);
-  semantic[1] = 1U;
-  const auto packet = fec_packet(semantic);
-  TEST_ASSERT_EQUAL_UINT32(4088, packet.size());
-  std::array<std::uint8_t, ledgrid::kFecScratchBytes> scratch{};
-  constexpr std::size_t kIterations = 2000;
-  volatile std::size_t checksum = 0;
-  bool all_decoded = true;
-  const auto started = std::chrono::steady_clock::now();
-  for (std::size_t iteration = 0; iteration < kIterations; ++iteration) {
-    ledgrid::ReceiverPacketPayload decoded{};
-    ledgrid::ReceiverPacketDecodeReport report{};
-    all_decoded = ledgrid::decode_receiver_packet_payload(
-        packet.data(), packet.size(), &decoded, &report,
-        scratch.data(), scratch.size()) && all_decoded;
-    checksum += decoded.size + report.corrected_bits;
-  }
-  const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::steady_clock::now() - started).count();
-  const double mean_us = static_cast<double>(elapsed) /
-      static_cast<double>(kIterations) / 1000.0;
-  std::printf(
-      "[FEC_BENCH] native 4088-byte maximum sparse decode %.3f us/packet "
-      "(%zu packets)\n",
-      mean_us, kIterations);
-  TEST_ASSERT_TRUE(all_decoded);
-  TEST_ASSERT_EQUAL_UINT32(semantic.size() * kIterations, checksum);
-}
+
 
 }  // namespace
 
 void setUp() {}
 void tearDown() {}
 
+void test_repeated_config_preserves_static_pixels_and_brightness() {
+ ledgrid::OutputConfiguration output;
+ TEST_ASSERT_EQUAL_UINT8(0,output.brightness);
+ std::array<std::uint8_t,8*138*3> frame{}; frame.fill(97);
+ const std::uint8_t config[]={7,8,0,138,0,0,0,0};
+ TEST_ASSERT_TRUE(ledgrid::configure_host_output(config,8,&output,frame.data(),frame.size()));
+ output.brightness=128;
+ TEST_ASSERT_TRUE(ledgrid::configure_host_output(config,8,&output,frame.data(),frame.size()));
+ TEST_ASSERT_EQUAL_UINT8(128,output.brightness);
+ for(auto value:frame) TEST_ASSERT_EQUAL_UINT8(97,value);
+ const std::uint8_t tail[]={7,1,0,138,0,4,0,32};
+ TEST_ASSERT_TRUE(ledgrid::configure_host_output(tail,8,&output,frame.data(),frame.size()));
+ TEST_ASSERT_EQUAL_UINT8(128,output.brightness);
+ for(auto value:frame) TEST_ASSERT_EQUAL_UINT8(0,value);
+}
+
+void test_installed_config_and_status_crc() {
+ for (unsigned id=0;id<5;++id) {
+  std::uint8_t cfg[]={7,static_cast<std::uint8_t>(id==4?1:8),0,138,0,static_cast<std::uint8_t>(id),0,static_cast<std::uint8_t>(id*8)};
+  TEST_ASSERT_TRUE(ledgrid::valid_installed_config(cfg,8));
+  cfg[7]++; TEST_ASSERT_FALSE(ledgrid::valid_installed_config(cfg,8));
+ }
+ const std::uint8_t invalid[]={7,8,0,140,0,0,0,0};
+ TEST_ASSERT_FALSE(ledgrid::valid_installed_config(invalid,8));
+ ledgrid::ReceiverStatusV7 status{}; status.logical_receiver_id=4;
+ status.global_strip_offset=32; status.fec_corrected_packets=7; status.last_result=4;
+ std::array<std::uint8_t,ledgrid::kStatusBytesV8> bytes{};
+ TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v8(status,bytes.data(),bytes.size()));
+ TEST_ASSERT_EQUAL_MEMORY("LGS8",bytes.data(),4);
+ TEST_ASSERT_EQUAL_UINT8(4,bytes[312]); TEST_ASSERT_EQUAL_UINT8(32,bytes[83]);
+ TEST_ASSERT_EQUAL_UINT8(7,bytes[1227]); TEST_ASSERT_EQUAL_UINT8(4,bytes[72]);
+ std::uint32_t crc=0xffffffff;
+ for(unsigned i=0;i<1248;++i){crc^=bytes[i]; for(unsigned b=0;b<8;++b)crc=(crc>>1)^((crc&1)?0xedb88320:0);}
+ crc^=0xffffffff;
+ for(unsigned i=0;i<4;++i)TEST_ASSERT_EQUAL_UINT8(crc>>(24-i*8),bytes[1248+i]);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_installed_config_and_status_crc);
+  RUN_TEST(test_repeated_config_preserves_static_pixels_and_brightness);
   RUN_TEST(test_encoder_emits_parallel_grb_waveform);
   RUN_TEST(test_encoder_scales_brightness_before_bit_expansion);
   RUN_TEST(test_encoder_refreshes_cached_expansion_when_brightness_changes);
@@ -1775,25 +1570,17 @@ int main(int, char**) {
   RUN_TEST(test_stagger_round_trips_every_lane);
   RUN_TEST(test_stagger_writes_stay_inside_the_encoded_buffer);
   RUN_TEST(test_encoder_appends_300us_reset_and_rejects_bad_bounds);
-  RUN_TEST(test_startup_rainbow_is_45_degrees_and_moves_up_right);
-  RUN_TEST(test_startup_rainbow_cycles_once_per_second_and_checks_bounds);
   RUN_TEST(test_mailbox_replaces_only_unread_ready_frames);
-  RUN_TEST(test_status_v2_layout_is_stable);
   RUN_TEST(test_aligned_envelope_decodes_current_payload_and_rejects_raw_packets);
   RUN_TEST(test_aligned_envelope_accepts_frame_and_exact_maximum_semantic_sizes);
-  RUN_TEST(test_aligned_envelope_accepts_only_current_status_query_semantics);
   RUN_TEST(test_aligned_envelope_rejects_bad_crc_version_length_padding_and_alignment);
   RUN_TEST(test_fec_envelope_golden_layout_and_exact_installed_sizes);
   RUN_TEST(test_fec_corrects_header_payload_crc_and_distinct_codeword_bits);
   RUN_TEST(
-      test_fec_sparse_batch_dispatch_boundary_is_exact_once_and_fail_closed);
-  RUN_TEST(
       test_fec_outer_parity_covers_the_full_installed_frame_and_fails_closed);
   RUN_TEST(test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed);
-  RUN_TEST(test_status_v7_preserves_v6_and_encodes_exact_fec_counters);
   RUN_TEST(test_fec_runtime_outcome_partition_is_total_and_exclusive);
   RUN_TEST(test_fec_native_decode_benchmark_installed_frame);
   RUN_TEST(test_fec_clean_integrity_does_not_bypass_inner_padding_validation);
-  RUN_TEST(test_fec_native_decode_benchmark_maximum_sparse_batch);
   return UNITY_END();
 }

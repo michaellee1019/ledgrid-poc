@@ -20,8 +20,7 @@ from animation.core.installation_profile_topology import INSTALLED_INSTALLATION_
 from ipc.scene_contract import normalize_composer_scene
 from web.starter_looks import get_starter
 from web.composer_final_preview import (
-    ComposerFinalPreview, InstalledFinalSceneRuntime, NATIVE_AURORA_BUNDLE_DIGEST,
-    NATIVE_AURORA_COMPONENT_ID,
+    ComposerFinalPreview, InstalledFinalSceneRuntime,
 )
 
 
@@ -48,12 +47,10 @@ def _component(component_id: str, role: str, parameters: dict | None = None) -> 
     value = {
         "component_id": component_id,
         "version": 1,
-        "provider": "receiver_native" if role == "background" else "python",
+        "provider": "python" if role == "background" else "python",
         "role": role,
         "parameters": parameters or {},
     }
-    if role == "background":
-        value["bundle_digest"] = NATIVE_AURORA_BUNDLE_DIGEST
     return value
 
 
@@ -62,8 +59,8 @@ def _scene(*, animation: str = "conway_life", widgets: list[dict] | None = None,
            plants: dict | None = None) -> dict:
     return {
         "schema": "ledgrid.scene.v2",
-        "background": _component(NATIVE_AURORA_COMPONENT_ID, "background", {
-            "seed": 812, "source_fps": 30.0, "gain": 0.72,
+        "background": _component("solid_background", "background", {
+            "seed": 812, "gain": 0.72,
         }),
         "animation": _component(animation, "animation", {
             "seed": 1971, "rule": "B3/S23", "initial_density": 0.14,
@@ -129,82 +126,8 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         self.assertEqual(self.wall.commands, [])
         self.assertEqual(self.interface.composer_control.commands, [])
 
-    def test_twilight_opaque_host_full_matches_native_final_with_selected_profile(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        canonical = normalize_composer_scene({
-            "origin": "composer", "scene": get_starter("human_twilight_sparkle")["scene"],
-        }, self.interface.composer_catalog)
-        with tempfile.TemporaryDirectory() as directory:
-            library = InstallationProfileLibrary(Path(directory))
-            published = library.publish((root / "tests/fixtures/installation_profile_v1.bin").read_bytes())
-            selection = InstallationProfileSelection(library, INSTALLED_INSTALLATION_PROFILE_TOPOLOGY)
-            selection.select(published.id)
-            native = InstalledFinalSceneRuntime(self.interface.composer_catalog, root)
-            opaque = InstalledFinalSceneRuntime(self.interface.composer_catalog, root, foreground_only=True)
-            for runtime in (native, opaque):
-                runtime.set_installation_profile(selection.view)
-            wall_time = datetime.fromisoformat("2026-09-19T12:00:00+00:00")
-            native_changed = opaque_changed = 0
-            for index in range(160):
-                context = ScenePresentationContext(canonical, index / 160, wall_time)
-                expected = native.render(context)
-                actual = opaque.render_opaque_full(context)
-                np.testing.assert_array_equal(actual.pixels, expected.pixels)
-                self.assertEqual(actual.basis, canonical.identity)
-                native_changed += expected.changed
-                opaque_changed += actual.changed
-            self.assertEqual(opaque_changed, 17)
-            self.assertGreater(native_changed, opaque_changed)
-            self.assertLess(native_changed, 160)
-            with patch("web.composer_final_preview.ManagedNativeHostPreview", side_effect=AssertionError("opaque full route must not load native preview")):
-                direct = InstalledFinalSceneRuntime(self.interface.composer_catalog, root, foreground_only=True)
-                direct.set_installation_profile(selection.view)
-                self.assertEqual(direct.render_opaque_full(ScenePresentationContext(canonical, 0.0, wall_time)).basis, canonical.identity)
 
-    def test_opaque_demo_frames_match_native_composition_with_selected_profile(self) -> None:
-        from copy import deepcopy
-        from web.composer_final_preview import current_component_descriptors
-        root = Path(__file__).resolve().parents[2]
-        with tempfile.TemporaryDirectory() as directory:
-            library = InstallationProfileLibrary(Path(directory))
-            published = library.publish((root / "tests/fixtures/installation_profile_v1.bin").read_bytes())
-            selection = InstallationProfileSelection(library, INSTALLED_INSTALLATION_PROFILE_TOPOLOGY)
-            selection.select(published.id)
-            for name in ('aurora_curtains', 'cellular_tapestry', 'circadian_window'):
-                with self.subTest(component=name):
-                    scene = get_starter("human_twilight_sparkle")["scene"]
-                    descriptor = next(item for item in current_component_descriptors() if item.component_id == name)
-                    scene['animation'] = {'component_id': name, 'provider': 'python',
-                                          'role': 'animation', 'version': 1,
-                                          'parameters': deepcopy(dict(descriptor.defaults))}
-                    canonical = normalize_composer_scene({'origin': 'composer', 'scene': scene}, self.interface.composer_catalog)
-                    native = InstalledFinalSceneRuntime(self.interface.composer_catalog, root)
-                    opaque = InstalledFinalSceneRuntime(self.interface.composer_catalog, root, foreground_only=True)
-                    for runtime in (native, opaque):
-                        runtime.set_installation_profile(selection.view)
-                    wall_time = datetime.fromisoformat("2026-09-20T12:00:00+00:00")
-                    for index in range(160):
-                        context = ScenePresentationContext(canonical, index / 20, wall_time + timedelta(seconds=index / 20))
-                        expected = native.render(context)
-                        actual = opaque.render_opaque_full(context)
-                        np.testing.assert_array_equal(actual.pixels, expected.pixels)
-                        self.assertEqual(actual.basis, canonical.identity)
 
-    def test_circadian_uses_scene_wall_time_instead_of_machine_clock(self) -> None:
-        from web.composer_final_preview import current_component_descriptors
-        descriptor = next(item for item in current_component_descriptors() if item.component_id == 'circadian_window')
-        scene = get_starter('human_twilight_sparkle')['scene']
-        scene['animation'] = {'component_id': 'circadian_window', 'provider': 'python',
-                              'role': 'animation', 'version': 1,
-                              'parameters': {**dict(descriptor.defaults), 'time_offset': 2.0}}
-        canonical = normalize_composer_scene({'origin': 'composer', 'scene': scene}, self.interface.composer_catalog)
-        runtime = InstalledFinalSceneRuntime(self.interface.composer_catalog, Path(__file__).resolve().parents[2], foreground_only=True)
-        with patch('animation.libraries.procedural_longform.datetime') as machine_clock:
-            machine_clock.now.side_effect = AssertionError('Scene rendering must not sample the machine clock')
-            for elapsed, hour in ((0., 6), (1., 18)):
-                context = ScenePresentationContext(canonical, elapsed, datetime.fromisoformat(f'2026-09-20T{hour:02d}:00:00+00:00'))
-                runtime.render_opaque_full(context)
-                self.assertEqual(runtime._runtime._animation.instance._circadian_hour, hour + 2)
 
     def test_clock_offset_changes_preview_time_without_advancing_the_scene(self) -> None:
         for format_24h, seconds, offset in ((True, True, 360), (False, False, 360),
@@ -364,13 +287,13 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
         np.testing.assert_array_equal(mist_clock[:, 3], ember_clock[:, 3])
         self.assertFalse(np.array_equal(mist_clock[:, :3], ember_clock[:, :3]))
 
-    def test_native_cadence_advances_continuously_without_live_side_effects(self) -> None:
+    def test_solid_background_stays_cached_without_live_side_effects(self) -> None:
         scene = _scene(animation="conway_life")
         first = self._pixels(self.client.post("/api/composer/preview", json=_request(scene, elapsed=.001)))
         inside_native_tick = self._pixels(self.client.post("/api/composer/preview", json=_request(scene, elapsed=.010)))
         next_native_tick = self._pixels(self.client.post("/api/composer/preview", json=_request(scene, elapsed=.040)))
         np.testing.assert_array_equal(first, inside_native_tick)
-        self.assertFalse(np.array_equal(inside_native_tick, next_native_tick))
+        np.testing.assert_array_equal(inside_native_tick, next_native_tick)
         status = self.client.get("/api/composer/status").get_json()
         self.assertIsNone(status["desired"])
         self.assertIsNone(status["observed"])

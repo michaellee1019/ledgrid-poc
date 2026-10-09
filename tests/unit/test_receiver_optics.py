@@ -25,22 +25,12 @@ from animation.core.receiver_optics import (
 from animation.core.receiver_presentation import quantize_q8_8
 from tools.fixtures.generate_receiver_optics_golden import (
     build_fixture,
-    render_coefficients_header,
-    render_cpp_header,
     render_fixture,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = ROOT / "tests" / "fixtures" / "receiver_optics_v1.json"
-CPP_FIXTURE_PATH = (
-    ROOT / "firmware" / "esp32" / "test" / "fixtures"
-    / "receiver_optics_v1.hpp"
-)
-COEFFICIENTS_PATH = (
-    ROOT / "firmware" / "esp32" / "include" / "ledgrid"
-    / "receiver_optics_coefficients_v1.hpp"
-)
 GENERATOR_PATH = ROOT / "tools" / "fixtures" / "generate_receiver_optics_golden.py"
 EXPECTED_MATRIX_SHA256 = (
     "df4f6386ad5cf27f697804dac4aff862f73c12e3b27768c36b64f6b7c76f8431"
@@ -262,14 +252,6 @@ class ReceiverOpticsTests(unittest.TestCase):
     def test_all_generated_artifacts_are_exact_derivatives(self) -> None:
         rebuilt = build_fixture()
         self.assertEqual(FIXTURE_PATH.read_text(encoding="utf-8"), render_fixture(rebuilt))
-        self.assertEqual(
-            CPP_FIXTURE_PATH.read_text(encoding="utf-8"),
-            render_cpp_header(rebuilt),
-        )
-        self.assertEqual(
-            COEFFICIENTS_PATH.read_text(encoding="utf-8"),
-            render_coefficients_header(rebuilt),
-        )
         subprocess.run(
             [sys.executable, str(GENERATOR_PATH), "--check"],
             cwd=ROOT,
@@ -282,22 +264,13 @@ class ReceiverOpticsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             json_path = root / "nested" / "vectors.json"
-            cpp_path = root / "nested" / "vectors.hpp"
-            coefficients_path = root / "nested" / "coefficients.hpp"
             command = [
                 sys.executable,
                 str(GENERATOR_PATH),
                 "--output", str(json_path),
-                "--cpp-output", str(cpp_path),
-                "--coefficients-output", str(coefficients_path),
             ]
             subprocess.run(command, cwd=ROOT, check=True, capture_output=True, text=True)
             self.assertEqual(json_path.read_text(encoding="utf-8"), render_fixture())
-            self.assertEqual(cpp_path.read_text(encoding="utf-8"), render_cpp_header())
-            self.assertEqual(
-                coefficients_path.read_text(encoding="utf-8"),
-                render_coefficients_header(),
-            )
             subprocess.run(
                 [*command, "--check"], cwd=ROOT, check=True,
                 capture_output=True, text=True,

@@ -1,91 +1,24 @@
-"""Regression coverage for the atomic Composer generated-asset publication."""
-
-from __future__ import annotations
-
-import shutil
+"""Source-only Composer assets are built in staging without offline/native output."""
+from pathlib import Path
 import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import patch
-
-from tools.build_browser_composer_assets import (
-    asset_manifest,
-    check_published,
-    publish,
-    validate_asset_set,
-)
-
-
-ROOT = Path(__file__).resolve().parents[2]
-PUBLISHED = ROOT / "web/static/generated/composer"
-
+from tools.build_browser_composer_assets import build_stage, validate_asset_set
+ROOT=Path(__file__).resolve().parents[2]
 
 class ComposerAssetPublicationTests(unittest.TestCase):
-    def copied_assets(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
-        temporary = tempfile.TemporaryDirectory()
-        copied = Path(temporary.name) / "composer"
-        shutil.copytree(PUBLISHED, copied)
-        return temporary, copied
-
-    def test_clean_publication_check_rebuilds_the_same_complete_asset_set(self) -> None:
-        first = check_published(ROOT)
-        second = check_published(ROOT)
-        self.assertEqual(first, second)
-
-    def test_check_fails_closed_for_stale_missing_and_orphan_generated_output(self) -> None:
-        for name, mutate, expected in (
-            (
-                "stale",
-                lambda path: path.joinpath("bootstrap.v1.json").write_bytes(b"stale"),
-                "offline manifest is stale",
-            ),
-            (
-                "missing",
-                lambda path: path.joinpath("compiled_rainbow.wasm").unlink(),
-                "stale, missing, or orphaned",
-            ),
-            (
-                "orphan",
-                lambda path: path.joinpath("painter_preview.png").write_bytes(b"ghost"),
-                "ghost Composer artifacts",
-            ),
-            (
-                "nested-orphan",
-                lambda path: (path / "retained" / "emoji").mkdir(parents=True),
-                "ghost Composer artifacts",
-            ),
-        ):
-            with self.subTest(name=name):
-                temporary, copied = self.copied_assets()
-                with temporary:
-                    mutate(copied)
-                    with self.assertRaisesRegex(ValueError, expected):
-                        validate_asset_set(ROOT, copied)
-
-    def test_failed_final_replace_restores_the_exact_prior_publication(self) -> None:
-        before = asset_manifest(PUBLISHED)
-        original_replace = __import__("os").replace
-
-        def staged_copy(_root: Path, stage: Path) -> dict[str, object]:
-            shutil.copytree(PUBLISHED, stage)
-            return asset_manifest(stage)
-
-        def fail_final_replace(source: Path, destination: Path) -> None:
-            if source.name == "composer" and destination == PUBLISHED:
-                raise OSError("injected final publication failure")
-            original_replace(source, destination)
-
-        with patch("tools.build_browser_composer_assets.build_stage", staged_copy), patch(
-            "tools.build_browser_composer_assets.os.replace", fail_final_replace
-        ):
-            with self.assertRaisesRegex(OSError, "injected final publication failure"):
-                publish(ROOT)
-        self.assertEqual(asset_manifest(PUBLISHED), before)
-        self.assertEqual(
-            sorted(PUBLISHED.parent.glob("composer-assets-stage-*")), [],
-            "failed publication must not expose a partial staging directory",
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_staged_source_assets_are_deterministic_and_complete(self):
+        with tempfile.TemporaryDirectory() as d:
+            first=build_stage(ROOT,Path(d)/'first')
+            second=build_stage(ROOT,Path(d)/'second')
+            self.assertEqual(first,second)
+            self.assertEqual(len(first),3)
+            self.assertIn('bootstrap.v1.json',first)
+            self.assertIn('ledgrid_python_runtime.zip',first)
+            self.assertFalse(any('offline' in name or 'native' in name for name in first))
+            validate_asset_set(ROOT,Path(d)/'first')
+    def test_browser_runtime_identity_detects_tampered_generated_zip(self):
+        with tempfile.TemporaryDirectory() as d:
+            stage=Path(d)/'composer';build_stage(ROOT,stage)
+            (stage/'ledgrid_python_runtime.zip').write_bytes(b'corrupt')
+            with self.assertRaisesRegex(ValueError,'runtime digest'):
+                validate_asset_set(ROOT,stage)

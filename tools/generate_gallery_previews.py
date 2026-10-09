@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT))
 from ipc.scene_contract import normalize_composer_scene  # noqa: E402
 from web.composer_component_presets import ComponentPresetCatalog  # noqa: E402
 from web.composer_final_preview import (  # noqa: E402
-    ComposerFinalPreview, NATIVE_AURORA_BUNDLE_DIGEST, current_component_catalog,
+    ComposerFinalPreview, current_component_catalog,
 )
 
 OUTPUT = ROOT / "web/static/generated/gallery"
@@ -64,10 +64,9 @@ def catalog_scene(descriptor, choice=None):
         parameters = descriptor.parameter_normalizer(json.loads(path.read_text())["params"])
     scene = {
         "schema": "ledgrid.scene.v2",
-        "background": {"component_id": "native_aurora", "version": 1,
-                       "provider": "receiver_native", "role": "background",
-                       "bundle_digest": NATIVE_AURORA_BUNDLE_DIGEST,
-                       "parameters": {"gain": .12, "source_fps": 30, "seed": 4201}},
+        "background": {"component_id": "solid_background", "version": 1,
+                       "provider": "python", "role": "background",
+                       "parameters": {"gain": .12, "seed": 4201}},
         "animation": {"component_id": descriptor.component_id,
                       "version": descriptor.version, "provider": descriptor.provider.value,
                       "role": "animation", "parameters": parameters},
@@ -112,7 +111,10 @@ def render_thumbnail(descriptor, catalog, choice=None):
     return buffer.getvalue(), scene, sample_time
 
 
-def main():
+def build_gallery(repo_root: Path = ROOT):
+    global ROOT, OUTPUT
+    ROOT = repo_root.resolve()
+    OUTPUT = ROOT / "web/static/generated/gallery"
     catalog = current_component_catalog()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     entries = {}
@@ -162,4 +164,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    build_gallery()

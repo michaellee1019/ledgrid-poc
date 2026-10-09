@@ -20,38 +20,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
-from flask import Flask, jsonify, redirect, render_template, request, send_from_directory
+from flask import Flask, has_request_context, jsonify, redirect, render_template, request, send_from_directory
 
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
-from animation.core.activation_qualification import (
-    QUALIFICATION_RECORD_SCHEMA,
-    QUALIFICATION_RECORD_VERSION,
-    QualificationValidationError,
-    activation_qualification_binding_digest,
-    activation_qualification_record_digest,
-    evaluate_activation_qualification,
-    installation_qualification_budget_digest,
-    load_installation_qualification_budget,
-    load_target_qualification_evidence,
-)
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
-from animation.core.installation_profile_authoring import (
-    InstallationProfileAuthoring,
-    InstallationProfileAuthoringError,
-    InstallationProfileDraftConflict,
-)
-from animation.core.installation_profile_library import (
-    InstallationProfileLibrary,
-    InstallationProfileLibraryError,
-    InstallationProfileNotFoundError,
-)
 from animation.core.installation_profile_runtime import EMPTY_INSTALLATION_PROFILE_DIGEST
-from animation.core.installation_profile_topology import (
-    IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
-    InstallationProfileTopology,
-)
 from animation.core.manager import AnimationManager, PreviewLEDController
-from animation.core.native_background_library import NativeBackgroundLibrary
 from animation.core.plant_awareness import (
     FIELD_MODIFIERS,
     LEGACY_PLANT_MASK_PATH_PARAMETERS,
@@ -84,7 +58,6 @@ from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.pixel_chase import PixelChaseAnimation
 from animation.plugins.plant_glow import PlantGlowAnimation
 from animation.plugins.gif_animation import GifAnimation
-from animation.plugins.world_flags import WorldFlagsAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from animation.plugins.gradient import GradientAnimation
@@ -112,11 +85,9 @@ from drivers.frame_codec import (
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from ipc.control_channel import FileControlChannel
 from ipc.runtime_control import (
-    manager_controller_runtime_digests,
     normalize_controller_command_guard,
 )
 from ipc.scene_contract import (
-    SCENE_ACTIVATION_BASIS_VERSION,
     BROWSER_SCENE_MAX_BYTES,
     BROWSER_SCENE_SCHEMA,
     DEFAULT_SCENE_PROVIDER_POLICY,
@@ -125,22 +96,15 @@ from ipc.scene_contract import (
     SCENE_PRESET_VERSION,
     SceneProviderPolicy,
     SceneValidationError,
-    activation_identity_from_basis,
     background_only_scene,
-    build_scene_activation_basis,
     browser_scene_to_host_scene,
     canonical_json_sha256,
     decorate_browser_component,
     decorate_catalog,
     filter_catalog,
     normalize_browser_scene_document,
-    build_composer_operations_status,
     normalize_global_settings_payload,
-    normalize_scene_activation_command,
-    normalize_scene_activation_basis,
-    normalize_scene_activation_status,
     normalize_scene_payload,
-    scene_activation_basis_digest,
     validate_bounded_browser_json,
     LocalSceneAdapter,
     SceneContractError,
@@ -158,7 +122,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v27"
+COMPOSER_SHELL_VERSION = "composer-shell-v28"
 CANONICAL_BROWSER_SCENE_SCHEMA = "ledgrid.browser-scene-v2"
 
 # The Gallery stays projected from the Scene v2 packet, while this small map
@@ -199,36 +163,11 @@ PAINTER_MASK_TYPES = (
         'color': [255, 72, 190],
     },
 )
-from web.activation_token_store import (
-    ActivationTokenConflict,
-    ActivationTokenExpired,
-    ActivationTokenStore,
-    canonical_digest,
-)
-from web.maintenance_api import (
-    DIAGNOSTICS as MAINTENANCE_DIAGNOSTICS,
-    MAX_DURATION_SECONDS as MAINTENANCE_MAX_DURATION_SECONDS,
-    MAX_INTENSITY as MAINTENANCE_MAX_INTENSITY,
-    MAINTENANCE_SCHEMA,
-    MAINTENANCE_SCHEMA_VERSION,
-    MaintenanceRequest,
-    MaintenanceRequestError,
-    identity_from_status as maintenance_identity_from_status,
-)
 
 # Browser execution is deliberately capability-gated. The generated Pyodide
 # asset contains the authoritative Python animation-plugin package, so every
 # animation component with a valid Python module:Class entrypoint can use the
-# universal worker. Receiver-native execution remains explicitly
-# capability-bound to separately built Wasm peers.
-BROWSER_NATIVE_COMPONENT_ASSETS = {
-    'native_aurora': 'native_aurora.wasm',
-    'aurora_curtains_native': 'aurora_curtains_native.wasm',
-    'compiled_rainbow': 'compiled_rainbow.wasm',
-}
-BROWSER_NATIVE_COMPONENTS = frozenset(BROWSER_NATIVE_COMPONENT_ASSETS)
-
-
+# universal worker.
 class _ComposerLocalControlChannel:
     """In-memory Scene-v1 control sink used by the local Composer demo.
 
@@ -254,12 +193,7 @@ class AnimationWebInterface:
                  port: int = 5000,
                  local_mode: bool = False,
                  release_id: Optional[str] = None,
-                 activation_token_store_path: Optional[Path] = None,
                  activation_enabled: Optional[bool] = None,
-                 maintenance_enabled: Optional[bool] = None,
-                 installation_profile_authoring: Optional[
-                     InstallationProfileAuthoring
-                 ] = None,
                  project_root: Optional[Path] = None):
         """
         Initialize web interface
@@ -279,19 +213,11 @@ class AnimationWebInterface:
         self.activation_enabled = (
             bool(activation_enabled)
             if activation_enabled is not None
-            else os.environ.get('LEDGRID_GUARDED_ACTIVATION_CANARY') == '1'
+            else not self.local_mode
         )
         self.activation_mode = (
-            'development_canary' if self.activation_enabled else 'disabled'
+            'host_full_rgb' if self.activation_enabled else 'local_preview'
         )
-        # This separate, default-off capability guards the only Composer
-        # endpoint that can ask the controller to present a named diagnostic.
-        # It does not grant a web client any frame or controller authority.
-        self.maintenance_enabled = (
-            bool(maintenance_enabled)
-            if maintenance_enabled is not None
-            else os.environ.get('LEDGRID_COMPOSER_MAINTENANCE_ENABLED') == '1'
-        ) and self.activation_enabled
         self.project_root = (
             Path(project_root)
             if project_root is not None
@@ -304,22 +230,6 @@ class AnimationWebInterface:
         self._bundled_composer_catalog_cache: Optional[List[Dict[str, Any]]] = None
         self._bundled_composer_catalog_checked = False
         self._controller_runtime_digests_cache: Optional[Dict[str, str]] = None
-        self.target_qualification_evidence_path = (
-            self.project_root
-            / "run_state"
-            / "activation_qualification_evidence.json"
-        )
-        profile_library = getattr(
-            self.preview_manager, '_installation_profile_library', None
-        )
-        self.installation_profile_authoring = installation_profile_authoring
-        if self.installation_profile_authoring is None and isinstance(
-            profile_library, InstallationProfileLibrary
-        ):
-            self.installation_profile_authoring = InstallationProfileAuthoring(
-                profile_library,
-                self.project_root / 'run_state' / 'installation_profile_authoring',
-            )
         self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.foliage_mask_path = self.project_root / "config" / "plant_pixel_map_32x138.json"
         self.planter_mask_path = self.project_root / "config" / "plant_globe_map_32x138.json"
@@ -355,7 +265,6 @@ class AnimationWebInterface:
                 PixelChaseAnimation.COMPONENT_ID: PixelChaseAnimation._normalized_parameters,
                 PlantGlowAnimation.COMPONENT_ID: PlantGlowAnimation._normalized_parameters,
                 GifAnimation.COMPONENT_ID: GifAnimation._normalized_parameters,
-                WorldFlagsAnimation.COMPONENT_ID: WorldFlagsAnimation._normalized_parameters,
                 GradientAnimation.COMPONENT_ID: GradientAnimation._normalized_parameters,
                 RainbowAnimation.COMPONENT_ID: RainbowAnimation._normalized_parameters,
                 SolidColorAnimation.COMPONENT_ID: SolidColorAnimation._normalized_parameters,
@@ -398,28 +307,16 @@ class AnimationWebInterface:
             self.generated_preview_dir = (
                 self.project_root / "run_state" / "mac_animation_previews"
             )
-        self.activation_token_store_path = (
-            Path(activation_token_store_path)
-            if activation_token_store_path is not None
-            else self.project_root / "run_state" / "activation_tokens.sqlite3"
-        )
-        self._activation_token_store: Optional[ActivationTokenStore] = None
         # Create Flask app
         self.app = Flask(__name__)
         self.app.secret_key = 'led-grid-secret-key-change-in-production'
-        # Installation-profile globe regions have a frozen user-facing order.
+        # Fixed calibration globe regions have a frozen user-facing order.
         # Flask's default key sorting would destroy it in the JSON response.
         self.app.json.sort_keys = False
 
         self.animation_presets_dir.mkdir(parents=True, exist_ok=True)
         self.scene_presets_dir.mkdir(parents=True, exist_ok=True)
         self.painter_presets_dir.mkdir(parents=True, exist_ok=True)
-
-        if self.activation_enabled:
-            self._activation_token_store = ActivationTokenStore(
-                self.activation_token_store_path
-            )
-            self._recover_activation_outbox()
 
         # Register routes
         self._register_routes()
@@ -1032,7 +929,7 @@ class AnimationWebInterface:
             """
             response = send_from_directory(
                 self.project_root / 'web' / 'static' / 'js',
-                'composer.js',
+                'composer_slice.js',
                 mimetype='application/javascript',
             )
             response.headers['Cache-Control'] = 'no-store'
@@ -1060,9 +957,7 @@ class AnimationWebInterface:
                     'save_component_preset': True,
                     'save_scene_preset': True,
                     'live_edit_component': True,
-                    'check_scene': self.activation_enabled,
                     'activate_scene': self.activation_enabled,
-                    'activation_status': self.activation_enabled,
                     'playlists': True,
                 },
                 'activation_mode': self.activation_mode,
@@ -1075,16 +970,17 @@ class AnimationWebInterface:
         @self.app.route('/api/v1/composer/operations/status')
         def api_browser_composer_operations_status():
             """Revision-qualified observed output and bounded health evidence."""
-            response = jsonify(build_composer_operations_status(
-                self._status_payload(), now_ms=int(time.time() * 1000),
-            ))
+            response = jsonify(self._composer_playback_status())
             response.headers['Cache-Control'] = 'no-store'
             return response
 
         @self.app.route('/api/v1/composer/settings/observed')
         def api_browser_composer_observed_settings():
             """Return the bounded controller observation used by Composer settings."""
-            response = jsonify(self._composer_settings_observation_payload())
+            try:
+                response = jsonify(self._composer_settings_observation_payload())
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
             response.headers['Cache-Control'] = 'no-store'
             return response
 
@@ -1103,95 +999,7 @@ class AnimationWebInterface:
             response.headers['Cache-Control'] = 'no-store'
             return response
 
-        @self.app.route('/api/v1/composer/maintenance', methods=['POST'])
-        def api_browser_composer_maintenance():
-            """Enqueue one reviewed maintenance request through controller IPC."""
-            if not self.maintenance_enabled:
-                return self._maintenance_unavailable()
-            try:
-                request_id = self._maintenance_request_id(
-                    request.headers.get('Idempotency-Key')
-                )
-                submitted = self._maintenance_browser_input(request.get_json(silent=True))
-                existing = self.control_channel.read_maintenance_request(request_id)
-                if existing is not None:
-                    command = existing.get('command')
-                    parsed = MaintenanceRequest.from_mapping(command)
-                    if self._maintenance_browser_shape(parsed) != submitted:
-                        return self._maintenance_error(
-                            'the idempotency key already names a different maintenance request',
-                            'maintenance_conflict', 409,
-                        )
-                    return self._maintenance_accepted(
-                        parsed,
-                        self.control_channel.read_maintenance_status(request_id),
-                        exact_retry=True,
-                    )
 
-                status = dict(self.control_channel.read_status() or {})
-                self._require_activation_release_identity(status)
-                # Use the existing Composer mutation guard in full: release
-                # parity is not sufficient without a current session/revision
-                # identity that the controller has itself published.
-                self._activation_controller_identity(status)
-                identity = maintenance_identity_from_status(status)
-                authority_digest = self._maintenance_authority_digest(status)
-                parsed = MaintenanceRequest.from_mapping({
-                    'schema': MAINTENANCE_SCHEMA,
-                    'schema_version': MAINTENANCE_SCHEMA_VERSION,
-                    'request_id': request_id,
-                    **submitted,
-                    'expected_identity': identity.to_dict(),
-                    'provenance': {
-                        'operator': 'composer-trusted-network',
-                        'source_revision': self.release_id,
-                        'purpose': 'reviewed Composer maintenance diagnostic',
-                    },
-                })
-                self.control_channel.enqueue_maintenance_request(
-                    parsed.to_dict(), authority_digest=authority_digest,
-                )
-                return self._maintenance_accepted(
-                    parsed,
-                    self.control_channel.read_maintenance_status(request_id),
-                    exact_retry=False,
-                )
-            except (MaintenanceRequestError, RuntimeError, ValueError, AttributeError) as exc:
-                return self._maintenance_error(str(exc), 'invalid_maintenance', 409)
-
-        @self.app.route('/api/v1/composer/maintenance/<request_id>')
-        def api_browser_composer_maintenance_status(request_id: str):
-            """Expose one monotonic lifecycle plus its immutable terminal proof."""
-            if not self.maintenance_enabled:
-                return self._maintenance_unavailable()
-            try:
-                request_id = self._maintenance_request_id(request_id)
-                record = self.control_channel.read_maintenance_request(request_id)
-                if record is None:
-                    return self._maintenance_error(
-                        'maintenance request not found', 'maintenance_not_found', 404,
-                    )
-                parsed = MaintenanceRequest.from_mapping(record.get('command'))
-                status = self.control_channel.read_maintenance_status(request_id)
-                result = self.control_channel.read_maintenance_result(request_id)
-            except (MaintenanceRequestError, ValueError, AttributeError) as exc:
-                return self._maintenance_error(
-                    f'maintenance status is invalid: {exc}',
-                    'maintenance_status_invalid', 500,
-                )
-            response = jsonify({
-                'schema': 'ledgrid.composer-maintenance-status',
-                'schema_version': 1,
-                'request': parsed.to_dict(),
-                'phase': (status or {}).get('phase', 'queued'),
-                'status': status,
-                'result': result,
-                'terminal': (status or {}).get('phase') in {
-                    'restored', 'safe_idle', 'rejected', 'failed',
-                },
-            })
-            response.headers['Cache-Control'] = 'no-store'
-            return response
 
         @self.app.route('/api/v1/composer/presets/validate', methods=['POST'])
         def api_browser_composer_validate_preset():
@@ -1277,596 +1085,42 @@ class AnimationWebInterface:
                 'preset_diagnostics': self._scene_preset_diagnostics(scene),
             })
 
-        @self.app.route('/api/v1/scene/checks', methods=['POST'])
-        def api_check_scene_activation():
-            """Authorize one exact scene/global/controller basis for 120 seconds."""
-            if not self.activation_enabled:
-                return self._activation_unavailable()
-            payload = request.get_json(silent=True)
-            if not isinstance(payload, dict):
-                return jsonify({'error': 'request body must be a JSON object'}), 400
-            unknown = sorted(set(payload) - {
-                'scene', 'global_settings', 'browser_evidence',
-            })
-            if unknown:
-                return jsonify({
-                    'error': f"unsupported Check fields: {', '.join(unknown)}"
-                }), 400
-            expires_at_ms = int((time.time() + 120) * 1000)
-            try:
-                controller_status = dict(self.control_channel.read_status() or {})
-                current_scene = controller_status.get('scene_state')
-                current_powered = bool(controller_status.get('is_running', False))
-                if current_powered and not isinstance(current_scene, dict):
-                    response = jsonify({
-                        'error': (
-                            'Guarded activation is unavailable while the wall is '
-                            'showing a legacy animation because '
-                            'that complete prior state cannot be restored exactly. '
-                            'Stop live output before running Check.'
-                        ),
-                        'code': 'activation_snapshot_unavailable',
-                    })
-                    response.headers['Cache-Control'] = 'no-store'
-                    return response, 409
-                basis, _scene, settings, qualification_record, qualification_result = (
-                    self._activation_basis_for_request(
-                        browser_scene=payload.get('scene'),
-                        global_settings=payload.get('global_settings'),
-                        browser_evidence=payload.get('browser_evidence'),
-                        expires_at_ms=expires_at_ms,
-                        status=controller_status,
-                    )
-                )
-                issued = self._activation_tokens().issue(basis)
-            except RuntimeError as exc:
-                response = jsonify({
-                    'error': str(exc),
-                    'code': 'controller_state_unavailable',
-                })
-                response.headers['Cache-Control'] = 'no-store'
-                return response, 503
-            except (SceneValidationError, TypeError, ValueError) as exc:
-                response = jsonify({'error': str(exc), 'code': 'invalid_check'})
-                response.headers['Cache-Control'] = 'no-store'
-                return response, 400
-            expected_digest = scene_activation_basis_digest(basis)
-            if issued.basis_digest != expected_digest:
-                response = jsonify({
-                    'error': 'server Check basis serialization is inconsistent',
-                    'code': 'check_internal_error',
-                })
-                response.headers['Cache-Control'] = 'no-store'
-                return response, 500
-            response = jsonify({
-                'schema': 'ledgrid.scene-check',
-                'schema_version': 1,
-                'check_token': issued.token,
-                'basis': basis,
-                'basis_digest': expected_digest,
-                'expires_at': issued.expires_at,
-                'qualification': {
-                    'version': basis['qualification']['version'],
-                    'status': (
-                        'passed'
-                        if qualification_result['qualified']
-                        else 'development_canary'
-                    ),
-                    'production_qualified': qualification_result['qualified'],
-                    'record_digest': activation_qualification_record_digest(
-                        qualification_record
-                    ),
-                    'binding_digest': qualification_result['binding_digest'],
-                    'budget_digest': qualification_result['budget_digest'],
-                    'gates': qualification_result['gates'],
-                    'blockers': qualification_result['reasons'],
-                    'browser_evidence': 'advisory',
-                    'global_settings_digest': canonical_json_sha256(settings),
-                },
-            })
-            response.headers['Cache-Control'] = 'no-store'
-            return response, 201
 
         @self.app.route('/api/v1/scene', methods=['PUT', 'POST'])
         def api_start_scene():
+            """Queue a host-rendered scene; controller playback is observed separately."""
             if not self.activation_enabled:
                 return self._activation_unavailable()
             payload = request.get_json(silent=True)
-            if not isinstance(payload, dict):
-                return jsonify({'error': 'request body must be a JSON object'}), 400
-            token = payload.get('check_token')
-            expected_session = payload.get('expected_controller_session_id')
-            expected_revision = payload.get('expected_controller_state_revision')
-            idempotency_key = request.headers.get('Idempotency-Key')
-            if not all(value is not None for value in (
-                token, expected_session, expected_revision
-            )) or not idempotency_key:
-                return jsonify({
-                    'error': (
-                        'check_token, expected controller session/revision, and '
-                        'Idempotency-Key are required'
-                    ),
-                    'code': 'activation_precondition_required',
-                }), 428
+            if not isinstance(payload, dict) or set(payload) - {'scene', 'global_settings'}:
+                return jsonify({'error': 'request must contain scene and optional global_settings'}), 400
             try:
-                if (
-                    not isinstance(idempotency_key, str)
-                    or not 1 <= len(idempotency_key.encode('utf-8')) <= 256
-                    or any(ord(character) < 32 for character in idempotency_key)
-                ):
-                    raise SceneValidationError('Idempotency-Key is invalid')
-                stored = self._activation_tokens().inspect(
-                    token, allow_bound_expired=True
-                )
-            except ActivationTokenExpired as exc:
-                return jsonify({'error': str(exc), 'code': 'check_expired'}), 410
-            except ActivationTokenConflict as exc:
-                return jsonify({'error': str(exc), 'code': 'check_conflict'}), 409
-            except SceneValidationError as exc:
-                return jsonify({'error': str(exc)}), 400
-            basis = stored.basis
-            if (
-                expected_session != basis['controller']['session_id']
-                or expected_revision != basis['controller']['state_revision']
-            ):
-                return jsonify({
-                    'error': 'activation controller precondition changed after Check',
-                    'code': 'activation_conflict',
-                }), 409
-            request_digest = canonical_digest({
-                'basis_digest': stored.basis_digest,
-                'scene': payload.get('scene'),
-                'global_settings': payload.get('global_settings'),
-                'expected_controller_session_id': expected_session,
-                'expected_controller_state_revision': expected_revision,
-            })
-            if stored.activation_id is not None:
-                try:
-                    bound = self._activation_tokens().bind(
-                        token,
-                        basis_digest=scene_activation_basis_digest(basis),
-                        idempotency_key=idempotency_key,
-                        request_digest=request_digest,
-                        activation_id_factory=lambda: str(uuid.uuid4()),
-                    )
-                    existing_status = self._deliver_activation_outbox(bound.token)
-                except ActivationTokenConflict as exc:
-                    return jsonify({
-                        'error': str(exc), 'code': 'activation_conflict'
-                    }), 409
-                except (FileExistsError, OSError, SceneValidationError, ValueError) as exc:
-                    return jsonify({
-                        'error': f'activation could not be queued durably: {exc}',
-                        'code': 'activation_queue_failed',
-                    }), 500
-                status_url = f'/api/v1/scene/activations/{bound.activation_id}'
-                response = jsonify({
-                    'schema': 'ledgrid.scene-activation-accepted',
-                    'schema_version': 1,
-                    'activation_id': bound.activation_id,
-                    'phase': existing_status['phase'],
-                    'pending': existing_status['phase'] not in {
-                        'active', 'rolled_back', 'failed', 'timed_out'
-                    },
-                    'status_url': status_url,
-                    'exact_retry': True,
-                })
-                response.status_code = 202
-                response.headers['Location'] = status_url
-                response.headers['Cache-Control'] = 'no-store'
-                return response
-            try:
-                document, scene = self._validated_browser_activation_scene(
-                    payload.get('scene')
-                )
-                settings = self._canonical_activation_global_settings(
-                    payload.get('global_settings')
-                )
-            except SceneValidationError as exc:
-                return jsonify({
-                    'error': f'activation no longer matches its Check: {exc}',
-                    'code': 'activation_conflict',
-                }), 409
-            except (TypeError, ValueError) as exc:
-                return jsonify({'error': str(exc), 'code': 'invalid_activation'}), 400
-            if (
-                canonical_json_sha256(document) != basis['browser_scene']['digest']
-                or canonical_json_sha256(scene) != basis['host_scene']['digest']
-                or canonical_json_sha256(settings) != basis['global_settings']['digest']
-                or document['installation_profile']['digest']
-                != basis['installation_profile_digest']
-            ):
-                return jsonify({
-                    'error': 'scene, globals, runtime, or profile changed after Check',
-                    'code': 'activation_conflict',
-                }), 409
-            try:
-                status = dict(self.control_channel.read_status() or {})
-                current_session, current_revision, current_identity = (
-                    self._activation_controller_identity(status)
-                )
-            except RuntimeError as exc:
-                return jsonify({
-                    'error': str(exc), 'code': 'controller_state_unavailable'
-                }), 503
-            if (
-                current_session != basis['controller']['session_id']
-                or current_revision != basis['controller']['state_revision']
-                or current_identity
-                != basis['controller']['current_identity_digest']
-            ):
-                return jsonify({
-                    'error': 'controller state changed after Check',
-                    'code': 'activation_conflict',
-                }), 409
-
-            def activation_outbox(activation_id: str) -> Dict[str, Any]:
-                command = normalize_scene_activation_command({
-                    'schema': 'ledgrid.scene-activation-command',
-                    'schema_version': 1,
-                    'activation_id': activation_id,
-                    'check_token_digest': hashlib.sha256(
-                        token.encode('utf-8')
-                    ).hexdigest(),
-                    'basis': basis,
-                    'basis_digest': stored.basis_digest,
-                    'desired': {
-                        'scene': scene,
-                        'global_settings': settings,
-                        'installation_profile_digest': basis[
-                            'installation_profile_digest'
-                        ],
-                    },
-                }, catalog=self._component_catalog(),
-                    canonical_catalog=self.composer_catalog,
-                    provider_policy=self._scene_provider_policy())
-                identity = activation_identity_from_basis(basis)
-                queued = normalize_scene_activation_status({
-                    'schema': 'ledgrid.scene-activation-status',
-                    'schema_version': 1,
-                    'activation_id': activation_id,
-                    'basis_digest': stored.basis_digest,
-                    'command_id': activation_id,
-                    'phase': 'queued',
-                    'requested_identity': identity,
-                    'normalized_identity': identity,
-                    'observed_identity': None,
-                    'controller': {
-                        'session_id': expected_session,
-                        'state_revision_before': expected_revision,
-                        'state_revision_after': None,
-                    },
-                    'telemetry': {
-                        'complete': False, 'fresh': False, 'observed_at': None,
-                    },
-                    'rollback': {
-                        'available': False, 'snapshot_id': None,
-                        'result': None, 'error': None,
-                    },
-                    'camera_observation': None,
-                    'error': None,
-                })
-                return {'command': command, 'status': queued}
-            try:
-                bound = self._activation_tokens().bind(
-                    token,
-                    basis_digest=scene_activation_basis_digest(basis),
-                    idempotency_key=idempotency_key,
-                    request_digest=request_digest,
-                    activation_id_factory=lambda: str(uuid.uuid4()),
-                    outbox_factory=activation_outbox,
-                )
-            except ActivationTokenExpired as exc:
-                return jsonify({'error': str(exc), 'code': 'check_expired'}), 410
-            except ActivationTokenConflict as exc:
-                return jsonify({'error': str(exc), 'code': 'activation_conflict'}), 409
-
-            activation_id = bound.activation_id
-            try:
-                existing_status = self._deliver_activation_outbox(bound.token)
-            except (FileExistsError, OSError, SceneValidationError, ValueError) as exc:
-                return jsonify({
-                    'error': f'activation could not be queued durably: {exc}',
-                    'code': 'activation_queue_failed',
-                }), 500
-
-            status_url = f'/api/v1/scene/activations/{activation_id}'
-            response = jsonify({
-                'schema': 'ledgrid.scene-activation-accepted',
-                'schema_version': 1,
-                'activation_id': activation_id,
-                'phase': existing_status['phase'],
-                'pending': existing_status['phase'] not in {
-                    'active', 'rolled_back', 'failed', 'timed_out'
-                },
-                'status_url': status_url,
-                'exact_retry': bound.exact_retry,
-            })
-            response.status_code = 202
-            response.headers['Location'] = status_url
+                raw_scene = payload.get('scene')
+                if isinstance(raw_scene, dict) and raw_scene.get('schema') == CANONICAL_BROWSER_SCENE_SCHEMA:
+                    raw_scene = raw_scene.get('scene')
+                if isinstance(raw_scene, dict) and raw_scene.get('schema') == 'ledgrid.scene.v2':
+                    scene = self._composer_canonical({'origin': 'composer', 'scene': raw_scene}).scene
+                else:
+                    scene = self._validated_scene_request(raw_scene)
+                settings = normalize_global_settings_payload(payload['global_settings']) if payload.get('global_settings') is not None else None
+                command = self.control_channel.send_command('start_scene', scene=scene, **({'global_settings': settings} if settings is not None else {}))
+            except (SceneValidationError, SceneContractError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc), 'code': 'invalid_scene'}), 400
+            response = jsonify({'success': True, 'state': 'requested', 'command_id': self._command_id(command), 'request_id': command.get('request_id') if isinstance(command, dict) else None, 'requested_scene': scene})
             response.headers['Cache-Control'] = 'no-store'
-            return response
+            return response, 202
 
         @self.app.route('/api/v1/scene', methods=['DELETE'])
         def api_stop_scene():
-            return self._guarded_scene_error(
-                'Stopping a complete scene requires the guarded activation path.'
-            )
+            command = self.control_channel.send_command('stop_scene')
+            return jsonify({'success': True, 'state': 'requested', 'command_id': self._command_id(command), 'request_id': command.get('request_id') if isinstance(command, dict) else None}), 202
 
-        @self.app.route('/api/v1/scene/activations/<activation_id>')
-        def api_get_scene_activation(activation_id: str):
-            if not self.activation_enabled:
-                return self._activation_unavailable()
-            try:
-                status = self.control_channel.read_activation_status(activation_id)
-                if status is None:
-                    return jsonify({'error': 'Activation not found'}), 404
-                status = normalize_scene_activation_status(status)
-            except (SceneValidationError, ValueError) as exc:
-                return jsonify({
-                    'error': f'Activation status is invalid: {exc}'
-                }), 500
-            response = jsonify(status)
-            response.headers['Cache-Control'] = 'no-store'
-            return response
 
-        @self.app.route(
-            '/api/v1/scene/activations/<activation_id>', methods=['DELETE']
-        )
-        def api_cancel_scene_activation(activation_id: str):
-            if not self.activation_enabled:
-                return self._activation_unavailable()
-            try:
-                status = self.control_channel.read_activation_status(activation_id)
-                if status is None:
-                    return jsonify({'error': 'Activation not found'}), 404
-                status = normalize_scene_activation_status(status)
-                cancel = self.control_channel.read_activation_cancel(activation_id)
-                if cancel is None and status['phase'] not in {'queued', 'preflighting'}:
-                    return jsonify({
-                        'error': 'Activation can no longer be canceled without mutation',
-                        'code': 'activation_cancel_conflict',
-                    }), 409
-                if cancel is None:
-                    cancel = self.control_channel.request_activation_cancel(activation_id)
-            except (SceneValidationError, ValueError) as exc:
-                return jsonify({'error': str(exc)}), 400
-            request_status_url = (
-                f'/api/v1/scene/activations/{activation_id}'
-                f'/cancel-requests/{cancel["request_id"]}'
-            )
-            response = jsonify({
-                'activation_id': activation_id,
-                'request_id': cancel['request_id'],
-                'phase': status['phase'],
-                'cancel_requested': True,
-                'requested_at': cancel['requested_at'],
-                'request_status_url': request_status_url,
-            })
-            response.status_code = 202
-            response.headers['Location'] = request_status_url
-            response.headers['Cache-Control'] = 'no-store'
-            return response
 
-        @self.app.route(
-            '/api/v1/scene/activations/<activation_id>'
-            '/cancel-requests/<request_id>'
-        )
-        def api_get_scene_activation_cancel(activation_id: str, request_id: str):
-            if not self.activation_enabled:
-                return self._activation_unavailable()
-            try:
-                cancel = self.control_channel.read_activation_cancel(activation_id)
-                if cancel is None or cancel.get('request_id') != request_id:
-                    return jsonify({'error': 'Cancellation request not found'}), 404
-                result = self.control_channel.read_activation_cancel_result(
-                    activation_id
-                )
-            except ValueError as exc:
-                return jsonify({'error': str(exc)}), 400
-            payload = result or {
-                'schema': 'ledgrid.scene-activation-cancel-result',
-                'schema_version': 1,
-                'request_id': request_id,
-                'activation_id': activation_id,
-                'outcome': 'pending',
-                'status_phase': None,
-                'error': None,
-                'completed_at': None,
-            }
-            response = jsonify(payload)
-            response.headers['Cache-Control'] = 'no-store'
-            return response
 
-        @self.app.route(
-            '/api/v1/scene/activations/<activation_id>/rollback',
-            methods=['POST'],
-        )
-        def api_rollback_scene_activation(activation_id: str):
-            if not self.activation_enabled:
-                return self._activation_unavailable()
-            body = request.get_json(silent=True)
-            if not isinstance(body, dict) or (
-                body.get('expected_controller_session_id') is None
-                or body.get('expected_controller_state_revision') is None
-            ):
-                return jsonify({
-                    'error': 'rollback controller session and revision are required',
-                    'code': 'activation_precondition_required',
-                }), 428
-            try:
-                status = self.control_channel.read_activation_status(activation_id)
-                if status is None:
-                    return jsonify({'error': 'Activation not found'}), 404
-                status = normalize_scene_activation_status(status)
-                existing_rollback = self.control_channel.read_activation_rollback(
-                    activation_id
-                )
-            except (SceneValidationError, ValueError) as exc:
-                return jsonify({'error': str(exc)}), 400
-            if existing_rollback is not None:
-                if (
-                    existing_rollback['expected_controller_session_id']
-                    != body['expected_controller_session_id']
-                    or existing_rollback['expected_controller_state_revision']
-                    != body['expected_controller_state_revision']
-                ):
-                    return jsonify({
-                        'error': 'activation already has a different rollback request',
-                        'code': 'activation_conflict',
-                    }), 409
-                rollback = existing_rollback
-                request_status_url = (
-                    f'/api/v1/scene/activations/{activation_id}'
-                    f'/rollback-requests/{rollback["request_id"]}'
-                )
-                response = jsonify({
-                    'activation_id': activation_id,
-                    'request_id': rollback['request_id'],
-                    'rollback_requested': True,
-                    'snapshot_id': rollback['snapshot_id'],
-                    'request_status_url': request_status_url,
-                    'exact_retry': True,
-                })
-                response.status_code = 202
-                response.headers['Location'] = request_status_url
-                response.headers['Cache-Control'] = 'no-store'
-                return response
-            if not status['rollback']['available']:
-                return jsonify({
-                    'error': 'Exact rollback snapshot is unavailable',
-                    'code': 'rollback_unavailable',
-                }), 409
-            if (
-                body['expected_controller_session_id']
-                != status['controller']['session_id']
-                or body['expected_controller_state_revision']
-                != status['controller']['state_revision_after']
-            ):
-                return jsonify({
-                    'error': 'controller state changed after activation',
-                    'code': 'activation_conflict',
-                }), 409
-            try:
-                current_session, current_revision, _current_identity = (
-                    self._activation_controller_identity(
-                        dict(self.control_channel.read_status() or {})
-                    )
-                )
-            except RuntimeError as exc:
-                return jsonify({
-                    'error': str(exc), 'code': 'controller_state_unavailable'
-                }), 503
-            if (
-                current_session != body['expected_controller_session_id']
-                or current_revision != body['expected_controller_state_revision']
-            ):
-                return jsonify({
-                    'error': 'controller state changed before rollback was queued',
-                    'code': 'activation_conflict',
-                }), 409
-            try:
-                rollback = self.control_channel.request_activation_rollback(
-                    activation_id,
-                    snapshot_id=status['rollback']['snapshot_id'],
-                    expected_controller_session_id=(
-                        body['expected_controller_session_id']
-                    ),
-                    expected_controller_state_revision=(
-                        body['expected_controller_state_revision']
-                    ),
-                )
-            except (FileExistsError, OSError, ValueError) as exc:
-                return jsonify({'error': str(exc)}), 409
-            request_status_url = (
-                f'/api/v1/scene/activations/{activation_id}'
-                f'/rollback-requests/{rollback["request_id"]}'
-            )
-            response = jsonify({
-                'activation_id': activation_id,
-                'request_id': rollback['request_id'],
-                'rollback_requested': True,
-                'snapshot_id': rollback['snapshot_id'],
-                'status_url': f'/api/v1/scene/activations/{activation_id}',
-                'request_status_url': request_status_url,
-                'exact_retry': False,
-            })
-            response.status_code = 202
-            response.headers['Location'] = request_status_url
-            response.headers['Cache-Control'] = 'no-store'
-            return response
 
-        @self.app.route(
-            '/api/v1/scene/activations/<activation_id>'
-            '/rollback-requests/<request_id>'
-        )
-        def api_get_scene_activation_rollback(activation_id: str, request_id: str):
-            if not self.activation_enabled:
-                return self._activation_unavailable()
-            try:
-                rollback = self.control_channel.read_activation_rollback(
-                    activation_id
-                )
-                if rollback is None or rollback.get('request_id') != request_id:
-                    return jsonify({'error': 'Rollback request not found'}), 404
-                result = self.control_channel.read_activation_rollback_result(
-                    activation_id
-                )
-            except ValueError as exc:
-                return jsonify({'error': str(exc)}), 400
-            payload = result or {
-                'schema': 'ledgrid.scene-activation-rollback-result',
-                'schema_version': 1,
-                'request_id': request_id,
-                'activation_id': activation_id,
-                'outcome': 'pending',
-                'status_phase': None,
-                'error': None,
-                'completed_at': None,
-            }
-            response = jsonify(payload)
-            response.headers['Cache-Control'] = 'no-store'
-            return response
 
-        @self.app.route('/api/v1/receiver-native/recover', methods=['POST'])
-        def api_recover_receiver_native():
-            """Explicitly replace native playback with its recorded fallback."""
-            command = self.control_channel.send_command('recover_receiver_native')
-            return jsonify({
-                'success': True,
-                'operation': 'recover_to_known_python_fallback',
-                'command_id': self._command_id(command),
-            }), 202
 
-        @self.app.route(
-            '/api/v1/native-backgrounds/<bundle_digest>/<operation>',
-            methods=['POST'],
-        )
-        def api_native_background_operation(bundle_digest: str, operation: str):
-            if re.fullmatch(r'[0-9a-f]{64}', bundle_digest) is None:
-                return jsonify({'error': 'bundle digest must be lowercase SHA-256'}), 400
-            actions = {
-                'probe': 'probe_native_background',
-                'install': 'install_native_background',
-                'clear-quarantine': 'clear_native_background_quarantine',
-            }
-            action = actions.get(operation)
-            if action is None:
-                return jsonify({
-                    'error': (
-                        'native operation must be probe, install, or '
-                        'clear-quarantine'
-                    ),
-                }), 404
-            command = self.control_channel.send_command(
-                action, bundle_digest=bundle_digest
-            )
-            return jsonify({
-                'success': True,
-                'operation': operation,
-                'bundle_digest': bundle_digest,
-                'command_id': self._command_id(command),
-            }), 202
 
         @self.app.route('/api/v1/scene/components/<target>', methods=['PATCH'])
         def api_update_scene_component(target: str):
@@ -1874,13 +1128,12 @@ class AnimationWebInterface:
 
             Ordinary direct PATCH calls remain fail-closed.  Composer live edit
             opts in per request, names the component it expects to be live, and
-            may update parameters only; replacing a scene still uses guarded
-            activation.
+            may update parameters only; replacing a scene uses a complete Scene request.
             """
             payload = request.get_json(silent=True)
             if not isinstance(payload, dict) or payload.get('live_edit') is not True:
                 return self._guarded_scene_error(
-                    f'Updating scene component {target!r} requires a complete guarded activation.'
+                    f'Updating scene component {target!r} requires a complete Scene request.'
                 )
             unknown = sorted(set(payload) - {
                 'live_edit', 'expected_component', 'params',
@@ -2114,9 +1367,15 @@ class AnimationWebInterface:
 
         @self.app.route('/api/v1/scene-presets/<preset_id>/apply', methods=['POST'])
         def api_apply_scene_preset(preset_id: str):
-            return self._guarded_scene_error(
-                f'Scene preset {preset_id!r} requires Check and guarded activation.'
-            )
+            preset = self._load_scene_preset(preset_id)
+            if preset is None:
+                return jsonify({'error': 'Scene preset not found'}), 404
+            try:
+                scene = self._validated_scene_request(preset.get('scene'))
+                command = self.control_channel.send_command('start_scene', scene=scene)
+            except (SceneValidationError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+            return jsonify({'success': True, 'state': 'requested', 'command_id': self._command_id(command)}), 202
 
         @self.app.route('/api/v1/scene-presets/<preset_id>', methods=['DELETE'])
         def api_delete_scene_preset(preset_id: str):
@@ -2173,13 +1432,10 @@ class AnimationWebInterface:
         @self.app.route('/api/v1/receivers/status/refresh', methods=['POST'])
         def api_refresh_receiver_status():
             """Request a fresh controller-side SPI status drain on every receiver."""
-            request_id = f"phase3a-{time.time_ns():x}"
-            command = self.control_channel.send_command(
-                'refresh_receiver_status', request_id=request_id
-            )
+            command = self.control_channel.send_command('refresh_receiver_status')
             return jsonify({
                 'accepted': True,
-                'request_id': request_id,
+                'request_id': command.get('request_id') if isinstance(command, dict) else None,
                 'command_id': (
                     command.get('command_id') if isinstance(command, dict) else None
                 ),
@@ -2461,138 +1717,9 @@ class AnimationWebInterface:
                 'preset': self._preset_summary(preset_payload),
             })
 
-        @self.app.route(
-            '/api/v1/installation-profiles/<digest>/draft',
-            methods=['GET'],
-        )
-        def api_installation_profile_get_draft(digest: str):
-            """Load a revisioned draft derived from this exact immutable artifact."""
-            try:
-                draft = self._installation_profile_authoring().load(digest)
-            except InstallationProfileNotFoundError as exc:
-                return jsonify({'error': str(exc)}), 404
-            except InstallationProfileAuthoringError as exc:
-                return jsonify({'error': str(exc)}), 400
-            except InstallationProfileLibraryError as exc:
-                return jsonify({'error': str(exc)}), 500
-            response = jsonify(draft)
-            response.headers['ETag'] = f'"{draft["revision"]}"'
-            response.headers['Cache-Control'] = 'no-store'
-            return response
 
-        @self.app.route(
-            '/api/v1/installation-profiles/<digest>/draft',
-            methods=['PUT'],
-        )
-        def api_installation_profile_update_draft(digest: str):
-            """Replace a draft using restart-safe optimistic concurrency."""
-            expected_revision = self._installation_profile_if_match()
-            if expected_revision is None:
-                return jsonify({
-                    'error': 'If-Match is required for installation-profile draft updates',
-                    'code': 'precondition_required',
-                }), 428
-            payload = request.get_json(silent=True)
-            if payload is None:
-                return jsonify({'error': 'A complete JSON draft is required'}), 400
-            try:
-                draft = self._installation_profile_authoring().update(
-                    digest,
-                    expected_revision=expected_revision,
-                    draft=payload,
-                )
-            except InstallationProfileDraftConflict as exc:
-                response = jsonify({
-                    'error': str(exc),
-                    'code': 'revision_conflict',
-                    'current_revision': exc.current_revision,
-                })
-                response.status_code = 409
-                response.headers['ETag'] = f'"{exc.current_revision}"'
-                return response
-            except InstallationProfileNotFoundError as exc:
-                return jsonify({'error': str(exc)}), 404
-            except InstallationProfileAuthoringError as exc:
-                return jsonify({'error': str(exc)}), 400
-            except InstallationProfileLibraryError as exc:
-                return jsonify({'error': str(exc)}), 500
-            response = jsonify(draft)
-            response.headers['ETag'] = f'"{draft["revision"]}"'
-            response.headers['Cache-Control'] = 'no-store'
-            return response
 
-        @self.app.route(
-            '/api/v1/installation-profiles/<digest>/publish',
-            methods=['POST'],
-        )
-        def api_installation_profile_publish(digest: str):
-            """Compile and publish a candidate without selecting the live profile."""
-            expected_revision = self._installation_profile_if_match()
-            if expected_revision is None:
-                return jsonify({
-                    'error': 'If-Match is required for installation-profile publication',
-                    'code': 'precondition_required',
-                }), 428
-            try:
-                receipt, draft = self._installation_profile_authoring().publish(
-                    digest,
-                    expected_revision=expected_revision,
-                )
-            except InstallationProfileDraftConflict as exc:
-                response = jsonify({
-                    'error': str(exc),
-                    'code': 'revision_conflict',
-                    'current_revision': exc.current_revision,
-                })
-                response.status_code = 409
-                response.headers['ETag'] = f'"{exc.current_revision}"'
-                return response
-            except InstallationProfileNotFoundError as exc:
-                return jsonify({'error': str(exc)}), 404
-            except InstallationProfileAuthoringError as exc:
-                return jsonify({'error': str(exc)}), 400
-            except InstallationProfileLibraryError as exc:
-                return jsonify({'error': str(exc)}), 500
-            response = jsonify({
-                'published_digest': receipt.content_digest,
-                'artifact_url': (
-                    f'/api/v1/installation-profiles/{receipt.content_digest}/artifact'
-                ),
-                'selected': False,
-                'revision': draft['revision'],
-                'receipt': receipt.to_dict(),
-            })
-            response.headers['ETag'] = f'"{draft["revision"]}"'
-            response.headers['Cache-Control'] = 'no-store'
-            return response
 
-        @self.app.route(
-            '/api/v1/installation-profiles/<digest>/artifact',
-            methods=['GET'],
-        )
-        def api_installation_profile_artifact(digest: str):
-            """Serve one validated content-addressed LGIP artifact read-only."""
-            try:
-                resolved = self._installation_profile_authoring().library.resolve(digest)
-            except InstallationProfileNotFoundError as exc:
-                return jsonify({'error': str(exc)}), 404
-            except InstallationProfileAuthoringError as exc:
-                return jsonify({'error': str(exc)}), 400
-            except InstallationProfileLibraryError as exc:
-                return jsonify({'error': str(exc)}), 500
-            if request.if_none_match.contains(resolved.content_digest):
-                response = self.app.response_class(status=304)
-            else:
-                response = self.app.response_class(
-                    resolved.encoded,
-                    status=200,
-                    mimetype='application/octet-stream',
-                )
-            response.headers['ETag'] = f'"{resolved.content_digest}"'
-            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-            response.headers['X-Installation-Profile-Digest'] = resolved.content_digest
-            response.headers['X-Content-Type-Options'] = 'nosniff'
-            return response
 
     @staticmethod
     def _canonical_vibe_state(requested: Any) -> Dict[str, Any]:
@@ -2661,30 +1788,26 @@ class AnimationWebInterface:
 
     def _component_catalog(self) -> List[Dict[str, Any]]:
         """Read the unified descriptor catalog without importing implementations."""
-        policy = self._scene_provider_policy()
-        getter = getattr(self.preview_manager, 'list_components', None)
-        if callable(getter):
-            raw = getter()
-            if isinstance(raw, dict):
-                raw = raw.get('components', [])
-            catalog = decorate_catalog(raw or [], provider_policy=policy)
-            return self._scene_v1_component_roles(catalog)
         loader = getattr(self.preview_manager, 'plugin_loader', None)
-        if loader is not None:
-            catalog_getter = getattr(loader, 'component_catalog', None)
-            if callable(catalog_getter):
-                return self._scene_v1_component_roles(
-                    decorate_catalog(catalog_getter(), provider_policy=policy)
-                )
-        # Small test doubles and legacy local integrations may expose only the
-        # animation list.  Keep this adapter explicit and Python/background-only.
-        catalog = decorate_catalog(({
-            **item,
-            'plugin_id': item.get('plugin_id', item.get('plugin_name')),
-            'provider': item.get('provider', 'python'),
-            'role': item.get('role', 'background'),
-        } for item in self.preview_manager.list_animations()), provider_policy=policy)
-        return self._scene_v1_component_roles(catalog)
+        raw_getter = getattr(loader, 'component_catalog', None)
+        discovered = raw_getter() if callable(raw_getter) else []
+        discovered_by_id = {item.get('plugin_id'): item for item in discovered}
+        records = []
+        for descriptor in self.composer_catalog.descriptors:
+            component_id = descriptor.component_id
+            source_id = 'solid' if component_id == 'solid_background' else component_id
+            source = dict(discovered_by_id.get(source_id, {}))
+            source.update(plugin_id=component_id, provider='python', role=descriptor.role.value,
+                          name='Solid background' if component_id == 'solid_background' else source.get('name', component_id.replace('_', ' ').title()),
+                          defaults=descriptor.default_parameters())
+            if component_id == 'solid_background':
+                source['parameter_schema'] = {
+                    'gain': {'type': 'float', 'min': 0, 'max': 1, 'default': .62},
+                    'seed': {'type': 'int', 'min': 0, 'max': 999999, 'default': 4201},
+                }
+                source['entrypoint'] = ''
+            records.append(source)
+        return self._scene_v1_component_roles(decorate_catalog(records, provider_policy=DEFAULT_SCENE_PROVIDER_POLICY))
 
     def _composer_gallery_payload(self) -> Dict[str, Any]:
         """Project every eligible Composer Animation exactly once.
@@ -2778,14 +1901,6 @@ class AnimationWebInterface:
             )
         return guard
 
-    def _activation_tokens(self) -> ActivationTokenStore:
-        """Lazily open the durable hashed-token store only when Check is used."""
-
-        if self._activation_token_store is None:
-            self._activation_token_store = ActivationTokenStore(
-                self.activation_token_store_path
-            )
-        return self._activation_token_store
 
     @staticmethod
     def _activation_unavailable() -> tuple[Any, int]:
@@ -2797,496 +1912,31 @@ class AnimationWebInterface:
         return response, 503
 
     @staticmethod
-    def _maintenance_error(message: str, code: str, status: int):
-        response = jsonify({'error': message, 'code': code})
-        response.headers['Cache-Control'] = 'no-store'
-        return response, status
 
-    def _maintenance_unavailable(self):
-        return self._maintenance_error(
-            'Guarded Composer maintenance is disabled on this server.',
-            'maintenance_unavailable', 503,
-        )
 
     @staticmethod
-    def _maintenance_request_id(value: Any) -> str:
-        if not isinstance(value, str):
-            raise ValueError('Idempotency-Key must be a lowercase UUID')
-        try:
-            canonical = str(uuid.UUID(value))
-        except (AttributeError, ValueError) as exc:
-            raise ValueError('Idempotency-Key must be a lowercase UUID') from exc
-        if value != canonical:
-            raise ValueError('Idempotency-Key must be a lowercase UUID')
-        return canonical
 
     @staticmethod
-    def _maintenance_browser_input(value: Any) -> Dict[str, Any]:
-        if not isinstance(value, dict) or set(value) != {
-            'diagnostic', 'target', 'intensity', 'duration_seconds',
-        }:
-            raise ValueError(
-                'maintenance requests require exactly diagnostic, target, intensity, and duration_seconds'
-            )
-        return {
-            'diagnostic': value['diagnostic'],
-            'target': value['target'],
-            'intensity': value['intensity'],
-            'duration_seconds': value['duration_seconds'],
-        }
 
     @staticmethod
-    def _maintenance_browser_shape(request_value: MaintenanceRequest) -> Dict[str, Any]:
-        return {
-            'diagnostic': request_value.diagnostic,
-            'target': dict(request_value.target),
-            'intensity': request_value.intensity,
-            'duration_seconds': request_value.duration_seconds,
-        }
 
     @staticmethod
-    def _maintenance_authority_digest(status: Dict[str, Any]) -> str:
-        """Read the controller-published immutable authority without guessing."""
-        value = status.get('receiver_identity_authority_digest')
-        if isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value):
-            return value
-        raise RuntimeError('controller receiver identity authority is unavailable')
 
-    def _maintenance_accepted(
-        self,
-        request_value: MaintenanceRequest,
-        status: Any,
-        *,
-        exact_retry: bool,
-    ):
-        phase = status.get('phase', 'queued') if isinstance(status, dict) else 'queued'
-        status_url = f'/api/v1/composer/maintenance/{request_value.request_id}'
-        response = jsonify({
-            'schema': 'ledgrid.composer-maintenance-accepted',
-            'schema_version': 1,
-            'request_id': request_value.request_id,
-            'phase': phase,
-            'pending': phase in {'queued', 'running'},
-            'status_url': status_url,
-            'exact_retry': exact_retry,
-        })
-        response.status_code = 202
-        response.headers['Location'] = status_url
-        response.headers['Cache-Control'] = 'no-store'
-        return response
 
-    def _deliver_activation_outbox(self, stored: Any) -> Dict[str, Any]:
-        """Project one SQLite-committed activation into durable IPC idempotently."""
 
-        command = stored.outbox_command
-        status = stored.outbox_status
-        if not isinstance(command, dict) or not isinstance(status, dict):
-            raise ValueError('activation outbox is incomplete')
-        activation_id = stored.activation_id
-        existing_status = self.control_channel.read_activation_status(activation_id)
-        if existing_status is None:
-            existing_status = self.control_channel.write_activation_status(status)
-        else:
-            existing_status = normalize_scene_activation_status(existing_status)
-        self.control_channel.enqueue_activation(command)
-        self._activation_tokens().mark_outbox_delivered(activation_id)
-        return existing_status
 
-    def _recover_activation_outbox(self) -> None:
-        required = (
-            'read_activation_status', 'write_activation_status',
-            'enqueue_activation',
-        )
-        if not all(callable(getattr(self.control_channel, name, None)) for name in required):
-            return
-        store = self._activation_token_store
-        if store is None:
-            return
-        for pending in store.pending_outbox():
-            try:
-                self._deliver_activation_outbox(pending)
-            except (FileExistsError, OSError, SceneValidationError, ValueError):
-                # Remains pending in SQLite and is repaired on the next startup
-                # or exact retry. Never pretend it reached the controller queue.
-                continue
 
-    def _activation_runtime_digests(
-        self, catalog: List[Dict[str, Any]], *, required: Optional[set[str]] = None,
-    ) -> Dict[str, str]:
-        """Bind Check to the controller's authoritative runtime derivation."""
 
-        if self.local_mode:
-            result = manager_controller_runtime_digests(self.preview_manager)
-        else:
-            if self._controller_runtime_digests_cache is None:
-                self._controller_runtime_digests_cache = (
-                    manager_controller_runtime_digests(self.preview_manager)
-                )
-            result = self._controller_runtime_digests_cache
-        required_identities = required if required is not None else {
-            f"{component.get('provider')}:{component.get('plugin_id')}"
-            for component in catalog
-            if isinstance(component.get('provider'), str)
-            and isinstance(component.get('plugin_id'), str)
-        }
-        missing = sorted(required_identities - result.keys())
-        if missing:
-            raise SceneValidationError(
-                'controller runtime identity is unavailable for '
-                + ', '.join(missing)
-            )
-        return result
 
-    @staticmethod
-    def _activation_controller_identity(status: Dict[str, Any]) -> tuple[str, int, Optional[str]]:
-        session_id = status.get('controller_session_id')
-        state_revision = status.get('controller_state_revision')
-        active_identity = status.get('active_identity')
-        current_identity_digest = status.get('current_identity_digest')
-        if current_identity_digest is None and isinstance(active_identity, dict):
-            current_identity_digest = active_identity.get(
-                'current_identity', active_identity.get('current_identity_digest')
-            )
-        if not isinstance(session_id, str) or not session_id:
-            raise RuntimeError('controller session identity is unavailable')
-        if (
-            isinstance(state_revision, bool)
-            or not isinstance(state_revision, int)
-            or state_revision < 0
-        ):
-            raise RuntimeError('controller state revision is unavailable')
-        if current_identity_digest is not None and (
-            not isinstance(current_identity_digest, str)
-            or re.fullmatch(r'[0-9a-f]{64}', current_identity_digest) is None
-        ):
-            raise RuntimeError('controller active identity is invalid')
-        if isinstance(active_identity, dict):
-            derived_identity_digest = canonical_json_sha256(active_identity)
-            if current_identity_digest != derived_identity_digest:
-                raise RuntimeError(
-                    'controller active identity digest does not match its payload'
-                )
-        return session_id, state_revision, current_identity_digest
 
-    def _require_activation_release_identity(
-        self, status: Dict[str, Any]
-    ) -> str:
-        """Require web and controller to execute one immutable release."""
 
-        web_release = self.release_id
-        controller_release = status.get('release_id')
-        if (
-            not isinstance(web_release, str)
-            or re.fullmatch(r'[0-9a-f]{64}', web_release) is None
-        ):
-            raise RuntimeError(
-                'web release identity is unavailable for guarded activation'
-            )
-        if (
-            not isinstance(controller_release, str)
-            or re.fullmatch(r'[0-9a-f]{64}', controller_release) is None
-        ):
-            raise RuntimeError(
-                'controller release identity is unavailable for guarded activation'
-            )
-        if controller_release != web_release:
-            raise RuntimeError(
-                'web and controller release identities do not match'
-            )
-        return web_release
 
-    def _canonical_activation_global_settings(self, payload: Any) -> Dict[str, Any]:
-        settings = normalize_global_settings_payload(payload)
-        vibe = settings['vibe']
-        # Resolve through the authoritative registry so a syntactically valid
-        # but invented vibe digest cannot acquire a server Check token.
-        self._canonical_vibe_state({
-            **vibe,
-            'revision': settings['revision'],
-        })
-        return settings
-
-    @staticmethod
-    def _browser_activation_evidence(
-        value: Any, *, binding_digest: str
-    ) -> Optional[Dict[str, Any]]:
-        """Adapt one completed local Check into advisory browser evidence."""
-        if not isinstance(value, dict) or value.get('source') != 'browser':
-            return None
-        frame_time = value.get('frameTimeMs')
-        cadence = value.get('cadence')
-        electrical = value.get('electrical')
-        if not all(isinstance(item, dict) for item in (
-            frame_time, cadence, electrical,
-        )):
-            return None
-        environment = value.get('environment')
-        user_agent = (
-            environment.get('userAgent')
-            if isinstance(environment, dict)
-            else None
-        )
-        if not isinstance(user_agent, str) or not user_agent.strip():
-            user_agent = 'browser environment not reported'
-        current_mean = electrical.get('meanCurrentAmps')
-        current_peak = electrical.get('peakCurrentAmps')
-        nominal_voltage = electrical.get('nominalVoltageVolts')
-        if any(
-            isinstance(item, bool) or not isinstance(item, (int, float))
-            for item in (current_mean, current_peak, nominal_voltage)
-        ):
-            return None
-        return {
-            'source': 'browser',
-            'binding_digest': binding_digest,
-            'captured_at': value.get('capturedAt'),
-            'environment': f'Browser local Check: {user_agent}',
-            'sample_count': value.get('sampleCount'),
-            'frame_time_ms': {
-                'mean': frame_time.get('mean'),
-                'p95': frame_time.get('p95'),
-                'p99': frame_time.get('p99'),
-                'max': frame_time.get('max'),
-            },
-            'cadence': {
-                'observed_fps': cadence.get('observedFps'),
-                'missed_frame_ratio': cadence.get('missedFrameRatio'),
-                'changed_frame_ratio': cadence.get('changedFrameRatio'),
-            },
-            'electrical': {
-                'kind': 'uncalibrated_estimate',
-                'budget_digest': None,
-                'brightness': electrical.get('brightness'),
-                'voltage_v': {
-                    'mean': nominal_voltage,
-                    'p95': nominal_voltage,
-                    'p99': nominal_voltage,
-                    'max': nominal_voltage,
-                },
-                'current_a': {
-                    'mean': current_mean,
-                    'p95': current_peak,
-                    'p99': current_peak,
-                    'max': current_peak,
-                },
-            },
-        }
-
-    def _activation_qualification(
-        self,
-        *,
-        document: Dict[str, Any],
-        settings: Dict[str, Any],
-        controller_status: Dict[str, Any],
-        browser_evidence: Any,
-        runtime_identity: Dict[str, Any],
-    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-        """Build and evaluate one exact, server-owned qualification record."""
-        geometry = self._normalize_led_info({
-            'strip_count': self.preview_manager.controller.strip_count,
-            'leds_per_strip': self.preview_manager.controller.leds_per_strip,
-            'total_leds': self.preview_manager.controller.total_leds,
-        })
-        if geometry is None:
-            raise SceneValidationError('qualification geometry is unavailable')
-        document_revision = (
-            document['scene_identity']['revision']
-            if document.get('schema') == CANONICAL_BROWSER_SCENE_SCHEMA
-            else document['revision']
-        )
-        binding = {
-            'browser_scene': {
-                'revision': document_revision,
-                'digest': canonical_json_sha256(document),
-            },
-            'installation_profile_digest': document[
-                'installation_profile'
-            ]['digest'],
-            'global_settings': {
-                'revision': settings['revision'],
-                'digest': canonical_json_sha256(settings),
-            },
-            'geometry': {
-                'strip_count': geometry['strip_count'],
-                'leds_per_strip': geometry['leds_per_strip'],
-            },
-            'brightness': settings['output']['brightness'],
-            'vibe': settings['vibe'],
-            'plant_modifiers': settings['plant_modifiers'],
-            'target_fps': settings['output']['target_fps'],
-        }
-        binding_digest = activation_qualification_binding_digest(binding)
-        evidence = []
-        browser = self._browser_activation_evidence(
-            browser_evidence, binding_digest=binding_digest
-        )
-        if browser is not None:
-            evidence.append(browser)
-        try:
-            retained_envelope = load_target_qualification_evidence(
-                self.target_qualification_evidence_path
-            )
-        except QualificationValidationError:
-            # Missing, malformed, stale-binding, and partial evidence all fail
-            # closed as missing target evidence in the qualification result.
-            retained_envelope = None
-        if (
-            retained_envelope is not None
-            and retained_envelope['binding_digest'] == binding_digest
-            and retained_envelope['runtime_identity'] == runtime_identity
-        ):
-            transport_digest = canonical_json_sha256(
-                retained_envelope['transport']
-            )
-            for item in retained_envelope['evidence']:
-                retained_item = dict(item)
-                if retained_item['source'] == 'receiver':
-                    if retained_item['transport_digest'] != transport_digest:
-                        raise QualificationValidationError(
-                            'receiver transport digest does not match normalized proof'
-                        )
-                evidence.append(retained_item)
-
-        budget = load_installation_qualification_budget()
-        record = {
-            'schema': QUALIFICATION_RECORD_SCHEMA,
-            'schema_version': QUALIFICATION_RECORD_VERSION,
-            'revision': 1,
-            'qualification_version': 'server-check-v2',
-            'binding': binding,
-            'budget': {
-                'revision': budget['revision'],
-                'digest': installation_qualification_budget_digest(budget),
-            },
-            'evidence': evidence,
-        }
-        result = evaluate_activation_qualification(
-            record, budget, now_ms=int(time.time() * 1000)
-        )
-        return record, result
-
-    def _activation_basis_for_request(
-        self,
-        *,
-        browser_scene: Any,
-        global_settings: Any,
-        browser_evidence: Any = None,
-        expires_at_ms: int,
-        status: Optional[Dict[str, Any]] = None,
-    ) -> tuple[
-        Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any],
-        Dict[str, Any],
-    ]:
-        catalog = self._browser_scene_catalog()
-        document, host_scene = self._validated_browser_activation_scene(
-            browser_scene
-        )
-        settings = self._canonical_activation_global_settings(global_settings)
-        controller_status = (
-            dict(status) if isinstance(status, dict)
-            else dict(self.control_channel.read_status() or {})
-        )
-        release_id = self._require_activation_release_identity(controller_status)
-        session_id, state_revision, current_identity = (
-            self._activation_controller_identity(controller_status)
-        )
-        if current_identity is None:
-            raise RuntimeError(
-                'controller runtime identity is unavailable for guarded activation'
-            )
-        qualification_record, qualification_result = self._activation_qualification(
-            document=document,
-            settings=settings,
-            controller_status=controller_status,
-            browser_evidence=browser_evidence,
-            runtime_identity={
-                'release_id': release_id,
-                'controller_session_id': session_id,
-                'controller_state_revision': state_revision,
-                'current_identity_digest': current_identity,
-            },
-        )
-        if document.get('schema') == CANONICAL_BROWSER_SCENE_SCHEMA:
-            scene_components = list(document['components'])
-        else:
-            scene_components = [document['background'], document['fallback']]
-            scene_components.extend(
-                layer['component'] for layer in document.get('layers', [])
-                if isinstance(layer, dict) and isinstance(layer.get('component'), dict)
-            )
-        required_runtime_identities = {
-            f"{component.get('provider')}:{component.get('component_id')}"
-            for component in scene_components
-            if isinstance(component.get('provider'), str)
-            and isinstance(component.get('component_id'), str)
-        }
-        runtime_digests = self._activation_runtime_digests(
-            catalog, required=required_runtime_identities,
-        )
-        if document.get('schema') == CANONICAL_BROWSER_SCENE_SCHEMA:
-            identities = []
-            for component in document['components']:
-                qualified_id = f"{component['provider']}:{component['component_id']}"
-                identity = {
-                    'slot_id': component['slot_id'],
-                    'provider': component['provider'],
-                    'component_id': component['component_id'],
-                    'component_digest': component['component_digest'],
-                    'browser_runtime_digest': component['runtime_digest'],
-                    'controller_runtime_digest': runtime_digests[qualified_id],
-                    'parameter_schema_version': component['parameter_schema_version'],
-                }
-                if component['provider'] == 'receiver_native':
-                    identity.update(
-                        bundle_digest=component['bundle_digest'],
-                        expected_payload_digest=component['expected_payload_digest'],
-                    )
-                identities.append(identity)
-            basis = normalize_scene_activation_basis({
-                'schema': 'ledgrid.scene-activation-basis', 'schema_version': SCENE_ACTIVATION_BASIS_VERSION,
-                'browser_scene': {
-                    'revision': document['scene_identity']['revision'],
-                    'digest': canonical_json_sha256(document),
-                },
-                'host_scene': document['scene_identity'],
-                'components': identities,
-                'installation_profile_digest': document['installation_profile']['digest'],
-                'global_settings': {'revision': settings['revision'], 'digest': canonical_json_sha256(settings)},
-                'controller': {'session_id': session_id, 'state_revision': state_revision, 'current_identity_digest': current_identity},
-                'qualification': {
-                    'version': qualification_record['qualification_version'],
-                    'record_digest': activation_qualification_record_digest(qualification_record),
-                    'expires_at': expires_at_ms,
-                },
-            })
-        else:
-            basis = build_scene_activation_basis(
-            browser_scene=document,
-            catalog=catalog,
-            global_settings=settings,
-            controller_runtime_digests=runtime_digests,
-            controller_session_id=session_id,
-            controller_state_revision=state_revision,
-            current_identity_digest=current_identity,
-            qualification_version=qualification_record['qualification_version'],
-            qualification_record_digest=activation_qualification_record_digest(
-                qualification_record
-            ),
-            expires_at=expires_at_ms,
-            host_scene=host_scene,
-            provider_policy=self._scene_provider_policy(),
-            )
-        return (
-            basis, host_scene, settings, qualification_record,
-            qualification_result,
-        )
 
     @staticmethod
     def _guarded_scene_error(message: str) -> tuple[Any, int]:
         return jsonify({
             'error': message,
-            'code': 'guarded_activation_required',
-            'check_url': '/api/v1/scene/checks',
+            'code': 'scene_request_required',
             'activation_url': '/api/v1/scene',
         }), 428
 
@@ -3410,7 +2060,7 @@ class AnimationWebInterface:
                 r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*',
                 entrypoint,
             ))
-            if provider == 'python' and python_entrypoint_ready:
+            if provider == 'python' and python_entrypoint_ready and plugin_id != 'solid_background':
                 runtime = {
                     'kind': 'python',
                     'supported': True,
@@ -3418,20 +2068,6 @@ class AnimationWebInterface:
                     'worker_url': '/static/js/composer_python_worker.js',
                     'asset_url': (
                         '/static/generated/composer/ledgrid_python_runtime.zip'
-                    ),
-                }
-            elif (
-                provider == 'receiver_native'
-                and plugin_id in BROWSER_NATIVE_COMPONENTS
-            ):
-                runtime = {
-                    'kind': 'native',
-                    'supported': True,
-                    'engine': 'receiver-native-cpp-wasm',
-                    'worker_url': '/static/js/composer_native_worker.js',
-                    'asset_url': (
-                        '/static/generated/composer/'
-                        f'{BROWSER_NATIVE_COMPONENT_ASSETS[plugin_id]}'
                     ),
                 }
             else:
@@ -3536,8 +2172,6 @@ class AnimationWebInterface:
                     'vibe_capabilities': vibe_capabilities,
                 },
             }
-            if descriptor is not None and provider == 'receiver_native':
-                component['compatibility']['implementation_authority'] = 'managed_receiver'
             components.append(decorate_browser_component(
                 component,
                 browser_runtime=runtime,
@@ -3558,24 +2192,7 @@ class AnimationWebInterface:
         profile_digest = profile_status.get(
             'selected_digest', EMPTY_INSTALLATION_PROFILE_DIGEST
         )
-        managed_profile_selected = (
-            isinstance(profile_digest, str)
-            and profile_digest != EMPTY_INSTALLATION_PROFILE_DIGEST
-            and re.fullmatch(r'[0-9a-f]{64}', profile_digest) is not None
-            and self.installation_profile_authoring is not None
-        )
-        profile_draft_url = (
-            f'/api/v1/installation-profiles/{profile_digest}/draft'
-            if managed_profile_selected else None
-        )
-        profile_publish_url = (
-            f'/api/v1/installation-profiles/{profile_digest}/publish'
-            if managed_profile_selected else None
-        )
-        profile_artifact_url = (
-            f'/api/v1/installation-profiles/{profile_digest}/artifact'
-            if managed_profile_selected else None
-        )
+        profile_draft_url = profile_publish_url = profile_artifact_url = None
         plant_state = (
             getattr(self.preview_manager, 'plant_modifier_state', None)
             if observe_installation_profile else None
@@ -3612,19 +2229,10 @@ class AnimationWebInterface:
             'components': components,
             'capabilities': {
                 'rendering': 'browser_webassembly',
-                'draft_storage': 'browser_local_storage',
+                'draft_storage': 'controller',
                 'checker': 'browser_worker',
                 'live_wall_mutated': False,
                 'framebuffer_readback': False,
-                'maintenance': {
-                    'available': self.maintenance_enabled,
-                    'url': '/api/v1/composer/maintenance',
-                    'diagnostics': sorted(MAINTENANCE_DIAGNOSTICS),
-                    'max_intensity': MAINTENANCE_MAX_INTENSITY,
-                    'max_duration_seconds': MAINTENANCE_MAX_DURATION_SECONDS,
-                    'requires_idempotency_key': True,
-                    'execution': 'controller_file_channel',
-                },
                 'server_actions': {
                     'activation_available': self.activation_enabled,
                     'activation_mode': self.activation_mode,
@@ -3644,12 +2252,8 @@ class AnimationWebInterface:
                     ),
                     'live_edit_available': True,
                     'validate_scene_url': '/api/v1/scene/validate',
-                    'check_scene_url': '/api/v1/scene/checks',
                     'activate_scene_url': '/api/v1/scene',
                     'current_scene_url': '/api/v1/scene',
-                    'activation_status_url_template': (
-                        '/api/v1/scene/activations/{activation_id}'
-                    ),
                     'status_url': '/api/v1/composer/settings/observed',
                     'operations_status_url': '/api/v1/composer/operations/status',
                     'vibe_url': '/api/v1/vibe',
@@ -3757,142 +2361,24 @@ class AnimationWebInterface:
         document = normalize_browser_scene_document(
             payload, catalog=catalog, purpose=purpose
         )
-        if purpose == 'activation':
-            profile_digest = document['installation_profile']['digest']
-            preflight = getattr(
-                self.preview_manager, 'preflight_installation_profile', None
-            )
-            if callable(preflight):
-                try:
-                    preflight(profile_digest)
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise SceneValidationError(
-                        'browser scene.installation_profile.digest is not a '
-                        f'managed installation profile: {exc}'
-                    ) from exc
-            elif profile_digest != EMPTY_INSTALLATION_PROFILE_DIGEST:
-                raise SceneValidationError(
-                    'browser scene.installation_profile.digest cannot be '
-                    'resolved by this manager'
-                )
         scene = browser_scene_to_host_scene(document, catalog=catalog)
         return document, scene
 
-    def _validated_canonical_activation_document(
-        self, payload: Any,
-    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-        """Bind one exact canonical Scene v2 to deployed managed runtimes."""
-        validate_bounded_browser_json(payload, label='canonical browser scene')
-        if not isinstance(payload, dict) or set(payload) != {
-            'schema', 'schema_version', 'scene', 'components', 'installation_profile',
-        }:
-            raise SceneValidationError('canonical browser scene fields are malformed')
-        if payload.get('schema') != CANONICAL_BROWSER_SCENE_SCHEMA or payload.get('schema_version') != 1:
-            raise SceneValidationError('unsupported canonical browser scene contract')
-        try:
-            canonical = self._composer_canonical({'origin': 'composer', 'scene': payload.get('scene')})
-        except SceneContractError as exc:
-            raise SceneValidationError(str(exc)) from exc
-        installation = payload.get('installation_profile')
-        if (not isinstance(installation, dict) or set(installation) != {'digest'}
-                or not isinstance(installation.get('digest'), str)
-                or re.fullmatch(r'[0-9a-f]{64}', installation['digest']) is None):
-            raise SceneValidationError('canonical browser scene installation profile is invalid')
-        profile_digest = installation['digest']
-        if profile_digest == EMPTY_INSTALLATION_PROFILE_DIGEST:
-            raise SceneValidationError('canonical browser scene requires a verified managed installation profile')
-        preflight = getattr(self.preview_manager, 'preflight_installation_profile', None)
-        if callable(preflight):
-            try:
-                preflight(profile_digest)
-            except (KeyError, TypeError, ValueError, RuntimeError) as exc:
-                raise SceneValidationError(f'canonical browser scene installation profile is not managed: {exc}') from exc
-        elif profile_digest != EMPTY_INSTALLATION_PROFILE_DIGEST:
-            raise SceneValidationError('canonical browser scene installation profile cannot be resolved')
 
-        scene = canonical.scene
-        expected_slots = [('background', scene['background']), ('animation', scene['animation'])]
-        expected_slots.extend((f"widget:{widget['id']}", widget['component']) for widget in scene['widgets'])
-        raw_scene = payload['scene']
-        authored_components = [raw_scene['background'], raw_scene['animation']]
-        authored_components.extend(widget['component'] for widget in raw_scene['widgets'])
-        raw_components = payload.get('components')
-        if not isinstance(raw_components, list) or len(raw_components) != len(expected_slots):
-            raise SceneValidationError('canonical browser scene component slots are incomplete')
-        catalog = {(item.get('provider'), item.get('plugin_id')): item for item in self._browser_scene_catalog() if isinstance(item, dict)}
-        normalized_components = []
-        binding_fields = ('provider', 'component_id', 'component_digest', 'runtime_digest', 'parameter_schema_version')
-        for index, ((slot_id, scene_component), supplied) in enumerate(zip(expected_slots, raw_components)):
-            if not isinstance(supplied, dict) or set(supplied) != {'slot_id', *binding_fields, 'parameters'}:
-                raise SceneValidationError(f'canonical browser scene components[{index}] is malformed')
-            if supplied['slot_id'] != slot_id:
-                raise SceneValidationError('canonical browser scene component order or slot changed')
-            descriptor = catalog.get((scene_component['provider'], scene_component['component_id']))
-            managed = descriptor.get('browser_capabilities', {}).get('managed_identity') if isinstance(descriptor, dict) else None
-            capabilities = descriptor.get('browser_capabilities', {}) if isinstance(descriptor, dict) else {}
-            if capabilities.get('activation_ready') is not True:
-                raise SceneValidationError(f"canonical browser scene {slot_id} is not activation-ready: {capabilities.get('reason') or 'managed runtime unavailable'}")
-            if not isinstance(managed, dict) or any(type(supplied.get(field)) is not type(managed.get(field)) or supplied.get(field) != managed.get(field) for field in binding_fields):
-                raise SceneValidationError(f'canonical browser scene {slot_id} managed identity is stale')
-            if canonical_json_sha256(supplied.get('parameters')) != canonical_json_sha256(authored_components[index]['parameters']):
-                raise SceneValidationError(f'canonical browser scene {slot_id} parameters changed')
-            normalized = {field: managed[field] for field in binding_fields}
-            normalized.update(slot_id=slot_id, parameters=deepcopy(scene_component['parameters']))
-            if scene_component['provider'] == 'receiver_native':
-                normalized['bundle_digest'] = scene_component['bundle_digest']
-                build = descriptor.get('build') or {}
-                expected_payload = managed.get('expected_payload_digest', build.get('expected_payload_digest'))
-                if not isinstance(expected_payload, str) or re.fullmatch(r'[0-9a-f]{64}', expected_payload) is None:
-                    raise SceneValidationError(f'canonical browser scene {slot_id} native payload identity is unavailable')
-                normalized['expected_payload_digest'] = expected_payload
-            normalized_components.append(normalized)
-        document = {
-            'schema': CANONICAL_BROWSER_SCENE_SCHEMA, 'schema_version': 1,
-            'scene': scene, 'scene_identity': canonical.identity.to_dict(),
-            'components': normalized_components,
-            'installation_profile': {'digest': profile_digest},
-        }
-        return document, scene
 
-    def _validated_browser_activation_scene(
-        self, payload: Any,
-    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-        """Bind a browser document to the running manager before Check.
-
-        The deployed browser catalog can briefly lag the controller catalog
-        during a source update.  Browser normalization is still required for
-        its managed runtime identities, but it cannot be the final activation
-        authority: translate the document, then run the same provider,
-        parameter, preset, and implementation checks as the live host API.
-        """
+    def _validated_browser_activation_scene(self, payload: Any) -> tuple[Dict[str, Any], Dict[str, Any]]:
         if isinstance(payload, dict) and payload.get('schema') == CANONICAL_BROWSER_SCENE_SCHEMA:
-            return self._validated_canonical_activation_document(payload)
-        migrated = deepcopy(payload)
-        if isinstance(migrated, dict):
-            for layer in migrated.get('layers', []):
-                if not isinstance(layer, dict):
-                    continue
-                component = layer.get('component')
-                if not isinstance(component, dict):
-                    continue
-                parameters = component.get('parameters')
-                if (
-                    component.get('provider') == 'python'
-                    and component.get('component_id') == 'clock_overlay'
-                    and isinstance(parameters, dict)
-                ):
-                    # Scene v2 originally authored Clock color locally.  The
-                    # current Clock resolves it from the semantic Scene palette,
-                    # so accept old saved scenes without forwarding that retired
-                    # field into the strict managed-component contract.
-                    parameters.pop('color', None)
-        document, _scene = self._validated_browser_scene_document(
-            migrated, purpose='activation'
-        )
-        scene = self._validated_scene_request(
-            document, browser_purpose='activation'
-        )
-        return document, scene
+            scene = payload.get('scene')
+        else:
+            scene = payload
+        if isinstance(scene, dict) and scene.get('schema') == 'ledgrid.scene.v2':
+            try:
+                canonical = self._composer_canonical({'origin': 'composer', 'scene': scene})
+            except SceneContractError as exc:
+                raise SceneValidationError(str(exc)) from exc
+            return {'scene': canonical.scene}, canonical.scene
+        document, host_scene = self._validated_browser_scene_document(scene, purpose='activation')
+        return document, host_scene
 
     def _validated_browser_composer_import(
         self, payload: Any, *, encoded_size: Optional[int] = None
@@ -4672,6 +3158,14 @@ class AnimationWebInterface:
 
     def _composer_canonical(self, request_value: Any):
         """Canonicalize the one current Scene v2 representation for Composer."""
+        scene = request_value.get('scene') if isinstance(request_value, Mapping) else None
+        if isinstance(scene, Mapping):
+            references = [('background', scene.get('background')), ('animation', scene.get('animation'))]
+            references.extend((f"widget:{widget.get('id', '?')}", widget.get('component')) for widget in scene.get('widgets', []) if isinstance(widget, Mapping))
+            supported = {(descriptor.provider.value, descriptor.component_id) for descriptor in self.composer_catalog.descriptors}
+            for slot, reference in references:
+                if isinstance(reference, Mapping) and (reference.get('provider'), reference.get('component_id')) not in supported:
+                    raise SceneContractError(f"Unsupported saved component {reference.get('provider')}:{reference.get('component_id')} in {slot}; choose a supported component explicitly.")
         canonical = normalize_composer_scene(request_value, self.composer_catalog)
         # Keep Emoji Message's compact, local controls at the Composer boundary
         # so an invalid text or position cannot replace the last
@@ -4795,23 +3289,7 @@ class AnimationWebInterface:
             return None
         return payload if isinstance(payload, dict) else None
 
-    def _installation_profile_authoring(self) -> InstallationProfileAuthoring:
-        service = self.installation_profile_authoring
-        if not isinstance(service, InstallationProfileAuthoring):
-            raise InstallationProfileAuthoringError(
-                'Managed installation-profile authoring is unavailable'
-            )
-        return service
 
-    @staticmethod
-    def _installation_profile_if_match() -> Optional[str]:
-        raw = request.headers.get('If-Match')
-        if raw is None or not raw.strip():
-            return None
-        value = raw.strip()
-        if value.startswith('"') and value.endswith('"') and len(value) >= 2:
-            value = value[1:-1]
-        return value
 
     @staticmethod
     def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -5164,9 +3642,12 @@ class AnimationWebInterface:
         status.setdefault('actual_fps', 0)
         status.setdefault('uptime', 0)
         status['deploy_timestamp'] = self._deploy_timestamp()
-        timestamp = status.get('updated_at') or status.get('timestamp')
-        if not timestamp:
-            timestamp = time.time()
+        timestamp = status.get('updated_at') or status.get('timestamp') or status.get('written_at')
+        if not isinstance(timestamp, (int, float)) or isinstance(timestamp, bool):
+            timestamp = 0
+        status['controller_observation_fresh'] = bool(
+            status.get('controller_session_id') and 0 <= time.time() - timestamp <= 5
+        )
         status['timestamp'] = timestamp
 
         encoded_frame = raw_status.get('frame_data_encoded')
@@ -5198,12 +3679,29 @@ class AnimationWebInterface:
 
         return status
 
+    def _composer_playback_status(self) -> Dict[str, Any]:
+        status = self._status_payload()
+        return {
+            'schema': 'ledgrid.composer-playback-status', 'schema_version': 1,
+            'requested_scene': status.get('requested_scene'),
+            'controller_playback': {
+                'state': 'unavailable' if not status.get('controller_observation_fresh') else 'running' if status.get('is_running') else 'stopped',
+                'running': bool(status.get('is_running')) if status.get('controller_observation_fresh') else None,
+                'animation': status.get('current_animation'),
+                'scene': status.get('scene_state'),
+                'error': (status.get('controller_playback') or {}).get('error') or status.get('last_error'),
+                'actual_fps': status.get('actual_fps'),
+                'updated_at': status.get('timestamp'),
+            },
+            'receiver_connectivity': status.get('receiver_connectivity') or status.get('receiver_status') or [],
+        }
+
     def _operations_telemetry_payload(self) -> Dict[str, Any]:
         """Return the explicit non-browser controller read contract.
 
         Do not return the legacy status document wholesale.  Each retained
         owner gets only its declared deployment, receiver-diagnostic,
-        calibration/profile, or guarded-qualification evidence here.
+        calibration and playback evidence here.
         """
         status = self._status_payload()
         driver = status.get('driver_stats')
@@ -5254,13 +3752,6 @@ class AnimationWebInterface:
                 ),
                 'plant_modifiers': status.get('plant_modifiers'),
             },
-            'qualification': {
-                'active_identity': status.get('active_identity'),
-                'scene': status.get('scene'),
-                'scene_state': status.get('scene_state'),
-                'latest_activation': status.get('latest_activation'),
-            },
-            'receiver_native': receiver_hybrid,
         }
 
     def _composer_settings_observation_payload(self) -> Dict[str, Any]:
@@ -5273,24 +3764,31 @@ class AnimationWebInterface:
         details.
         """
         status = self._status_payload()
+        requested_id = request.args.get('request_id') if has_request_context() else None
+        if requested_id:
+            requested_id = str(uuid.UUID(requested_id))
+        result_reader = getattr(self.control_channel, 'read_command_result', None)
+        command_result = result_reader(requested_id) if requested_id and callable(result_reader) else status.get('command_result')
         raw_global_settings = status.get('global_settings')
         global_settings = (
             dict(raw_global_settings)
             if isinstance(raw_global_settings, dict)
             else {}
         )
-        active_identity = status.get('active_identity')
         return {
             'schema': 'ledgrid.composer-settings-observation',
             'schema_version': 1,
             'observed_at': status.get('timestamp'),
+            'freshness': 'fresh' if status.get('controller_observation_fresh') else 'stale',
             'controller_session_id': status.get('controller_session_id'),
             'controller_state_revision': status.get('controller_state_revision'),
             'last_command_id': status.get('last_command_id'),
+            'command_result': command_result,
             'last_applied_command_id': status.get('last_applied_command_id'),
-            'active_identity': (
-                dict(active_identity) if isinstance(active_identity, dict) else None
-            ),
+            'scene_digest': status.get('scene_digest'),
+            'scene': status.get('scene_state'),
+            'last_error': (status.get('controller_playback') or {}).get('error') or status.get('last_error'),
+            'receiver_connectivity': status.get('receiver_status') or status.get('receiver_connectivity') or {},
             'installation_profile_digest': status.get(
                 'installation_profile_digest'
             ),
@@ -5363,9 +3861,6 @@ def create_app(control_channel: FileControlChannel = None,
                plant_aware: bool = DEFAULT_PLANT_AWARE,
                release_id: Optional[str] = None,
                feature_flags: Optional[AnimationPipelineFeatureFlags] = None,
-               installation_profile_topology: InstallationProfileTopology = (
-                   IDENTITY_INSTALLATION_PROFILE_TOPOLOGY
-               ),
                project_root: Optional[Path] = None):
     """Factory function to create the web application"""
     if control_channel is None:
@@ -5384,13 +3879,6 @@ def create_app(control_channel: FileControlChannel = None,
         'plugins_dir': animations_dir,
         'animation_speed_scale': animation_speed_scale,
         'plant_aware': plant_aware,
-        'installation_profile_library': InstallationProfileLibrary(
-            preview_project_root / 'installation_profile_library'
-        ),
-        'installation_profile_topology': installation_profile_topology,
-        'native_background_library': NativeBackgroundLibrary(
-            preview_project_root / 'receiver_library/native_backgrounds'
-        ),
         'auto_start': False,
     }
     if feature_flags is not None:

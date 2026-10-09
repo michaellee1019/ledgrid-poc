@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import io
 import subprocess
 import sys
 import tempfile
@@ -126,9 +127,8 @@ class BrowserPythonBundleTests(unittest.TestCase):
         first = build_archive(REPO_ROOT)
         second = build_archive(REPO_ROOT)
         self.assertEqual(first, second)
-        self.assertEqual(BUNDLE_PATH.read_bytes(), first)
 
-        with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:
+        with zipfile.ZipFile(io.BytesIO(first), "r") as archive:
             names = archive.namelist()
             self.assertIn("animation/core/component_catalog.py", names)
             self.assertIn("animation/core/compositing.py", names)
@@ -221,7 +221,6 @@ runtime = BrowserPreviewRuntime()
 runtime.bind_installation_profile_path(str(profile), digest)
 for instance_id, plugin_id, class_name in (
     ("plant", "plant_glow", "PlantGlowAnimation"),
-    ("flags", "world_flags", "WorldFlagsAnimation"),
 ):
     ready = runtime.initialize(
         plugin_id, class_name, {"width": 33, "height": 138},
@@ -564,7 +563,7 @@ assert len(runtime.frame_bytes_for("controlled")) == 33 * 138 * 3
     def test_browser_shim_matches_direct_plugin_frames(self):
         direct = _direct_fingerprints()
         with tempfile.TemporaryDirectory() as temp_dir:
-            with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:
+            with zipfile.ZipFile(io.BytesIO(first), "r") as archive:
                 archive.extractall(temp_dir)
             script = r'''
 import hashlib
@@ -630,7 +629,7 @@ print(json.dumps(result, sort_keys=True))
         direct_digest = hashlib.sha256(direct_pixels.tobytes(order="C")).hexdigest()
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:
+            with zipfile.ZipFile(io.BytesIO(first), "r") as archive:
                 archive.extractall(temp_dir)
             script = r'''
 import hashlib

@@ -10,10 +10,8 @@ host once loading is complete.
 from __future__ import annotations
 
 import json
-import math
 import re
-import struct
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional, Type
 
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
@@ -45,70 +43,6 @@ _EXPLICIT_COMPONENT_FIELDS = frozenset(
 _IMPLEMENTATION_OWNED_FIELDS = frozenset(
     {"parameter_schema", "defaults", "controls"}
 )
-_NATIVE_MANIFEST_FIELDS = frozenset({
-    "manifest_version", "plugin_id", "name", "description", "icon", "gallery",
-    "provider", "role", "entrypoint", "cadence", "parameter_schema", "vibe",
-    "installation_profile_requirements", "preview", "build", "geometry",
-})
-_NATIVE_BUILD_FIELDS = frozenset({
-    "artifact_kind", "bundle_schema", "bundle_version", "abi_schema",
-    "abi_version", "target", "source",
-})
-_NATIVE_PREVIEW_FIELDS = frozenset({
-    "kind", "capture_seconds", "simulation_fps", "framebuffer_readback",
-})
-_NATIVE_GEOMETRY_FIELDS = frozenset({
-    "global_strips", "leds_per_strip", "receiver_views",
-})
-_NATIVE_RECEIVER_VIEW_FIELDS = frozenset({
-    "logical_receiver_id", "global_strip_offset", "local_strips",
-    "reverse_local_strip_order",
-})
-_NATIVE_VIBE_REQUIRED_FIELDS = frozenset(
-    {"color_policy", "timing_adapter", "capabilities"}
-)
-_NATIVE_VIBE_ALLOWED_FIELDS = _NATIVE_VIBE_REQUIRED_FIELDS | {"semantic_roles"}
-_NATIVE_ENTRYPOINT = "ledgrid.native-background-abi:2"
-_NATIVE_SOURCE = "native/background.cpp"
-_INT32_MIN = -(2**31)
-_INT32_MAX = 2**31 - 1
-_UINT64_MAX = 2**64 - 1
-
-
-def _finite_float32(value: Any) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError("value is not numeric")
-    try:
-        number = float(value)
-    except (OverflowError, ValueError) as exc:
-        raise ValueError("value does not fit a finite float") from exc
-    if not math.isfinite(number):
-        raise ValueError("value is not finite")
-    try:
-        decoded = struct.unpack(">f", struct.pack(">f", number))[0]
-    except OverflowError as exc:
-        raise ValueError("value does not fit float32") from exc
-    if not math.isfinite(decoded) or (number != 0.0 and decoded == 0.0):
-        raise ValueError("value does not fit finite nonzero float32")
-    return number
-
-
-def _capture_microseconds(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError("capture time is not numeric")
-    try:
-        seconds = float(value)
-    except (OverflowError, ValueError) as exc:
-        raise ValueError("capture time does not fit a finite float") from exc
-    if not math.isfinite(seconds) or seconds < 0:
-        raise ValueError("capture time is not finite and non-negative")
-    try:
-        microseconds = round(seconds * 1_000_000)
-    except OverflowError as exc:
-        raise ValueError("capture time does not fit uint64 microseconds") from exc
-    if not 0 <= microseconds <= _UINT64_MAX:
-        raise ValueError("capture time does not fit uint64 microseconds")
-    return microseconds
 
 
 def validate_and_normalize_manifest(
@@ -128,10 +62,8 @@ def validate_and_normalize_manifest(
             f"{manifest_path}"
         )
 
-    if payload.get("provider") == ComponentProvider.RECEIVER_NATIVE.value:
-        return _validate_and_normalize_native_manifest(
-            payload, manifest_path, plugin_id
-        )
+    if payload.get("provider", "python") != ComponentProvider.PYTHON.value:
+        raise ValueError(f"unsupported component provider {payload.get('provider')!r}: {manifest_path}")
 
     class_name = payload.get("class")
     if not isinstance(class_name, str) or not _PYTHON_CLASS.fullmatch(class_name):
@@ -199,480 +131,6 @@ def validate_and_normalize_manifest(
     return normalized
 
 
-def _validate_and_normalize_native_manifest(
-    payload: Dict[str, Any], manifest_path: Path, plugin_id: str
-) -> Dict[str, Any]:
-    """Validate the strict repository-native source descriptor contract."""
-    missing = _NATIVE_MANIFEST_FIELDS.difference(payload)
-    unknown = set(payload).difference(_NATIVE_MANIFEST_FIELDS)
-    if missing or unknown:
-        raise ValueError(
-            "receiver-native provider manifest fields "
-            f"missing={sorted(missing)} unknown={sorted(unknown)}: {manifest_path}"
-        )
-    if manifest_path.parent.is_symlink():
-        raise ValueError(
-            "receiver-native package directory must not be a symlink: "
-            f"{manifest_path.parent}"
-        )
-    init_path = manifest_path.parent / "__init__.py"
-    if init_path.exists():
-        raise ValueError(
-            "receiver-native package must not contain __init__.py: "
-            f"{manifest_path.parent}"
-        )
-    version = payload["manifest_version"]
-    if type(version) is not int or version != COMPONENT_DESCRIPTOR_VERSION:
-        raise ValueError(
-            f"receiver-native manifest_version must be 1: {manifest_path}"
-        )
-    for name in ("name", "description", "icon"):
-        value = payload[name]
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(
-                f"receiver-native manifest {name} must be non-empty: {manifest_path}"
-            )
-    if payload["gallery"] not in {"show", "test"}:
-        raise ValueError(
-            f"receiver-native manifest gallery must be 'show' or 'test': {manifest_path}"
-        )
-    if payload["role"] != ComponentRole.BACKGROUND.value:
-        raise ValueError(
-            f"receiver-native manifest role must be 'background': {manifest_path}"
-        )
-    if payload["entrypoint"] != _NATIVE_ENTRYPOINT:
-        raise ValueError(
-            "receiver-native manifest entrypoint must be "
-            f"{_NATIVE_ENTRYPOINT!r}: {manifest_path}"
-        )
-
-    cadence = normalize_cadence(payload["cadence"], manifest_path)
-    if cadence["mode"] != "fixed_fps":
-        raise ValueError(
-            f"receiver-native manifest cadence must be fixed_fps: {manifest_path}"
-        )
-    preferred_fps = cadence.get("preferred_fps")
-    if preferred_fps is None or not 1 <= preferred_fps <= 200:
-        raise ValueError(
-            "receiver-native preferred_fps must be from 1 to 200: "
-            f"{manifest_path}"
-        )
-
-    parameter_schema = _normalize_native_parameter_schema(
-        payload["parameter_schema"], manifest_path
-    )
-    requirements = payload["installation_profile_requirements"]
-    if (
-        not isinstance(requirements, list)
-        or len(requirements) > 16
-        or any(
-            not isinstance(item, str) or not _PARAMETER_ID.fullmatch(item)
-            or len(item) > 48
-            for item in requirements
-        )
-        or len(requirements) != len(set(requirements))
-    ):
-        raise ValueError(
-            "receiver-native installation_profile_requirements must be a unique "
-            f"list of at most 16 identifiers no longer than 48 characters: {manifest_path}"
-        )
-    vibe = _normalize_native_vibe(payload["vibe"], manifest_path)
-    preview = _normalize_native_preview(payload["preview"], manifest_path)
-    build = _normalize_native_build(payload["build"], manifest_path)
-    geometry = _normalize_native_geometry(payload["geometry"], manifest_path)
-
-    normalized = _json_copy(payload, f"manifest {manifest_path}")
-    normalized["cadence"] = cadence
-    normalized["parameter_schema"] = parameter_schema
-    normalized["installation_profile_requirements"] = sorted(requirements)
-    normalized["vibe"] = vibe
-    normalized["preview"] = preview
-    normalized["build"] = build
-    normalized["geometry"] = geometry
-    normalized["_legacy_component_manifest"] = False
-    return normalized
-
-
-def _normalize_native_geometry(value: Any, manifest_path: Path) -> Dict[str, Any]:
-    """Require the exact finalized heterogeneous receiver topology.
-
-    The package owns an explicit geometry binding so a previously built 32-strip
-    artifact cannot become selectable after the physical wall changes.  The ABI
-    remains width-generic; this is the product/package compatibility gate.
-    """
-    from animation.native.constants import (
-        GLOBAL_STRIPS,
-        LEDS_PER_STRIP,
-        RECEIVER_VIEWS,
-    )
-
-    if not isinstance(value, Mapping) or set(value) != _NATIVE_GEOMETRY_FIELDS:
-        actual = set(value) if isinstance(value, Mapping) else set()
-        raise ValueError(
-            "receiver-native geometry fields "
-            f"missing={sorted(_NATIVE_GEOMETRY_FIELDS - actual)} "
-            f"unknown={sorted(actual - _NATIVE_GEOMETRY_FIELDS)}: {manifest_path}"
-        )
-    views = value.get("receiver_views")
-    if not isinstance(views, list):
-        raise ValueError(
-            f"receiver-native geometry.receiver_views must be an array: {manifest_path}"
-        )
-    normalized_views: list[Dict[str, Any]] = []
-    for index, raw in enumerate(views):
-        if not isinstance(raw, Mapping) or set(raw) != _NATIVE_RECEIVER_VIEW_FIELDS:
-            raise ValueError(
-                "receiver-native geometry receiver view fields are invalid at "
-                f"index {index}: {manifest_path}"
-            )
-        logical_id = raw["logical_receiver_id"]
-        offset = raw["global_strip_offset"]
-        local_strips = raw["local_strips"]
-        reverse = raw["reverse_local_strip_order"]
-        if (
-            type(logical_id) is not int
-            or type(offset) is not int
-            or type(local_strips) is not int
-            or type(reverse) is not bool
-            or logical_id < 0
-            or offset < 0
-            or local_strips < 1
-            or offset + local_strips > GLOBAL_STRIPS
-        ):
-            raise ValueError(
-                f"receiver-native geometry receiver view is invalid at index {index}: "
-                f"{manifest_path}"
-            )
-        normalized_views.append({
-            "logical_receiver_id": logical_id,
-            "global_strip_offset": offset,
-            "local_strips": local_strips,
-            "reverse_local_strip_order": reverse,
-        })
-    expected_views = [
-        {
-            "logical_receiver_id": logical_id,
-            "global_strip_offset": offset,
-            "local_strips": local_strips,
-            "reverse_local_strip_order": reverse,
-        }
-        for logical_id, offset, local_strips, reverse in RECEIVER_VIEWS
-    ]
-    normalized = {
-        "global_strips": value.get("global_strips"),
-        "leds_per_strip": value.get("leds_per_strip"),
-        "receiver_views": normalized_views,
-    }
-    expected = {
-        "global_strips": GLOBAL_STRIPS,
-        "leds_per_strip": LEDS_PER_STRIP,
-        "receiver_views": expected_views,
-    }
-    if normalized != expected:
-        raise ValueError(
-            "receiver-native geometry must match the finalized installed topology: "
-            f"{manifest_path}"
-        )
-    return _json_copy(normalized, "receiver-native geometry")
-
-
-def _normalize_native_vibe(value: Any, manifest_path: Path) -> Dict[str, Any]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"receiver-native vibe must be an object: {manifest_path}")
-    missing = _NATIVE_VIBE_REQUIRED_FIELDS.difference(value)
-    unknown = set(value).difference(_NATIVE_VIBE_ALLOWED_FIELDS)
-    if missing or unknown:
-        raise ValueError(
-            "receiver-native vibe fields "
-            f"missing={sorted(missing)} unknown={sorted(unknown)}: {manifest_path}"
-        )
-    color_policy = value["color_policy"]
-    timing_adapter = value["timing_adapter"]
-    capabilities = value["capabilities"]
-    semantic_roles = value.get("semantic_roles", [])
-    if color_policy not in VIBE_COLOR_POLICIES:
-        raise ValueError(f"receiver-native vibe color_policy is invalid: {manifest_path}")
-    if timing_adapter not in {adapter.value for adapter in TimingAdapter}:
-        raise ValueError(f"receiver-native vibe timing_adapter is invalid: {manifest_path}")
-    if (
-        not isinstance(capabilities, list)
-        or any(
-            not isinstance(item, str) or item not in VIBE_CAPABILITIES
-            for item in capabilities
-        )
-        or len(capabilities) != len(set(capabilities))
-    ):
-        raise ValueError(f"receiver-native vibe capabilities are invalid: {manifest_path}")
-    if (
-        not isinstance(semantic_roles, list)
-        or any(
-            not isinstance(item, str) or item not in VIBE_PALETTE_ROLES
-            for item in semantic_roles
-        )
-        or len(semantic_roles) != len(set(semantic_roles))
-    ):
-        raise ValueError(f"receiver-native vibe semantic_roles are invalid: {manifest_path}")
-    if timing_adapter == TimingAdapter.SCALED_CONTEXT.value and "tempo" not in capabilities:
-        raise ValueError(f"receiver-native scaled_context vibe requires tempo: {manifest_path}")
-    if timing_adapter == TimingAdapter.WALL_CLOCK.value and "tempo" in capabilities:
-        raise ValueError(f"receiver-native wall_clock vibe cannot claim tempo: {manifest_path}")
-    if color_policy == "semantic" and (
-        "palette_roles" not in capabilities or not semantic_roles
-    ):
-        raise ValueError(
-            f"receiver-native semantic vibe requires palette roles: {manifest_path}"
-        )
-    if color_policy != "semantic" and semantic_roles:
-        raise ValueError(
-            f"only receiver-native semantic vibe may declare roles: {manifest_path}"
-        )
-    if color_policy == "preserve" and "palette_roles" in capabilities:
-        raise ValueError(
-            f"receiver-native preserve vibe cannot claim palette roles: {manifest_path}"
-        )
-    normalized = {
-        "color_policy": color_policy,
-        "timing_adapter": timing_adapter,
-        "capabilities": sorted(capabilities),
-        "semantic_roles": sorted(semantic_roles),
-    }
-    return normalized
-
-
-def _normalize_native_parameter_schema(
-    value: Any, manifest_path: Path
-) -> Dict[str, Dict[str, Any]]:
-    if not isinstance(value, Mapping) or len(value) > 31:
-        raise ValueError(
-            "receiver-native parameter_schema must be an object with at most 31 "
-            f"parameters: {manifest_path}"
-        )
-    normalized: Dict[str, Dict[str, Any]] = {}
-    for name, raw_definition in value.items():
-        if (
-            not isinstance(name, str)
-            or len(name) > 48
-            or not _PARAMETER_ID.fullmatch(name)
-            or name in SCENE_EXTERNAL_COMPONENT_PARAMETERS
-        ):
-            raise ValueError(
-                f"invalid receiver-native parameter name {name!r}: {manifest_path}"
-            )
-        if not isinstance(raw_definition, Mapping):
-            raise ValueError(
-                f"receiver-native parameter {name!r} must be an object: {manifest_path}"
-            )
-        definition = dict(raw_definition)
-        kind = definition.get("type")
-        allowed = {"type", "default", "description"}
-        if kind in {"int", "float"}:
-            allowed.update({"min", "max"})
-        elif kind == "str":
-            allowed.add("options")
-        elif kind != "bool":
-            raise ValueError(
-                f"receiver-native parameter {name!r} has unsupported type {kind!r}: "
-                f"{manifest_path}"
-            )
-        unknown = set(definition).difference(allowed)
-        missing = {"type", "default", "description"}.difference(definition)
-        if kind in {"int", "float"}:
-            missing.update({"min", "max"}.difference(definition))
-        elif kind == "str":
-            missing.update({"options"}.difference(definition))
-        if missing or unknown:
-            raise ValueError(
-                f"receiver-native parameter {name!r} fields missing={sorted(missing)} "
-                f"unknown={sorted(unknown)}: {manifest_path}"
-            )
-        description = definition["description"]
-        if (
-            not isinstance(description, str)
-            or not description.strip()
-            or len(description) > 240
-        ):
-            raise ValueError(
-                f"receiver-native parameter {name!r} description is invalid: "
-                f"{manifest_path}"
-            )
-        _validate_native_parameter_value(
-            name, definition, definition["default"], manifest_path=manifest_path
-        )
-        normalized[name] = _json_copy(
-            definition, f"receiver-native parameter_schema.{name}"
-        )
-    return normalized
-
-
-def _validate_native_parameter_value(
-    name: str,
-    definition: Mapping[str, Any],
-    value: Any,
-    *,
-    manifest_path: Optional[Path] = None,
-) -> None:
-    suffix = f": {manifest_path}" if manifest_path is not None else ""
-    kind = definition.get("type")
-    if kind == "bool":
-        if not isinstance(value, bool):
-            raise ValueError(f"receiver-native parameter {name!r} must be bool{suffix}")
-        return
-    if kind == "int":
-        bounds = (definition.get("min"), definition.get("max"))
-        if any(isinstance(item, bool) or not isinstance(item, int) for item in bounds):
-            raise ValueError(
-                f"receiver-native parameter {name!r} requires integer bounds{suffix}"
-            )
-        lower, upper = bounds
-        if not _INT32_MIN <= lower <= upper <= _INT32_MAX:
-            raise ValueError(
-                f"receiver-native parameter {name!r} bounds must fit int32{suffix}"
-            )
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"receiver-native parameter {name!r} must be int{suffix}")
-        if not lower <= value <= upper:
-            raise ValueError(
-                f"receiver-native parameter {name!r} is outside its bounds{suffix}"
-            )
-        return
-    if kind == "float":
-        values = (definition.get("min"), definition.get("max"), value)
-        try:
-            lower, upper, selected = (
-                _finite_float32(item) for item in values
-            )
-        except ValueError as exc:
-            raise ValueError(
-                f"receiver-native parameter {name!r} requires finite float32 "
-                f"numbers{suffix}"
-            ) from exc
-        if lower > upper or not lower <= selected <= upper:
-            raise ValueError(
-                f"receiver-native parameter {name!r} is outside its bounds{suffix}"
-            )
-        return
-    if kind == "str":
-        options = definition.get("options")
-        if (
-            not isinstance(options, list)
-            or not 1 <= len(options) <= 64
-            or any(
-                not isinstance(option, str)
-                or not option
-                or len(option.encode("utf-8")) > 63
-                for option in options
-            )
-            or len(options) != len(set(options))
-        ):
-            raise ValueError(
-                f"receiver-native parameter {name!r} options are invalid{suffix}"
-            )
-        if not isinstance(value, str) or value not in options:
-            raise ValueError(
-                f"receiver-native parameter {name!r} must be one of {options!r}{suffix}"
-            )
-        return
-    raise ValueError(
-        f"receiver-native parameter {name!r} has unsupported type {kind!r}{suffix}"
-    )
-
-
-def _normalize_native_preview(value: Any, manifest_path: Path) -> Dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != _NATIVE_PREVIEW_FIELDS:
-        actual = set(value) if isinstance(value, Mapping) else set()
-        raise ValueError(
-            "receiver-native preview fields "
-            f"missing={sorted(_NATIVE_PREVIEW_FIELDS - actual)} "
-            f"unknown={sorted(actual - _NATIVE_PREVIEW_FIELDS)}: {manifest_path}"
-        )
-    if value["kind"] != "native_host_build":
-        raise ValueError(
-            f"receiver-native preview kind must be native_host_build: {manifest_path}"
-        )
-    if value["framebuffer_readback"] is not False:
-        raise ValueError(
-            f"receiver-native preview framebuffer_readback must be false: {manifest_path}"
-        )
-    captures = value["capture_seconds"]
-    try:
-        capture_microseconds = [
-            _capture_microseconds(item) for item in captures
-        ] if isinstance(captures, list) else []
-    except ValueError as exc:
-        raise ValueError(
-            "receiver-native preview capture_seconds must fit uint64 "
-            f"microseconds: {manifest_path}"
-        ) from exc
-    if (
-        not isinstance(captures, list)
-        or not 2 <= len(captures) <= 16
-        or any(
-            float(left) >= float(right)
-            for left, right in zip(captures, captures[1:])
-        )
-        or any(
-            left >= right
-            for left, right in zip(
-                capture_microseconds, capture_microseconds[1:]
-            )
-        )
-    ):
-        raise ValueError(
-            "receiver-native preview capture_seconds must be 2-16 strictly "
-            "increasing uint64-microsecond-representable non-negative numbers: "
-            f"{manifest_path}"
-        )
-    simulation_fps = value["simulation_fps"]
-    if (
-        isinstance(simulation_fps, bool)
-        or not isinstance(simulation_fps, int)
-        or not 1 <= simulation_fps <= 120
-    ):
-        raise ValueError(
-            f"receiver-native preview simulation_fps must be 1-120: {manifest_path}"
-        )
-    return _json_copy(dict(value), "receiver-native preview")
-
-
-def _normalize_native_build(value: Any, manifest_path: Path) -> Dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != _NATIVE_BUILD_FIELDS:
-        actual = set(value) if isinstance(value, Mapping) else set()
-        raise ValueError(
-            "receiver-native build fields "
-            f"missing={sorted(_NATIVE_BUILD_FIELDS - actual)} "
-            f"unknown={sorted(actual - _NATIVE_BUILD_FIELDS)}: {manifest_path}"
-        )
-    if (
-        type(value["bundle_version"]) is not int
-        or type(value["abi_version"]) is not int
-    ):
-        raise ValueError(
-            f"receiver-native build versions must be integers: {manifest_path}"
-        )
-    source_value = value.get("source")
-    if isinstance(source_value, str):
-        source = PurePosixPath(source_value)
-        if source.is_absolute() or ".." in source.parts:
-            raise ValueError(
-                f"receiver-native source path escapes package: {manifest_path}"
-            )
-    expected = {
-        "artifact_kind": "receiver_native_module",
-        "bundle_schema": "ledgrid.native-background-bundle",
-        "bundle_version": 1,
-        "abi_schema": "ledgrid.native-background-abi",
-        "abi_version": 2,
-        "target": "esp32-s3",
-        "source": _NATIVE_SOURCE,
-    }
-    if dict(value) != expected:
-        raise ValueError(
-            "receiver-native build contract must exactly match the v1 ABI-v2 "
-            f"source contract: {manifest_path}"
-        )
-    return _json_copy(dict(value), "receiver-native build")
-
-
 def normalize_cadence(value: Any, manifest_path: Path) -> Dict[str, Any]:
     """Validate the bounded v1 fixed-FPS or event-driven cadence shape."""
     if not isinstance(value, dict):
@@ -728,13 +186,7 @@ def scanned_descriptor(
     vibe = payload.get("vibe") if isinstance(payload.get("vibe"), dict) else {}
 
     provider = payload.get("provider", "python")
-    if provider == ComponentProvider.RECEIVER_NATIVE.value:
-        classification = "receiver_native_source"
-        diagnostic = (
-            "Trusted repository native source metadata is available for build "
-            "and host preview; receiver activation remains disabled until Phase 4."
-        )
-    elif flat_file is not None:
+    if flat_file is not None:
         classification = "external_flat_plugin"
         diagnostic = "External Python implementation has not been classified."
     elif plugin_id == "clock":
@@ -771,23 +223,10 @@ def scanned_descriptor(
         ),
         build=payload.get("build", {}),
     )
-    if provider == ComponentProvider.RECEIVER_NATIVE.value:
-        descriptor["geometry"] = _json_copy(
-            payload.get("geometry", {}), f"native geometry {plugin_id}"
-        )
     descriptor["compatibility"] = {
-        "legacy_manifest": legacy,
-        "classification": classification,
-        # Native source metadata is complete without loading a Python class. Its
-        # role is composable even though provider policy keeps it non-executable.
-        "composable": provider == ComponentProvider.RECEIVER_NATIVE.value,
-        "implementation_loaded": False,
-        "parameter_metadata": (
-            "manifest"
-            if provider == ComponentProvider.RECEIVER_NATIVE.value
-            else "implementation_not_loaded"
-        ),
-        "diagnostic": diagnostic,
+        "legacy_manifest": legacy, "classification": classification,
+        "composable": False, "implementation_loaded": False,
+        "parameter_metadata": "implementation_not_loaded", "diagnostic": diagnostic,
     }
     return descriptor
 
@@ -962,7 +401,7 @@ def validate_parameter_overrides(
         raise TypeError("component controls must be an object")
     compatibility = descriptor.get("compatibility", {})
     metadata = compatibility.get("parameter_metadata")
-    if metadata not in {"loaded", "manifest"}:
+    if metadata != "loaded":
         raise ValueError(
             f"component {descriptor.get('plugin_id')!r} has no loaded parameter schema"
         )
@@ -972,9 +411,6 @@ def validate_parameter_overrides(
         raise ValueError(
             f"component controls contain undeclared parameters {sorted(unknown)}"
         )
-    if descriptor.get("provider") == ComponentProvider.RECEIVER_NATIVE.value:
-        for name, value in values.items():
-            _validate_native_parameter_value(name, schema[name], value)
     return _json_copy(dict(values), "component controls")
 
 

@@ -3,7 +3,6 @@
   const root = document.querySelector('.composer');
   const api = root.dataset.apiRoot;
   const $ = (selector) => document.querySelector(selector);
-  const nativeDigest = 'cc2bdc1b413c05ca9c21f62c9e7334d1dd3783e3b7828ea1003b5b75f0e1aba2';
   const DEFAULT_SCENE_PACE = .7;
   function newUuid() {
     const browserCrypto = typeof globalThis.crypto === 'object' ? globalThis.crypto : null;
@@ -26,7 +25,7 @@
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
       bootstrap: null, observation: null, scene: null, activating: false, dirty: false,
-      adoptedLook: null, adoptedVibeId: null, activationError: null, retryBlocked: false, pendingObservation: null,
+      adoptedLook: null, adoptedVibeId: null, activationError: null, retryBlocked: false, requestId: null,
     },
     playlist: {id: null, entries: [], saved: [], requestId: null, runId: null,
       saving: false, startIntent: null, statusIntent: 0, statusPoll: 0}
@@ -166,7 +165,7 @@
     const control = document.getElementById(field.id);
     return [field.key, field.options ? control.value : field.step === 1 ? Math.trunc(Number(control.value)) : Number(control.value)];
   }));
-  const mediaSpecs = Object.freeze({"gif_animation":{"name":"GIF Animation","prefix":"mediaGif","fields":[{"key":"gif_name","label":"Clip","value":"penguin_top_center.gif","options":[["axolotl-bubble-column.gif","Axolotl-Bubble-Column"],["balloon-blobs.gif","Balloon-Blobs"],["bumblebee-garden.gif","Bumblebee-Garden"],["cactus-bloom-dance.gif","Cactus-Bloom-Dance"],["campfire-ghost-stories.gif","Campfire-Ghost-Stories"],["coral-fish-friends.gif","Coral-Fish-Friends"],["cotton-candy-clouds.gif","Cotton-Candy-Clouds"],["cozy-shelf-naps.gif","Cozy-Shelf-Naps"],["cozy-window-cats.gif","Cozy-Window-Cats"],["cupcake-sprinkle-party.gif","Cupcake-Sprinkle-Party"],["curtain-cat-watch.gif","Curtain-Cat-Watch"],["firefly-bottle.gif","Firefly-Bottle"],["frog-pond-ripple.gif","Frog-Pond-Ripple"],["grape-bounce.gif","Grape-Bounce"],["happy-star-fall.gif","Happy-Star-Fall"],["hydrangea-rain.gif","Hydrangea-Rain"],["jellyfish-lanterns.gif","Jellyfish-Lanterns"],["jolly-slime-stack.gif","Jolly-Slime-Stack"],["koi-ribbon.gif","Koi-Ribbon"],["lantern-tree.gif","Lantern-Tree"],["moon-bunny-meadow.gif","Moon-Bunny-Meadow"],["moonlit-ducks.gif","Moonlit-Ducks"],["mushroom-village.gif","Mushroom-Village"],["peach-orchard.gif","Peach-Orchard"],["penguin-ice-fishing.gif","Penguin-Ice-Fishing"],["penguin_top_center.gif","Penguin Top Center"],["planet-parade.gif","Planet-Parade"],["pocket-rocket.gif","Pocket-Rocket"],["shy-ghost-parade.gif","Shy-Ghost-Parade"],["sleepy-bat-cave.gif","Sleepy-Bat-Cave"],["snails-after-rain.gif","Snails-After-Rain"],["sunflower-hamsters.gif","Sunflower-Hamsters"],["tiny-robot-patrol.gif","Tiny-Robot-Patrol"]]},{"key":"playback_speed","label":"Playback rate","value":1,"min":0.1,"max":4,"step":0.1},{"key":"fit_mode","label":"Fit","value":"stretch","options":[["stretch","Stretch"],["contain","Contain"],["cover","Cover"]]},{"key":"flip_y","label":"Flip vertically","value":true,"type":"checkbox"}]},"world_flags":{"name":"World Flags","prefix":"mediaFlags","fields":[{"key":"display_mode","label":"Display","value":"parade","options":[["parade","Parade"],["single","Single flag"]]},{"key":"country","label":"Country","value":"USA","options":[["USA","United States"],["CAN","Canada"],["MEX","Mexico"],["BRA","Brazil"],["ARG","Argentina"],["COL","Colombia"],["GBR","United Kingdom"],["FRA","France"],["DEU","Germany"],["ITA","Italy"],["ESP","Spain"],["IRL","Ireland"],["NLD","Netherlands"],["BEL","Belgium"],["POL","Poland"],["UKR","Ukraine"],["SWE","Sweden"],["NOR","Norway"],["DNK","Denmark"],["FIN","Finland"],["GRC","Greece"],["CHE","Switzerland"],["JPN","Japan"],["CHN","China"],["IND","India"],["BGD","Bangladesh"],["IDN","Indonesia"],["PHL","Philippines"],["THA","Thailand"],["VNM","Vietnam"],["AUS","Australia"],["NZL","New Zealand"],["NGA","Nigeria"],["ZAF","South Africa"],["KEN","Kenya"],["EGY","Egypt"],["TUR","Turkey"],["ISR","Israel"]]},{"key":"scroll_pixels_per_second","label":"Scroll rate","value":7,"min":-40,"max":40,"step":0.5},{"key":"flag_height","label":"Flag height","value":21,"min":12,"max":40,"step":1},{"key":"gap","label":"Flag spacing","value":3,"min":0,"max":12,"step":1},{"key":"flip_horizontal","label":"Flip horizontally","value":false,"type":"checkbox"},{"key":"flip_vertical","label":"Flip vertically","value":true,"type":"checkbox"}]}});
+  const mediaSpecs = Object.freeze({"gif_animation":{"name":"GIF Animation","prefix":"mediaGif","fields":[{"key":"gif_name","label":"Clip","value":"penguin_top_center.gif","options":[["axolotl-bubble-column.gif","Axolotl-Bubble-Column"],["balloon-blobs.gif","Balloon-Blobs"],["bumblebee-garden.gif","Bumblebee-Garden"],["cactus-bloom-dance.gif","Cactus-Bloom-Dance"],["campfire-ghost-stories.gif","Campfire-Ghost-Stories"],["coral-fish-friends.gif","Coral-Fish-Friends"],["cotton-candy-clouds.gif","Cotton-Candy-Clouds"],["cozy-shelf-naps.gif","Cozy-Shelf-Naps"],["cozy-window-cats.gif","Cozy-Window-Cats"],["cupcake-sprinkle-party.gif","Cupcake-Sprinkle-Party"],["curtain-cat-watch.gif","Curtain-Cat-Watch"],["firefly-bottle.gif","Firefly-Bottle"],["frog-pond-ripple.gif","Frog-Pond-Ripple"],["grape-bounce.gif","Grape-Bounce"],["happy-star-fall.gif","Happy-Star-Fall"],["hydrangea-rain.gif","Hydrangea-Rain"],["jellyfish-lanterns.gif","Jellyfish-Lanterns"],["jolly-slime-stack.gif","Jolly-Slime-Stack"],["koi-ribbon.gif","Koi-Ribbon"],["lantern-tree.gif","Lantern-Tree"],["moon-bunny-meadow.gif","Moon-Bunny-Meadow"],["moonlit-ducks.gif","Moonlit-Ducks"],["mushroom-village.gif","Mushroom-Village"],["peach-orchard.gif","Peach-Orchard"],["penguin-ice-fishing.gif","Penguin-Ice-Fishing"],["penguin_top_center.gif","Penguin Top Center"],["planet-parade.gif","Planet-Parade"],["pocket-rocket.gif","Pocket-Rocket"],["shy-ghost-parade.gif","Shy-Ghost-Parade"],["sleepy-bat-cave.gif","Sleepy-Bat-Cave"],["snails-after-rain.gif","Snails-After-Rain"],["sunflower-hamsters.gif","Sunflower-Hamsters"],["tiny-robot-patrol.gif","Tiny-Robot-Patrol"]]},{"key":"playback_speed","label":"Playback rate","value":1,"min":0.1,"max":4,"step":0.1},{"key":"fit_mode","label":"Fit","value":"stretch","options":[["stretch","Stretch"],["contain","Contain"],["cover","Cover"]]},{"key":"flip_y","label":"Flip vertically","value":true,"type":"checkbox"}]}});
   const mediaIds = Object.freeze(Object.keys(mediaSpecs));
   const mediaControlId = (id, field) => `${mediaSpecs[id].prefix}_${field.key}`;
   const mediaControls = Object.fromEntries(mediaIds.map((id) => [id, mediaSpecs[id].fields.map((field) => `#${mediaControlId(id, field)}`)]));
@@ -188,7 +187,7 @@
       });
     });
   }
-  const componentPresetTargets = Object.freeze({gif_animation: 'gif-animation-preset-cards', world_flags: 'world-flags-preset-cards', plant_glow: 'plant-glow-preset-cards', pixel_chase: 'pixel-chase-preset-cards', aurora_curtains: 'aurora-curtains-preset-cards', conway_life: 'conway-life-preset-cards', tetris: 'tetris-preset-cards', firefly_synchrony: 'firefly-synchrony-preset-cards', fireworks: 'fireworksPresetCards', flame_burst: 'flame-burst-preset-cards', fluid_tank: 'fluid-tank-preset-cards', lava_lamp: 'lavaPresetCards', snake: 'snakePresetCards', cyclic_reef: 'reefPresetCards', canopy_cup: 'canopyPresetCards', maze_chase: 'mazePresetCards', pinball: 'pinballPresetCards', pixel_quest: 'questPresetCards', ascii_drop: 'asciiDropPresetCards', emoji: 'emojiAnimationPresetCards', christmas_tree: 'christmasTreePresetCards', night_train_windows: 'nightTrainPresetCards', gradient: 'gradient-preset-cards', rainbow: 'rainbow-preset-cards', solid: 'solid-preset-cards', sparkle: 'sparkle-preset-cards', wave: 'wave-preset-cards'});
+  const componentPresetTargets = Object.freeze({gif_animation: 'gif-animation-preset-cards', plant_glow: 'plant-glow-preset-cards', pixel_chase: 'pixel-chase-preset-cards', aurora_curtains: 'aurora-curtains-preset-cards', conway_life: 'conway-life-preset-cards', tetris: 'tetris-preset-cards', firefly_synchrony: 'firefly-synchrony-preset-cards', fireworks: 'fireworksPresetCards', flame_burst: 'flame-burst-preset-cards', fluid_tank: 'fluid-tank-preset-cards', lava_lamp: 'lavaPresetCards', snake: 'snakePresetCards', cyclic_reef: 'reefPresetCards', canopy_cup: 'canopyPresetCards', maze_chase: 'mazePresetCards', pinball: 'pinballPresetCards', pixel_quest: 'questPresetCards', ascii_drop: 'asciiDropPresetCards', emoji: 'emojiAnimationPresetCards', christmas_tree: 'christmasTreePresetCards', night_train_windows: 'nightTrainPresetCards', gradient: 'gradient-preset-cards', rainbow: 'rainbow-preset-cards', solid: 'solid-preset-cards', sparkle: 'sparkle-preset-cards', wave: 'wave-preset-cards'});
   const atmospherePresetTargets = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
   const sculpturePresetTargets = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
   const componentControls = Object.freeze({...mediaControls,plant_glow: plantGlowSelectors, pixel_chase: pixelChaseSelectors, aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], tetris: ['#tetrisPieces', '#tetrisFallRate', '#tetrisRisk', '#tetrisSmoothDrop'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], flame_burst: ['#flameCadence', '#flameSize', '#flameEmbers', '#flameFlicker'], fluid_tank: ['#fluidFlow', '#fluidCurrent', '#fluidBubbles', '#fluidSurface'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed'], snake: ['#snakeCadence', '#snakeCount', '#snakeFood', '#snakeGrowth', '#snakeRules', '#snakeObstacles', '#snakeTrails', '#snakeGlow', '#snakeSeed'], canopy_cup: ['#canopyWorld', '#canopyHeats', '#canopyCourse', '#canopyDensity', '#canopyRivalry', '#canopyPowerups'], cyclic_reef: ['#reefSpecies', '#reefThreshold', '#reefMutation', '#reefGrazers', '#reefGlow', '#reefTopology', '#reefPace', '#reefSeed'], maze_chase: ['#mazeCadence', '#mazeDifficulty', '#mazeRadar'], pinball: ['#pinballTicks', '#pinballChaos'], pixel_quest: ['#questCadence', '#questDifficulty', '#questHud'], ascii_drop: ['#asciiPhrase', '#asciiStory', '#asciiSpeed', '#asciiDensity'], emoji: ['#emojiFace', '#emojiMood', '#emojiAnimationPulse', '#emojiAnimationScale'], christmas_tree: ['#treeSeason', '#treeHeight', '#treeSnowfall'], night_train_windows: ['#trainRoute', '#trainSpeed', '#trainGlow'], gradient: ['#gradientDirection','#gradientDrift','#gradientMotion','#gradientSeed'], rainbow: ['#rainbowBands','#rainbowTravel','#rainbowDirection','#rainbowSeed'], solid: ['#solidGlow','#solidBreath','#solidSeed'], sparkle: ['#sparkleDensity','#sparkleLinger','#sparkleTwinkle','#sparkleNight','#sparkleSeed'], wave: ['#waveAxis','#waveFrequency','#waveTravel','#waveShape','#waveDirection','#waveSeed']});
@@ -519,7 +518,7 @@
 
   function defaultScene() {
     return { schema: 'ledgrid.scene.v2',
-      background: {component_id: 'native_aurora', version: 1, provider: 'receiver_native', role: 'background', bundle_digest: nativeDigest, parameters: {gain: number('#backgroundGain'), source_fps: 30, seed: 4201}},
+      background: {component_id: 'solid_background', version: 1, provider: 'python', role: 'background', parameters: {gain: number('#backgroundGain'), seed: 4201}},
       animation: {component_id: 'aurora_curtains', version: 1, provider: 'python', role: 'animation', parameters: {curtain_density: number('#curtainDensity'), fold_depth: number('#foldDepth'), glow_intensity: number('#glowIntensity'), source_fps: 30, seed: 4201}},
       widgets: [], plants: {effects: {version: 1, active: [], strengths: {}}},
       look: {palette_id: $('#previewPalette').value, pace: number('#sceneSpeed'), presentation_brightness: number('#sceneLuminance')} };
@@ -923,45 +922,19 @@
     onError: (error) => { $('#previewStatus').textContent = error.message || 'Preview could not render.'; if (error.previewUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); },
   });
   const paletteForVibe = Object.freeze({quiet: 'mist', neutral: 'neutral', vivid: 'spectrum', celebration: 'spectrum', cozy: 'ember'});
-  function managedWallComponent(componentId, role = 'background', provider = null) {
-    return state.wall.bootstrap?.components?.find((component) => (
-      (!provider || component.provider === provider)
-      && component.plugin_id === componentId && component.role === role
-      && component.browser_capabilities?.activation_ready === true
-      && component.browser_capabilities?.managed_identity
-    ));
-  }
-  function wallComponentReference(componentId, parameters, role = 'background', provider = null) {
-    const component = managedWallComponent(componentId, role, provider);
-    const managed = component?.browser_capabilities?.managed_identity;
-    if (!managed) throw new Error(`${componentId} is not activation-ready on this wall.`);
-    const managedParameters = structuredClone(parameters || {});
-    // Older starter/saved scenes carry a Clock-local color.  Clock now derives
-    // color from the Scene palette, so do not send that retired field through
-    // the strict managed activation schema.
-    if (componentId === 'clock_overlay') delete managedParameters.color;
-    return {
-      provider: managed.provider, component_id: managed.component_id,
-      component_digest: managed.component_digest, runtime_digest: managed.runtime_digest,
-      parameter_schema_version: managed.parameter_schema_version,
-      parameters: managedParameters,
-    };
-  }
   function observedWallIdentity(scene = state.wall.scene, observation = state.wall.observation) {
-    const active = observation?.active_identity?.scene_identity;
-    if (!scene || !active?.digest) return null;
-    return {revision: Number.isSafeInteger(active.revision) ? active.revision : scene.revision, digest: active.digest};
+    if (!scene) return null;
+    return {revision: Number(scene.revision || observation?.controller_state_revision || 0), digest: observation?.scene_digest || 'controller scene'};
   }
   function wallStatus(lastError = null) {
     const observation = state.wall.observation;
     const selected = observedWallIdentity();
-    const running = Boolean(observation?.is_running && selected);
-    return {
-      connected: Boolean(observation?.controller_session_id), running, armed: running,
-      current: selected, desired: selected, observed: running ? selected : null,
-      revision: Number(observation?.controller_state_revision || selected?.revision || 0),
-      last_error: lastError,
-    };
+    const connected = Boolean(observation?.controller_session_id && observation.freshness === 'fresh');
+    const running = Boolean(connected && observation?.is_running);
+    return {connected, running, armed: running,
+      current: selected, desired: state.scene ? {revision: state.sequence, digest: state.scene.animation?.component_id || 'requested scene'} : null,
+      observed: running ? selected : null, revision: Number(observation?.controller_state_revision || 0),
+      receiver_connectivity: observation?.receiver_connectivity || {}, last_error: lastError || observation?.last_error || null};
   }
   function composerSceneFromWall(scene, observation) {
     if (scene?.schema === 'ledgrid.scene.v2') return structuredClone(scene);
@@ -975,9 +948,8 @@
     return {
       schema: 'ledgrid.scene.v2',
       background: {
-        component_id: 'native_aurora', version: 1, provider: 'receiver_native', role: 'background',
-        bundle_digest: nativeDigest,
-        parameters: {gain: 0, source_fps: 30, seed: Math.trunc(Number(parameters.seed || 0))},
+        component_id: 'solid_background', version: 1, provider: 'python', role: 'background',
+        parameters: {gain: 0, seed: Math.trunc(Number(parameters.seed || 0))},
       },
       animation: {component_id: selected.plugin_id, version: 1, provider: 'python', role: 'animation', parameters},
       widgets: clock ? [{
@@ -1002,27 +974,7 @@
       },
     };
   }
-  function browserSceneForWall(scene) {
-    const components = [{
-      slot_id: 'background',
-      ...wallComponentReference(scene.background.component_id, scene.background.parameters, 'background', scene.background.provider),
-    }, {
-      slot_id: 'animation',
-      ...wallComponentReference(scene.animation.component_id, scene.animation.parameters, 'animation', scene.animation.provider),
-    }];
-    (scene.widgets || []).forEach((widget) => components.push({
-      slot_id: `widget:${widget.id}`,
-      ...wallComponentReference(widget.component.component_id, widget.component.parameters, 'overlay', widget.component.provider),
-    }));
-    const profileDigest = state.wall.observation?.installation_profile_digest
-      || state.wall.bootstrap?.installation_profile?.digest;
-    if (!/^[0-9a-f]{64}$/.test(profileDigest || '')) throw new Error('The wall has no managed installation profile.');
-    return {
-      schema: 'ledgrid.browser-scene-v2', schema_version: 1,
-      scene: structuredClone(scene), components,
-      installation_profile: {digest: profileDigest},
-    };
-  }
+  function browserSceneForWall(scene) { return structuredClone(scene); }
   function globalSettingsForWall(scene, power, targetFps) {
     const observation = state.wall.observation || {};
     const bootstrap = state.wall.bootstrap || {};
@@ -1059,10 +1011,12 @@
     if (!state.wall.bootstrap) state.wall.bootstrap = await requestJson('/api/v1/composer/bootstrap');
     const priorRevision = state.wall.observation?.active_identity?.scene_identity?.digest || state.wall.scene?.revision;
     const [scenePayload, observation] = await Promise.all([
-      requestJson('/api/v1/scene'), requestJson('/api/v1/composer/settings/observed'),
+      requestJson('/api/v1/scene'), requestJson(`/api/v1/composer/settings/observed${state.wall.requestId ? `?request_id=${encodeURIComponent(state.wall.requestId)}` : ''}`),
     ]);
     state.wall.scene = scenePayload.scene || null;
     state.wall.observation = observation;
+    if (observation.scene) state.wall.scene = structuredClone(observation.scene);
+    if (observation.command_result?.state === 'failed' && observation.command_result.request_id === state.wall.requestId) { state.wall.activationError = observation.command_result.error || 'Controller playback failed; output may have been interrupted.'; state.wall.retryBlocked = true; }
     syncFrameRateObservation(observation);
     const shouldAdopt = Boolean(!preserveAuthored && scenePayload.scene && (adopt || (
       !state.wall.dirty && priorRevision != null && priorRevision !== (observation.active_identity?.scene_identity?.digest || scenePayload.scene.revision)
@@ -1086,7 +1040,7 @@
     // accepts it.  While that acknowledgement is failed or pending recovery,
     // keep the Operations pane anchored to the wall observation rather than
     // letting a later local Composer poll imply the desired scene is live.
-    const status = {...(state.wall.activationError ? wallStatus() : (payload.status || payload))};
+    const status = {...(state.wall.observation ? wallStatus() : (payload.status || payload))};
     if (state.wall.observation) {
       const observed = wallStatus();
       // Saved Composer publication is desired state, not proof of wall playback.
@@ -1095,7 +1049,9 @@
     state.status = status;
     state.revision = Math.max(state.revision || 0, status.revision || 0);
     $('#connectionState').textContent = status.connected ? (status.running ? 'Running' : 'Stopped') : 'Offline';
-    $('#observedIdentity').textContent = identity(status.observed); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
+    $('#observedIdentity').textContent = identity(status.observed);
+    const receiverState = $('#receiverConnectivity');
+    if (receiverState) receiverState.textContent = JSON.stringify(status.receiver_connectivity || {}); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
     $('#sceneIdentity').textContent = identity(status.current); $('#saveState').textContent = state.dirty ? 'Unsaved changes' : (state.selection?.kind === 'look' ? 'Saved scene' : 'Not saved');
     const live = Boolean(status.running && status.armed);
     $('#liveAction').textContent = live ? 'Stop output' : 'Stopped';
@@ -1125,20 +1081,20 @@
       const component = components.find(item => item.slot_id === 'animation')
         || components.find(item => item.slot_id === 'known_python_fallback')
         || components.find(item => item.slot_id === 'background');
-      const componentId = active?.scene_identity?.digest ? component?.component_id : null;
+      const componentId = state.wall.scene?.animation?.component_id || state.wall.scene?.background?.plugin_id || component?.component_id || null;
       const entry = state.gallery?.entries?.find(item => item.component_id === componentId);
-      const name = entry?.name || (componentId ? componentId.replaceAll('_', ' ') : 'Verified scene');
+      const name = entry?.name || (componentId ? componentId.replaceAll('_', ' ') : 'Controller scene');
       const offline = state.wall.statusUnavailable || !status.connected;
       const pending = Boolean(state.wall.activating || state.publication.queued || state.publication.afterStop || state.publication.inFlight);
       playbackTitle.textContent = offline ? 'Wall unavailable' : live ? `Playing · ${name}` : 'Output stopped';
       playbackHint.textContent = offline
         ? 'Cannot confirm current output. Reconnecting automatically.'
-        : state.wall.activationError ? 'Update failed. The requested scene is not confirmed; retry below.'
+        : state.wall.activationError ? 'Update failed. Playback may have been interrupted; retry below.'
         : state.authoredValidationError ? 'Edit needs attention. The previous output is unchanged.'
-        : pending ? 'Updating the wall… Showing the last confirmed output.'
+        : pending ? 'Updating the wall… Controller playback is observed separately.'
         : live ? 'Selections and adjustments update the wall immediately.'
         : 'Choose a scene or adjust a control to resume live output.';
-      $('#connectionState').textContent = offline ? 'Offline' : pending ? 'Updating…' : live ? 'Live' : 'Stopped';
+      $('#connectionState').textContent = offline ? 'Offline' : pending ? 'Updating…' : live ? 'Controller playing' : 'Stopped';
     }
 
   }
@@ -1255,13 +1211,13 @@
     state.lastControl = control?.id || null;
     if (state.lastControl === 'clockEnabled' || state.lastControl === 'emojiEnabled') syncWidgetDisclosure();
     if (control && ['asciiPhrase', 'emojiText'].includes(control.id) && !controlEditSessions.has(control)) beginControlEdit(control);
-    const rollback = historySnapshot();
+    const previousDraft = historySnapshot();
     const next = sceneFromControls();
     const targetFps = boundedTargetFps($('#targetFps').value);
     if (sameLocalParameters(next, state.scene) && targetFps === authoredTargetFps) return;
     const session = control && controlEditSessions.get(control);
     const rememberEdit = !session || !session.remembered;
-    const previous = session?.previous || (priorScene ? historySnapshot(priorScene, rollback.targetFps) : rollback);
+    const previous = session?.previous || (priorScene ? historySnapshot(priorScene, previousDraft.targetFps) : previousDraft);
     if (session) session.remembered = true;
     const historyBefore = state.history.slice(); const redoBefore = state.redo.slice(); const editHistoryGeneration = historyGeneration;
     const intentToken = beginIntent();
@@ -1271,7 +1227,7 @@
       if (intentIsCurrent(intentToken) && !state.publication.queued && !state.publication.inFlight) {
         if (historyGeneration === editHistoryGeneration) { state.history = historyBefore; state.redo = redoBefore; }
         if (session && rememberEdit) session.remembered = false;
-        state.scene = rollback.scene; authoredTargetFps = rollback.targetFps; syncTargetFps(rollback.targetFps); applyScene(rollback.scene); updateHistoryActions();
+        state.scene = previousDraft.scene; authoredTargetFps = previousDraft.targetFps; syncTargetFps(previousDraft.targetFps); applyScene(previousDraft.scene); updateHistoryActions();
       }
       $('#operationMessage').textContent = error.message;
     }
@@ -1389,114 +1345,67 @@
   function focusable(dialog) { return [...dialog.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter((node) => !node.disabled); }
   function openDialog(dialog) { const prior = document.activeElement; dialog.showModal(); focusable(dialog)[0]?.focus(); const trap = (event) => { if (event.key === 'Escape') { event.preventDefault(); dialog.close(); } if (event.key !== 'Tab') return; const nodes = focusable(dialog); const first = nodes[0]; const last = nodes.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }; dialog.addEventListener('keydown', trap); dialog.addEventListener('close', () => { dialog.removeEventListener('keydown', trap); prior?.focus(); }, {once: true}); }
   function blockers(result) { const list = $('#readinessList'); list.replaceChildren(); (result.blockers || [{message: result.error || 'The live update is not ready.', recovery: 'Review the connection and current scene.'}]).forEach((blocker) => { const item = document.createElement('li'); item.textContent = `${blocker.message} ${blocker.recovery || ''}`; list.append(item); }); openDialog($('#readinessDialog')); }
-  async function waitForExactActivation(accepted, controllerSessionId) {
-    const statusUrl = accepted.status_url || `/api/v1/scene/activations/${encodeURIComponent(accepted.activation_id)}`;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 120000) {
-      const status = await requestJson(statusUrl);
-      if (status.activation_id !== accepted.activation_id) throw new Error('The activation acknowledgement changed identity.');
-      if (status.controller?.session_id !== controllerSessionId) throw new Error('The wall restarted before it observed this scene.');
-      if (status.phase === 'active') {
-        if (JSON.stringify(status.requested_identity) !== JSON.stringify(status.observed_identity)) {
-          throw new Error('The wall did not observe the exact requested scene.');
-        }
-        return status;
-      }
-      if (['failed', 'timed_out', 'rolled_back'].includes(status.phase)) {
-        // Rollback can advance the revision before general status catches up.
-        // Only the controller's explicit queued-handoff rejection proves no
-        // mutation occurred. Missing rollback evidence alone proves nothing.
-        const rejectedBeforeMutation = status.phase === 'failed'
-          && status.error?.startsWith('durable queued activation rejected before mutation:')
-          && status.controller.state_revision_after === null
-          && status.observed_identity === null
-          && status.telemetry?.complete === false && status.telemetry?.fresh === false
-          && status.rollback?.available === false && status.rollback?.snapshot_id === null
-          && status.rollback?.result === null
-          && status.rollback?.error === 'no rollback authority was acquired before rejection';
-        state.wall.pendingObservation = rejectedBeforeMutation ? null : status;
-        throw new Error(status.error || `Activation ${status.phase}.`);
-      }
-      await sleep(500);
-    }
-    throw new Error('The wall did not acknowledge this scene in time.');
-  }
-  async function waitForActivationObservation() {
-    const receipt = state.wall.pendingObservation;
-    if (!receipt) return;
-    const session = receipt.controller?.session_id;
-    const revision = receipt.controller?.state_revision_after;
-    const rollbackObserved = receipt.phase === 'active' || (
-      receipt.rollback?.result === 'succeeded'
-      && receipt.telemetry?.complete === true && receipt.telemetry?.fresh === true
-    );
-    if (!session || !Number.isSafeInteger(revision) || revision < 0
-        || !receipt.observed_identity?.scene_identity?.digest || !rollbackObserved) {
-      throw new Error('The activation receipt has no complete observation basis.');
-    }
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 20000) {
-      await refreshWallStatus({preserveAuthored: true});
-      const observation = state.wall.observation;
-      if (observation?.controller_session_id && observation.controller_session_id !== session) {
-        state.wall.pendingObservation = null;
-        throw new Error('The wall restarted before its updated status was available.');
-      }
-      const observedRevision = observation?.controller_state_revision;
-      if (observation?.controller_session_id === session && Number.isSafeInteger(observedRevision) && observedRevision >= revision) {
-        state.wall.pendingObservation = null;
-        if (observedRevision !== revision || stableGalleryJson(observation.active_identity) !== stableGalleryJson(receipt.observed_identity)) {
-          throw new Error('The wall changed before its activated scene could be confirmed.');
-        }
-        return;
-      }
-      await sleep(250);
-    }
-    // Keep the fence across queued edits and explicit retries. Terminal
-    // receipts can precede publication of the general status used by Check.
-    throw new Error('The updated wall status is not available yet.');
-  }
+
+
   async function guardedWallActivation(scene, power, targetFps = boundedTargetFps($('#targetFps').value)) {
-    await waitForActivationObservation();
     await refreshWallStatus({preserveAuthored: true});
     if (state.wall.bootstrap?.capabilities?.server_actions?.activation_available !== true) {
       state.wall.dirty = false;
       return {local_only: true};
     }
-    const browserScene = browserSceneForWall(scene);
-    const globalSettings = globalSettingsForWall(scene, power, targetFps);
-    const checked = await requestJson('/api/v1/scene/checks', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({scene: browserScene, global_settings: globalSettings}),
-    });
-    if (!checked.check_token || !checked.basis?.controller) throw new Error('The wall cannot accept this scene yet.');
     const accepted = await requestJson('/api/v1/scene', {
-      method: 'PUT', headers: {'Content-Type': 'application/json', 'Idempotency-Key': newUuid()},
-      body: JSON.stringify({
-        check_token: checked.check_token,
-        expected_controller_session_id: checked.basis.controller.session_id,
-        expected_controller_state_revision: checked.basis.controller.state_revision,
-        scene: browserScene, global_settings: globalSettings,
-      }),
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scene: structuredClone(scene), global_settings: globalSettingsForWall(scene, power, targetFps)}),
     });
-    state.wall.pendingObservation = await waitForExactActivation(accepted, checked.basis.controller.session_id);
-    await waitForActivationObservation();
+    state.wall.requestId = accepted.request_id || null;
+    state.wall.requested = structuredClone(scene);
     state.wall.activationError = null;
-    // A slider may have produced a newer queued scene while this exact one was
-    // being acknowledged. Never snap the controls back to the older scene.
     state.wall.dirty = Boolean(state.publication.queued || state.publication.afterStop);
+    await refreshWallStatus({preserveAuthored: true});
+    return accepted;
+  }
+  async function waitForStopCommand(requestId, {signal, deadline}) {
+    if (!requestId) throw new Error('The controller did not identify the Stop request.');
+    while (Date.now() < deadline && !signal.aborted) {
+      const observation = await requestJson(`/api/v1/composer/settings/observed?request_id=${encodeURIComponent(requestId)}`, {signal});
+      if (signal.aborted) throw new Error('Stop timed out; refresh to check output.');
+      state.wall.observation = observation;
+      const result = observation.command_result;
+      if (result?.request_id === requestId && result.state === 'failed') {
+        throw new Error(result.error || 'The controller could not stop output.');
+      }
+      if (result?.request_id === requestId && result.state === 'completed'
+          && observation.freshness === 'fresh' && observation.is_running === false) return;
+      await sleep(Math.min(200, Math.max(0, deadline - Date.now())));
+    }
+    throw new Error('Stop timed out; refresh to check output.');
   }
   async function stopOutputNow(scene) {
+    const controller = new AbortController();
+    const deadline = Date.now() + 10000;
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
+    const signal = controller.signal;
     state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = 'Stopping…';
     $('#operationMessage').textContent = 'Stopping output. The next valid edit resumes automatically.';
     try {
-      await guardedWallActivation(scene, false);
+      if (state.wall.bootstrap?.capabilities?.server_actions?.activation_available === true) {
+        const accepted = await requestJson('/api/v1/scene', {method: 'DELETE', signal});
+        if (signal.aborted) throw new Error('Stop timed out; refresh to check output.');
+        state.wall.requestId = accepted.request_id;
+        await waitForStopCommand(accepted.request_id, {signal, deadline});
+      }
       const result = await requestJson(`${api}/stop`, {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId}),
+        method: 'POST', signal, headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId}),
       });
+      if (signal.aborted) throw new Error('Stop timed out; refresh to check output.');
+      state.wall.activationError = null;
       renderStatus(result.status || result);
-    } catch (error) { renderStatus(wallStatus(error.message)); blockers({error: error.message, blockers: error.blockers}); }
-    finally { state.wall.activating = false; renderStatus(state.status || wallStatus()); }
+    } catch (error) {
+      const message = signal.aborted ? 'Stop timed out; refresh to check output.' : error.message;
+      state.wall.activationError = message;
+      renderStatus(wallStatus(message)); blockers({error: message, blockers: error.blockers});
+    }
+    finally { window.clearTimeout(timeout); state.wall.activating = false; renderStatus(state.status || wallStatus()); }
   }
   function stopOutput() {
     beginIntent();
@@ -1515,7 +1424,7 @@
       }
     });
   }
-  async function check() { try { const response = await fetch(`${api}/check`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene: sceneFromControls()})}); const result = await response.json(); $('#checkMessage').textContent = response.ok ? 'This is advisory; it does not change output.' : (result.error || 'Check could not complete.'); const details = $('#checkDetails'); details.replaceChildren(); [['Scene identity', identity(result.basis)], ['Connection', result.status?.connected ? 'Connected' : 'Disconnected'], ['Publication', result.status?.connected ? 'Every valid edit applies automatically' : 'Edits will apply when the wall reconnects']].forEach(([term, description]) => { const entry = document.createElement('div'); entry.innerHTML = `<dt>${term}</dt><dd>${description}</dd>`; details.append(entry); }); if (result.status) renderStatus(result); openDialog($('#checkDialog')); } catch (error) { $('#operationMessage').textContent = error.message; } }
+  async function check() { try { const response = await fetch(`${api}/check`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origin: 'composer', scene: sceneFromControls()})}); const result = await response.json(); $('#checkMessage').textContent = response.ok ? 'This is advisory; it does not change output.' : (result.error || 'Check could not complete.'); const details = $('#checkDetails'); details.replaceChildren(); [['Scene identity', identity(result.basis)], ['Connection', result.status?.connected ? 'Connected' : 'Disconnected'], ['Publication', result.status?.connected ? 'Every valid edit applies automatically' : 'Reconnect and make a new edit to request playback']].forEach(([term, description]) => { const entry = document.createElement('div'); entry.innerHTML = `<dt>${term}</dt><dd>${description}</dd>`; details.append(entry); }); if (result.status) renderStatus(result); openDialog($('#checkDialog')); } catch (error) { $('#operationMessage').textContent = error.message; } }
   function saveFeedback(message, stateName) {
     const feedback = $('#saveFeedback');
     feedback.textContent = message; feedback.dataset.state = stateName; feedback.hidden = false;
@@ -1779,14 +1688,16 @@
     try {
       const [status, observation] = await Promise.all([
         requestJson(`${api}/status?client_id=${encodeURIComponent(clientId)}`),
-        requestJson('/api/v1/composer/settings/observed'),
+        requestJson(`/api/v1/composer/settings/observed${state.wall.requestId ? `?request_id=${encodeURIComponent(state.wall.requestId)}` : ''}`),
       ]);
       state.wall.observation = observation;
+    if (observation.scene) state.wall.scene = structuredClone(observation.scene);
+      if (observation.command_result?.state === 'failed' && observation.command_result.request_id === state.wall.requestId) { state.wall.activationError = observation.command_result.error || 'Controller playback failed; output may have been interrupted.'; state.wall.retryBlocked = true; }
       state.wall.statusUnavailable = false;
       syncFrameRateObservation(observation);
       renderStatus(status);
       if (status.undo_invalidated) await acknowledgeUndo(status.undo_invalidation_revision);
-      if (status.connected && state.wall.dirty && state.scene && !state.wall.retryBlocked && !state.publication.queued && !state.publication.afterStop && !state.publication.inFlight) await submit(state.scene, {intentToken: state.intent, automatic: true});
+
     } catch (error) { state.wall.statusUnavailable = true; renderStatus({...state.status, last_error: error.message}); }
     finally { state.refreshInFlight = false; }
   }
@@ -1813,8 +1724,8 @@
     } else { applyScene(defaultScene()); state.scene = defaultScene(); state.dirty = false; }
     // The legacy Composer may be empty after restart while the canonical wall
     // still has a selected Scene. Hydration must not republish that Scene or
-    // restart stopped output. Only seed a genuinely empty installation.
-    if (!body.status?.current && state.wall.observation && !state.wall.statusUnavailable && !state.wall.observation.active_identity?.scene_identity?.digest) await submit(state.scene);
+    // restart stopped output. The operator chooses when to resume output.
+
   }
   renderPlaylist();
   hydrateCurrentScene().then(() => Promise.all([loadLibrary(), loadGallery(), loadPlaylists(), refreshPlaylistStatus()])).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'pixel_chase', 'plant_glow', ...mediaIds, 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) { refreshStatus(); refreshPlaylistStatus(); } }, 1000); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });

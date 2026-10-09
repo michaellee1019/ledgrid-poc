@@ -10,10 +10,6 @@ if [ ! -x "$RUNTIME_PYTHON" ]; then
     exit 1
 fi
 
-# Digest-addressed environments are built in a temporary directory and then
-# atomically renamed. Python resolves a moved venv correctly when its interpreter
-# is invoked directly, while activation scripts retain the temporary absolute
-# path. Never source the activation script in production startup.
 DEFAULT_STRIPS=$("$RUNTIME_PYTHON" - <<'PY'
 from drivers.led_layout import default_strip_count
 print(default_strip_count())
@@ -29,19 +25,6 @@ from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
 print(DEFAULT_ANIMATION_SPEED_SCALE)
 PY
 )
-RELEASE_ID=$("$RUNTIME_PYTHON" - "$ROOT_DIR" <<'PY'
-import sys
-from pathlib import Path
-from scripts.start_server import resolve_active_release_id
-
-print(resolve_active_release_id(Path(sys.argv[1])) or "")
-PY
-)
-RELEASE_ARGS=()
-if [ -n "$RELEASE_ID" ]; then
-    RELEASE_ARGS=(--release-id "$RELEASE_ID")
-fi
-
 STRIPS=${STRIPS:-$DEFAULT_STRIPS}
 LEDS_PER_STRIP=${LEDS_PER_STRIP:-$DEFAULT_LEDS_PER_STRIP}
 # The output pipeline is capable of 200 FPS, but the physical installation
@@ -77,7 +60,6 @@ mkdir -p "$(dirname "$CONTROL_FILE")" "$(dirname "$STATUS_FILE")"
     --poll-interval "$POLL_INTERVAL" \
     --status-interval "$STATUS_INTERVAL" \
     --spi-speed "$SPI_SPEED" \
-    ${RELEASE_ARGS[@]+"${RELEASE_ARGS[@]}"} \
     > controller.log 2>&1 &
 CONTROLLER_PID=$!
 echo "$CONTROLLER_PID" > run_state/controller.pid
@@ -92,7 +74,6 @@ echo "$CONTROLLER_PID" > run_state/controller.pid
     --animation-speed-scale "$ANIMATION_SPEED_SCALE" \
     --host "$HOST" \
     --port "$PORT" \
-    ${RELEASE_ARGS[@]+"${RELEASE_ARGS[@]}"} \
     > web.log 2>&1 &
 WEB_PID=$!
 echo "$WEB_PID" > run_state/web.pid
@@ -109,7 +90,7 @@ EXIT_STATUS=$?
 set -e
 
 if [ "$EXIT_STATUS" -ne 0 ]; then
-    echo "ledgrid child exited with status $EXIT_STATUS (release ${RELEASE_ID:-unknown})" >&2
+    echo "ledgrid child exited with status $EXIT_STATUS" >&2
     for log_file in controller.log web.log; do
         echo "--- $log_file ---" >&2
         tail -n 200 "$log_file" >&2 || true

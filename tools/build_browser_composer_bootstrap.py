@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic offline-first Composer catalog and profile assets."""
+"""Build the deterministic Composer catalog and fixed calibration assets."""
 
 from __future__ import annotations
 
@@ -25,14 +25,8 @@ from animation.core.installation_profile import (  # noqa: E402
     encode_installation_profile,
 )
 from animation.core.manager import AnimationManager, PreviewLEDController  # noqa: E402
-from animation.core.native_background_library import NativeBackgroundLibrary  # noqa: E402
-from animation.native.managed_preview import ManagedNativeHostPreview  # noqa: E402
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT  # noqa: E402
 from web.app import AnimationWebInterface  # noqa: E402
-from web.composer_final_preview import (  # noqa: E402
-    NATIVE_AURORA_BUNDLE_DIGEST,
-    NATIVE_AURORA_COMPONENT_ID,
-)
 
 
 ARTIFACT_VERSION = 1
@@ -52,8 +46,14 @@ class _NoWallChannel:
         raise AssertionError("static Composer generation must not mutate wall state")
 
 
-def build_profile() -> tuple[bytes, str]:
-    payload = encode_installation_profile(compile_installation_profile())
+def build_profile(repo_root: Path = ROOT) -> tuple[bytes, str]:
+    config = repo_root / 'config'
+    payload = encode_installation_profile(compile_installation_profile(
+        foliage_path=config / 'plant_pixel_map_32x138.json',
+        globes_path=config / 'plant_globe_map_32x138.json',
+        regions_path=config / 'plant_globe_regions_32x138.json',
+        wall_path=config / 'webcam_wall_calibration.json',
+    ))
     digest = payload[68:100].hex()
     return payload, digest
 
@@ -73,47 +73,15 @@ def build_bootstrap(
     runtime_asset_root: Path | None = None,
 ) -> dict[str, Any]:
     controller = PreviewLEDController(DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP)
-    flags = AnimationPipelineFeatureFlags(
-        receiver_local_background=True,
-        receiver_sparse_overlay=True,
-        receiver_native_modules=True,
-    )
-    with tempfile.TemporaryDirectory(prefix="composer-native-library-") as native_root, contextlib.redirect_stdout(io.StringIO()):
-        library = NativeBackgroundLibrary(
-            Path(native_root), clock=lambda: datetime(1970, 1, 1, tzinfo=timezone.utc),
-        )
-        build = (
-            repo_root / "run_state" / "native_background_builds"
-            / NATIVE_AURORA_COMPONENT_ID / NATIVE_AURORA_BUNDLE_DIGEST
-        )
-        if build.exists() or build.is_symlink():
-            # Verify the source, target payload, and host peer before publishing
-            # this exact identity into the temporary catalog-only library.
-            ManagedNativeHostPreview(
-                repo_root, NATIVE_AURORA_COMPONENT_ID, NATIVE_AURORA_BUNDLE_DIGEST,
-            )
-            library.publish(build / "bundle.zip")
-        manager = AnimationManager(
-            controller,
-            animation_speed_scale=DEFAULT_ANIMATION_SPEED_SCALE,
-            plant_aware=DEFAULT_PLANT_AWARE,
-            feature_flags=flags,
-            native_background_library=library,
-            auto_start=False,
-        )
-        interface = AnimationWebInterface(
-            _NoWallChannel(),
-            manager,
-            local_mode=True,
-            project_root=repo_root,
-            activation_enabled=False,
-        )
-        payload = interface._browser_composer_bootstrap(
-            observe_installation_profile=False,
-            runtime_asset_root=runtime_asset_root,
-        )
+    with contextlib.redirect_stdout(io.StringIO()):
+        manager = AnimationManager(controller, animation_speed_scale=DEFAULT_ANIMATION_SPEED_SCALE,
+                                   plant_aware=DEFAULT_PLANT_AWARE, auto_start=False)
+        interface = AnimationWebInterface(_NoWallChannel(), manager, local_mode=True,
+                                          project_root=repo_root, activation_enabled=False)
+        payload = interface._browser_composer_bootstrap(observe_installation_profile=False,
+                                                       runtime_asset_root=runtime_asset_root)
 
-    _profile, profile_digest = build_profile()
+    _profile, profile_digest = build_profile(repo_root)
     profile_url = bundled_profile_url or (
         "/static/generated/composer/installation_profile_" + profile_digest + ".bin"
     )
@@ -133,7 +101,7 @@ def build_bootstrap(
     actions = payload["capabilities"]["server_actions"]
     actions.update({
         "activation_available": False,
-        "activation_mode": "offline",
+        "activation_mode": "local_preview",
         "installation_profile_draft_url": None,
         "installation_profile_publish_url": None,
         "installation_profile_artifact_url": None,
@@ -171,7 +139,7 @@ def write_assets(
     profile_output: Path | None = None,
 ) -> tuple[bytes, bytes]:
     root = repo_root.resolve()
-    profile, digest = build_profile()
+    profile, digest = build_profile(root)
     if profile_output is None:
         profile_output = Path("web/static/generated/composer/") / (
             f"installation_profile_{digest}.bin"

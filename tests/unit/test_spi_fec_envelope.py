@@ -303,57 +303,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertFalse(item._last_transfer_captured_response)
         self.assertFalse(item._last_transfer_status_sampled)
 
-    def test_selected_sparse_batches_use_v7_with_separate_exact_accounting(self):
-        item = _controller(requested=True)
-        item._transport_envelope_enabled = True
-        item._fec_transport_enabled = True
-        session = bytes(range(16))
-        packets = item.serialize_overlay_patch_batches(
-            controller_session_id=session,
-            generation=7,
-            patches=[(0, bytes((1, 2, 3, 4)) * protocol.OVERLAY_LOCAL_PIXELS)],
-            update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
-            maximum_semantic_bytes=item._sparse_transport_semantic_limit(),
-        )
 
-        self.assertEqual(tuple(map(len, packets)), (3336, 1144))
-        for semantic in packets:
-            item._xfer(semantic)
-            wire = item.spi.packets[-1]
-            self.assertEqual(wire[:2], b"\x0b\x07")
-            self.assertLessEqual(len(wire), protocol.MAX_SPI_TRANSFER)
-            self.assertEqual(_decode_clean_v7(wire), semantic)
-            self.assertEqual(
-                item._command_wire_size(semantic[0], len(semantic)), len(wire)
-            )
-
-        self.assertEqual(item._fec_sparse_packets_sent, 2)
-        self.assertEqual(item._fec_sparse_codewords_sent, 96)
-        self.assertEqual(item._fec_sparse_parity_bytes_sent, 1060)
-        self.assertEqual(item._fec_sparse_data_padding_bytes_sent, 196)
-        self.assertEqual(item._fec_frames_sent, 0)
-        self.assertEqual(item._fec_codewords_sent, 0)
-        self.assertEqual(item._fec_parity_bytes_sent, 0)
-        self.assertEqual(item._fec_data_padding_bytes_sent, 0)
-
-    def test_sparse_fec_selection_does_not_protect_other_commands(self):
-        semantic = bytes((protocol.CMD_OVERLAY_PATCH, 1, 2, 3))
-        item = _controller(requested=True)
-        item._transport_envelope_enabled = True
-        item._fec_transport_enabled = False
-        item._xfer(semantic)
-        self.assertEqual(item.spi.packets[-1][:2], b"\x0b\x01")
-        self.assertEqual(item._fec_sparse_packets_sent, 0)
-
-        item._fec_transport_enabled = True
-        item._xfer(semantic)
-        self.assertEqual(item.spi.packets[-1][:2], b"\x0b\x07")
-        self.assertEqual(_decode_clean_v7(item.spi.packets[-1]), semantic)
-        self.assertEqual(item._fec_sparse_packets_sent, 1)
-
-        item._xfer(bytes((protocol.CMD_OVERLAY_COMMIT,)))
-        self.assertEqual(item.spi.packets[-1][:2], b"\x0b\x01")
-        self.assertEqual(item._fec_sparse_packets_sent, 1)
 
     def test_scheduled_fec_sample_drains_queue_before_full_duplex_fec_frame(self):
         item = _controller(requested=True)

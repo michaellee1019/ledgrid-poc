@@ -9,7 +9,6 @@ using Queue = ledgrid::ReceiverCommandQueue<4, 4096>;
 
 struct Receiver {
   Queue queue;
-  ledgrid::ReceiverOperationTracker tracker;
   ledgrid::ReceiverStatusV7 live{};
   std::array<std::uint8_t, ledgrid::kStatusBytesV8> published{};
   Receiver() { publish(); }
@@ -30,12 +29,11 @@ struct Receiver {
     return true;
   }
   void finish(const Queue::Command& command, bool accepted = true) {
-    TEST_ASSERT_TRUE(tracker.begin(command.bytes[0]));
-    live.operation_sequence = tracker.sequence();
-    live.last_processed_command = tracker.last_processed_command();
+    ++live.operation_sequence;
+    live.last_processed_command = command.bytes[0];
     live.last_result = command.rejected || !accepted
-        ? ledgrid::ReceiverOperationResult::InvalidState
-        : ledgrid::ReceiverOperationResult::Ok;
+        ? 4
+        : 1;
     queue.complete();
   }
 };
@@ -134,7 +132,7 @@ void test_overflow_is_one_ordered_rejection_and_permanent_admission_fault() {
   }
   TEST_ASSERT_TRUE(receiver.publish());
   TEST_ASSERT_EQUAL_UINT32(5, receiver.live.operation_sequence);
-  TEST_ASSERT_EQUAL(ledgrid::ReceiverOperationResult::InvalidState, receiver.live.last_result);
+  TEST_ASSERT_EQUAL(4, receiver.live.last_result);
   receiver.receive(config, sizeof(config));
   TEST_ASSERT_FALSE(receiver.queue.take(&command));
   TEST_ASSERT_EQUAL_UINT32(2, receiver.live.spi_queue_errors);
@@ -150,7 +148,7 @@ void test_failed_command_completes_with_failure_and_reset_has_no_old_work() {
   TEST_ASSERT_TRUE(receiver.queue.take(&command));
   receiver.finish(command, false);
   TEST_ASSERT_TRUE(receiver.publish());
-  TEST_ASSERT_EQUAL(ledgrid::ReceiverOperationResult::InvalidState, receiver.live.last_result);
+  TEST_ASSERT_EQUAL(4, receiver.live.last_result);
   receiver.receive(config, sizeof(config));
   TEST_ASSERT_TRUE(receiver.queue.pending());
   receiver = Receiver(); // Reboot creates all state and DMA snapshots afresh.

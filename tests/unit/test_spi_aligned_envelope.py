@@ -179,7 +179,7 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         self.assert_crc(packet)
 
     def test_exact_maximum_fits_4096_and_one_byte_more_fails_closed(self):
-        semantic = bytes((protocol.CMD_NATIVE_CHUNK,)) + bytes(
+        semantic = bytes((protocol.CMD_SET_ALL,)) + bytes(
             protocol.MAX_ALIGNED_SEMANTIC_BYTES - 1
         )
         packet = protocol._encode_aligned_envelope(semantic)

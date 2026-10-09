@@ -34,3 +34,6 @@ compile_commands.json
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Browser assets are built from source before deployment.
+/web/static/generated/

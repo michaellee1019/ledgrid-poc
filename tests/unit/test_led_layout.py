@@ -29,11 +29,7 @@ from drivers.led_layout import (
     wall_device_map,
 )
 from drivers.multi_device import MultiDeviceLEDController
-from tools.deployment.receiver_hybrid_config import (
-    DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS,
-    DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS,
-    DEFAULT_RECEIVER_STRIP_COUNTS,
-)
+
 
 
 class LedLayoutTests(unittest.TestCase):
@@ -63,12 +59,12 @@ class LedLayoutTests(unittest.TestCase):
     def test_rightmost_extra_strip_broadcasts_one_semantic_column(self):
         self.assertEqual(EXTRA_STRIP_LANE, 0)
         self.assertTrue(MIRROR_EXTRA_STRIP_ON_ALL_LANES)
-        self.assertEqual(DEFAULT_RECEIVER_STRIP_COUNTS, (8, 8, 8, 8, 1))
+        self.assertEqual(WALL_RECEIVER_STRIP_COUNTS, (8, 8, 8, 8, 1))
         self.assertEqual(
-            DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS, (0, 8, 16, 24, 32)
+            WALL_RECEIVER_GLOBAL_STRIP_OFFSETS, (0, 8, 16, 24, 32)
         )
         self.assertEqual(
-            DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS,
+            WALL_PHYSICAL_OUTPUT_LANE_MASKS,
             (0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
         )
 

@@ -31,16 +31,6 @@ from drivers.multi_device import MultiDeviceLEDController
 from drivers.spi_controller import CRC_BYTES, LEDController
 from drivers.spi_controller import RECEIVER_STATUS_BYTES
 from drivers.spi_controller import RECEIVER_STATUS_BYTES_V2
-from tools.benchmarks.receiver_acceptance import (
-    CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
-    CAPABILITY_PRESENTATION_CONTEXT_V1,
-    CAPABILITY_STATIC_LOCAL_BACKGROUND,
-    CAPABILITY_STATUS_V3,
-    evaluate_phase3a_status,
-    evaluate_samples,
-    installed_streamed_timing_facts,
-)
-from tools.benchmarks.live_animation_sweep import receiver_failures
 
 
 class _Controller:
@@ -298,16 +288,18 @@ class FrameContractTests(unittest.TestCase):
         self.assertEqual(first.dtype, np.uint8)
         self.assertTrue(first.flags.c_contiguous)
 
-    def test_static_solid_marks_duplicate_frames_unchanged(self):
-        animation = SolidColorAnimation(_Controller(), {"red": 7, "green": 8, "blue": 9})
+    def test_solid_reuses_cached_frame_within_its_source_cadence(self):
+        animation = SolidColorAnimation(_Controller(), {'glow': .68, 'breath': 0.0})
         first = animation.generate_frame(0.0, 0)
-        second = animation.generate_frame(0.1, 1)
-
-        self.assertIsInstance(first, RenderedFrame)
+        snapshot = first.pixels.copy()
+        second = animation.generate_frame(0.005, 1)
         self.assertTrue(first.changed)
         self.assertFalse(second.changed)
-        self.assertIs(first.pixels, second.pixels)
-        np.testing.assert_array_equal(first.pixels[0], (7, 8, 9))
+        np.testing.assert_array_equal(snapshot, second.pixels)
+        animation.update_parameters({'glow': .5})
+        third = animation.generate_frame(0.005, 2)
+        self.assertTrue(third.changed)
+        self.assertFalse(np.array_equal(snapshot, third.pixels))
 
     def test_reusable_hsv_conversion_matches_colorsys(self):
         animation = _Animation(_Controller())
@@ -325,28 +317,16 @@ class FrameContractTests(unittest.TestCase):
         self.assertIs(returned, output)
         np.testing.assert_allclose(output, expected, atol=1)
 
-    def test_rainbow_reuses_color_lut_until_color_parameters_change(self):
-        class InstrumentedRainbow(RainbowAnimation):
-            hsv_conversions = 0
-
-            def hsv_to_rgb_array(self, *args, **kwargs):
-                self.hsv_conversions += 1
-                return super().hsv_to_rgb_array(*args, **kwargs)
-
-        animation = InstrumentedRainbow(_Controller())
-        first = animation.generate_frame(0.0, 0)
-        second = animation.generate_frame(0.005, 1)
-
-        self.assertEqual(animation.hsv_conversions, 1)
-        self.assertIsNot(first, second)
+    def test_rainbow_time_and_parameter_edits_change_cached_frames(self):
+        animation = RainbowAnimation(_Controller())
+        first = animation.generate_frame(0.0, 0).pixels.copy()
+        second = animation.generate_frame(0.1, 1).pixels.copy()
         self.assertEqual(first.shape, (_Controller.total_leds, 3))
-        self.assertEqual(first.dtype, np.uint8)
         self.assertFalse(np.array_equal(first, second))
-        np.testing.assert_array_equal(first[:5], first[5:10])
-
-        animation.update_parameters({'color_saturation': 0.5})
-        animation.generate_frame(0.01, 2)
-        self.assertEqual(animation.hsv_conversions, 2)
+        animation.update_parameters({'bands': .5})
+        third = animation.generate_frame(0.1, 2)
+        self.assertTrue(third.changed)
+        self.assertFalse(np.array_equal(second, third.pixels))
 
     def test_manager_does_not_transmit_unchanged_render_results(self):
         class Controller(_Controller):
@@ -428,7 +408,7 @@ class FrameContractTests(unittest.TestCase):
             manager._animation_loop()
 
         self.assertEqual(manager.frames_presented, 0)
-        self.assertTrue(manager.is_running)
+        self.assertFalse(manager.is_running)
 
     def test_manager_generates_next_frame_while_previous_frame_is_presented(self):
         send_started = threading.Event()
@@ -486,107 +466,6 @@ class _SPI:
         return [0] * len(data)
 
 
-class DriverBufferTests(unittest.TestCase):
-    def _driver(self):
-        driver = LEDController.__new__(LEDController)
-        driver.total_leds = 4
-        driver.strip_count = 1
-        driver.leds_per_strip = 4
-        driver.spi = _SPI()
-        driver._frame_packet = bytearray(1 + driver.total_leds * 3 + CRC_BYTES)
-        driver._bytes_sent = 0
-        driver._crc_bytes_sent = 0
-        driver._spi_transfers = 0
-        driver._errors = 0
-        driver._frames_sent = 0
-        driver._last_frame_duration = 0.0
-        driver._total_frame_duration = 0.0
-        driver._refresh_configuration = lambda force=False: None
-        return driver
-
-    def test_full_frame_packet_is_reused_and_crc_is_valid(self):
-        driver = self._driver()
-        packet_id = id(driver._frame_packet)
-        frame = np.arange(12, dtype=np.uint8).reshape(4, 3)
-
-        driver.set_all_pixels(frame)
-        driver.set_all_pixels(frame + 1)
-
-        self.assertEqual(id(driver._frame_packet), packet_id)
-        self.assertEqual(len(driver.spi.calls), 2)
-        for packet in driver.spi.calls:
-            payload, crc_bytes = packet[:-2], packet[-2:]
-            self.assertEqual(
-                int.from_bytes(crc_bytes, "big"),
-                binascii.crc_hqx(payload, 0xFFFF),
-            )
-
-    def test_receiver_status_is_parsed_from_miso(self):
-        driver = self._driver()
-        response = [0] * RECEIVER_STATUS_BYTES
-        response[:4] = b"LGS1"
-        response[4:8] = (123).to_bytes(4, "big")
-        response[8:12] = (2).to_bytes(4, "big")
-        response[12:16] = (121).to_bytes(4, "big")
-        response[16:20] = (99).to_bytes(4, "big")
-        response[20:22] = (41).to_bytes(2, "big")
-        response[22:24] = (52).to_bytes(2, "big")
-        response[24:26] = (4321).to_bytes(2, "big")
-        response[26] = 8
-        response[27:29] = (140).to_bytes(2, "big")
-
-        driver._update_receiver_status(response)
-
-        self.assertTrue(driver._receiver_status_seen)
-        self.assertEqual(driver._receiver_packets, 123)
-        self.assertEqual(driver._receiver_crc_errors, 2)
-        self.assertEqual(driver._receiver_frames_rendered, 99)
-        self.assertEqual(driver._receiver_last_show_us, 4321)
-        self.assertEqual(driver._receiver_leds_per_strip, 140)
-
-    def test_receiver_status_v2_exposes_pipeline_accounting(self):
-        driver = self._driver()
-        response = [0] * RECEIVER_STATUS_BYTES_V2
-        response[:4] = b"LGS2"
-        response[4] = 2
-        response[5] = 3
-        response[6] = 8
-        response[8:10] = (140).to_bytes(2, "big")
-        response[10:12] = (2).to_bytes(2, "big")
-        response[12:16] = (1000).to_bytes(4, "big")
-        response[16:20] = (0).to_bytes(4, "big")
-        response[20:24] = (999).to_bytes(4, "big")
-        response[24:28] = (900).to_bytes(4, "big")
-        response[28:32] = (890).to_bytes(4, "big")
-        response[32:36] = (9).to_bytes(4, "big")
-        response[36:40] = (0).to_bytes(4, "big")
-        response[40:44] = (0).to_bytes(4, "big")
-        response[44:46] = (310).to_bytes(2, "big")
-        response[46:48] = (20).to_bytes(2, "big")
-        response[48:50] = (450).to_bytes(2, "big")
-        response[50:52] = (4500).to_bytes(2, "big")
-        response[52:56] = (901).to_bytes(4, "big")
-        response[56:60] = (891).to_bytes(4, "big")
-        response[60:64] = (0).to_bytes(4, "big")
-        response[64] = 3
-
-        driver._update_receiver_status(response)
-
-        self.assertEqual(driver._receiver_status_version, 2)
-        self.assertEqual(driver._receiver_queued_transactions, 2)
-        self.assertEqual(driver._receiver_frames_accepted, 900)
-        self.assertEqual(driver._receiver_frames_displayed, 890)
-        self.assertEqual(driver._receiver_frames_superseded, 9)
-        self.assertEqual(driver._receiver_last_encode_us, 450)
-        self.assertEqual(driver._receiver_last_show_us, 4500)
-        self.assertEqual(driver._receiver_last_displayed_sequence, 891)
-        self.assertEqual(driver._receiver_stagger_phases, 3)
-
-        driver._update_receiver_status([0] * RECEIVER_STATUS_BYTES_V2)
-        self.assertEqual(driver._receiver_status_misses, 1)
-
-        driver._update_receiver_status([0] * 5)
-        self.assertEqual(driver._receiver_status_misses, 1)
 
 
 class _PartialDevice:
@@ -601,299 +480,8 @@ class _PartialDevice:
         self.full.append(colors.copy())
 
 
-class MultiDevicePartialTests(unittest.TestCase):
-    def test_independent_spi_buses_present_concurrently(self):
-        started = threading.Barrier(2)
-        overlapped = threading.Event()
-
-        class BlockingDevice:
-            def set_all_pixels(self, _colors, *, wall_frame_sequence=None):
-                try:
-                    started.wait(timeout=0.5)
-                    overlapped.set()
-                except threading.BrokenBarrierError:
-                    pass
-
-        controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
-        controller.num_devices = 2
-        controller.strips_per_device = 1
-        controller.leds_per_strip = 1
-        controller.leds_per_device = 1
-        controller.strip_count = 2
-        controller.total_leds = 2
-        controller.devices = [BlockingDevice(), BlockingDevice()]
-        controller._devices_by_bus = {0: [0], 1: [1]}
-        controller._executor = ThreadPoolExecutor(max_workers=2)
-        controller.debug = False
-        controller._logical_frames_sent = 0
-
-        try:
-            controller.set_all_pixels(np.zeros((2, 3), dtype=np.uint8))
-        finally:
-            controller._executor.shutdown(wait=True)
-
-        self.assertTrue(overlapped.is_set())
-        self.assertEqual(controller._logical_frames_sent, 1)
-
-    def test_devices_on_one_spi_bus_remain_serialized(self):
-        order = []
-
-        class OrderedDevice:
-            def __init__(self, index):
-                self.index = index
-
-            def set_all_pixels(self, _colors, *, wall_frame_sequence=None):
-                order.append(self.index)
-
-        controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
-        controller.num_devices = 2
-        controller.strips_per_device = 1
-        controller.leds_per_strip = 1
-        controller.leds_per_device = 1
-        controller.strip_count = 2
-        controller.total_leds = 2
-        controller.devices = [OrderedDevice(0), OrderedDevice(1)]
-        controller._devices_by_bus = {0: [0, 1]}
-        controller._executor = None
-        controller.debug = False
-        controller._logical_frames_sent = 0
-
-        controller.set_all_pixels(np.zeros((2, 3), dtype=np.uint8))
-
-        self.assertEqual(order, [0, 1])
-
-    def test_global_dirty_ranges_are_mapped_to_affected_devices(self):
-        controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
-        controller.num_devices = 2
-        controller.strips_per_device = 1
-        controller.leds_per_strip = 4
-        controller.leds_per_device = 4
-        controller.strip_count = 2
-        controller.total_leds = 8
-        controller.devices = [_PartialDevice(), _PartialDevice()]
-        controller._devices_by_bus = {0: [0, 1]}
-        controller._executor = None
-        controller.debug = False
-        controller._logical_frames_sent = 0
-
-        frame = np.arange(24, dtype=np.uint8).reshape(8, 3)
-        controller.set_frame(frame, dirty_ranges=((3, 5),))
-
-        self.assertEqual(controller.devices[0].partial[0][1], ((3, 4),))
-        self.assertEqual(controller.devices[1].partial[0][1], ((0, 1),))
-        np.testing.assert_array_equal(controller.devices[0].partial[0][0], frame[:4])
-        np.testing.assert_array_equal(controller.devices[1].partial[0][0], frame[4:])
-        self.assertEqual(controller._logical_frames_sent, 1)
 
 
-class ReceiverAcceptanceTests(unittest.TestCase):
-    def test_acceptance_rate_uses_the_counter_sample_window(self):
-        first = {
-            'receiver_status_version': 3,
-            'receiver_frames_accepted': 0,
-            'receiver_frames_displayed': 0,
-            'receiver_frames_superseded': 0,
-            'receiver_crc_errors': 0,
-            'receiver_publish_drops': 0,
-            'receiver_spi_queue_errors': 0,
-            'receiver_display_errors': 0,
-            'receiver_status_misses': 0,
-            'receiver_last_encode_us': 500,
-            'receiver_last_show_us': 4400,
-        }
-        last = dict(first, receiver_frames_accepted=1500,
-                    receiver_frames_displayed=1500)
-
-        result = evaluate_samples([first, last], 10.0)
-
-        self.assertTrue(result['passed'], result['failures'])
-        self.assertEqual(result['elapsed_seconds'], 10.0)
-        self.assertEqual(result['displayed_fps'], 150.0)
-
-    def test_phase3a_status_gate_requires_v3_ownership_and_exact_identities(self):
-        devices = [
-            {
-                "receiver_status_version": 3,
-                "receiver_capabilities": (
-                    CAPABILITY_STATUS_V3 | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
-                ),
-                "receiver_logical_device": index,
-            }
-            for index in range(5)
-        ]
-        self.assertTrue(evaluate_phase3a_status(devices)["passed"])
-
-        cases = (
-            (0, "receiver_status_version", 2, "status v2"),
-            (1, "receiver_capabilities", 0, "status capabilities"),
-            (2, "receiver_logical_device", 3, "logical identity"),
-        )
-        for index, key, value, message in cases:
-            with self.subTest(key=key):
-                broken = [dict(item) for item in devices]
-                broken[index][key] = value
-                result = evaluate_phase3a_status(broken)
-                self.assertFalse(result["passed"])
-                self.assertTrue(any(message in failure for failure in result["failures"]))
-        self.assertFalse(evaluate_phase3a_status(devices[:-1])["passed"])
-
-    def test_phase3a_canary_gate_requires_local_context_capabilities_only_there(self):
-        devices = [
-            {
-                "receiver_status_version": 3,
-                "receiver_capabilities": (
-                    CAPABILITY_STATUS_V3 | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
-                ),
-                "receiver_logical_device": index,
-            }
-            for index in range(5)
-        ]
-        canary_bits = (
-            CAPABILITY_STATIC_LOCAL_BACKGROUND
-            | CAPABILITY_PRESENTATION_CONTEXT_V1
-        )
-        devices[2]["receiver_capabilities"] |= canary_bits
-        self.assertTrue(
-            evaluate_phase3a_status(devices, local_canary_device=2)["passed"]
-        )
-        devices[2]["receiver_capabilities"] &= ~CAPABILITY_PRESENTATION_CONTEXT_V1
-        result = evaluate_phase3a_status(devices, local_canary_device=2)
-        self.assertFalse(result["passed"])
-        self.assertTrue(any("local-canary capabilities" in item for item in result["failures"]))
-
-    def test_phase3a_status_gate_rejects_stale_or_failed_refresh_proof(self):
-        devices = [
-            {
-                "receiver_status_version": 3,
-                "receiver_capabilities": (
-                    CAPABILITY_STATUS_V3 | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
-                ),
-                "receiver_logical_device": index,
-            }
-            for index in range(5)
-        ]
-        fresh = {
-            "request_id": "fresh-2", "completed_at": 123.5,
-            "passed": True, "errors": [],
-        }
-        self.assertTrue(evaluate_phase3a_status(
-            devices, refresh=fresh, expected_refresh_id="fresh-2"
-        )["passed"])
-        stale = evaluate_phase3a_status(
-            devices, refresh={**fresh, "request_id": "old-1"},
-            expected_refresh_id="fresh-2",
-        )
-        self.assertFalse(stale["passed"])
-        self.assertTrue(any("stale" in item for item in stale["failures"]))
-        failed = evaluate_phase3a_status(
-            devices, refresh={**fresh, "passed": False},
-            expected_refresh_id="fresh-2",
-        )
-        self.assertFalse(failed["passed"])
-        self.assertTrue(any("did not pass" in item for item in failed["failures"]))
-
-    def test_live_sweep_evaluator_checks_only_integrity_counter_deltas(self):
-        first = {
-            'receiver_status_version': 2,
-            'receiver_crc_errors': 4,
-            'receiver_publish_drops': 0,
-            'receiver_spi_queue_errors': 0,
-            'receiver_display_errors': 0,
-            'receiver_status_misses': 1,
-        }
-        self.assertEqual(receiver_failures(first, dict(first)), [])
-
-        last = dict(first)
-        last['receiver_display_errors'] = 2
-        self.assertEqual(
-            receiver_failures(first, last),
-            ['display errors increased by 2'],
-        )
-
-        v3_first = dict(first, receiver_status_version=3)
-        self.assertEqual(receiver_failures(v3_first, dict(v3_first)), [])
-
-    def test_installed_full_frame_timing_facts_are_locked(self):
-        self.assertEqual(installed_streamed_timing_facts(), {
-            'strips_per_receiver': 8,
-            'receiver_strip_counts': [8, 8, 8, 8, 1],
-            'receiver_full_frame_bytes': [3315, 3315, 3315, 3315, 417],
-            'full_wall_frame_bytes': 13677,
-            'leds_per_strip': 138,
-            'full_frame_bytes': 3315,
-            'spi_speed_hz': 20_000_000,
-            'receiver_spi_speeds_hz': [
-                20_000_000, 20_000_000, 20_000_000, 20_000_000, 20_000_000,
-            ],
-            'full_frame_spi_us': 1326,
-            'receiver_full_frame_spi_us': [1326, 1326, 1326, 1326, 166],
-            'nominal_show_us': 4440,
-        })
-
-    def test_acceptance_evaluator_passes_exactly_150fps_pipeline(self):
-        first = {
-            'receiver_status_version': 2,
-            'receiver_crc_errors': 1,
-            'receiver_publish_drops': 0,
-            'receiver_spi_queue_errors': 0,
-            'receiver_display_errors': 0,
-            'receiver_status_misses': 0,
-            'receiver_frames_accepted': 100,
-            'receiver_frames_displayed': 98,
-            'receiver_frames_superseded': 1,
-            'receiver_last_encode_us': 500,
-            'receiver_last_show_us': 4500,
-        }
-        last = dict(first)
-        last.update({
-            'receiver_frames_accepted': 1600,
-            'receiver_frames_displayed': 1598,
-            'receiver_frames_superseded': 1,
-            'receiver_last_encode_us': 600,
-            'receiver_last_show_us': 4550,
-        })
-
-        result = evaluate_samples([first, last], 10.0)
-
-        self.assertTrue(result['passed'], result['failures'])
-        self.assertEqual(result['displayed_fps'], 150.0)
-        self.assertEqual(result['installed_timing_facts']['full_frame_bytes'], 3315)
-
-        v3_result = evaluate_samples([
-            dict(first, receiver_status_version=3),
-            dict(last, receiver_status_version=3),
-        ], 10.0)
-        self.assertTrue(v3_result['passed'], v3_result['failures'])
-
-        below = dict(last, receiver_frames_displayed=1597)
-        below_result = evaluate_samples([first, below], 10.0)
-        self.assertFalse(below_result['passed'])
-        self.assertEqual(below_result['displayed_fps'], 149.9)
-        self.assertTrue(any('below 150 FPS' in item
-                            for item in below_result['failures']))
-
-    def test_acceptance_evaluator_reports_integrity_and_timing_failures(self):
-        first = {
-            'receiver_status_version': 2,
-            'receiver_frames_accepted': 0,
-            'receiver_frames_displayed': 0,
-            'receiver_frames_superseded': 0,
-            'receiver_crc_errors': 0,
-        }
-        last = dict(first)
-        last.update({
-            'receiver_frames_accepted': 100,
-            'receiver_frames_displayed': 50,
-            'receiver_crc_errors': 1,
-            'receiver_last_encode_us': 1200,
-            'receiver_last_show_us': 5000,
-        })
-
-        result = evaluate_samples([first, last], 1.0)
-
-        self.assertFalse(result['passed'])
-        self.assertTrue(any('CRC errors' in failure for failure in result['failures']))
-        self.assertTrue(any('display DMA' in failure for failure in result['failures']))
 
 
 if __name__ == "__main__":

@@ -17,10 +17,10 @@ from ipc.scene_contract import (
 def _catalog() -> ComponentCatalog:
     return ComponentCatalog([
         ComponentDescriptor(
-            component_id="native-aurora", version=1, provider="receiver_native", role="background",
+            component_id="host-background", version=1, provider="python", role="background",
             timing_policy="scaled_context", alpha_behavior="none", palette_policy="semantic",
             plant_capabilities=("final_optics",), fidelity_exceptions=(),
-            defaults={"bundle_digest": "a" * 64, "gain": 0.5},
+            defaults={"gain": 0.5},
         ),
         ComponentDescriptor(
             component_id="aurora", version=1, provider="python", role="animation",
@@ -45,8 +45,8 @@ def _scene(**changes: object) -> dict:
     scene = {
         "schema": "ledgrid.scene.v2",
         "background": {
-            "component_id": "native-aurora", "version": 1, "provider": "receiver_native",
-            "role": "background", "parameters": {"gain": 0.75}, "bundle_digest": "a" * 64,
+            "component_id": "host-background", "version": 1, "provider": "python",
+            "role": "background", "parameters": {"gain": 0.75},
         },
         "animation": {
             "component_id": "aurora", "version": 1, "provider": "python",
@@ -156,7 +156,7 @@ class SceneV2ContractTests(unittest.TestCase):
             ComponentDescriptor(component_id="missing", version=1)  # type: ignore[call-arg]
         with self.assertRaisesRegex(ValueError, "Background"):
             ComponentDescriptor(
-                component_id="bad-background", version=1, provider="python", role="background",
+                component_id="bad-background", version=1, provider="receiver_native", role="background",
                 timing_policy="scaled_context", alpha_behavior="none", palette_policy="semantic",
                 plant_capabilities=("none",), fidelity_exceptions=(),
             )

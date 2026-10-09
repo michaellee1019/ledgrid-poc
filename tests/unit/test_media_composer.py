@@ -8,27 +8,21 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class MediaComposerTests(unittest.TestCase):
-    def test_all_retained_media_presets_reach_exact_controller_receipts(self):
-        from tests.unit.test_canonical_scene_activation import CanonicalSceneActivationTests
-        CanonicalSceneActivationTests.setUpClass()
-        fixture = CanonicalSceneActivationTests()
-        fixture.setUp()
-        self.addCleanup(fixture.doCleanups)
-        for component, count in (("gif_animation", 32), ("world_flags", 8)):
-            response = fixture.client.get(f"/api/composer/components/{component}/presets")
-            self.assertEqual(response.status_code, 200, response.get_json())
-            presets = response.get_json()["presets"]
-            self.assertEqual(len(presets), count)
-            for preset in presets:
-                with self.subTest(component=component, preset=preset["preset_id"]):
-                    scene = deepcopy(fixture.scene)
-                    scene["animation"] = dict(component_id=component, version=1,
-                        provider="python", role="animation", parameters=preset["parameters"])
-                    canonical = fixture.interface._composer_canonical({"origin":"composer", "scene":scene}).scene
-                    _, _, receipt = fixture.activate(canonical)
-                    self.assertEqual(receipt["phase"], "active", receipt)
-                    self.assertEqual(receipt["requested_identity"], receipt["observed_identity"])
-                    self.assertEqual(fixture.manager.get_scene_state(), canonical)
+    def test_retained_media_presets_render_through_host_preview(self):
+        from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
+        from web.app import AnimationWebInterface
+        interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
+        client = interface.app.test_client()
+        response = client.get('/api/composer/components/gif_animation/presets')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.get_json()['presets']), 32)
+        for preset in response.get_json()['presets']:
+            with self.subTest(preset=preset['preset_id']):
+                scene = _current_scene()
+                scene['animation'] = dict(component_id='gif_animation', version=1, provider='python',
+                                          role='animation', parameters=preset['parameters'])
+                response = client.post('/api/composer/preview', json={'origin':'composer', 'scene':scene})
+                self.assertEqual(response.status_code, 200, response.get_json())
 
     def test_shipped_media_selection_and_control_remix_preserve_scene(self):
         source = (ROOT / "web/static/js/composer_slice.js").read_text()

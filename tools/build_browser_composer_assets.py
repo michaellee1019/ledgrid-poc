@@ -17,27 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools import build_browser_native, build_browser_python_bundle  # noqa: E402
+from tools import build_browser_python_bundle  # noqa: E402
 from tools.build_browser_composer_bootstrap import build_profile, encoded_bootstrap  # noqa: E402
-from tools.build_browser_offline_manifest import build_manifest, encoded_manifest  # noqa: E402
-from tools.composer_asset_publication import (  # noqa: E402
-    BOOTSTRAP_NAME,
-    CONFIG_NAME,
-    GENERATED_DIRECTORY,
-    MANIFEST_NAME,
-    NATIVE_NAMES,
-    PYTHON_RUNTIME_NAME,
-    all_local_assets,
-    generation_digest,
-    profile_name,
-    profile_url,
-    read_service_worker_config,
-    render_service_worker_config,
-    shell_assets,
-)
+BOOTSTRAP_NAME = 'bootstrap.v1.json'
+PYTHON_RUNTIME_NAME = 'ledgrid_python_runtime.zip'
+GENERATED_DIRECTORY = Path('web/static/generated/composer')
 
+def profile_name(digest: str) -> str:
+    return f'installation_profile_{digest}.bin'
 
-GHOST_TERMS = ("emoji", "painter", "preview")
+def profile_url(digest: str) -> str:
+    return '/static/generated/composer/' + profile_name(digest)
 
 
 def _generated_path(root: Path) -> Path:
@@ -51,28 +41,11 @@ def _profile_digest(path: Path) -> str:
     return payload[68:100].hex()
 
 
-def _staged_local_assets(profile_digest: str, stage: Path) -> dict[str, Path]:
-    return {
-        url: (stage / relative.name if relative.parent == GENERATED_DIRECTORY else relative)
-        for url, relative in all_local_assets(profile_digest).items()
-    }
-
-
-def _previous_generation(published: Path) -> str | None:
-    config = published / CONFIG_NAME
-    if not config.is_file():
-        return "v26"  # migration from the last pre-atomic checked-in shell.
-    return str(read_service_worker_config(config).get("cacheVersion") or "v26")
-
-
 def build_stage(repo_root: Path, stage: Path) -> dict[str, object]:
     """Build every generated artifact into ``stage`` without touching publication."""
     stage.mkdir(parents=True, exist_ok=True)
     build_browser_python_bundle.build_bundle(repo_root, stage / PYTHON_RUNTIME_NAME)
-    build_browser_native.build(stage / NATIVE_NAMES[0], repo_root=repo_root)
-    build_browser_native.build_compiled_rainbow(stage / NATIVE_NAMES[1], repo_root=repo_root)
-    build_browser_native.build_native_aurora(stage / NATIVE_NAMES[2], repo_root=repo_root)
-    profile, profile_digest = build_profile()
+    profile, profile_digest = build_profile(repo_root)
     profile_path = stage / profile_name(profile_digest)
     profile_path.write_bytes(profile)
     (stage / BOOTSTRAP_NAME).write_bytes(
@@ -82,25 +55,6 @@ def build_stage(repo_root: Path, stage: Path) -> dict[str, object]:
             runtime_asset_root=stage,
         )
     )
-    prior = _previous_generation(_generated_path(repo_root))
-    cache_version = "g-" + generation_digest(repo_root, profile_digest, stage)[:20]
-    # A repeated build of the same generation retains its previous lineage.
-    if (existing := _generated_path(repo_root) / CONFIG_NAME).is_file():
-        current = read_service_worker_config(existing)
-        if current.get("cacheVersion") == cache_version:
-            prior = current.get("previousCacheVersion") if isinstance(current.get("previousCacheVersion"), str) else None
-    (stage / CONFIG_NAME).write_bytes(render_service_worker_config(
-        cache_version=cache_version,
-        previous_cache_version=prior,
-        profile_digest=profile_digest,
-    ))
-    local_assets = _staged_local_assets(profile_digest, stage)
-    (stage / MANIFEST_NAME).write_bytes(encoded_manifest(
-        repo_root,
-        local_assets=local_assets,
-        cache_version=cache_version,
-        previous_cache_version=prior,
-    ))
     validate_asset_set(repo_root, stage)
     return asset_manifest(stage)
 
@@ -113,42 +67,14 @@ def asset_manifest(directory: Path) -> dict[str, object]:
 
 
 def validate_asset_set(repo_root: Path, directory: Path) -> None:
-    config = read_service_worker_config(directory / CONFIG_NAME)
-    profile = str(config["bundledProfileUrl"]).rsplit("/", 1)[-1]
-    profile_digest = _profile_digest(directory / profile)
-    expected = {
-        path.name
-        for path in _staged_local_assets(profile_digest, directory).values()
-        if path.parent == directory
-    }
-    expected.add(MANIFEST_NAME)
-    actual = {
-        path.relative_to(directory).as_posix()
-        for path in directory.rglob("*")
-    }
-    ghosts = sorted(
-        name for name in actual if any(term in name.lower() for term in GHOST_TERMS)
-    )
-    if ghosts:
-        raise ValueError("ghost Composer artifacts are forbidden: " + ", ".join(ghosts))
+    profiles = list(directory.glob('installation_profile_*.bin'))
+    if len(profiles) != 1:
+        raise ValueError('exactly one fixed calibration asset is required')
+    profile_digest = _profile_digest(profiles[0])
+    expected = {BOOTSTRAP_NAME, PYTHON_RUNTIME_NAME, profile_name(profile_digest)}
+    actual = {path.relative_to(directory).as_posix() for path in directory.rglob('*') if path.is_file()}
     if actual != expected:
-        raise ValueError(
-            "generated Composer asset set is stale, missing, or orphaned: "
-            + "expected " + repr(sorted(expected)) + " got " + repr(sorted(actual))
-        )
-    if config.get("bundledProfileUrl") != profile_url(profile_digest):
-        raise ValueError("service-worker config does not name the staged installation profile")
-    if tuple(config.get("shellAssets", ())) != shell_assets(profile_digest):
-        raise ValueError("service-worker config does not declare the complete shell")
-    manifest = json.loads((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
-    expected_manifest = build_manifest(
-        repo_root,
-        local_assets=_staged_local_assets(profile_digest, directory),
-        cache_version=str(config["cacheVersion"]),
-        previous_cache_version=config.get("previousCacheVersion"),
-    )
-    if manifest != expected_manifest:
-        raise ValueError("offline manifest is stale or does not match the staged shell")
+        raise ValueError('generated Composer asset set contains missing or obsolete assets')
     bootstrap = json.loads((directory / BOOTSTRAP_NAME).read_text(encoding="utf-8"))
     for component in bootstrap.get("components", ()):
         runtime = component.get("browser_runtime", {})
@@ -192,6 +118,8 @@ def publish(repo_root: Path) -> dict[str, object]:
                 os.replace(backup, target)
             raise
         shutil.rmtree(backup, ignore_errors=True)
+    from tools.generate_gallery_previews import build_gallery
+    build_gallery(repo_root)
     return result
 
 

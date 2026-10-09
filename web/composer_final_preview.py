@@ -1,14 +1,14 @@
 """Inert, continuously-cadenced final preview for Composer Scene v2.
 
 This is deliberately a presentation seam, not a second scene model.  It owns
-only the verified host peer for the receiver-native background plus calibrated
+the host background plus calibrated
 final plant optics.  CanonicalSceneRuntime continues to own ordering, alpha
 composition, resolved palette/pace, and the single output-brightness boundary.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
@@ -28,8 +28,6 @@ from animation.core.plant_awareness import (
 from animation.core.scene_runtime import (
     CanonicalSceneRuntime, CanonicalSceneRuntimeError, RuntimeFrame, ScenePresentationContext,
 )
-from animation.native.managed_preview import ManagedNativeHostPreview
-from animation.native.aurora import canonical_palette_roles
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.canopy_cup import CanopyCupAnimation
 from animation.plugins.ascii_drop import AsciiDropAnimation
@@ -51,7 +49,6 @@ from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.pixel_chase import PixelChaseAnimation
 from animation.plugins.plant_glow import PlantGlowAnimation
 from animation.plugins.gif_animation import GifAnimation
-from animation.plugins.world_flags import WorldFlagsAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from animation.plugins.gradient import GradientAnimation
@@ -76,36 +73,13 @@ from animation.plugins.physarum_network import PhysarumNetworkAnimation
 from animation.plugins.reaction_diffusion_garden import ReactionDiffusionGardenAnimation
 from animation.plugins.wind_in_the_reeds import WindInTheReedsAnimation
 from ipc.scene_contract import CanonicalScene
-from tools.deployment.native_preview_identity import (
-    NATIVE_AURORA_BUNDLE_DIGEST,
-    NATIVE_AURORA_COMPONENT_ID,
-)
-
-
-NATIVE_AURORA_PAYLOAD_DIGEST = "4dad42e167e6ce5dd34816c0365453c3cf9dd08c94e36b69e88bec384f615554"
-NATIVE_AURORA_HOST_ARTIFACT_DIGEST = "3444d2782da762721123a076830bdfdbe2188424302ba6ad018f748d27ba21ff"
-
-
-def native_aurora_descriptor() -> ComponentDescriptor:
-    """The integrity declaration for the installed native ambient renderer."""
-
+def solid_background_descriptor() -> ComponentDescriptor:
+    """Use the established Solid host renderer as the Scene background."""
     return ComponentDescriptor(
-        component_id=NATIVE_AURORA_COMPONENT_ID,
-        version=1,
-        provider="receiver_native",
-        role="background",
-        timing_policy="scaled_context",
-        alpha_behavior="none",
-        palette_policy="semantic",
-        plant_capabilities=("final_optics",),
-        fidelity_exceptions=(),
-        intensity_parameter="gain",
-        defaults={
-            "bundle_digest": NATIVE_AURORA_BUNDLE_DIGEST,
-            "gain": 0.72,
-            "source_fps": 30.0,
-            "seed": 8012,
-        },
+        component_id="solid_background", version=1, provider="python", role="background",
+        timing_policy="scaled_context", alpha_behavior="none", palette_policy="semantic",
+        plant_capabilities=("final_optics",), fidelity_exceptions=(),
+        intensity_parameter="gain", defaults={"gain": 0.62, "seed": 4201},
     )
 
 
@@ -118,7 +92,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
     """
 
     return (
-        native_aurora_descriptor(),
+        solid_background_descriptor(),
         AuroraCurtainsAnimation.component_descriptor(),
         CanopyCupAnimation.component_descriptor(),
         AsciiDropAnimation.component_descriptor(),
@@ -140,7 +114,6 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         PixelChaseAnimation.component_descriptor(),
         PlantGlowAnimation.component_descriptor(),
         GifAnimation.component_descriptor(),
-        WorldFlagsAnimation.component_descriptor(),
         GradientAnimation.component_descriptor(),
         RainbowAnimation.component_descriptor(),
         SolidColorAnimation.component_descriptor(),
@@ -173,26 +146,6 @@ def current_component_catalog() -> ComponentCatalog:
     return ComponentCatalog(current_component_descriptors())
 
 
-class _NativeAuroraPreview:
-    """Scene adapter over the verified host build of the receiver source."""
-
-    def __init__(self, project_root: Path) -> None:
-        self._native = ManagedNativeHostPreview(
-            project_root, NATIVE_AURORA_COMPONENT_ID, NATIVE_AURORA_BUNDLE_DIGEST
-        )
-
-    def render(self, context: Any, frame_count: int) -> BaseFrame:
-        parameters = context.parameters
-        pace = float(context.canonical_scene["look"]["pace"])
-        unscaled = context.phase_time / pace if pace > 0.0 else 0.0
-        roles = canonical_palette_roles(context.palette["palette_id"])
-        return self._native.render(
-            parameters=parameters,
-            palette=tuple(roles.values()),
-            scaled_scene_time=context.phase_time,
-            unscaled_scene_time=unscaled,
-            frame_index=frame_count,
-        )
 
 
 @dataclass
@@ -231,22 +184,16 @@ class InstalledFinalSceneRuntime:
         project_root: Path,
         *,
         controller: Any | None = None,
-        foreground_only: bool = False,
     ) -> None:
         self.controller = controller or PreviewLEDController(strips=33, leds_per_strip=138)
         if (getattr(self.controller, "strip_count", None), getattr(self.controller, "leds_per_strip", None)) != (33, 138):
             raise ValueError("installed Scene v2 presentation requires a 33x138 controller")
-        self.foreground_only = bool(foreground_only)
-        self._inert_base = np.zeros((self.controller.total_leds, 3), dtype=np.uint8)
-        self._inert_base_ready = False
         self._wall_time = datetime.now().astimezone()
         self._project_root = project_root
-        self._native: _NativeAuroraPreview | None = None
-        background_renderer = (
-            self._render_foreground_only_background
-            if self.foreground_only
-            else self._render_native_background
-        )
+        self._background: SolidColorAnimation | None = None
+        self._background_seed: int | None = None
+        self._background_key: Any = None
+        self._background_frame: Any = None
         self._geometry = PlantMaskCache(_PlantGeometryOwner(33, 138, project_root))
         self._installation_profile_view: InstallationProfileRuntimeView | None = None
         self._geometry_contact: InstallationGeometryContact | None = None
@@ -254,7 +201,7 @@ class InstalledFinalSceneRuntime:
         self._runtime = CanonicalSceneRuntime(
             self.controller,
             catalog,
-            background_renderer=background_renderer,
+            background_renderer=self._render_host_background,
             animation_factory=self._animation_factory,
             widget_factory=self._widget_factory,
             plant_input_resolver=self._plant_inputs,
@@ -265,33 +212,22 @@ class InstalledFinalSceneRuntime:
         self._active_digest: str | None = None
         self._lock = RLock()
 
-    def _render_native_background(self, context: Any, frame_count: int) -> BaseFrame:
-        # Browser Preview uses WASM. A controller needs no workstation host
-        # build merely to serve Composer or extract the receiver foreground.
-        from animation.native.errors import NativePreviewError
+    def _render_host_background(self, context: Any, frame_count: int) -> BaseFrame:
+        parameters = context.parameters
+        key = (tuple(parameters.items()), context.palette['palette_id'] if context.palette else 'neutral')
+        if key == self._background_key:
+            return BaseFrame(self._background_frame, changed=False, dirty_ranges=())
+        seed = parameters.get('seed', 4201)
+        if self._background is None or self._background_seed != seed:
+            self._background = SolidColorAnimation(self.controller, {"glow": 0.68, "breath": 0, "seed": seed})
+            self._background_seed = seed
+        rendered = self._background.render_resolved_scene(replace(context, descriptor=SolidColorAnimation.component_descriptor(), parameters={"glow": .68, "breath": 0, "seed": seed}))
+        pixels = np.asarray(rendered.pixels if hasattr(rendered, 'pixels') else rendered, dtype=np.uint8)
+        pixels = np.rint(pixels.astype(np.float32) * float(parameters.get('gain', .62))).astype(np.uint8)
+        self._background_key = key
+        self._background_frame = pixels
+        return BaseFrame(pixels, changed=True)
 
-        try:
-            if self._native is None:
-                self._native = _NativeAuroraPreview(self._project_root)
-            return self._native.render(context, frame_count)
-        except NativePreviewError as exc:
-            raise CanonicalSceneRuntimeError(f"Native host Preview unavailable: {exc}") from exc
-
-    def _render_foreground_only_background(
-        self, _context: Any, _frame_count: int
-    ) -> BaseFrame:
-        """Supply an inert base only for receiver foreground extraction.
-
-        Normally this RGB frame is not an installed-final preview: receiver
-        activation consumes only ``RuntimeFrame.foreground``. The narrow
-        ``render_opaque_full`` path verifies full alpha coverage before using
-        the same composition as final host RGB.
-        """
-
-        changed = not self._inert_base_ready
-        self._inert_base_ready = True
-        return BaseFrame(self._inert_base, changed=changed,
-                         dirty_ranges=None if changed else ())
 
     def render(self, presentation: ScenePresentationContext) -> RuntimeFrame:
         """Render one installed-final frame without mutating publication state."""
@@ -303,17 +239,8 @@ class InstalledFinalSceneRuntime:
             if canonical.identity.digest != self._active_digest:
                 self._runtime.activate(canonical)
                 self._active_digest = canonical.identity.digest
-                self._inert_base_ready = False
             return self._runtime.render_presentation(presentation)
 
-    def render_opaque_full(self, presentation: ScenePresentationContext) -> RuntimeFrame:
-        """Use the inert base as final RGB only with verified full alpha coverage."""
-        if not self.foreground_only:
-            raise ValueError("opaque host-full rendering requires an inert base")
-        frame = self.render(presentation)
-        if frame.foreground is None or not np.all(frame.foreground.pixels[:, 3] == 255):
-            raise ValueError("host-full foreground no longer covers every pixel")
-        return frame
 
     def set_installation_profile(
         self, view: InstallationProfileRuntimeView | None
@@ -389,8 +316,6 @@ class InstalledFinalSceneRuntime:
             return PixelQuestAnimation(controller, parameters)
         if descriptor.component_id == GifAnimation.COMPONENT_ID:
             return GifAnimation(controller, parameters)
-        if descriptor.component_id == WorldFlagsAnimation.COMPONENT_ID:
-            return WorldFlagsAnimation(controller, parameters)
         if descriptor.component_id == PlantGlowAnimation.COMPONENT_ID:
             return PlantGlowAnimation(controller, parameters)
         if descriptor.component_id == PixelChaseAnimation.COMPONENT_ID:
@@ -521,5 +446,5 @@ __all__ = [
     "ComposerFinalPreview", "InstalledFinalSceneRuntime", "NATIVE_AURORA_BUNDLE_DIGEST",
     "NATIVE_AURORA_COMPONENT_ID", "NATIVE_AURORA_HOST_ARTIFACT_DIGEST",
     "NATIVE_AURORA_PAYLOAD_DIGEST", "current_component_catalog",
-    "current_component_descriptors", "native_aurora_descriptor",
+    "current_component_descriptors", "solid_background_descriptor",
 ]

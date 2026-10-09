@@ -106,20 +106,17 @@ bridged or the fifth receiver never sees chip select.
 Transport identity, wall position, and pixel direction are separate hardware
 facts. The finalized installed contract as of 2026-08-27 is:
 
-| Logical receiver | SPI route | Logical width | Physical lane from left | Host strip order | Native coordinate order | Native global offset | Output mask |
-| ---: | --- | ---: | ---: | --- | --- | ---: | ---: |
-| 0 | `spidev0.0` | 8 | 0 | forward | forward | 0 | `0xff` |
-| 1 | `spidev0.1` | 8 | 1 | forward | forward | 8 | `0xff` |
-| 2 | `spidev1.1` | 8 | 2 | forward | reversed (pending native test) | 16 | `0xff` |
-| 3 | `spidev1.0` | 8 | 3 | forward | reversed (pending native test) | 24 | `0xff` |
-| 4 | `spidev1.2` | 1 | 4 | forward | forward | 32 | `0xff` broadcast |
+| Logical receiver | SPI route | Width | Physical order | Host strip order | Offset | Output mask |
+| ---: | --- | ---: | ---: | --- | ---: | ---: |
+| 0 | `spidev0.0` | 8 | 0 | forward | 0 | `0xff` |
+| 1 | `spidev0.1` | 8 | 1 | forward | 8 | `0xff` |
+| 2 | `spidev1.1` | 8 | 2 | forward | 16 | `0xff` |
+| 3 | `spidev1.0` | 8 | 3 | forward | 24 | `0xff` |
+| 4 | `spidev1.2` | 1 | 4 | forward | 32 | `0xff` broadcast |
 
-In config form, physical left-to-right logical order is `(0,1,2,3,4)`. The
-camera-qualified host-frame reversal map is `(false,false,false,false,false)`;
-the independently retained receiver-native map is
-`(false,false,true,true,false)`. The durable runtime authority is
-`run_state/receiver_hybrid.json`; software defaults and this copied table are
-not substitutes for reading that file after a cable change.
+Host full-frame direction is forward on all five receivers. Firmware consumes
+already mapped pixels. The measured fixed mapping lives in the host driver;
+USB flashing uses `data/run_state/receiver_identity_mapping.json`.
 
 The 2026-08-27 Anker-camera diagnostic assigned one color to each logical
 receiver. Photo Booth's live preview was mirrored, and its left-to-right preview
@@ -140,8 +137,7 @@ left to right. The negative third and fourth blocks prove that both host reversa
 bits inherited from the earlier layout were wrong. The accepted pre-fix evidence
 is `run_state/physical-acceptance/20260827-strip-direction-pre-fix-direct-anker-low.jpg`
 (SHA-256 `3c39c34dbe4271db1ff3e0854daf622a0ecc2ebe3778384b20af08fba6acebc1`).
-This host painter test does not qualify receiver-native direction, so those bits
-remain unchanged pending the direction-marked native phase field.
+The October 9 simplification retires the separate native direction map.
 
 Clean application deployment of commit `7cc351a` activated release
 `e6f5c43245a3b9198d96a1afa8388005751d0072a0f4a341323aeb16183527e8` and
@@ -156,36 +152,13 @@ A fresh 20-second window advanced about 1,978 accepted frames per receiver with
 no additional CRC errors; display, publish-drop, and SPI-queue errors remained
 zero. The exact prior Lava Lamp scene was restored after the capture.
 
-The two reversal columns deliberately remain independent. Host reversal maps
-complete RGB frames and sparse RGBA foreground into the receiver's local output
-buffer. Receiver-native topology uses the exact eight-byte CONFIG form
-`[0x07, local_width, height_hi, height_lo, flags, logical_id, offset_hi,
-offset_lo]`; flags bit 7 reverses native local strip order, logical IDs are
-`0..4`, height is LEDs per strip, and the final `u16` is the global strip offset.
-Receiver 4 therefore receives `07 01 00 8a 00 04 00 20`. Legacy four/five-byte
-CONFIG remains valid; the six-byte direction/identity form remains limited to
-IDs `0..3` and retains its previously provisioned offset. A correct clock or
-host diagnostic therefore does not prove that a receiver-native background has
-the right orientation.
+The receiver accepts one eight-byte CONFIG command: command, local width,
+big-endian height, debug flags, logical ID, and big-endian global offset.
+Receiver 4 receives `07 01 00 8a 00 04 00 20`. Native reversal flags are rejected.
 
-After changing cables, establish the domains in this order:
-
-1. Verify the unchanged or new logical-to-`spidev` routes and readable roles.
-2. Show one color per receiver to establish physical lane permutation.
-3. Show one distinct color per physical strip to establish host local direction;
-   four lane colors are insufficient for this step.
-4. Use boundary-crossing host content to verify sparse slicing and old-pixel
-   clears.
-5. Independently run a receiver-native direction-marked diagonal/phase pattern
-   and inspect every 8-strip boundary for a reversal or phase fold.
-6. Photograph the final state after service restart and again after ordinary
-   deployment. Retain rejected frames as rejected evidence rather than
-   overwriting or reinterpreting them.
-
-All five receiver return paths are now wired and readable. Release acceptance
-still requires fresh delta-based integrity and timing evidence; nonzero lifetime
-counters or an outbound host counter are not substitutes for a clean measured
-window and photographed geometry.
+After cables change, verify routes, show a distinct receiver color, then a
+within-receiver strip ramp and boundary-crossing host content. Capture physical
+geometry and report transport counters separately from visual acceptance.
 
 ## Alternate HAT compatibility mode
 
@@ -382,23 +355,3 @@ host layout code.
 
 The full timing and rollback criteria are in
 [Rendering acceptance](RENDERING_PIPELINE_ACCEPTANCE.md).
-
-## Receiver-native roadmap hardware gate
-
-The [unified roadmap](plan-revamped-animation-pipeline.md) uses the
-`native-animations` branch as an implementation organ donor, but the branch's
-handoff recorded the now-repaired SPI1 MISO/MOSI coupling. That historical
-branch is not evidence that the finalized wall can safely stage, verify, or
-reconcile five receiver artifacts.
-
-The current repository builds a separate managed-native canary with the dynamic
-loader, cache, status v6, typed parameters, watchdog, and quarantine support.
-Production remains feature-off, and portable/build success does not prove that
-the canary is installed or accepted on the wall. A quarantined payload is never
-retried automatically; an explicit exact-bundle clear and separate reinstall must
-still pass unanimous five-receiver status before execution resumes.
-
-Before any all-wall receiver-native release, obtain fresh identity/status from
-all five receivers with no TX echo and rerun the streamed and full-wall
-canaries. Only a clean H0 baseline may advance loader/cache or sparse-overlay
-code to the roadmap's physical gates.

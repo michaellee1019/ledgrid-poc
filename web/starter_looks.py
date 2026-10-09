@@ -2,15 +2,13 @@
 
 from copy import deepcopy
 
-from web.composer_final_preview import NATIVE_AURORA_BUNDLE_DIGEST
 
 
 def _background(*, gain: float, seed: int, source_fps: int = 30) -> dict:
     return {
-        "component_id": "native_aurora", "version": 1,
-        "provider": "receiver_native", "role": "background",
-        "bundle_digest": NATIVE_AURORA_BUNDLE_DIGEST,
-        "parameters": {"gain": gain, "source_fps": source_fps, "seed": seed},
+        "component_id": "solid_background", "version": 1,
+        "provider": "python", "role": "background",
+        "parameters": {"gain": gain, "seed": seed},
     }
 
 

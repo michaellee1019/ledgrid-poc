@@ -170,8 +170,8 @@ class ComponentDescriptor:
 
     def _validate_role_shape(self) -> None:
         if self.role is ComponentRole.BACKGROUND:
-            if self.provider is not ComponentProvider.RECEIVER_NATIVE or self.alpha_behavior is not AlphaBehavior.NONE:
-                raise ValueError("Scene v2 Background must be receiver_native with alpha_behavior none")
+            if self.provider is not ComponentProvider.PYTHON or self.alpha_behavior is not AlphaBehavior.NONE:
+                raise ValueError("Scene v2 Background must be Python with alpha_behavior none")
         elif self.role is ComponentRole.ANIMATION:
             if self.provider is not ComponentProvider.PYTHON:
                 raise ValueError("Scene v2 Animation must be provided by Python")

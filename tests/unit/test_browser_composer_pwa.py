@@ -1,4 +1,4 @@
-"""Installability, offline-shell, and mobile-accessibility acceptance checks."""
+"""Installability, online-shell, and mobile-accessibility acceptance checks."""
 
 from __future__ import annotations
 
@@ -75,16 +75,20 @@ class BrowserComposerPWATests(unittest.TestCase):
         metas = {item.get('name'): item.get('content') for item in self.audit.metas}
         self.assertEqual(metas['apple-mobile-web-app-capable'], 'yes')
 
-    def test_current_preview_and_offline_shell_are_loaded(self) -> None:
+    def test_current_preview_and_online_shell_are_loaded(self) -> None:
         sources = [item.get('src', '') for item in self.audit.scripts]
         scripts = {}
         for source in sources:
+            if '/static/generated/' in source:
+                continue  # Generated artifacts are verified by the staging build test.
             response = self.client.get(source)
             self.addCleanup(response.close)
             self.assertEqual(response.status_code, 200, source)
             scripts[source.split('?')[0]] = response.get_data(as_text=True)
         self.assertIn('/static/js/composer_preview_scheduler.js', scripts)
         self.assertIn('/static/js/composer_shell.js', scripts)
+        self.assertIn('retireOfflineWorkers', scripts['/static/js/composer_shell.js'])
+        self.assertNotIn('serviceWorker.register(', scripts['/static/js/composer_shell.js'])
         self.assertIn('fetch(`${api}/preview`', scripts['/static/js/composer_slice.js'])
         self.assertNotIn('/static/js/composer_compositor.js', scripts)
         # The server composes final preview; the browser schedules and paints it.

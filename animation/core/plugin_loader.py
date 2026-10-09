@@ -114,10 +114,7 @@ class AnimationPluginLoader:
             raise ValueError(f"manifest must contain an object: {manifest_path}")
         payload = validate_and_normalize_manifest(payload, manifest_path, plugin_name)
         preview = payload.get("preview")
-        if (
-            preview is not None
-            and payload.get("provider") != ComponentProvider.RECEIVER_NATIVE.value
-        ):
+        if preview is not None:
             if not isinstance(preview, dict):
                 raise ValueError(f"manifest preview must be an object: {manifest_path}")
             unknown = set(preview) - {"capture_seconds", "simulation_fps"}
@@ -157,14 +154,6 @@ class AnimationPluginLoader:
                     f"{manifest_path}"
                 )
         AnimationPluginLoader._normalize_vibe_manifest(payload, manifest_path)
-        if (
-            payload.get("provider") == ComponentProvider.RECEIVER_NATIVE.value
-            and payload["vibe"].get("legacy_parameter_mappings")
-        ):
-            raise ValueError(
-                "receiver-native manifests cannot declare legacy_parameter_mappings: "
-                f"{manifest_path}"
-            )
         return payload
 
     @classmethod
@@ -384,21 +373,17 @@ class AnimationPluginLoader:
                 raise ValueError(f"plugin package is missing manifest: {path}")
             if not manifest_path.is_file():
                 continue
-            # A manifest-only directory is intentionally ignored unless it
-            # explicitly declares the receiver-native provider. This preserves
-            # the historical treatment of non-plugin data directories while
-            # allowing a native peer to require no Python package at all.
+            # Data directories do not participate in executable Python discovery.
             if not init_path.is_file():
                 try:
                     peek = json.loads(manifest_path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError) as exc:
                     raise ValueError(f"invalid manifest {manifest_path}: {exc}") from exc
                 if not isinstance(peek, dict):
-                    raise ValueError(
-                        f"manifest must contain an object: {manifest_path}"
-                    )
-                if peek.get("provider") != ComponentProvider.RECEIVER_NATIVE.value:
-                    continue
+                    raise ValueError(f"manifest must contain an object: {manifest_path}")
+                if peek.get("provider", "python") != ComponentProvider.PYTHON.value:
+                    raise ValueError(f"unsupported component provider {peek.get('provider')!r}: {manifest_path}")
+                continue
             plugin_name = path.name
             if plugin_name in flat_candidates or plugin_name in package_candidates:
                 raise ValueError(f"duplicate flat and package plugin ID: {plugin_name}")
@@ -410,14 +395,6 @@ class AnimationPluginLoader:
             package = package_candidates.get(plugin_name)
             if package is not None:
                 package_dir, init_path, manifest = package
-                provider = manifest.get("provider", ComponentProvider.PYTHON.value)
-                if provider == ComponentProvider.RECEIVER_NATIVE.value:
-                    self.component_dirs[plugin_name] = package_dir
-                    self.component_manifests[plugin_name] = manifest
-                    self.component_descriptors[plugin_name] = scanned_descriptor(
-                        plugin_name, manifest
-                    )
-                    continue
                 if self.allowed_plugins is not None and plugin_name not in self.allowed_plugins:
                     continue
                 self.plugin_files[plugin_name] = init_path

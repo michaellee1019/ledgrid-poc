@@ -1,6 +1,6 @@
 """Current-only Scene v2 compositor runtime.
 
-The receiver owns exactly one qualified native Background.  One Python
+The host renders one Background.  One Python
 Animation and ordered Python Widgets are folded into the established aggregate
 premultiplied-RGBA foreground transport before final RGB output.
 """
@@ -67,7 +67,7 @@ class RuntimeFrame:
     dirty_ranges: tuple[tuple[int, int], ...] | None = None
     foreground: OverlayFrame | None = None
     stage_trace: tuple[str, ...] = (
-        "native_background", "animation", "widgets", "plant_optics",
+        "background", "animation", "widgets", "plant_optics",
         "look_presentation", "output_master_brightness",
     )
     widget_placements: Mapping[str, WidgetPlacementResolution] = MappingProxyType({})
@@ -94,7 +94,7 @@ class _ComponentSlot:
 class CanonicalSceneRuntime:
     """Render a canonical Scene v2 without changing its identity.
 
-    ``background_renderer`` is the receiver-native preview seam.  Plant
+    ``background_renderer`` is the host Background seam.  Plant
     calibration is supplied by runtime-owned callbacks, never saved in a look.
     """
 
@@ -116,7 +116,7 @@ class CanonicalSceneRuntime:
         self.catalog = catalog
         self.strip_count, self.leds_per_strip = self._controller_geometry(controller)
         self._compositor = HostSceneCompositor(self.strip_count, self.leds_per_strip)
-        self._background_renderer = background_renderer or self._black_native_preview
+        self._background_renderer = background_renderer or self._black_background
         self._animation_factory = animation_factory or self._default_component_factory
         self._widget_factory = widget_factory or self._default_component_factory
         self._plant_input_resolver = plant_input_resolver or self._neutral_plant_inputs
@@ -229,8 +229,8 @@ class CanonicalSceneRuntime:
         bg_context = self._context(canonical, self._descriptor(scene["background"]), scene["background"]["parameters"], elapsed)
         background = self._background_renderer(bg_context, self._frame_count)
         if not isinstance(background, BaseFrame):
-            raise CanonicalSceneRuntimeError("receiver-native background renderer must return BaseFrame")
-        self._require_geometry(background.pixels, 3, "receiver-native background")
+            raise CanonicalSceneRuntimeError("host background renderer must return BaseFrame")
+        self._require_geometry(background.pixels, 3, "host background")
 
         assert self._animation is not None
         animation_descriptor = self._descriptor(scene["animation"])
@@ -440,7 +440,7 @@ class CanonicalSceneRuntime:
             return ClockOverlayAnimation(controller, parameters)
         raise CanonicalSceneRuntimeError(f"no runtime factory is registered for {descriptor.component_id}")
 
-    def _black_native_preview(self, context: ResolvedScene, frame_count: int) -> BaseFrame:
+    def _black_background(self, context: ResolvedScene, frame_count: int) -> BaseFrame:
         del context, frame_count
         return BaseFrame(np.zeros((self.strip_count * self.leds_per_strip, 3), dtype=np.uint8), changed=False)
 

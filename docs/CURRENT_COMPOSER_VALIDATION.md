@@ -1,9 +1,29 @@
 # Current Composer validation
 
-Run `just test-composer-current` to exercise the supported local Composer journey. It is a maintenance gate for current behavior; `just test-demo` and `just deploy-precheck` keep their existing roles. This command neither contacts the wall nor adds a deployment prerequisite.
+Validate the installed 33×138 wall's current host-rendered path. The October 9
+simplification retires receiver-native execution, distributed activation
+transactions, exact displayed-identity receipts, offline editing, installation
+profile libraries, and automatic rollback.
 
-The command first creates the ignored, repository-local `native_aurora` managed bundle fixture with the pinned firmware environment (`uv run --frozen --group firmware python tools/deployment/native_background_entrypoint.py build native_aurora`). The fixture is deliberately prepared by the gate so a clean supported checkout does not rely on a pre-existing `run_state/native_background_builds` cache.
+The focused journey covers catalog selection, browser previews, component
+editing, applying a scene, saving and reopening a Look, playlists and manual
+takeover, stopping, and reconnecting. Preserve all game animations. Removed
+components must produce understandable errors without deleting saved Looks.
 
-After the existing demo gate, the focused checks cover Composer selection, editable controls, local Preview, canonical activation and its stale-identity rejection, direct-live Stop followed by a newer edit, reconnect recovery, named Look save/reopen, installation-profile stale-update atomicity, and deployment release identity. Catalog activation coverage derives its members from the live component descriptors; it does not assert a fixed renderer count.
+Playback status describes the controller. Receiver connectivity and errors are
+separate observations; neither a request acknowledgement nor controller
+playback proves exact physical display on all receivers.
 
-Historical suites that require retired Check-token activation or retired source-shape strings are intentionally outside this command. They remain available for compatibility-debt work and do not change the current product contract.
+Run focused Python tests and JavaScript syntax checks for changed behavior.
+Build generated browser assets from a clean source tree. Exercise changed
+phone and desktop paths in a browser. Build the installed firmware target for
+firmware changes and retain transport corruption, physical mapping, brightness,
+and command-ordering tests.
+
+Before deployment, independently review persistence migration and host/receiver
+contract changes. Preserve personal data and current brightness, then deploy in
+a stopped maintenance window. Verify retained animations on the wall, calibrated
+mapping, smooth playback, and prepared scene switches within five seconds.
+Measure actual output rate; 150 FPS is a goal, not a fabricated result.
+
+Report source readiness, deployment, and installed acceptance separately.

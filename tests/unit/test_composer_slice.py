@@ -12,7 +12,6 @@ from pathlib import Path
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from web.app import AnimationWebInterface
-from web.composer_final_preview import NATIVE_AURORA_BUNDLE_DIGEST
 from web.scene_look_store import SceneLookStore
 from web.working_draft_store import WorkingDraftStore
 
@@ -110,7 +109,7 @@ def _conway(slot_id: str = "conway_lower", parameters: dict | None = None) -> di
 def _current_scene() -> dict:
     return {
         "schema": "ledgrid.scene.v2",
-        "background": {"component_id": "native_aurora", "version": 1, "provider": "receiver_native", "role": "background", "bundle_digest": NATIVE_AURORA_BUNDLE_DIGEST, "parameters": {"gain": .62, "source_fps": 30, "seed": 4201}},
+        "background": {"component_id": "solid_background", "version": 1, "provider": "python", "role": "background", "parameters": {"gain": .62, "seed": 4201}},
         "animation": {"component_id": "aurora_curtains", "version": 1, "provider": "python", "role": "animation", "parameters": {"curtain_density": .56, "fold_depth": .58, "glow_intensity": .62, "source_fps": 30, "seed": 4201}},
         "widgets": [], "plants": {"effects": {"version": 1, "active": [], "strengths": {}}},
         "look": {"palette_id": "mist", "pace": .7, "presentation_brightness": .82},
@@ -510,7 +509,7 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         self.assertIn("status: {connected: true, running: true, armed: true", script)
         self.assertIn("publication: {queued: null, afterStop: null, inFlight: null, scheduled: false}", script)
         self.assertIn("replacement?.resolve({coalesced: true});", script)
-        self.assertIn("if (!body.status?.current && state.wall.observation && !state.wall.statusUnavailable && !state.wall.observation.active_identity?.scene_identity?.digest) await submit(state.scene);", script)
+        self.assertNotIn("await submit(state.scene)", script[script.index("async function hydrateCurrentScene"):])
         self.assertIn("try { await guardedWallActivation(entry.scene, true, entry.targetFps); }", script)
         self.assertNotIn("activateWall", script)
         self.assertNotIn("queueOperatorSpeed", script)
@@ -873,9 +872,9 @@ vm.runInNewContext(process.argv[1] + `
         self.assertIn("targetFps = boundedTargetFps($('#targetFps').value)", script)
         self.assertIn("globalSettingsForWall(scene, power, targetFps)", script)
         self.assertIn("if (state.wall.dirty || state.publication.queued || state.publication.afterStop || state.publication.inFlight) return;", script)
-        self.assertIn("if (status.connected && state.wall.dirty && state.scene", script)
-        self.assertIn("!state.wall.retryBlocked", script)
-        self.assertIn("automatic: true", script)
+        self.assertNotIn("if (status.connected && state.wall.dirty && state.scene", script)
+        self.assertIn("state.wall.retryBlocked = wallError.code", script)
+        self.assertNotIn("automatic: true", script)
         self.assertIn("state.publication.afterStop", script)
         self.assertIn("{kind: 'stop', scene: structuredClone(state.scene), resolve, reject}", script)
 
@@ -900,7 +899,7 @@ assert.equal(context.editCurrentAfterStop, false);
         self.assertIn("if (!intentIsCurrent(intentToken)) return;\n      state.selection = item;", script)
         self.assertIn("if (intentIsCurrent(intentToken) && error.status !== 409)", script)
         self.assertIn("beginIntent();\n    if (!state.scene) return Promise.resolve();", script)
-        self.assertIn("await submit(state.scene, {intentToken: state.intent, automatic: true})", script)
+        self.assertNotIn("await submit(state.scene, {intentToken: state.intent, automatic: true})", script)
 
         in_flight_javascript = """
 const assert = require('node:assert/strict');
@@ -1062,8 +1061,8 @@ const run = vm.runInNewContext(source + `
     control.mode = 'success';
     await refreshStatus();
     await refreshStatus();
-    assert.equal(stats.publicationPosts, 5, 'reconnect poll retries once, then clean state stays idle');
-    assert.equal(state.wall.dirty, false);
+    assert.equal(stats.publicationPosts, 4, 'reconnect does not replay offline edits');
+    assert.equal(state.wall.dirty, true);
     assert.deepEqual(state.scene, offlineDraft);
 
     control.mode = 'queued-terminal';
@@ -1074,7 +1073,7 @@ const run = vm.runInNewContext(source + `
     control.mode = 'success';
     releaseQueuedActivation();
     await Promise.all([olderPromise, newestPromise]);
-    assert.equal(stats.publicationPosts, 7);
+    assert.equal(stats.publicationPosts, 6);
     assert.equal(state.wall.retryBlocked, false, 'superseded failure cannot block newer intent');
     assert.equal(state.wall.activationError, null);
     assert.equal(state.wall.dirty, false);
@@ -1091,114 +1090,6 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_wall_activation_failure_stays_visible_until_an_exact_acknowledgement(self) -> None:
-        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        adapter = script[
-            script.index("function managedWallComponent") : script.index(
-                "  function globalSettingsForWall"
-            )
-        ]
-        identity = script[
-            script.index("const identity") : script.index("  const beginIntent")
-        ]
-        status = script[
-            script.index("function renderStatus") : script.index(
-                "  async function acknowledgeUndo"
-            )
-        ]
-        javascript = """
-const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const source = process.argv[1];
-class Node {
-  constructor() { this.textContent = ''; this.hidden = true; this.disabled = false; this.children = []; }
-  replaceChildren() { this.children = []; this.textContent = ''; }
-  append(child) { this.children.push(child); }
-  addEventListener(type, listener) { this.listener = listener; }
-}
-const nodes = Object.fromEntries([
-  '#connectionState', '#observedIdentity', '#diagnosticObserved', '#desiredIdentity',
-  '#sceneRevision', '#sceneIdentity', '#saveState', '#liveAction',
-  '#wallActivationFailure', '#operationMessage',
-].map((selector) => [selector, new Node()]));
-const prior = {revision: 7, digest: 'a'.repeat(64)};
-const context = {
-  assert, nodes, prior, JSON, Number, Boolean, Math, Object, Set, structuredClone,
-  document: {
-    createTextNode(text) { return {textContent: text}; },
-    createElement() { return new Node(); },
-  },
-  retryWallActivation() {},
-  state: {
-    status: {}, revision: 0, dirty: false, selection: null, authoredValidationError: null,
-    publication: {queued: null, afterStop: null, inFlight: null},
-    wall: {
-      bootstrap: {components: [
-        ['receiver_native', 'native_aurora', 'background'],
-        ['python', 'conway_life', 'animation'],
-        ['python', 'clock_overlay', 'overlay'],
-        ['python', 'emoji_arranger', 'overlay'],
-      ].map(([provider, plugin_id, role]) => ({
-        provider, plugin_id, role,
-        browser_capabilities: {activation_ready: true, managed_identity: {
-          provider, component_id: plugin_id, component_digest: 'c'.repeat(64),
-          runtime_digest: 'd'.repeat(64), parameter_schema_version: 1,
-        }},
-      }))},
-      observation: {
-        controller_session_id: 'session', controller_state_revision: 7, is_running: true,
-        installation_profile_digest: 'e'.repeat(64), active_identity: {scene_identity: prior},
-      },
-      scene: {revision: 7}, activating: false, dirty: false,
-      activationError: 'Activation rejected by mocked wall.',
-    },
-  },
-  $: (selector) => nodes[selector],
-};
-vm.runInNewContext(source + `
-  ; const authored = {schema: 'ledgrid.scene.v2', background: {component_id: 'native_aurora', provider: 'receiver_native', bundle_digest: 'f'.repeat(64), parameters: {gain: .37, seed: 12}}, animation: {component_id: 'conway_life', provider: 'python', parameters: {seed: 23}}, widgets: [
-    {id: 'status.clock', visible: false, component: {component_id: 'clock_overlay', provider: 'python', parameters: {show_seconds: true}}},
-    {id: 'message', visible: true, component: {component_id: 'emoji_arranger', provider: 'python', parameters: {text: 'HI'}}},
-  ], look: {pace: .35, palette_id: 'ember', presentation_brightness: 1.75}, plants: {effects: {version: 1, active: ['shadow'], strengths: {shadow: .5}}}};
-  const scene = browserSceneForWall(authored);
-  assert.equal(scene.schema, 'ledgrid.browser-scene-v2');
-  assert.equal(JSON.stringify(scene.scene), JSON.stringify(authored));
-  assert.deepEqual(scene.components.map(item => item.slot_id), ['background', 'animation', 'widget:status.clock', 'widget:message']);
-  assert.equal(scene.components[0].parameters.gain, .37);
-  assert.equal(scene.components[1].parameters.seed, 23);
-  renderStatus({connected: true, running: true, armed: true, current: {revision: 8, digest: 'b'.repeat(64)}, desired: {revision: 8, digest: 'b'.repeat(64)}, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
-  assert.equal(nodes['#wallActivationFailure'].hidden, false);
-  assert.equal(nodes['#wallActivationFailure'].children[0].textContent, 'Live update failed. ');
-  assert.equal(nodes['#operationMessage'].textContent, 'Activation rejected by mocked wall.');
-  assert.equal(nodes['#wallActivationFailure'].children[1].textContent, 'Retry once');
-  assert.equal(nodes['#wallActivationFailure'].children[1].disabled, false);
-  assert.equal(nodes['#liveAction'].disabled, false);
-  assert.equal(nodes['#observedIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
-  assert.equal(nodes['#desiredIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
-  state.wall.activationError = null;
-  renderStatus({connected: true, running: true, armed: true, current: {revision: 8, digest: 'b'.repeat(64)}, desired: {revision: 8, digest: 'b'.repeat(64)}, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
-  assert.equal(nodes['#wallActivationFailure'].hidden, true);
-  assert.equal(nodes['#wallActivationFailure'].children.length, 0);
-  assert.equal(nodes['#observedIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
-  state.wall.observation.is_running = false;
-  renderStatus({connected: true, running: true, armed: true, observed: {revision: 8, digest: 'b'.repeat(64)}, revision: 8});
-  assert.equal(nodes['#connectionState'].textContent, 'Stopped');
-  assert.equal(nodes['#liveAction'].disabled, true);
-  assert.equal(state.status.observed, null);
-  state.wall.observation.is_running = true;
-  renderStatus({connected: true, running: false, armed: false, observed: null, revision: 8});
-  assert.equal(nodes['#connectionState'].textContent, 'Running');
-  assert.equal(nodes['#liveAction'].disabled, false);
-  assert.equal(nodes['#observedIdentity'].textContent, 'r7 · ' + 'a'.repeat(64));
-`, context);
-"""
-        completed = subprocess.run(
-            ["node", "-e", javascript, identity + adapter + status],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_readding_after_primary_removal_selects_the_missing_slot_and_checks(self) -> None:
         """The client must restore the missing Conway lower slot without duplicates."""

@@ -514,20 +514,6 @@
         "tiny-robot-patrol"
       ],
       "provider": "python"
-    },
-    "world_flags": {
-      "component_version": 1,
-      "preset_ids": [
-        "brazil-festival",
-        "grand-banners",
-        "japan-rising-sun",
-        "mini-banner-rush",
-        "reverse-parade",
-        "stars-and-stripes",
-        "ukraine-solidarity",
-        "world-parade"
-      ],
-      "provider": "python"
     }
   }
 }

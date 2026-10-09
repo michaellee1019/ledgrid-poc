@@ -21,7 +21,6 @@ from ipc.scene_contract import (
 )
 from web.composer_final_preview import (
     ComposerFinalPreview,
-    NATIVE_AURORA_BUNDLE_DIGEST,
     current_component_catalog,
 )
 
@@ -45,12 +44,11 @@ class AllComposerAnimationsLiveTests(unittest.TestCase):
             "scene": {
                 "schema": "ledgrid.scene.v2",
                 "background": {
-                    "component_id": "native_aurora",
+                    "component_id": "solid_background",
                     "version": 1,
-                    "provider": "receiver_native",
+                    "provider": "python",
                     "role": "background",
-                    "bundle_digest": NATIVE_AURORA_BUNDLE_DIGEST,
-                    "parameters": {"gain": 0.0, "source_fps": 30.0, "seed": 0},
+                    "parameters": {"gain": 0.0, "seed": 0},
                 },
                 "animation": {
                     "component_id": descriptor.component_id,

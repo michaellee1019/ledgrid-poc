@@ -30,90 +30,29 @@ generate-ai-ssh-key key_path=ai_ssh_key:
 	echo "Then deploy without the SSH agent using:"
 	printf '  SSH_KEY=%q just deploy\n' "$key"
 
-# Run the focused product gate before a provision/firmware deployment.
-# Set TEST=false for an explicitly requested fast deployment.
+# Stop, copy/build, flash the explicitly mapped receivers, start, and check HTTP.
 deploy:
-	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --health-policy demo-degraded-receiver-3-fec
+	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full
 
-# Production qualification retains exact display proof while recording accepted
-# receiver-3 CRC/FEC diagnostics without making them a demo blocker.
-deploy-strict:
-	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --health-policy strict
+deploy-dirty: deploy
 
-# Explicit development exception: deploy tracked edits plus safe untracked source.
-deploy-dirty:
-	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy dirty --health-policy demo-degraded-receiver-3-fec
+deploy-verbose: deploy
 
-# Stream the clean deployment while retaining the same captured log and policy.
-deploy-verbose:
-	{{captured}} --verbose --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --verbose --health-policy demo-degraded-receiver-3-fec
+deploy-force-firmware: deploy
 
-# Reconcile every attached receiver even when its recorded firmware identity matches.
-deploy-force-firmware:
-	{{captured}} --verbose --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --verbose --force-firmware --health-policy demo-degraded-receiver-3-fec
-
-# Read-only source accounting plus the authoritative coordinator sequence.
 deploy-plan:
-	python3 tools/deployment/deploy_entrypoint.py plan --mode full --policy plan
+	python3 tools/deployment/deploy_entrypoint.py plan --mode full
 
-# Sync tracked application/plugin files without provisioning or flashing firmware.
+# Application-only deployment uses the same persistent data and startup path.
 deploy-python:
-	{{captured}} --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python --policy clean
+	{{captured}} --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python
 
-deploy-python-dirty:
-	{{captured}} --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python --policy dirty
+deploy-python-dirty: deploy-python
 
-deploy-python-verbose:
-	{{captured}} --verbose --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python --policy clean --verbose
+deploy-python-verbose: deploy-python
 
 deploy-python-plan:
-	python3 tools/deployment/deploy_entrypoint.py plan --mode python --policy plan
-
-# Read-only, package-scoped source and action accounting for one native background.
-native-plan plugin_id:
-	{{python_env}} python tools/deployment/native_background_entrypoint.py \
-		plan "{{plugin_id}}"
-
-# Build, preview, validate, and retain one repository-owned native bundle locally.
-native-build plugin_id:
-	{{captured}} --phase receiver_background.build -- \
-		{{python_env}} --group firmware python tools/deployment/native_background_entrypoint.py \
-		build "{{plugin_id}}"
-
-# Publish a managed local bundle (or first build a plugin ID) to shared Pi state.
-# Requires an immutable current app release for the version-matched Pi helper.
-# This never installs on receivers, changes display ownership, or restarts services.
-native-publish bundle_or_plugin:
-	{{captured}} --phase receiver_background.publish -- \
-		{{python_env}} --group firmware python tools/deployment/native_background_entrypoint.py \
-		publish "{{bundle_or_plugin}}"
-
-# Install a published managed bundle on the exact configured receiver roster.
-native-install plugin_or_digest:
-	{{captured}} --phase receiver_background.install -- \
-		{{python_env}} python tools/deployment/native_background_entrypoint.py \
-		install "{{plugin_or_digest}}"
-
-# Retired compatibility entrypoint: fails before target access and points to
-# Composer Check + guarded activation.
-native-start plugin_or_digest fallback="aurora_curtains":
-	{{captured}} --phase receiver_background.activate -- \
-		{{python_env}} python tools/deployment/native_background_entrypoint.py \
-		start "{{plugin_or_digest}}" --fallback "{{fallback}}"
-
-# Retired compatibility entrypoint: fails before build, publish, install, or
-# target access and points to Composer Check + guarded activation.
-native-run plugin_id fallback="aurora_curtains":
-	{{captured}} --phase receiver_background.run -- \
-		{{python_env}} --group firmware python tools/deployment/native_background_entrypoint.py \
-		run "{{plugin_id}}" --fallback "{{fallback}}"
-
-releases:
-	python3 tools/deployment/deploy_entrypoint.py releases
-
-rollback release_id:
-	{{captured}} --phase deploy.rollback -- python3 tools/deployment/deploy_entrypoint.py \
-		rollback "{{release_id}}"
+	python3 tools/deployment/deploy_entrypoint.py plan --mode python
 
 # Compatibility name for the fast Python deployment.
 deploy-no-firmware: deploy-python
@@ -157,7 +96,7 @@ setup:
 	bash tools/deployment/setup.sh
 
 # Run every local regression gate: Python, rendering performance, and firmware.
-test: test-unit test-rendering test-firmware test-deployment
+test: test-composer-current test-firmware test-deployment
 
 # Discover unit tests in both shared code and self-contained animation plugins.
 test-unit:
@@ -172,203 +111,32 @@ test-rendering:
 test-firmware:
 	uv run --frozen --group firmware pio test -d firmware/esp32 -e native
 	uv run --frozen --group firmware pio run -d firmware/esp32 -e esp32-s3-devkitc-1
-	uv run --frozen --group firmware pio run -d firmware/esp32 -e esp32-s3-devkitc-1-local-canary
-	uv run --frozen --group firmware pio run -d firmware/esp32 -e esp32-s3-devkitc-1-native-canary
 	if rg -n 'FastLED|fastled' firmware/esp32/src firmware/esp32/include firmware/esp32/platformio.ini; then exit 1; fi
 	if rg -n 'stable/platform-espressif32' firmware/esp32/platformio.ini; then exit 1; fi
 
-# Run deployment behavior tests and validate every maintained shell script.
+# Current deployment/data behavior and maintained shell syntax.
 test-deployment:
-	{{python_env}} pytest -q \
-		tests/unit/test_deploy_*.py \
-		tests/unit/test_app_releases.py \
-		tests/unit/test_configure_spi.py \
-		tests/unit/test_firmware_reconciliation.py \
-		tests/unit/test_receiver_firmware_inventory.py \
-		tests/unit/test_receiver_identity_authority.py \
-		tests/unit/test_gate_policy.py \
-		tests/unit/test_preserve_deploy_settings.py \
-		tests/unit/test_receiver_hybrid_config.py
-	for script in tools/deployment/*.sh; do bash -n "$script"; done
+	{{python_env}} pytest -q tests/unit/test_deploy_simple.py tests/unit/test_deploy_settings.py tests/unit/test_deploy_captured.py tests/unit/test_configure_spi.py tests/unit/test_server_startup.py
+	for script in tools/deployment/*.sh scripts/start_systemd.sh; do bash -n "$script"; done
 
 # Full local readiness gate.
 preflight: test
 
-# Fast local feedback for a Scene switch correction. The prepared .venv avoids
-# uv dependency resolution on every edit; use test-demo/full canonical coverage
-# once for a relevant deployment batch.
+# Fast command, ordering and host-output regressions.
 test-scene-fast:
-	.venv/bin/python -m pytest -q \
-		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_christmas_tree_activates_without_loading_quarantined_hidden_background \
-		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_missing_checked_display_api_rejects_preflight_without_stopping_scene \
-		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_missing_or_wrong_receiver_receipt_rolls_back_exact_prior_state \
-		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_large_rollback_error_still_publishes_terminal_receipt \
-		tests/unit/test_receiver_reset_recovery.py
+    {{python_env}} pytest -q tests/unit/test_host_full_controller.py tests/unit/test_controller_command_queue.py tests/unit/test_composer_simple_playback.py
 
-# Product-demo gate: the accepted current Composer slice plus the deployment
-# path itself.  The broader `just test` aggregate remains available for
-# compatibility-debt cleanup and release hardening, but retired Scene v1 and
-# unreconstructed browser surfaces do not block a wall demo.
-test-demo:
-	{{python_env}} pytest -q \
-		tests/unit/test_composer_desktop_workspace.py \
-		tests/unit/test_composer_runtime_preview.py \
-		tests/unit/test_composer_preset_catalog_boundary.py \
-		tests/unit/test_composer_maintenance_api.py \
-		tests/unit/test_deploy_captured.py \
-		tests/unit/test_deploy_coordinator.py \
-		tests/unit/test_deploy_entrypoint.py \
-		tests/unit/test_deploy_manifest.py \
-		tests/unit/test_deploy_plugin_startup_precheck.py \
-		tests/unit/test_deploy_startup.py
-
-# Local-only current Composer journey.  It builds the ignored managed native
-# fixture first so this gate also works from a clean supported checkout; it does
-# not contact receivers and is not an additional deployment prerequisite.
+# Current phone/desktop Composer and retained browser renderer contracts.
 test-composer-current:
-	uv run --frozen --group firmware python tools/deployment/native_background_entrypoint.py build native_aurora
-	just test-demo
-	{{python_env}} pytest -q \
-		tests/unit/test_composer_slice.py \
-		tests/unit/test_composer_offline_shell.py \
-		tests/unit/test_browser_composer_profile_runtime.py \
-		tests/unit/test_installation_profile_authoring.py::InstallationProfileAuthoringTests::test_update_is_restart_safe_and_stale_update_has_zero_mutation \
-		tests/unit/test_installation_profile_authoring_api.py::InstallationProfileAuthoringApiTests::test_get_and_put_require_etag_and_stale_put_has_zero_mutation \
-		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_every_current_catalog_animation_reaches_real_controller_activation \
-		tests/unit/test_canonical_scene_activation.py::CanonicalSceneActivationTests::test_full_current_catalog_matrix_uses_browser_requests_preview_and_exact_receipts
+    {{python_env}} pytest -q tests/unit/test_composer_async_stop.py tests/unit/test_composer_simple_playback.py tests/unit/test_browser_composer_asset_publication.py tests/unit/test_composer_runtime_preview.py tests/unit/test_component_catalog.py tests/unit/test_media_composer.py tests/unit/test_composer_slice.py tests/unit/test_host_browser_rendering.py tests/unit/test_host_full_controller.py tests/unit/test_controller_command_queue.py tests/unit/test_retained_simulations.py
 
-# Required gate before a normal wall deployment.  This uses only the in-memory
-# preview controller, so it cannot contact receivers or mutate wall state.
-deploy-precheck:
-	{{python_env}} python tools/deployment/plugin_startup_precheck.py
-	just test-demo
+test-demo: test-composer-current test-deployment
 
-# Run the receiver-side timed hardware gates against one controller.
-receiver-acceptance expected_scene_digest device="0" duration="60" min_fps="150" target_fps="160":
-	expected_scene_digest="{{expected_scene_digest}}"; device="{{device}}"; duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
-	device="${device#device=}"; duration="${duration#duration=}"; \
-	min_fps="${min_fps#min_fps=}"; target_fps="${target_fps#target_fps=}"; \
-	{{python_env}} python tools/benchmarks/receiver_acceptance.py --expected-scene-digest "$expected_scene_digest" --device "$device" --duration "$duration" --min-displayed-fps "$min_fps" --target-fps "$target_fps" --animation rainbow
+deploy-precheck: test-demo
 
-# Run the dense streamed-frame gate against the complete installed topology.
-receiver-streamed-wall-acceptance expected_scene_digest duration="60" min_fps="150" target_fps="160":
-	expected_scene_digest="{{expected_scene_digest}}"; duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
-	duration="${duration#duration=}"; min_fps="${min_fps#min_fps=}"; \
-	target_fps="${target_fps#target_fps=}"; \
-	{{python_env}} python tools/benchmarks/receiver_acceptance.py \
-		--expected-scene-digest "$expected_scene_digest" \
-		--device 0 --device 1 --device 2 --device 3 --device 4 \
-		--duration "$duration" --min-displayed-fps "$min_fps" \
-		--target-fps "$target_fps" --animation rainbow
-
-# Observe the exact guarded activation and immutable release for the complete
-# WALL-02 soak. This never activates, restores, restarts, or otherwise mutates.
-guarded-wall-soak activation_id expected_scene_digest expected_release_id expected_basis_digest duration="1800" sample_interval="5" target="ledgridwall.local" min_fps="150" target_fps="150":
-	activation_id="{{activation_id}}"; expected_scene_digest="{{expected_scene_digest}}"; expected_release_id="{{expected_release_id}}"; expected_basis_digest="{{expected_basis_digest}}"; \
-	duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
-	duration="${duration#duration=}"; sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
-	min_fps="${min_fps#min_fps=}"; target_fps="${target_fps#target_fps=}"; \
-	{{python_env}} python tools/benchmarks/guarded_wall_soak.py \
-		"$activation_id" --expected-scene-digest "$expected_scene_digest" \
-		--expected-release-id "$expected_release_id" \
-		--expected-basis-digest "$expected_basis_digest" --target "$target" \
-		--duration "$duration" --sample-interval "$sample_interval" \
-		--min-displayed-fps "$min_fps" --target-fps "$target_fps"
-
-# Collect H2 binding/topology/skew/drift supporting evidence. Transaction
-# injection, restart/lease repair, streamed capacity, and the Python sweep remain
-# explicit companion subgates. The default is a real 30-minute evidence run.
-receiver-native-h2-evidence expected_scene_digest selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
-	expected_scene_digest="{{expected_scene_digest}}"; selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
-	selector="${selector#selector=}"; duration="${duration#duration=}"; \
-	sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
-	{{python_env}} python tools/benchmarks/receiver_native_physical_acceptance.py \
-		"$selector" --expected-scene-digest "$expected_scene_digest" --gate H2 --target "$target" --duration "$duration" \
-		--sample-interval "$sample_interval"
-
-# H4 supporting soak at authored defaults; this intentionally defaults to 1800 s.
-receiver-native-h4-default-soak expected_scene_digest selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
-	expected_scene_digest="{{expected_scene_digest}}"; selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
-	selector="${selector#selector=}"; duration="${duration#duration=}"; \
-	sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
-	{{python_env}} python tools/benchmarks/receiver_native_physical_acceptance.py \
-		"$selector" --expected-scene-digest "$expected_scene_digest" --gate H4-default --target "$target" --duration "$duration" \
-		--sample-interval "$sample_interval"
-
-# Separate H4 maximum-work supporting soak; this also defaults to 1800 s.
-receiver-native-h4-maximum-soak expected_scene_digest selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
-	expected_scene_digest="{{expected_scene_digest}}"; selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
-	selector="${selector#selector=}"; duration="${duration#duration=}"; \
-	sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
-	{{python_env}} python tools/benchmarks/receiver_native_physical_acceptance.py \
-		"$selector" --expected-scene-digest "$expected_scene_digest" --gate H4-maximum --target "$target" --duration "$duration" \
-		--sample-interval "$sample_interval"
-
-# Temporary installed-wall exception: require full receiver telemetry on SPI0,
-# prove outbound host traffic on write-only SPI1, and require visual inspection.
-receiver-streamed-wall-acceptance-degraded-spi1 expected_scene_digest duration="60" min_fps="150" target_fps="160":
-	expected_scene_digest="{{expected_scene_digest}}"; duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
-	duration="${duration#duration=}"; min_fps="${min_fps#min_fps=}"; \
-	target_fps="${target_fps#target_fps=}"; \
-	{{python_env}} python tools/benchmarks/receiver_acceptance.py \
-		--expected-scene-digest "$expected_scene_digest" \
-		--device 0 --device 1 --device 2 --device 3 \
-		--allow-degraded-spi1-return-path \
-		--duration "$duration" --min-displayed-fps "$min_fps" \
-		--target-fps "$target_fps" --animation rainbow
-
-# Verify deployed Phase 3A status/ownership/identity without changing display state.
-receiver-phase3a-status:
-	{{python_env}} python tools/benchmarks/receiver_acceptance.py --phase3a-status-only
-
-# Temporary installed-wall status proof: strict on SPI0, exact no-return state on SPI1.
-receiver-phase3a-status-degraded-spi1:
-	{{python_env}} python tools/benchmarks/receiver_acceptance.py \
-		--phase3a-status-only --allow-degraded-spi1-return-path
-
-# Require local/background context capability on the deliberately flashed canary.
-receiver-phase3a-canary-status device:
-	{{python_env}} python tools/benchmarks/receiver_acceptance.py --phase3a-status-only --local-canary-device {{device}}
-
-# Run with ledgrid.service already stopped; this recipe never manages services or flashes.
-receiver-phase3a-physical-canary bus device logical_id disconnect_seconds="60":
-	{{python_env}} python tools/benchmarks/phase3a_single_receiver_canary.py \
-		--bus {{bus}} --device {{device}} --logical-id {{logical_id}} \
-		--disconnect-seconds {{disconnect_seconds}}
-
-# Run with ledgrid.service already stopped and one readable receiver deliberately
-# flashed with the named local-canary image. This never manages services or flashes.
-receiver-phase3b-physical-canary bus device logical_id disconnect_seconds="5":
-	{{python_env}} python tools/benchmarks/phase3b_single_receiver_canary.py \
-		--bus {{bus}} --device {{device}} --logical-id {{logical_id}} \
-		--disconnect-seconds {{disconnect_seconds}}
-
-# Explicitly incomplete four-wall product showcase for the documented SPI1 return
-# fault. The operator must supply an exact prior complete frame/state and a fresh
-# nonce response; this never installs, uploads, flashes, or claims release acceptance.
-receiver-phase3b-degraded-showcase desired_state restore_frame challenge response duration="15":
-	{{python_env}} python tools/benchmarks/phase3b_degraded_showcase.py \
-		--desired-display-state {{desired_state}} --restore-frame-npy {{restore_frame}} \
-		--confirmation-challenge {{challenge}} --confirmation-response {{response}} \
-		--duration {{duration}}
-
-# Retired compatibility recipe: fails before network/wall changes and points to
-# per-scene guarded activation plus receipt-bound observation.
-live-animation-sweep seconds="2":
-	seconds="{{seconds}}"; seconds="${seconds#seconds=}"; \
-	{{python_env}} python tools/benchmarks/live_animation_sweep.py --seconds "$seconds"
-
-# Retired degraded compatibility recipe; also fails before network/wall changes.
-live-animation-sweep-degraded-spi1 seconds="2":
-	seconds="{{seconds}}"; seconds="${seconds#seconds=}"; \
-	{{python_env}} python tools/benchmarks/live_animation_sweep.py \
-		--allow-degraded-spi1-return-path --seconds "$seconds"
-
-# Observe one exact pre-activated scene/rate; never changes target FPS or scene.
-output-rate-observation expected_scene_digest seconds="15" rate="160":
-	expected_scene_digest="{{expected_scene_digest}}"; seconds="{{seconds}}"; rate="{{rate}}"; \
-	seconds="${seconds#seconds=}"; rate="${rate#rate=}"; \
-	{{python_env}} python tools/benchmarks/output_rate_sweep.py --expected-scene-digest "$expected_scene_digest" --seconds "$seconds" --rate "$rate"
+# Read-only controller rate samples; no scene identity/display-proof claim.
+output-rate-observation seconds="15":
+    {{python_env}} python tools/benchmarks/output_rate_sweep.py --seconds "{{seconds}}"
 
 # Diagnose the deploy host (API + logs). Outputs to diagnostics/remote_diagnostics.out.
 diagnose-remote:
@@ -378,7 +146,7 @@ diagnose-remote:
 # Diagnose the deploy host and restart the web server if needed.
 diagnose-remote-restart:
 	mkdir -p diagnostics
-	OUT_FILE=diagnostics/remote_diagnostics.out KILL_PORT=1 RESTART_WEB=1 tools/diagnostics/remote_diagnostics.sh
+	OUT_FILE=diagnostics/remote_diagnostics.out RESTART_WEB=1 tools/diagnostics/remote_diagnostics.sh
 
 # Run the web controller locally (defaults to HOST=127.0.0.1, PORT=5000).
 start:

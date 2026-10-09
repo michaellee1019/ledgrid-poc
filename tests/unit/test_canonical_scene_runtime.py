@@ -16,7 +16,7 @@ from ipc.scene_contract import SCENE_V2_SCHEMA, normalize_composer_scene
 
 def _catalog() -> ComponentCatalog:
     return ComponentCatalog([
-        ComponentDescriptor("native", 1, "receiver_native", "background", "scaled_context", "none", "semantic", ("final_optics",), (), defaults={"bundle_digest": "a" * 64}),
+        ComponentDescriptor("background", 1, "python", "background", "scaled_context", "none", "semantic", ("final_optics",), ()),
         ComponentDescriptor("alpha", 1, "python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), (), optional_simulation_inputs=("foliage_density",)),
         ComponentDescriptor("required", 1, "python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), (), required_simulation_inputs=("globe_proximity",)),
         ComponentDescriptor("opaque", 1, "python", "animation", "scaled_context", "opaque", "preserve", ("none",), ("authored_media_color",)),
@@ -25,13 +25,13 @@ def _catalog() -> ComponentCatalog:
 
 
 def _component(component_id: str, role: str, **parameters: object) -> dict:
-    return {"component_id": component_id, "version": 1, "provider": "receiver_native" if role == "background" else "python", "role": role, "parameters": parameters, **({"bundle_digest": "a" * 64} if role == "background" else {})}
+    return {"component_id": component_id, "version": 1, "provider": "python", "role": role, "parameters": parameters}
 
 
 def _scene(*, animation: str = "alpha", widgets: list[dict] | None = None, brightness: float = 1.0) -> dict:
     return {
         "schema": SCENE_V2_SCHEMA,
-        "background": _component("native", "background"),
+        "background": _component("background", "background"),
         "animation": _component(animation, "animation"),
         "widgets": widgets or [],
         "plants": {"effects": {"version": 1, "active": [], "strengths": {}}},
@@ -119,7 +119,7 @@ class SceneV2RuntimeTests(unittest.TestCase):
         self.assertEqual(self.instances["alpha"][0].calls, [2.0])
         self.assertEqual(frame.foreground.pixels.shape, (self.total, 4))
 
-    def test_opaque_animation_covers_native_background(self) -> None:
+    def test_opaque_animation_covers_host_background(self) -> None:
         self.runtime.activate(_canonical(animation="opaque"))
         frame = self.runtime.render(1.0)
         np.testing.assert_array_equal(frame.pixels[0], (7, 8, 9))

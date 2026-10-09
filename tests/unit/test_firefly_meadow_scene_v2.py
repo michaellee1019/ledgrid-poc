@@ -8,7 +8,7 @@ import numpy as np
 
 from animation.core.manager import PreviewLEDController
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
-from web.composer_final_preview import NATIVE_AURORA_BUNDLE_DIGEST, current_component_catalog
+from web.composer_final_preview import current_component_catalog
 from ipc.scene_contract import SceneContractError, normalize_composer_scene
 from web.app import AnimationWebInterface
 
@@ -16,7 +16,7 @@ from web.app import AnimationWebInterface
 def _scene(parameters: dict | None = None) -> dict:
     return {
         "schema": "ledgrid.scene.v2",
-        "background": {"component_id": "native_aurora", "version": 1, "provider": "receiver_native", "role": "background", "bundle_digest": NATIVE_AURORA_BUNDLE_DIGEST, "parameters": {"gain": .62, "source_fps": 30, "seed": 4201}},
+        "background": {"component_id": "solid_background", "version": 1, "provider": "python", "role": "background", "parameters": {"gain": .62, "seed": 4201}},
         "animation": {"component_id": "firefly_synchrony", "version": 1, "provider": "python", "role": "animation", "parameters": parameters or {}},
         "widgets": [], "plants": {"effects": {"version": 1, "active": [], "strengths": {}}},
         "look": {"palette_id": "mist", "pace": .7, "presentation_brightness": .82},

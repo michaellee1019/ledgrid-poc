@@ -126,12 +126,12 @@ def _normalize_component(value: Any, catalog: ComponentCatalog, expected_role: C
         )
         descriptor.validate_scene_v2()
     except (TypeError, ValueError) as exc:
-        raise SceneContractError(f"{name} is not a qualified Scene v2 component") from exc
+        raise SceneContractError(f"Unsupported {name} component: {value['provider']}:{value['component_id']} (version {value['version']})") from exc
     if descriptor.role is not expected_role or descriptor.provider.value != value["provider"]:
-        raise SceneContractError(f"{name} is not a qualified Scene v2 component")
+        raise SceneContractError(f"Unsupported {name} component: {value['provider']}:{value['component_id']} (version {value['version']})")
     if expected_role is ComponentRole.BACKGROUND:
-        if descriptor.provider is not ComponentProvider.RECEIVER_NATIVE or descriptor.alpha_behavior is not AlphaBehavior.NONE:
-            raise SceneContractError("Background must be receiver_native with no alpha plane")
+        if descriptor.provider is not ComponentProvider.PYTHON or descriptor.alpha_behavior is not AlphaBehavior.NONE:
+            raise SceneContractError("Background must be Python with no alpha plane")
     elif expected_role is ComponentRole.ANIMATION:
         if descriptor.provider is not ComponentProvider.PYTHON or descriptor.alpha_behavior not in {
             AlphaBehavior.PREMULTIPLIED_RGBA, AlphaBehavior.OPAQUE,
@@ -143,15 +143,10 @@ def _normalize_component(value: Any, catalog: ComponentCatalog, expected_role: C
     # normalization receives its own JSON-ready copy, so no scene can mutate a
     # shared descriptor through nested list or mapping values.
     defaults = descriptor.default_parameters()
-    catalog_digest = defaults.pop("bundle_digest", None)
-    if descriptor.provider is ComponentProvider.RECEIVER_NATIVE:
-        supplied = value.get("bundle_digest")
-        if not isinstance(catalog_digest, str) or _DIGEST.fullmatch(catalog_digest) is None:
-            raise SceneContractError(f"{name} catalog bundle identity is missing")
-        if not isinstance(supplied, str) or supplied != catalog_digest:
-            raise SceneContractError(f"{name} bundle_digest does not match the catalog")
-    elif "bundle_digest" in value:
-        raise SceneContractError(f"{name} Python components must not declare bundle_digest")
+    if descriptor.provider is not ComponentProvider.PYTHON:
+        raise SceneContractError('only host Python components are supported')
+    if 'bundle_digest' in value:
+        raise SceneContractError('host components must not declare bundle_digest')
     authored = validate_component_parameters(value["parameters"], intensity_parameter=descriptor.intensity_parameter)
     parameters = validate_component_parameters(
         {**defaults, **authored}, intensity_parameter=descriptor.intensity_parameter
@@ -171,8 +166,6 @@ def _normalize_component(value: Any, catalog: ComponentCatalog, expected_role: C
         "role": descriptor.role.value,
         "parameters": parameters,
     }
-    if descriptor.provider is ComponentProvider.RECEIVER_NATIVE:
-        result["bundle_digest"] = catalog_digest
     return result
 
 

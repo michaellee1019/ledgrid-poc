@@ -35,7 +35,6 @@ from animation.plugins.pixel_quest import PixelQuestAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.strip_order import StripOrderAnimation
 from animation.plugins.tetris import TetrisAnimation
-from animation.plugins.world_flags import WorldFlagsAnimation
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -296,14 +295,6 @@ class InstallationProfilePluginCacheRefreshTests(unittest.TestCase):
             (tetris.last_elapsed, tetris.last_render_elapsed, tetris.next_render_elapsed),
             (timing[0], None, None),
         )
-
-        flags = WorldFlagsAnimation(_Controller(), {"plant_aware": True})
-        flags.set_presentation_context(_context(self.populated))
-        flags.generate_frame(2.0, 1)
-        self.assertIsNotNone(flags._plant_canvas_key)
-        flags.set_presentation_context(_context(self.empty))
-        self.assertIsNone(flags._plant_canvas_key)
-        self.assertIsNone(flags._plant_canvas)
 
     def test_remaining_plugin_owned_caches_refresh_without_lifecycle_mutation(self) -> None:
         falling = AsciiDropAnimation(

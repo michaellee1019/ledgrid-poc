@@ -8,10 +8,7 @@
   const controls = () => [...document.querySelectorAll('.composer button, .composer input, .composer select')];
   const priorDisabled = new Map();
   let offline = false;
-  let waiting = null;
-  let activatingUpdate = false;
 
-  function hasProtectedScene() { return document.querySelector('#saveState').textContent !== 'Saved'; }
   function setMutationDisabled(value) {
     if (value) controls().forEach((control) => { if (!priorDisabled.has(control)) priorDisabled.set(control, control.disabled); control.disabled = true; });
     else { priorDisabled.forEach((disabled, control) => { control.disabled = disabled; }); priorDisabled.clear(); }
@@ -27,20 +24,19 @@
     if (target.closest('.composer')) { event.preventDefault(); event.stopImmediatePropagation(); }
   }
   function reloadFresh() { window.location.reload(); }
-  function updateReady(worker) { waiting = worker; show('A Composer shell update is ready. Reload when this scene is safe.', 'update'); }
-  function applyUpdate() { if (!waiting) return; if (hasProtectedScene()) return show('Save the current scene before reloading this shell update.', 'update'); activatingUpdate=true; waiting.postMessage({type:'composer-shell-activate'}); }
-  function register() {
-    if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/composer-sw.js?v=composer-shell-v27', {scope:'/'}).then((registration) => {
-      if (registration.waiting) updateReady(registration.waiting);
-      registration.addEventListener('updatefound', () => { const worker=registration.installing; if (!worker) return; worker.addEventListener('statechange', () => { if (worker.state === 'installed' && navigator.serviceWorker.controller) updateReady(worker); }); });
-    });
-    navigator.serviceWorker.addEventListener('controllerchange', () => { if (activatingUpdate) window.location.reload(); });
-    navigator.serviceWorker.addEventListener('message', (event) => { if (event.data && event.data.type === 'composer-server-unavailable') setOffline(); });
+  async function retireOfflineWorkers() {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.filter((registration) => [registration.active, registration.waiting, registration.installing].some((worker) => worker && ['/composer-sw.js', '/composer-service-worker.js'].includes(new URL(worker.scriptURL).pathname))).map((registration) => registration.unregister()));
+    }
+    if ('caches' in window) {
+      const names = await caches.keys();
+      await Promise.all(names.filter((name) => name.startsWith('composer-shell-') || name.startsWith('ledgrid-composer-')).map((name) => caches.delete(name)));
+    }
   }
   ['click', 'pointerdown', 'keydown', 'input', 'change'].forEach((type) => document.addEventListener(type, guard, true));
   window.addEventListener('online', reconnect); window.addEventListener('composer-server-unavailable', setOffline);
-  retry.addEventListener('click', reloadFresh); update.addEventListener('click', applyUpdate);
+  retry.addEventListener('click', reloadFresh);
   new MutationObserver(() => { if (offline) setMutationDisabled(true); }).observe(root, {childList:true, subtree:true});
-  register();
+  retireOfflineWorkers().catch((error) => console.info("Composer cache retirement:", error.message));
 })();

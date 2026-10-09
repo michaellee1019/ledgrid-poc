@@ -121,30 +121,6 @@
         let pending = installationProfileArtifacts.get(key);
         if (!pending) {
             pending = (async () => {
-                const delivered = await serviceWorkerRequest({
-                    type: 'INSTALLATION_PROFILE_ARTIFACT',
-                    artifactUrl: url.href,
-                    digest: profile.digest,
-                });
-                if (delivered.type === 'INSTALLATION_PROFILE_ARTIFACT') {
-                    if (
-                        delivered.digest !== profile.digest
-                        || !(delivered.bytes instanceof ArrayBuffer)
-                    ) {
-                        throw new ComposerRuntimeError(
-                            'The offline worker returned an invalid installation-profile artifact.',
-                        );
-                    }
-                    return Object.freeze({
-                        bytes: delivered.bytes,
-                        etag: delivered.etag || null,
-                    });
-                }
-                if (delivered.type !== 'OFFLINE_STATUS') {
-                    throw new ComposerRuntimeError(
-                        delivered.reason || 'The offline worker could not provide the installation profile.',
-                    );
-                }
                 const response = await global.fetch(url.href, {
                     cache: 'no-store',
                     headers: {'Accept': 'application/octet-stream'},
@@ -392,28 +368,6 @@
         }
         host.clientCount += 1;
         return {host, key};
-    }
-
-    function serviceWorkerRequest(message, timeoutMs = 10000) {
-        const controller = global.navigator?.serviceWorker?.controller;
-        if (!controller || typeof global.MessageChannel !== 'function') {
-            return Promise.resolve({
-                type: 'OFFLINE_STATUS',
-                readyOffline: false,
-                reason: 'The offline worker is not controlling this page yet.',
-            });
-        }
-        return new Promise((resolve, reject) => {
-            const channel = new global.MessageChannel();
-            const timer = global.setTimeout(() => {
-                reject(new ComposerRuntimeError('The offline worker did not answer.'));
-            }, timeoutMs);
-            channel.port1.onmessage = (event) => {
-                global.clearTimeout(timer);
-                resolve(event.data || {});
-            };
-            controller.postMessage(message, [channel.port2]);
-        });
     }
 
     class ComposerRuntime {
@@ -832,31 +786,6 @@
             return this.diagnostics();
         }
 
-        async prepareOffline() {
-            const runtime = this.component?.browser_runtime || {};
-            if (!isPythonRuntime(runtime)) {
-                return ComposerRuntime.offlineStatus();
-            }
-            if (!this.host || !this.ready) {
-                throw new ComposerRuntimeError('The Python browser renderer is not ready.');
-            }
-            const response = await this._withRecovery(() => this.host.request({
-                type: 'prepare',
-                assetUrl: runtime.asset_url || null,
-                packages: ['numpy', 'pillow'],
-            }, this.initTimeoutMs));
-            if (response.type !== 'prepared') {
-                throw new ComposerRuntimeError(`Unexpected renderer response: ${String(response.type)}`);
-            }
-            return serviceWorkerRequest({
-                type: 'PYTHON_RUNTIME_READY',
-                pyodideVersion: response.pyodideVersion,
-                packages: response.packages,
-                runtimeUrls: response.runtimeUrls,
-                installationProfile: this.installationProfile,
-            });
-        }
-
         async installationProfileView() {
             if (!this.ready || !this.installationProfile) {
                 throw new ComposerRuntimeError(
@@ -919,10 +848,6 @@
             this.host = null;
             this.hostKey = null;
             this.hostShared = false;
-        }
-
-        static offlineStatus() {
-            return serviceWorkerRequest({type: 'OFFLINE_STATUS'});
         }
 
         static diagnostics() {

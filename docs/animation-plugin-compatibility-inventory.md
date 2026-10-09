@@ -94,7 +94,6 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | `waterfall_veil` | `WaterfallVeilAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `wave` | `WaveAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `wind_in_the_reeds` | `WindInTheReedsAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
-| `world_flags` | `WorldFlagsAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 
 ## Current conclusion
 

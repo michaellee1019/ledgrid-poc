@@ -49,55 +49,28 @@ explicit as-built gaps.
 The root `presets/animations/` tree is a runtime/user-writable overlay. Curated
 presets belong to the plugin that owns them.
 
-Run `just test-composer-current` for the bounded local Composer journey, including explicit native fixtures. See [current Composer validation](docs/CURRENT_COMPOSER_VALIDATION.md) for scope.
+Run `just test-composer-current` for the focused local Composer journey. See
+[current validation](docs/CURRENT_COMPOSER_VALIDATION.md).
 
 ## Hardware deployment
 
-```bash
-just setup             # prepare the Pi and local web environment
-just deploy-precheck   # local validation without changing the Pi
-just deploy-plan       # read-only source and deployment-step accounting
-just deploy            # full application and firmware deployment
-```
+`just deploy-python` replaces application code; `just deploy` also builds and
+flashes the receivers. Deployment stops playback, preserves personal data outside
+the application directory, copies/builds, restarts, and checks readiness. A failed
+step may leave the wall stopped. Correct the error and rerun deployment; there is
+no automatic rollback requirement. See [Deployment](docs/DEPLOYMENT.md).
 
-`just deploy` and `just deploy-python` require a clean worktree. Use the
-corresponding `*-dirty` recipe only for an intentional development deployment;
-it records the base commit, selected diff digest, and safe untracked files. Use
-`*-verbose` to stream the normally captured deployment log. The deployment
-target defaults to `ledgridwall@ledgridwall.local`. Both commands stage an
-immutable release, atomically select `current`, require advancing release-aware
-health, and persist matching local/target receipts. Use `just releases` to inspect release state and `just rollback <release-id>`
-for recovery to a validated immutable release that provides the current
-operations-telemetry contract.
-
-Receiver-native software is present but remains default-off and is not yet a
-production-accepted wall path. Repository-owned modules use the explicit
-`just native-plan`, `just native-build`, `just native-publish`,
-and `just native-install` recipes; ordinary `just deploy` never installs or
-activates a module. The retired `native-start` and `native-run` compatibility
-commands fail before target access or partial build/publication/install work;
-activation now goes through Composer Check and guarded activation. The H2 and
-H4 evidence recipes require the exact scene digest from that activation receipt,
-default to real 1,800-second read-only observations, never restore or otherwise
-mutate the wall, and remain supporting evidence until every companion and
-photographed gate is complete. See
-[Deployment](docs/DEPLOYMENT.md#receiver-native-deployment) and
-[Rendering acceptance](docs/RENDERING_PIPELINE_ACCEPTANCE.md#phase-4-receiver-native-software-and-physical-evidence).
+The Pi renders full RGB frames. Receiver-native modules and sparse overlays are
+retired. Composer retains browser rendering while connected; offline editing is
+not supported. Calibration is one editable configuration for this wall.
 
 ## Required checks
 
-Before merging or deploying a change:
-
-1. `just test` passes.
-2. Every discovered plugin has a valid manifest and its focused tests and
-   curated presets live inside the plugin package.
-3. `just deploy-precheck` reports no missing source, configuration, or runtime
-   asset.
-4. Rendering or transport changes also pass `just test-rendering`.
-5. Firmware changes pass the receiver and full-wall gates in
-   [Rendering acceptance](docs/RENDERING_PIPELINE_ACCEPTANCE.md).
-6. Calibration changes satisfy the photographed checks in
-   [Plant-wall calibration](docs/PLANT_WALL_CALIBRATION.md).
+Use focused behavior tests, syntax checks, and `git diff --check`. Firmware changes
+require the installed-target build and transport/LED tests. Browser wiring changes
+require the affected phone/desktop journey. Persistence and protocol changes need
+independent review before deployment. Installed checks confirm mapping, brightness,
+playback and switching; local tests are not evidence of physical output.
 
 ## Documentation
 
@@ -110,11 +83,6 @@ Before merging or deploying a change:
 - [GIF asset pipeline](docs/GIF_PIPELINE.md)
 - [Plant-wall calibration](docs/PLANT_WALL_CALIBRATION.md)
 - [Current Composer contract](docs/CURRENT_UX_ACCEPTANCE.md)
-- [Unified delivery and animation roadmap](docs/plan-revamped-animation-pipeline.md)
 
-Repository documentation describes the current supported system. Use Git
-history for change history and abandoned approaches. The `native-animations`
-branch is a retained prototype/organ donor for the roadmap's Phase 3 and Phase 4
-work; it is not the deployed architecture or a merge target. The roadmap records
-the reusable commits and the signing, frame-track, exclusive-mode, and UI pieces
-that must not be ported unchanged.
+Use Git history and local Beads for historical designs and acceptance evidence.
+Current operation does not require qualification packages or exact displayed-scene receipts.
