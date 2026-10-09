@@ -1,6 +1,6 @@
 ---
 name: animation-creation
-description: Create, improve, debug, or review real-time procedural animations, autonomous visual simulations, mask-aware physical installations, pre-rendered animation packs, and receiver-side firmware animations, especially LED-grid Python plugins, signed native modules, curated presets, pixel-art loops, and GIF assets. Use for new animation plugins, clocks and other time/data-driven displays, visual-behavior changes, preset or asset families, coordinated agents or particles, gameplay/autoplay logic, calibrated obstacle or occlusion masks, animation parameters, frame pacing, deterministic simulation tests, render benchmarks, Raspberry Pi CPU optimization, or ESP32-local playback.
+description: Create or correct LED-grid animations, simulations, presets, and playback behavior. Use for rendering, timing, interaction, geometry, or animation performance work.
 ---
 
 # Animation Creation
@@ -462,3 +462,5 @@ Give short evidence-based updates at these moments:
 - After final tests and benchmarks.
 
 Lead the handoff with the outcome. Include changed files, behavior evidence, performance measurements with their environment, tests run, and any untouched unrelated worktree changes.
+
+For an explicitly requested catalog-wide modernization program only, read [modernization review discipline](references/modernization.md). Ordinary animation corrections do not activate that program.
