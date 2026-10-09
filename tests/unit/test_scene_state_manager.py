@@ -1,4 +1,4 @@
-"""Focused Phase 2C scene-state and manager lifecycle acceptance."""
+"""Focused host scene-state and manager lifecycle acceptance."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ class _PlantPreviewProbe(_ProbeBase):
     instances = []
 
     def generate_frame(self, _elapsed, _frame_index):
-        active = self.params.get("plant_modifiers", {}).get("active", ())
+        active = self.presentation_context.plant_modifiers.get("active", ())
         color = 180 if "illuminate" in active else 20
         self._cached[:] = (color, color, color)
         return self._cached
@@ -48,7 +48,7 @@ class _FailingOverlay(_ProbeOverlay):
         raise RuntimeError("authored start failure")
 
 
-class Phase2CSceneManagerTests(unittest.TestCase):
+class HostSceneManagerTests(unittest.TestCase):
     def setUp(self):
         _ProbeBase.instances.clear()
         _ProbeOverlay.instances.clear()
@@ -193,8 +193,8 @@ class Phase2CSceneManagerTests(unittest.TestCase):
         self.assertTrue(self.manager.start_scene(scene.to_dict()))
         self.assertEqual(self.manager.get_scene_state(), scene.to_dict())
         status = self.manager.get_current_status()["scene"]
-        self.assertFalse(status["background"]["preset"]["is_dirty"])
-        self.assertEqual(status["background"]["preset"]["preset_id"], "evening")
+        self.assertEqual(status["provider_mode"], "host_full_rgb")
+        self.assertEqual(status["background"]["component"], preset_background.to_dict())
 
         background = self.manager._scene_background["animation"]
         self.assertTrue(self.manager.update_scene_component(
@@ -218,10 +218,10 @@ class Phase2CSceneManagerTests(unittest.TestCase):
         self.assertEqual(state.overlays[0].component.resolved_parameters["position"], 2)
         self.assertEqual(state.overlays[0].opacity, 128)
         status = self.manager.get_current_status()["scene"]
-        self.assertTrue(status["background"]["preset"]["is_dirty"])
-        self.assertEqual(
-            len(status["background"]["preset"]["resolved_fingerprint"]), 64
-        )
+        self.assertEqual(status["background"]["component"], state.background.to_dict())
+        self.assertEqual(state.background.preset_id, "evening")
+        self.assertEqual(state.background.preset_fingerprint, _DIGEST)
+        self.assertEqual(state.background.parameter_overrides, {"color": 77})
 
     def test_overlay_replace_remove_and_apply_preserve_background_identity(self):
         first = self.scene()
@@ -288,7 +288,7 @@ class Phase2CSceneManagerTests(unittest.TestCase):
         self.assertEqual(self.manager.plant_modifier_state.to_dict(), live_state)
         self.assertIsNone(self.manager.get_scene_state())
 
-    def test_failed_overlay_replacement_rolls_back_both_live_identities(self):
+    def test_overlay_start_failure_leaves_unreplaced_components_intact(self):
         self.assertTrue(self.manager.start_scene(self.scene()))
         background = self.manager._scene_background["animation"]
         overlay = self.manager._scene_overlay["animation"]
@@ -302,7 +302,7 @@ class Phase2CSceneManagerTests(unittest.TestCase):
         self.assertIs(self.manager._scene_overlay["animation"], overlay)
         self.assertEqual(self.manager.get_scene_state(), state)
 
-    def test_failed_complete_scene_start_keeps_prior_scene_running(self):
+    def test_component_start_failure_before_activation_leaves_prior_scene_intact(self):
         self.assertTrue(self.manager.start_scene(self.scene()))
         background = self.manager._scene_background["animation"]
         overlay = self.manager._scene_overlay["animation"]
@@ -323,18 +323,22 @@ class Phase2CSceneManagerTests(unittest.TestCase):
         self.assertIs(self.manager._scene_overlay["animation"], overlay)
         self.assertEqual(self.manager.get_scene_state(), state)
 
-    def test_legacy_start_translates_to_scene_without_changing_legacy_status(self):
+    def test_animation_start_reports_host_scene_and_controller_playback(self):
         self.assertTrue(self.manager.start_animation("probe_base", {"color": 9}))
         status = self.manager.get_current_status()
         self.assertEqual(status["mode"], "animation")
-        self.assertNotIn("scene", status)
+        self.assertEqual(status["scene"]["provider_mode"], "host_full_rgb")
+        self.assertEqual(status["controller_playback"], {
+            "state": "running", "render_mode": "host_full_rgb", "error": None,
+        })
+        self.assertEqual(status["receiver_connectivity"], [])
         self.assertEqual(status["scene_state"]["background"]["plugin_id"], "probe_base")
         self.assertEqual(self.manager.list_components(role="overlay")[0]["role"], "overlay")
 
 
 class RealSceneProductIntegrationTests(unittest.TestCase):
     def test_normalized_gradient_clock_scene_start_update_preview_and_stop(self):
-        controller = _Controller(strips=32, leds_per_strip=138)
+        controller = _Controller(strips=33, leds_per_strip=138)
         with contextlib.redirect_stdout(io.StringIO()):
             manager = AnimationManager(controller, auto_start=False)
         manager._launch_animation_loop = lambda: None
@@ -343,7 +347,7 @@ class RealSceneProductIntegrationTests(unittest.TestCase):
             "background": {
                 "plugin_id": "gradient",
                 "provider": "python",
-                "resolved_parameters": {"animated": False},
+                "resolved_parameters": {"motion": 0.0},
                 "parameter_overrides": {},
             },
             "overlays": [{
@@ -366,7 +370,16 @@ class RealSceneProductIntegrationTests(unittest.TestCase):
         }, catalog=manager.list_components())
         try:
             self.assertTrue(manager.start_scene(scene))
+            before = manager.get_scene_state()
+            self.assertFalse(manager.update_scene_component(
+                "background", {"params": {"animated": False}}
+            ))
+            self.assertEqual(manager.get_scene_state(), before)
             background = manager._scene_background["animation"]
+            self.assertTrue(manager.update_scene_component(
+                "background", {"params": {"motion": 0.25}}
+            ))
+            self.assertEqual(manager.get_scene_state()["background"]["resolved_parameters"]["motion"], 0.25)
             self.assertTrue(manager.update_scene_component(
                 AGGREGATE_OVERLAY_SLOT_ID,
                 {
@@ -375,11 +388,17 @@ class RealSceneProductIntegrationTests(unittest.TestCase):
                 },
             ))
             self.assertIs(manager._scene_background["animation"], background)
+            self.assertTrue(manager.remove_overlay())
+            self.assertTrue(manager.update_scene_component(
+                "overlay", component=scene["overlays"][0]["component"]
+            ))
             preview = manager.get_scene_preview(scene, elapsed=0.0)
             self.assertEqual(preview["scene"]["background"], "gradient")
             self.assertIs(manager._scene_background["animation"], background)
-            self.assertEqual(manager.get_scene_state()["revision"], 5)
+            self.assertEqual(manager.get_scene_state()["revision"], 8)
             self.assertTrue(manager.stop_scene(clear_leds=False))
+            self.assertFalse(manager.is_running)
+            self.assertIsNone(manager.get_scene_state())
         finally:
             manager.stop_animation(clear_leds=False)
 

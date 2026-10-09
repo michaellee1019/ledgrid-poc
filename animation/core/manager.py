@@ -1198,7 +1198,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                     overrides = dict(old_ref.parameter_overrides)
                     overrides.update(requested)
                     new_ref = ComponentRef(plugin_id=old_ref.plugin_id, provider=old_ref.provider, preset_id=old_ref.preset_id, preset_fingerprint=old_ref.preset_fingerprint, parameter_overrides=overrides, resolved_parameters=resolved)
-                    runtime['animation'].update_parameters(self._component_config(requested))
+                    runtime['animation'].update_parameters(self._scene_component_config(requested))
                     runtime['config'] = resolved
                     runtime['ref'] = new_ref
                     self._active_scene_state = SceneState(current_scene.revision + 1, new_ref, current_scene.overlays, current_scene.known_python_fallback)
@@ -1230,7 +1230,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                 replacing = runtime is None or runtime['name'] != new_component.plugin_id
                 if replacing:
                     animation_class = self.plugin_loader.get_plugin(overlay_ref.component.plugin_id)
-                    animation = animation_class(self.controller, self._component_config(dict(overlay_ref.component.resolved_parameters)))
+                    animation = animation_class(self.controller, self._scene_component_config(dict(overlay_ref.component.resolved_parameters)))
                     new_runtime = None
                     try:
                         animation.start()
@@ -1251,7 +1251,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                     if old_runtime is not None:
                         self._cleanup_scene_component(old_runtime)
                 else:
-                    runtime['animation'].update_parameters(self._component_config(requested))
+                    runtime['animation'].update_parameters(self._scene_component_config(requested))
                     runtime['config'] = dict(overlay_ref.component.resolved_parameters)
                     runtime['ref'] = overlay_ref.component
                     runtime['enabled'] = overlay_ref.enabled
@@ -1541,6 +1541,8 @@ class AnimationManager(CanonicalReceiverSceneMixin):
 
         def preview_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             effective = dict(config or {})
+            if structured:
+                return effective
             effective['plant_aware'] = self.plant_aware if plant_modifiers is None and self._legacy_plant_aware_bridge else False
             effective['plant_modifiers'] = preview_plant_state.to_dict()
             return effective
