@@ -42,3 +42,31 @@ def test_integrity_diagnostic_is_detached_and_never_treated_as_status():
         stats['receiver_status_integrity_last_failure']['reason']='edited'
         assert receiver.get_stats()['receiver_status_integrity_last_failure']['reason']=='invalid_header'
         receiver.close()
+
+
+def test_fec_lifetime_counters_remain_truthful_across_corruption_and_reset():
+    fields = ('packets_received', 'packets_accepted', 'corrected_packets',
+              'corrected_codewords', 'uncorrectable_packets',
+              'semantic_crc_errors', 'framing_errors')
+    def sample(sequence, counts):
+        packet = bytearray(status(sequence))
+        for offset, value in zip(range(1216, 1244, 4), counts):
+            packet[offset:offset + 4] = value.to_bytes(4, 'big')
+        packet[-4:] = (binascii.crc32(packet[:-4]) & 0xffffffff).to_bytes(4, 'big')
+        return packet
+    with patch.object(protocol.spidev, 'SpiDev', SPI):
+        receiver = protocol.LEDController()
+        try:
+            counts = (100, 90, 8, 12, 5, 3, 2)
+            assert receiver._update_receiver_status(sample(123, counts))
+            corrupted = sample(124, (999,) * 7)
+            corrupted[1232] ^= 1
+            assert not receiver._update_receiver_status(corrupted, full_status_expected=True)
+            stats = receiver.get_stats()
+            assert tuple(stats['receiver_fec_' + name] for name in fields) == counts
+            # Receiver restart exposes its actual lower lifetime values.
+            assert receiver._update_receiver_status(sample(1, (0,) * 7))
+            stats = receiver.get_stats()
+            assert tuple(stats['receiver_fec_' + name] for name in fields) == (0,) * 7
+        finally:
+            receiver.close()

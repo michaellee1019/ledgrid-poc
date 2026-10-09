@@ -128,7 +128,7 @@ test-scene-fast:
 
 # Current phone/desktop Composer and retained browser renderer contracts.
 test-composer-current:
-    {{python_env}} pytest -q tests/unit/test_composer_async_stop.py tests/unit/test_composer_simple_playback.py tests/unit/test_browser_composer_asset_publication.py tests/unit/test_composer_runtime_preview.py tests/unit/test_component_catalog.py tests/unit/test_media_composer.py tests/unit/test_composer_slice.py tests/unit/test_host_browser_rendering.py tests/unit/test_host_full_controller.py tests/unit/test_controller_command_queue.py tests/unit/test_retained_simulations.py
+    {{python_env}} pytest -q tests/unit/test_receiver_status.py tests/unit/test_receiver_status_integrity.py tests/unit/test_browser_scene_contract.py tests/unit/test_spi_fec_envelope.py tests/unit/test_spi_crc.py tests/unit/test_composer_async_stop.py tests/unit/test_composer_simple_playback.py tests/unit/test_browser_composer_asset_publication.py tests/unit/test_composer_runtime_preview.py tests/unit/test_component_catalog.py tests/unit/test_media_composer.py tests/unit/test_composer_slice.py tests/unit/test_host_browser_rendering.py tests/unit/test_host_full_controller.py tests/unit/test_controller_command_queue.py tests/unit/test_retained_simulations.py
 
 test-demo: test-composer-current test-deployment
 

@@ -517,13 +517,6 @@ class LEDController:
         self._receiver_fec_uncorrectable_packets = 0
         self._receiver_fec_semantic_crc_errors = 0
         self._receiver_fec_framing_errors = 0
-        self._receiver_fec_terminal_baseline = None
-        self._receiver_fec_terminal_baseline_finalized = False
-        self._receiver_fec_terminal_baseline_invalid = False
-        self._receiver_fec_terminal_counter_resets = 0
-        self._receiver_fec_uncorrectable_packets_process_delta = 0
-        self._receiver_fec_semantic_crc_errors_process_delta = 0
-        self._receiver_fec_framing_errors_process_delta = 0
         self._receiver_fec_last_decode_us = 0
         self._receiver_fec_max_decode_us = 0
         self._receiver_frames_rendered = 0
@@ -556,10 +549,6 @@ class LEDController:
         self._fec_codewords_sent = 0
         self._fec_parity_bytes_sent = 0
         self._fec_data_padding_bytes_sent = 0
-        self._fec_sparse_packets_sent = 0
-        self._fec_sparse_codewords_sent = 0
-        self._fec_sparse_parity_bytes_sent = 0
-        self._fec_sparse_data_padding_bytes_sent = 0
         self._writebytes2_supported = None
         self._last_transfer_captured_response = False
         self._last_transfer_status_sampled = False
@@ -627,18 +616,11 @@ class LEDController:
             if payload_length and int(buf[0]) != CMD_STATUS_QUERY:
                 self._require_current_receiver_protocol()
             envelope_enabled = True
-            fec_sparse_command = bool(
-                payload_length
-                and False
-            )
             fec_enabled = bool(
                 envelope_enabled
                 and getattr(self, "_fec_transport_requested", False)
                 and getattr(self, "_fec_transport_enabled", False)
-                and (
-                    buf is getattr(self, "_frame_packet", None)
-                    or fec_sparse_command
-                )
+                and buf is getattr(self, "_frame_packet", None)
             )
             maximum_payload = (
                 MAX_FEC_SEMANTIC_BYTES if fec_enabled else MAX_ALIGNED_SEMANTIC_BYTES
@@ -727,36 +709,20 @@ class LEDController:
             def record_successful_fec_transfer():
                 if not fec_enabled:
                     return
-                if fec_sparse_command:
-                    self._fec_sparse_packets_sent = (
-                        getattr(self, "_fec_sparse_packets_sent", 0) + 1
-                    )
-                    self._fec_sparse_codewords_sent = (
-                        getattr(self, "_fec_sparse_codewords_sent", 0) + codewords
-                    )
-                    self._fec_sparse_parity_bytes_sent = (
-                        getattr(self, "_fec_sparse_parity_bytes_sent", 0)
-                        + fec_parity_bytes
-                    )
-                    self._fec_sparse_data_padding_bytes_sent = (
-                        getattr(self, "_fec_sparse_data_padding_bytes_sent", 0)
-                        + fec_data_padding_bytes
-                    )
-                else:
-                    self._fec_frames_sent = (
-                        getattr(self, "_fec_frames_sent", 0) + 1
-                    )
-                    self._fec_codewords_sent = (
-                        getattr(self, "_fec_codewords_sent", 0) + codewords
-                    )
-                    self._fec_parity_bytes_sent = (
-                        getattr(self, "_fec_parity_bytes_sent", 0)
-                        + fec_parity_bytes
-                    )
-                    self._fec_data_padding_bytes_sent = (
-                        getattr(self, "_fec_data_padding_bytes_sent", 0)
-                        + fec_data_padding_bytes
-                    )
+                self._fec_frames_sent = (
+                    getattr(self, "_fec_frames_sent", 0) + 1
+                )
+                self._fec_codewords_sent = (
+                    getattr(self, "_fec_codewords_sent", 0) + codewords
+                )
+                self._fec_parity_bytes_sent = (
+                    getattr(self, "_fec_parity_bytes_sent", 0)
+                    + fec_parity_bytes
+                )
+                self._fec_data_padding_bytes_sent = (
+                    getattr(self, "_fec_data_padding_bytes_sent", 0)
+                    + fec_data_padding_bytes
+                )
             try:
                 if not response_required and fec_enabled:
                     # Keep protected full frames on the SPI_IOC_MESSAGE path.
@@ -1008,14 +974,7 @@ class LEDController:
 
     def _update_receiver_status_v7(self, response):
         """Parse exact FEC transport outcomes after the complete v6 prefix."""
-        fec_enabled_before_observation = bool(
-            getattr(self, "_fec_transport_enabled", False)
-        )
         fresh = self._update_receiver_status_base(response)
-        fec_enabled_after_observation = bool(
-            getattr(self, "_fec_transport_enabled", False)
-        )
-        values = {}
         for name, offset in (
             ("packets_received", 1216),
             ("packets_accepted", 1220),
@@ -1026,57 +985,7 @@ class LEDController:
             ("framing_errors", 1240),
         ):
             value = self._response_u32(response, offset)
-            values[name] = value
             setattr(self, f"_receiver_fec_{name}", value)
-        terminal_names = (
-            "uncorrectable_packets",
-            "semantic_crc_errors",
-            "framing_errors",
-        )
-        baseline = getattr(self, "_receiver_fec_terminal_baseline", None)
-        baseline_finalized = bool(
-            getattr(self, "_receiver_fec_terminal_baseline_finalized", False)
-        )
-        current = {name: values[name] for name in terminal_names}
-        counter_reset = baseline is not None and any(
-            current[name] < baseline[name] for name in terminal_names
-        )
-        if counter_reset:
-            self._receiver_fec_terminal_counter_resets = (
-                getattr(self, "_receiver_fec_terminal_counter_resets", 0) + 1
-            )
-            self._receiver_fec_terminal_baseline_invalid = True
-        elif fec_enabled_before_observation and not baseline_finalized:
-            # Reaching v7 only after FEC was already active cannot establish
-            # which lifetime outcomes predate this Host process.
-            self._receiver_fec_terminal_baseline_invalid = True
-        elif fresh and not baseline_finalized:
-            # SPI responses are queued.  Keep advancing the lifetime snapshot
-            # throughout current-protocol establishment so an early queued
-            # response cannot hide historical pre-enable outcomes.
-            baseline = dict(current)
-            self._receiver_fec_terminal_baseline = baseline
-
-        if (
-            fresh
-            and not baseline_finalized
-            and fec_enabled_after_observation
-            and not getattr(self, "_receiver_fec_terminal_baseline_invalid", False)
-        ):
-            if baseline is None:
-                self._receiver_fec_terminal_baseline_invalid = True
-            else:
-                baseline_finalized = True
-                self._receiver_fec_terminal_baseline_finalized = True
-        for name in terminal_names:
-            setattr(
-                self,
-                f"_receiver_fec_{name}_process_delta",
-                (
-                    max(0, current[name] - baseline[name])
-                    if baseline is not None else 0
-                ),
-            )
         self._receiver_fec_last_decode_us = self._response_u16(response, 1244)
         self._receiver_fec_max_decode_us = self._response_u16(response, 1246)
         return fresh

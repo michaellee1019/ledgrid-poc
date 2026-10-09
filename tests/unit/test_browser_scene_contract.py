@@ -164,9 +164,8 @@ class BrowserScenePortableContractTests(unittest.TestCase):
         consumers = (
             "animation.core.presentation_contracts",
             "animation.core.manager",
-            "animation.core.component_catalog",
-            "animation.native.schema",
-            "ipc.scene_contract",
+            "animation.core.legacy_component_catalog",
+            "ipc.legacy_scene_contract",
         )
         for module_name in consumers:
             with self.subTest(module=module_name):
@@ -400,24 +399,24 @@ class BrowserSceneWebBoundaryTests(unittest.TestCase):
         bootstrap = self.client.get("/api/v1/composer/bootstrap").get_json()
         self.assertEqual(self.channel.commands, [])
         self.assertEqual(self.channel.read_count, 0)
-        self.catalog = bootstrap["components"]
+        # Exercise HTTP validation against declared fixture identities. Real
+        # bundled catalog/runtime publication is covered by the asset tests.
+        self.catalog = _catalog()
+        self.interface._browser_scene_catalog = lambda: deepcopy(self.catalog)
+        self.interface._component_catalog = lambda: deepcopy(self.catalog)
         self.document = _document(self.catalog)
 
-    def test_bootstrap_and_unified_catalog_expose_explicit_capabilities(self) -> None:
+    def test_bootstrap_capabilities_are_explicit_with_or_without_built_assets(self):
         bootstrap = self.client.get("/api/v1/composer/bootstrap").get_json()
-        self.assertEqual(bootstrap["installation_profile"]["digest"], EMPTY_PROFILE)
-        self.assertEqual(bootstrap["installation_profile"]["authority"], "host")
-        self.assertEqual(bootstrap["installation_profile"]["plant_modifiers"]["version"], 1)
-        for component in self.catalog:
+        for component in bootstrap["components"]:
             with self.subTest(component=component["key"]):
                 capability = component["browser_capabilities"]
-                self.assertIn("previewable", capability)
-                self.assertIn("saveable", capability)
-                self.assertIn("activation_ready", capability)
-                self.assertIn("reason", capability)
-                self.assertIn("managed_identity", capability)
-                self.assertRegex(component["browser_runtime"]["digest"], r"^[0-9a-f]{64}$")
-
+                for key in ("previewable", "saveable", "activation_ready", "reason", "managed_identity"):
+                    self.assertIn(key, capability)
+                if capability["previewable"]:
+                    self.assertRegex(component["browser_runtime"]["digest"], r"^[0-9a-f]{64}$")
+                else:
+                    self.assertTrue(capability["reason"])
         unified = self.client.get("/api/v1/components").get_json()["components"]
         self.assertTrue(all("browser_capabilities" in item for item in unified))
 

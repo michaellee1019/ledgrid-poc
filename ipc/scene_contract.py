@@ -331,14 +331,24 @@ def _validate_json(value: Any) -> None:
     raise SceneContractError(f"canonical JSON does not support {type(value).__name__}")
 
 
-def __getattr__(name: str) -> Any:
-    """Expose non-conflicting mature pipeline contracts on demand."""
-
-    from ipc import legacy_scene_contract
-
-    try:
-        return getattr(legacy_scene_contract, name)
-    except AttributeError as exc:
-        raise AttributeError(
-            f"module {__name__!r} has no attribute {name!r}"
-        ) from exc
+# Retained component/browser validation contracts.
+from ipc.legacy_scene_contract import (
+    BROWSER_SCENE_MAX_BYTES,
+    BROWSER_SCENE_SCHEMA,
+    DEFAULT_SCENE_PROVIDER_POLICY,
+    FIXED_OVERLAY_SLOT,
+    SCENE_PRESET_SCHEMA,
+    SCENE_PRESET_VERSION,
+    SceneProviderPolicy,
+    SceneValidationError,
+    background_only_scene,
+    browser_scene_to_host_scene,
+    canonical_json_sha256,
+    decorate_browser_component,
+    decorate_catalog,
+    filter_catalog,
+    normalize_browser_scene_document,
+    normalize_global_settings_payload,
+    normalize_scene_payload,
+    validate_bounded_browser_json,
+)

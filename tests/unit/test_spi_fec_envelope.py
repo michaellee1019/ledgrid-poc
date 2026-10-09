@@ -56,14 +56,6 @@ def _controller(*, requested):
     item._fec_codewords_sent = 0
     item._fec_parity_bytes_sent = 0
     item._fec_data_padding_bytes_sent = 0
-    item._fec_sparse_packets_sent = 0
-    item._fec_sparse_codewords_sent = 0
-    item._fec_sparse_parity_bytes_sent = 0
-    item._fec_sparse_data_padding_bytes_sent = 0
-    item._receiver_fec_terminal_baseline = None
-    item._receiver_fec_terminal_baseline_finalized = False
-    item._receiver_fec_terminal_baseline_invalid = False
-    item._receiver_fec_terminal_counter_resets = 0
     item._writebytes2_supported = None
     item._spidev_buffer_size = protocol.MAX_SPI_TRANSFER
     item._last_transfer_captured_response = False
@@ -121,18 +113,6 @@ def _status_v7(receiver_packets, *, fec=True):
         )
     response[64:68] = capabilities.to_bytes(4, "big")
     response[314] = protocol.STAGGER_OFF
-    return response
-
-
-def _status_v7_with_terminal_counts(
-    receiver_packets, *, uncorrectable, semantic_crc, framing, fec=True
-):
-    response = _status_v7(receiver_packets, fec=fec)
-    for offset, value in zip(
-        (1232, 1236, 1240),
-        (uncorrectable, semantic_crc, framing),
-    ):
-        response[offset:offset + 4] = value.to_bytes(4, "big")
     return response
 
 
