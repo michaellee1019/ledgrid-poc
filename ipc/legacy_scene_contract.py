@@ -13,7 +13,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, is_dataclass
 from enum import Enum
 from typing import Any, Iterable, Optional
 
@@ -33,7 +33,6 @@ BROWSER_SCENE_MAX_DEPTH = 16
 BROWSER_SCENE_MAX_VALUES = 4096
 BROWSER_SCENE_MAX_STRING_BYTES = 16 * 1024
 FIXED_OVERLAY_SLOT = "clock_overlay"
-COMPILED_RAINBOW_PLUGIN_ID = "compiled_rainbow"
 SUPPORTED_PROVIDERS = frozenset(("python",))
 KNOWN_PROVIDERS = frozenset(("python", "receiver_native"))
 SUPPORTED_ROLES = frozenset(("background", "animation", "overlay", "full_scene"))
@@ -91,49 +90,6 @@ def _browser_interaction_capabilities(
 
 class SceneValidationError(ValueError):
     """A stable client-visible validation error."""
-
-
-@dataclass(frozen=True)
-class SceneProviderPolicy:
-    """Explicit rollout policy for providers executable by scene clients.
-
-    Receiver-local playback and sparse foreground publication form one product
-    slice.  Enabling only one half must not make a receiver-native component
-    selectable or valid.  Version 1 deliberately allowlists the statically
-    linked compiled rainbow by default. Managed native packages are admitted
-    only when the independent module gate is also enabled; their exact bundle
-    and payload identities are still bound by the catalog.
-    """
-
-    receiver_local_background: bool = False
-    receiver_sparse_overlay: bool = False
-    receiver_native_modules: bool = False
-
-    def __post_init__(self) -> None:
-        for name in (
-            "receiver_local_background",
-            "receiver_sparse_overlay",
-            "receiver_native_modules",
-        ):
-            if type(getattr(self, name)) is not bool:
-                raise TypeError(f"scene provider policy {name!r} must be boolean")
-
-    @property
-    def compiled_rainbow_enabled(self) -> bool:
-        return self.receiver_local_background and self.receiver_sparse_overlay
-
-    @property
-    def managed_native_enabled(self) -> bool:
-        return self.compiled_rainbow_enabled and self.receiver_native_modules
-
-    def allows_receiver_background(self, plugin_id: str) -> bool:
-        return self.compiled_rainbow_enabled and (
-            plugin_id == COMPILED_RAINBOW_PLUGIN_ID
-            or self.receiver_native_modules
-        )
-
-
-DEFAULT_SCENE_PROVIDER_POLICY = SceneProviderPolicy()
 
 
 def jsonable(value: Any) -> Any:
@@ -410,12 +366,8 @@ def catalog_index(catalog: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str],
 
 def decorate_catalog(
     catalog: Iterable[Mapping[str, Any]],
-    *,
-    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
 ) -> list[dict[str, Any]]:
     """Expose explicit fixed-editor compatibility for every catalog item."""
-    if not isinstance(provider_policy, SceneProviderPolicy):
-        raise TypeError("provider_policy must be a SceneProviderPolicy")
     decorated = []
     for raw in catalog:
         item = jsonable(raw)
@@ -433,28 +385,7 @@ def decorate_catalog(
             isinstance(compatibility, dict)
             and compatibility.get("composable") is False
         )
-        if provider == "receiver_native":
-            if not provider_policy.compiled_rainbow_enabled:
-                # Preserve the Phase 2C feature-off product response exactly.
-                diagnostic = "This provider is catalog-visible but not executable in host scenes."
-            elif (
-                component_id != COMPILED_RAINBOW_PLUGIN_ID
-                and not provider_policy.managed_native_enabled
-            ):
-                diagnostic = (
-                    "Only the compiled_rainbow receiver-native background is "
-                    "enabled by the version 1 scene policy."
-                )
-            elif role != "background":
-                diagnostic = "The compiled_rainbow component must declare the background role."
-            elif explicitly_noncomposable:
-                diagnostic = str(
-                    compatibility.get("diagnostic")
-                    or "This component is not compatible with composed scenes."
-                )
-            else:
-                slots = ["background"]
-        elif provider not in SUPPORTED_PROVIDERS:
+        if provider not in SUPPORTED_PROVIDERS:
             diagnostic = "This provider is catalog-visible but not executable in host scenes."
         elif explicitly_noncomposable:
             diagnostic = str(
@@ -487,7 +418,6 @@ def filter_catalog(
     *,
     provider: Optional[str] = None,
     role: Optional[str] = None,
-    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
 ) -> list[dict[str, Any]]:
     if provider is not None:
         if provider not in KNOWN_PROVIDERS:
@@ -499,7 +429,7 @@ def filter_catalog(
             f"role filter must be one of {', '.join(sorted(SUPPORTED_ROLES))}"
         )
     result = []
-    for item in decorate_catalog(catalog, provider_policy=provider_policy):
+    for item in decorate_catalog(catalog):
         _component_id, item_provider, item_role = _catalog_identity(item)
         if provider is not None and item_provider != provider:
             continue
@@ -583,37 +513,18 @@ def decorate_browser_component(
         "runtime_digest": runtime_digest,
         "parameter_schema_version": schema_version,
     }
-    native_identity_ready = True
-    if provider == "receiver_native":
-        build = item.get("build")
-        build = build if isinstance(build, dict) else {}
-        bundle_digest = build.get("bundle_digest", build.get("contract_digest"))
-        payload_digest = build.get("expected_payload_digest")
-        managed_identity.update(
-            bundle_digest=bundle_digest,
-            expected_payload_digest=payload_digest,
-        )
-        native_identity_ready = all(
-            isinstance(digest, str) and _SHA256.fullmatch(digest) is not None
-            for digest in (bundle_digest, payload_digest)
-        )
-        # Native execution is supplied by the verified receiver bundle. The
-        # legacy loader correctly reports no Python host implementation.
-        if implementation.get("implementation_authority") == "managed_receiver":
-            implementation_ready = (
-                build.get("identity_authority") == "managed_library"
-                and native_identity_ready
-            )
     activation_ready = (
         saveable
         and composable
         and available
         and implementation_ready
-        and native_identity_ready
+        and provider in SUPPORTED_PROVIDERS
     )
 
     reason: Optional[str] = None
-    if not runtime_supported:
+    if provider not in SUPPORTED_PROVIDERS:
+        reason = f"Provider {provider!r} is unsupported in host scenes."
+    elif not runtime_supported:
         reason = str(runtime.get("reason") or "Browser preview runtime is unavailable.")
     elif not runtime_identity_ready:
         reason = "Browser preview runtime has no verified content digest."
@@ -630,8 +541,6 @@ def decorate_browser_component(
         )
     elif not implementation_ready:
         reason = "The managed host implementation is not loaded."
-    elif not native_identity_ready:
-        reason = "The managed native bundle identity is incomplete."
 
     runtime["digest"] = runtime_digest
     item.update({
@@ -1066,13 +975,6 @@ def browser_scene_to_host_scene(
                 preset_id=component["preset_id"],
                 preset_fingerprint=component["preset_fingerprint"],
             )
-        if provider == "receiver_native":
-            capabilities = descriptor["browser_capabilities"]
-            identity = capabilities["managed_identity"]
-            result.update(
-                bundle_digest=identity["bundle_digest"],
-                expected_payload_digest=identity["expected_payload_digest"],
-            )
         return result
 
     overlays = []
@@ -1106,8 +1008,6 @@ def _component_ref(
     *,
     expected_roles: set[str],
     catalog: Optional[Iterable[Mapping[str, Any]]],
-    provider_policy: SceneProviderPolicy,
-    allow_receiver_background: bool = False,
 ) -> dict[str, Any]:
     payload = _object(value, label)
     _only(
@@ -1121,38 +1021,9 @@ def _component_ref(
     )
     plugin_id = _identifier(payload.get("plugin_id"), f"{label}.plugin_id")
     provider = payload.get("provider", "python")
-    if provider == "receiver_native":
-        if (
-            not allow_receiver_background
-            or not provider_policy.allows_receiver_background(plugin_id)
-        ):
-            if not provider_policy.compiled_rainbow_enabled:
-                # Preserve the feature-off Phase 2C validation response.
-                raise SceneValidationError(
-                    f"{label}.provider {provider!r} is unsupported; "
-                    "Phase 2C supports python"
-                )
-            if label == "scene.known_python_fallback":
-                raise SceneValidationError(
-                    "scene.known_python_fallback must use the python provider"
-                )
-            if not provider_policy.managed_native_enabled:
-                raise SceneValidationError(
-                    "receiver_native scene backgrounds are limited to "
-                    f"{COMPILED_RAINBOW_PLUGIN_ID!r} by the version 1 policy"
-                )
-            raise SceneValidationError(
-                "receiver_native scene background is disabled by the active policy"
-            )
-        for field in ("bundle_digest", "expected_payload_digest"):
-            digest = payload.get(field)
-            if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
-                raise SceneValidationError(
-                    f"receiver-native {label}.{field} must be a lowercase SHA-256 digest"
-                )
-    elif provider not in SUPPORTED_PROVIDERS:
+    if provider not in SUPPORTED_PROVIDERS:
         raise SceneValidationError(
-            f"{label}.provider {provider!r} is unsupported; Phase 2C supports python"
+            f"{label}.provider {provider!r} is unsupported; host scenes support python"
         )
     else:
         for forbidden in ("bundle_digest", "expected_payload_digest"):
@@ -1200,26 +1071,6 @@ def _component_ref(
                 f"{label} component {plugin_id!r} is not composable: "
                 f"{compatibility.get('diagnostic', 'compatibility contract rejected it')}"
             )
-        if provider == "receiver_native":
-            build = descriptor.get("build")
-            if (
-                isinstance(build, Mapping)
-                and build.get("identity_authority") != "managed_library"
-            ):
-                expected_bindings = {
-                    "bundle_digest": build.get("contract_digest"),
-                    "expected_payload_digest": build.get(
-                        "expected_payload_digest"
-                    ),
-                }
-                for field, expected_digest in expected_bindings.items():
-                    if (
-                        isinstance(expected_digest, str)
-                        and payload[field] != expected_digest
-                    ):
-                        raise SceneValidationError(
-                            f"{label}.{field} does not match the catalog binding"
-                        )
 
     result: dict[str, Any] = {
         "plugin_id": plugin_id,
@@ -1227,11 +1078,6 @@ def _component_ref(
         "parameter_overrides": overrides,
         "resolved_parameters": resolved,
     }
-    if provider == "receiver_native":
-        result.update(
-            bundle_digest=payload["bundle_digest"],
-            expected_payload_digest=payload["expected_payload_digest"],
-        )
     if preset_id is not None:
         result.update(preset_id=preset_id, preset_fingerprint=fingerprint)
     return result
@@ -1241,11 +1087,8 @@ def normalize_scene_payload(
     value: Any,
     *,
     catalog: Optional[Iterable[Mapping[str, Any]]] = None,
-    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
 ) -> dict[str, Any]:
     """Validate and canonicalize the fixed background + clock-overlay scene."""
-    if not isinstance(provider_policy, SceneProviderPolicy):
-        raise TypeError("provider_policy must be a SceneProviderPolicy")
     payload = _object(value, "scene")
     if "scene" in payload and not {"background", "overlays"}.intersection(payload):
         _only(payload, {"scene"}, "scene envelope")
@@ -1268,14 +1111,11 @@ def normalize_scene_payload(
     background = _component_ref(
         payload.get("background"), "scene.background",
         expected_roles={"background"}, catalog=catalog,
-        provider_policy=provider_policy,
-        allow_receiver_background=True,
     )
     fallback = _component_ref(
         payload.get("known_python_fallback", payload.get("background")),
         "scene.known_python_fallback",
         expected_roles={"background"}, catalog=catalog,
-        provider_policy=provider_policy,
     )
     raw_overlays = payload.get("overlays", [])
     if not isinstance(raw_overlays, list) or len(raw_overlays) > 1:
@@ -1296,7 +1136,6 @@ def normalize_scene_payload(
         component = _component_ref(
             overlay.get("component"), "scene overlay component",
             expected_roles={"overlay"}, catalog=catalog,
-            provider_policy=provider_policy,
         )
         if component["plugin_id"] != FIXED_OVERLAY_SLOT:
             raise SceneValidationError(

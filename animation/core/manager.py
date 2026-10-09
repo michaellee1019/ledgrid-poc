@@ -30,7 +30,6 @@ from animation.core.plant_awareness import InstallationGeometryContact, PlantMod
 from animation.core.presentation_contracts import AGGREGATE_OVERLAY_SLOT_ID, AnimationRuntimeContext, BaseFrame, ClipPolicy, ComponentProvider, ComponentRef, ForegroundStalePolicy, OverlayFrame, OverlayPlacement, OverlayRef, NEUTRAL_PLANT_INPUTS, ResolvedScene, ResolvedVibe, SceneState, StalePolicy, VibeState, component_preset_fingerprint, list_vibe_profiles, resolve_vibe
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
-from ipc.scene_contract import SceneProviderPolicy
 FRAME_SCHEDULER_HEADROOM_RATIO = 0.05
 FRAME_SCHEDULER_MAX_FPS = 200.0
 FRAME_DEADLINE_COARSE_WINDOW_SECONDS = 0.002
@@ -643,9 +642,6 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                    if item.get('provider', 'python') == 'python']
         return [item for item in catalog if (provider is None or item.get('provider') == provider)
                 and (role is None or item.get('role') == role)]
-
-    def scene_provider_policy(self):
-        return SceneProviderPolicy()
 
     @staticmethod
     def _scene_parameter_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:

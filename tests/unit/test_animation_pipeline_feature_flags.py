@@ -1,4 +1,4 @@
-"""Phase 1 rollout-gate contract tests."""
+"""Host-only scene option contract tests."""
 
 import unittest
 
@@ -14,13 +14,9 @@ class AnimationPipelineFeatureFlagTests(unittest.TestCase):
     EXPECTED_FLAGS = {
         "vibe_context",
         "scene_layers",
-        "receiver_local_background",
-        "receiver_sparse_overlay",
-        "receiver_geometry_profile",
-        "receiver_native_modules",
     }
 
-    def test_every_phase_one_flag_is_present_and_defaulted_off(self):
+    def test_host_options_are_present_and_defaulted_off(self):
         payload = ANIMATION_PIPELINE_FEATURE_FLAGS.to_dict()
 
         self.assertEqual(set(payload), self.EXPECTED_FLAGS)
@@ -50,6 +46,16 @@ class AnimationPipelineFeatureFlagTests(unittest.TestCase):
     def test_unknown_flag_is_rejected_instead_of_silently_ignored(self):
         with self.assertRaisesRegex(ValueError, "unknown.*future_flag"):
             AnimationPipelineFeatureFlags.from_mapping({"future_flag": False})
+
+    def test_retired_receiver_flags_are_rejected_even_when_disabled(self):
+        for name in (
+            "receiver_local_background", "receiver_sparse_overlay",
+            "receiver_geometry_profile", "receiver_native_modules",
+        ):
+            for enabled in (False, True):
+                with self.subTest(name=name, enabled=enabled):
+                    with self.assertRaisesRegex(ValueError, f"unknown.*{name}"):
+                        AnimationPipelineFeatureFlags.from_mapping({name: enabled})
 
     def test_non_mapping_payload_is_rejected(self):
         with self.assertRaisesRegex(TypeError, "must be a mapping"):

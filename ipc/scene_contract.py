@@ -335,11 +335,9 @@ def _validate_json(value: Any) -> None:
 from ipc.legacy_scene_contract import (
     BROWSER_SCENE_MAX_BYTES,
     BROWSER_SCENE_SCHEMA,
-    DEFAULT_SCENE_PROVIDER_POLICY,
     FIXED_OVERLAY_SLOT,
     SCENE_PRESET_SCHEMA,
     SCENE_PRESET_VERSION,
-    SceneProviderPolicy,
     SceneValidationError,
     background_only_scene,
     browser_scene_to_host_scene,

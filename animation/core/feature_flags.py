@@ -1,9 +1,4 @@
-"""Dormant rollout gates for the versioned presentation pipeline.
-
-Phase 1 freezes the names and validation rules only.  Runtime code deliberately
-does not consume these flags until the phase that owns each behavior also owns
-its migration, persistence, API, and rollback semantics.
-"""
+"""Strictly typed host scene and vibe options."""
 
 from __future__ import annotations
 
@@ -17,14 +12,10 @@ ANIMATION_PIPELINE_FEATURE_FLAG_SCHEMA_VERSION = 1
 
 @dataclass(frozen=True)
 class AnimationPipelineFeatureFlags:
-    """Complete, strictly typed set of independently gated pipeline features."""
+    """Host-only options; retired receiver execution options are unsupported."""
 
     vibe_context: bool = False
     scene_layers: bool = False
-    receiver_local_background: bool = False
-    receiver_sparse_overlay: bool = False
-    receiver_geometry_profile: bool = False
-    receiver_native_modules: bool = False
 
     def __post_init__(self) -> None:
         for field in fields(self):

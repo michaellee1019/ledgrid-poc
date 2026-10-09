@@ -2,6 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 import subprocess
+import json
 import tempfile
 import unittest
 import time
@@ -60,6 +61,34 @@ class SimplePlaybackTests(unittest.TestCase):
         self.assertIn('native_aurora', response.get_json()['error'])
         self.assertEqual(self.channel.commands, [])
         self.assertEqual(scene['background']['provider'], 'receiver_native')
+    def test_retired_legacy_scene_preset_remains_readable_after_failed_apply(self):
+        component = {
+            'plugin_id': 'compiled_rainbow', 'provider': 'receiver_native',
+            'bundle_digest': 'a' * 64, 'expected_payload_digest': 'b' * 64,
+            'parameter_overrides': {'speed': 1}, 'resolved_parameters': {},
+        }
+        preset = {
+            'schema': 'ledgrid.scene-preset', 'schema_version': 1,
+            'preset_id': 'old-native', 'name': 'My native scene',
+            'scene': {
+                'schema': 'ledgrid.scene-state', 'schema_version': 1,
+                'background': component, 'overlays': [],
+                'known_python_fallback': {'plugin_id': 'gradient', 'provider': 'python'},
+            },
+        }
+        path = self.interface.scene_presets_dir / 'old-native.json'
+        original = json.dumps(preset).encode()
+        path.write_bytes(original)
+        self.assertEqual(self.client.get('/api/v1/scene-presets/old-native').get_json(), preset)
+        self.assertIn(preset, self.client.get('/api/v1/scene-presets').get_json()['presets'])
+        response = self.client.post('/api/v1/scene-presets/old-native/apply', json={})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('receiver_native', response.get_json()['error'])
+        self.assertIn('unsupported', response.get_json()['error'])
+        self.assertEqual(self.channel.commands, [])
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(self.client.get('/api/v1/scene-presets/old-native').get_json(), preset)
+
     def test_controller_playback_and_receiver_connectivity_are_separate(self):
         self.channel.status.update(is_running=True, scene_state=_current_scene(), last_error='output interrupted', command_result={'request_id':'request-1','state':'failed','error':'output interrupted'})
         response = self.client.get('/api/v1/composer/operations/status').get_json()

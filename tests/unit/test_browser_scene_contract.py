@@ -134,6 +134,28 @@ def _document(catalog: list[dict]) -> dict:
 
 
 class BrowserScenePortableContractTests(unittest.TestCase):
+    def test_stale_native_catalog_cannot_advertise_host_activation(self):
+        raw = _component("native_aurora")
+        raw.update(provider="receiver_native")
+        raw["scene_compatibility"] = {"selectable": True, "slots": ["background"]}
+        raw["compatibility"].update(
+            implementation_loaded=False, implementation_authority="managed_receiver",
+        )
+        raw["build"] = {
+            "identity_authority": "managed_library", "bundle_digest": "a" * 64,
+            "expected_payload_digest": "b" * 64,
+        }
+        before = deepcopy(raw)
+        decorated = decorate_browser_component(raw, browser_runtime={
+            "supported": True, "digest": "c" * 64,
+        })
+        self.assertFalse(decorated["browser_capabilities"]["activation_ready"])
+        self.assertIn("unsupported", decorated["browser_capabilities"]["reason"])
+        self.assertEqual(raw, before)
+        host = decorate_catalog([raw])[0]
+        self.assertFalse(host["scene_compatibility"]["selectable"])
+        self.assertEqual(host["build"], before["build"])
+
     def setUp(self) -> None:
         self.catalog = _catalog()
         self.document = _document(self.catalog)

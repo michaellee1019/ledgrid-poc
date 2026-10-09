@@ -8,7 +8,7 @@ import time
 import uuid
 import math
 from typing import Any, Mapping
-from ipc.scene_contract import DEFAULT_SCENE_PROVIDER_POLICY, SceneProviderPolicy, normalize_scene_payload, normalize_composer_scene
+from ipc.scene_contract import normalize_scene_payload, normalize_composer_scene
 
 class ControllerCommandConflictError(RuntimeError):
     """A command targets a controller session or ordering revision that changed."""
@@ -73,7 +73,7 @@ def controller_activation_coordinator(manager, *, restored_selected_scene=None, 
 def normalize_managed_scene(manager, value):
     if isinstance(value, Mapping) and value.get('schema') == 'ledgrid.scene.v2':
         return normalize_composer_scene({'origin':'composer','scene':value},manager_scene_v2_catalog(manager)).scene
-    return normalize_scene_payload(value,catalog=manager_component_catalog(manager),provider_policy=manager_scene_provider_policy(manager))
+    return normalize_scene_payload(value,catalog=manager_component_catalog(manager))
 
 def start_scene(manager, scene_payload):
     return bool(manager.start_scene(normalize_managed_scene(manager,scene_payload)))
@@ -141,18 +141,6 @@ def normalize_controller_command_guard(
         "expected_controller_state_revision": revision,
         "expires_at": expiry,
     }
-
-
-def manager_scene_provider_policy(manager: Any) -> SceneProviderPolicy:
-    """Read the manager's immutable provider policy, defaulting safely off."""
-
-    getter = getattr(manager, "scene_provider_policy", None)
-    if not callable(getter):
-        return DEFAULT_SCENE_PROVIDER_POLICY
-    policy = getter()
-    if not isinstance(policy, SceneProviderPolicy):
-        raise TypeError("manager scene_provider_policy() returned an invalid policy")
-    return policy
 
 
 def manager_scene_v2_catalog(manager: Any) -> Any:

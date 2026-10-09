@@ -90,11 +90,9 @@ from ipc.runtime_control import (
 from ipc.scene_contract import (
     BROWSER_SCENE_MAX_BYTES,
     BROWSER_SCENE_SCHEMA,
-    DEFAULT_SCENE_PROVIDER_POLICY,
     FIXED_OVERLAY_SLOT,
     SCENE_PRESET_SCHEMA,
     SCENE_PRESET_VERSION,
-    SceneProviderPolicy,
     SceneValidationError,
     background_only_scene,
     browser_scene_to_host_scene,
@@ -1050,7 +1048,6 @@ class AnimationWebInterface:
                     self._browser_scene_catalog(),
                     provider=request.args.get('provider'),
                     role=request.args.get('role'),
-                    provider_policy=self._scene_provider_policy(),
                 )
             except SceneValidationError as exc:
                 return jsonify({'error': str(exc)}), 400
@@ -1807,7 +1804,7 @@ class AnimationWebInterface:
                 }
                 source['entrypoint'] = ''
             records.append(source)
-        return self._scene_v1_component_roles(decorate_catalog(records, provider_policy=DEFAULT_SCENE_PROVIDER_POLICY))
+        return self._scene_v1_component_roles(decorate_catalog(records))
 
     def _composer_gallery_payload(self) -> Dict[str, Any]:
         """Project every eligible Composer Animation exactly once.
@@ -2561,29 +2558,6 @@ class AnimationWebInterface:
             'preset_fingerprint': self._component_preset_fingerprint(preset),
         }, existing is None)
 
-    def _scene_provider_policy(self) -> SceneProviderPolicy:
-        """Resolve the manager's explicit rollout policy, failing safely off."""
-        getter = getattr(self.preview_manager, 'scene_provider_policy', None)
-        if callable(getter):
-            try:
-                policy = getter()
-            except (TypeError, ValueError):
-                policy = None
-            if isinstance(policy, SceneProviderPolicy):
-                if not policy.compiled_rainbow_enabled:
-                    return policy
-                flags = getattr(self.preview_manager, 'feature_flags', None)
-                if (
-                    isinstance(flags, AnimationPipelineFeatureFlags)
-                    and flags.receiver_local_background
-                    and flags.receiver_sparse_overlay
-                ):
-                    return policy
-                # Receiver execution requires typed rollout flags and the
-                # manager's narrower product policy to agree.
-                return DEFAULT_SCENE_PROVIDER_POLICY
-        return DEFAULT_SCENE_PROVIDER_POLICY
-
     def _validated_scene_request(
         self, payload: Any, *, browser_purpose: str = 'activation'
     ) -> Dict[str, Any]:
@@ -2597,7 +2571,6 @@ class AnimationWebInterface:
         scene = normalize_scene_payload(
             payload,
             catalog=catalog,
-            provider_policy=self._scene_provider_policy(),
         )
         descriptors = {
             (item.get('provider'), item.get('plugin_id')): item
@@ -2710,7 +2683,6 @@ class AnimationWebInterface:
                 return normalize_scene_payload(
                     raw_scene,
                     catalog=self._component_catalog(),
-                    provider_policy=self._scene_provider_policy(),
                 )
             except SceneValidationError:
                 pass

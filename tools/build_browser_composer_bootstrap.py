@@ -19,7 +19,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE  # noqa: E402
-from animation.core.feature_flags import AnimationPipelineFeatureFlags  # noqa: E402
 from animation.core.installation_profile import (  # noqa: E402
     compile_installation_profile,
     encode_installation_profile,
