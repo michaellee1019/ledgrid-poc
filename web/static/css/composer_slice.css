@@ -265,3 +265,24 @@ label, .semantic-palette, .semantic-choice { font-size: .88rem; }
   .final-optic-row .switch { grid-column: 1 / -1; }
   .scene-speed-control input { min-height: 44px; }
 }
+
+/* Collection navigation is a single segmented row; content carries emphasis. */
+.workspace-nav, .browse-tabs { padding: 3px; gap: 3px; border-radius: 9px; background: #15282d; }
+.workspace-nav .button, .browse-tabs .button { border: 0; border-radius: 6px; background: transparent; color: #b6c7c9; }
+.workspace-nav .active, .browse-tabs .active { background: #345158; color: #f4fbfb; box-shadow: 0 1px 3px #0004; }
+.browse-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: .25rem; }
+.browse-tabs .button { min-width: 0; padding-inline: .25rem; font-size: .8rem; }
+#browsePlaylistAdd { margin: 0 0 .25rem; text-align: left; color: #b9e9dc; }
+.gallery > .pane-heading .eyebrow { display: none; }
+.gallery-select { min-height: 7rem; grid-template-columns: 1.5rem minmax(0, 1fr); border-color: #29434a; border-radius: 6px; }
+.gallery-thumb, .gallery-thumb-unavailable { inline-size: 1.5rem; }
+.gallery-card-description { -webkit-line-clamp: 2; }
+.gallery-card-meta { color: #b6c7c9; }
+.button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #83d7c5; outline-offset: 2px; }
+@media (max-width: 760px) {
+  .workspace-header h1 { font-size: 1.1rem; }
+  .workspace-header p { font-size: .75rem; }
+  .browse-tabs .button { min-height: 44px; }
+  input:not([type="range"]):not([type="checkbox"]), select, textarea { font-size: 16px; }
+  .composer { padding-top: max(.5rem, env(safe-area-inset-top)); padding-left: max(.5rem, env(safe-area-inset-left)); padding-right: max(.5rem, env(safe-area-inset-right)); }
+}
