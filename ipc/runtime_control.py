@@ -225,3 +225,18 @@ def update_scene_component(manager: Any, target: str, update: dict) -> bool:
         strip_offset=placement.get("strip_translation"),
         led_offset=placement.get("led_translation"),
     )) and changed
+
+
+def normalize_automation_device_state(value):
+    """Closed basic automation command, validated before any output changes."""
+    if not isinstance(value, dict) or not value or set(value) - {'power', 'brightness', 'pace'}:
+        raise ValueError('device state requires power, brightness or pace')
+    if 'power' in value and not isinstance(value['power'], bool):
+        raise ValueError('power must be boolean')
+    if 'brightness' in value and (type(value['brightness']) is not int or not 0 <= value['brightness'] <= 255):
+        raise ValueError('brightness must be an integer between 0 and 255')
+    if 'pace' in value:
+        pace = value['pace']
+        if isinstance(pace, bool) or not isinstance(pace, (int, float)) or not math.isfinite(pace) or not 0.1 <= pace <= 25:
+            raise ValueError('pace must be between 0.1 and 25')
+    return dict(value)

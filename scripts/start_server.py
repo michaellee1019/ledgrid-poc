@@ -14,7 +14,7 @@ from ipc.control_channel import FileControlChannel
 from ipc.playlist_runtime import PlaylistRunner, normalize_playlist_command
 from ipc.runtime_control import (ControllerCommandConflictError, controller_activation_coordinator,
     start_scene as _start_scene, normalize_managed_scene, update_scene_component as _update_scene_component,
-    restore_display_state as _restore_display_state)
+    restore_display_state as _restore_display_state, normalize_automation_device_state)
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, wall_device_map
 from tools.deployment.preserve_deploy_settings import load_saved_state,save_status
 
@@ -42,6 +42,24 @@ def handle_command(manager, action, data):
     data=dict(data)
     guard=data.pop('_controller_guard',None)
     with coordinator.legacy_mutation_guard(guard):
+        if action == 'automation_device_state':
+            from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
+            state = normalize_automation_device_state(data)
+            selected = coordinator.selected_scene
+            if state.get('power') is True and not manager.is_running:
+                if selected is None:
+                    raise ValueError('No selected scene is available; choose content before powering on.')
+                # Validate the selected scene before changing any settings.
+                selected = normalize_managed_scene(manager, selected)
+            if 'brightness' in state:
+                manager.set_output_brightness(state['brightness'])
+            if 'pace' in state:
+                manager.set_animation_speed_scale(state['pace'] * DEFAULT_ANIMATION_SPEED_SCALE)
+            if state.get('power') is False:
+                return manager.stop_animation()
+            if state.get('power') is True and not manager.is_running:
+                return _start_scene(manager, selected)
+            return True
         if action=='start_scene':
             settings=data.get('global_settings') or {}
             apply_global_settings(manager,settings)
@@ -57,6 +75,28 @@ def controller_status_payload(manager, release_id=None, **_unused):
     if release_id is not None:
         status['release_id']=release_id
     return status
+
+def process_control_command(channel, manager, command, *, last_applied_command_id=0):
+    """Execute once and publish current state before exposing its receipt."""
+    coordinator = controller_activation_coordinator(manager)
+    error = None
+    try:
+        accepted = handle_command(manager, command['action'], command.get('data') or {})
+        if accepted is False:
+            error = getattr(manager, '_playback_error', None) or 'controller rejected command'
+    except (RuntimeError, TypeError, ValueError) as exc:
+        error = str(exc)
+    result = {'request_id': command['request_id'], 'command_id': command['command_id'],
+              'state': 'failed' if error else 'completed', 'error': error, 'completed_at': time.time(),
+              'controller_session_id': coordinator.session_id,
+              'controller_state_revision': coordinator.state_revision}
+    status = controller_status_payload(manager)
+    status.update(command_result=result, last_command_id=command['command_id'],
+                  last_applied_command_id=last_applied_command_id if error else command['command_id'])
+    channel.write_status(status)
+    channel.acknowledge_command(command, result)
+    return result
+
 
 def run_controller_mode(args):
     from drivers.multi_device import MultiDeviceLEDController
@@ -102,19 +142,11 @@ def run_controller_mode(args):
     try:
         while True:
             for command in channel.poll_commands():
-                error=None
-                try:
-                    accepted=handle_command(manager,command['action'],command.get('data') or {})
-                    if accepted is False:
-                        error=getattr(manager,'_playback_error',None) or 'controller rejected command'
-                except (RuntimeError,TypeError,ValueError) as exc:
-                    error=str(exc)
-                last_result={'request_id':command['request_id'],'command_id':command['command_id'],
-                    'state':'failed' if error else 'completed','error':error,'completed_at':time.time()}
-                channel.acknowledge_command(command,last_result)
-                last_command_id=command['command_id']
-                if not error:
-                    last_applied_command_id=last_command_id
+                last_result = process_control_command(channel, manager, command,
+                                                      last_applied_command_id=last_applied_command_id)
+                last_command_id = command['command_id']
+                if last_result['state'] == 'completed':
+                    last_applied_command_id = last_command_id
                 save_status(controller_status_payload(manager),presets_dir=Path(args.presets_dir),state_path=Path(args.saved_state_file))
             process_playlist_commands(channel,runner)
             runner.advance()

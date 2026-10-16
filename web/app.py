@@ -318,6 +318,8 @@ class AnimationWebInterface:
 
         # Register routes
         self._register_routes()
+        from web.automation_api import register_automation_routes
+        register_automation_routes(self)
 
     def _bundled_composer_catalog_digest(self) -> Optional[str]:
         """Return the deployed browser catalog identity without rebuilding it."""
@@ -2969,26 +2971,27 @@ class AnimationWebInterface:
         updated before it accepts the same current-only Scene v2, which means a
         rejected edit cannot overwrite the last safely recoverable wall state.
         """
-        canonical = self._composer_canonical({'origin': 'composer', 'scene': scene})
-        next_opened_look_id = self._composer_opened_look_id if preserve_opened_look else opened_look_id
-        try:
-            result = self.composer_live.submit(
-                {'origin': 'composer', 'scene': canonical.scene}, client_id=client_id,
-                mutation_id=mutation_id, client_sequence=client_sequence,
-            )
-        except TimeoutError:
-            # LiveSceneState accepts desired state before attempting output
-            # acknowledgement. A timeout therefore leaves a valid newer scene
-            # editable in recovery, even while observed output remains prior.
+        with self.composer_live.publication_lock:
+            canonical = self._composer_canonical({'origin': 'composer', 'scene': scene})
+            next_opened_look_id = self._composer_opened_look_id if preserve_opened_look else opened_look_id
+            try:
+                result = self.composer_live.submit(
+                    {'origin': 'composer', 'scene': canonical.scene}, client_id=client_id,
+                    mutation_id=mutation_id, client_sequence=client_sequence,
+                )
+            except TimeoutError:
+                # LiveSceneState accepts desired state before attempting output
+                # acknowledgement. A timeout therefore leaves a valid newer scene
+                # editable in recovery, even while observed output remains prior.
+                self._persist_composer_recovery(canonical, next_opened_look_id)
+                raise
+            # An exact retry may describe an older mutation after another client
+            # has already won. It is not a new local edit and must not roll crash
+            # recovery or the opened-look cursor backward.
+            if result['exact_retry']:
+                return result
             self._persist_composer_recovery(canonical, next_opened_look_id)
-            raise
-        # An exact retry may describe an older mutation after another client
-        # has already won. It is not a new local edit and must not roll crash
-        # recovery or the opened-look cursor backward.
-        if result['exact_retry']:
             return result
-        self._persist_composer_recovery(canonical, next_opened_look_id)
-        return result
 
     def _persist_composer_recovery(self, canonical, opened_look_id: str | None) -> dict[str, Any]:
         """Write only complete current scenes; output/calibration cannot enter."""

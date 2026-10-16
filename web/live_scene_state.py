@@ -78,6 +78,11 @@ class LiveSceneState:
         self._client_acknowledged_remote_revisions: dict[str, int] = {}
         self._requests: dict[tuple[str, str], _RequestResult] = {}
 
+    @property
+    def publication_lock(self):
+        """Serialize external reconciliation with current Composer publication."""
+        return self._lock
+
     def submit(self, request: Mapping[str, Any], *, client_id: str = "composer", mutation_id: str | None = None,
                client_sequence: int | None = None) -> dict[str, Any]:
         """Validate a complete scene then publish it immediately.
