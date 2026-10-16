@@ -17,6 +17,7 @@ import tempfile
 import time
 import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -300,6 +301,7 @@ class AnimationWebInterface:
         # A saved look is editable only while it remains the opened user look.
         # Built-ins have no id here, which makes Save require Save As.
         self._composer_opened_look_id: str | None = None
+        self._composer_recovery_generation = 0
         self.composer_preview = ComposerFinalPreview(self.composer_catalog, self.project_root)
         if self.local_mode:
             self.generated_preview_dir = (
@@ -544,6 +546,7 @@ class AnimationWebInterface:
                 return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/draft')
+        @self._composer_recovery_transaction
         def api_composer_draft():
             try:
                 value = self.working_draft.get()
@@ -551,12 +554,13 @@ class AnimationWebInterface:
                     canonical = self._composer_recovery_scene(value['scene'])
                     if canonical.identity.to_dict() != value['basis']:
                         raise WorkingDraftError('Crash recovery no longer matches its basis; discard it.')
-                    self._composer_opened_look_id = value['opened_look_id']
+                    self._set_composer_opened_look(value['opened_look_id'])
                 return jsonify({'draft': value})
             except (WorkingDraftError, SceneContractError, SceneLookStoreError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/recovery')
+        @self._composer_recovery_transaction
         def api_composer_recovery():
             try:
                 status = self._composer_status_payload(
@@ -575,17 +579,19 @@ class AnimationWebInterface:
                 canonical = self._composer_recovery_scene(value['scene'])
                 if canonical.identity.to_dict() != value['basis']:
                     raise WorkingDraftError('Current scene recovery no longer matches its basis.')
-                self._composer_opened_look_id = value['opened_look_id']
+                self._set_composer_opened_look(value['opened_look_id'])
                 return jsonify({'recovery': {**value, 'authoritative': False}, 'status': status})
             except (WorkingDraftError, SceneContractError, TypeError, ValueError) as exc:
                 return jsonify({'error': str(exc), 'status': self._composer_status_payload(request.args.get('client_id'))}), 400
 
         @self.app.route('/api/composer/draft', methods=['POST','DELETE'])
+        @self._composer_recovery_transaction
         def api_composer_change_draft():
             try:
                 if request.method == 'DELETE':
                     self.working_draft.discard()
                     self._composer_opened_look_id = None
+                    self._composer_recovery_generation += 1
                     return jsonify({'discarded': True})
                 raise WorkingDraftError('Crash recovery is updated only after a valid Scene v2 edit.')
             except (WorkingDraftError, SceneContractError, TypeError, ValueError) as exc: return jsonify({'error':str(exc)}),400
@@ -690,6 +696,7 @@ class AnimationWebInterface:
             except (ComposerLibraryStateError, ValueError, SceneLookStoreError, SceneContractError, TypeError) as exc: return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/looks', methods=['POST'])
+        @self._composer_recovery_transaction
         def api_composer_save_look():
             payload = request.get_json(silent=True) or {}
             try:
@@ -710,6 +717,7 @@ class AnimationWebInterface:
                 return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/looks/<look_id>/open', methods=['POST'])
+        @self._composer_recovery_transaction
         def api_composer_select_look(look_id: str):
             payload = request.get_json(silent=True) or {}
             try:
@@ -753,6 +761,7 @@ class AnimationWebInterface:
                 return jsonify({'error': str(exc), 'status': self._composer_status_payload()}), 400
 
         @self.app.route('/api/composer/looks/save', methods=['POST'])
+        @self._composer_recovery_transaction
         def api_composer_save_opened_look():
             payload = request.get_json(silent=True) or {}
             try:
@@ -790,6 +799,7 @@ class AnimationWebInterface:
                 return jsonify({'error': str(exc)}), 400
 
         @self.app.route('/api/composer/looks/<look_id>', methods=['PATCH', 'PUT', 'DELETE'])
+        @self._composer_recovery_transaction
         def api_composer_change_look(look_id: str):
             try:
                 if request.method == 'DELETE':
@@ -2993,26 +3003,44 @@ class AnimationWebInterface:
             self._persist_composer_recovery(canonical, next_opened_look_id)
             return result
 
+    def _composer_recovery_transaction(self, operation):
+        """Serialize cursor reads and recovery mutations with reconciliation."""
+        @wraps(operation)
+        def serialized(*args, **kwargs):
+            with self.composer_live.publication_lock:
+                return operation(*args, **kwargs)
+        return serialized
+
+    def _set_composer_opened_look(self, opened_look_id: str | None) -> None:
+        with self.composer_live.publication_lock:
+            if self._composer_opened_look_id != opened_look_id:
+                self._composer_opened_look_id = opened_look_id
+                self._composer_recovery_generation += 1
+
     def _persist_composer_recovery(self, canonical, opened_look_id: str | None) -> dict[str, Any]:
-        """Write only complete current scenes; output/calibration cannot enter."""
-        self._composer_opened_look_id = opened_look_id
-        return self.working_draft.save(
-            canonical.scene, canonical.identity.to_dict(), opened_look_id, time.time(),
-        )
+        """Publish one recovery/cursor generation, including scene-neutral saves."""
+        with self.composer_live.publication_lock:
+            saved = self.working_draft.save(
+                canonical.scene, canonical.identity.to_dict(), opened_look_id, time.time(),
+            )
+            self._composer_opened_look_id = opened_look_id
+            self._composer_recovery_generation += 1
+            return saved
 
     def _composer_recovery_scene(self, scene: Any):
         return self._composer_canonical({'origin': 'composer', 'scene': scene})
 
     def _clear_opened_look_recovery(self) -> None:
         """Clear a deleted look cursor before the look can cease to exist."""
-        recovery = self.working_draft.get()
-        if recovery is None:
-            self._composer_opened_look_id = None
-            return
-        canonical = self._composer_recovery_scene(recovery['scene'])
-        if canonical.identity.to_dict() != recovery['basis']:
-            raise WorkingDraftError('Crash recovery no longer matches its basis; discard it.')
-        self._persist_composer_recovery(canonical, None)
+        with self.composer_live.publication_lock:
+            recovery = self.working_draft.get()
+            if recovery is None:
+                self._set_composer_opened_look(None)
+                return
+            canonical = self._composer_recovery_scene(recovery['scene'])
+            if canonical.identity.to_dict() != recovery['basis']:
+                raise WorkingDraftError('Crash recovery no longer matches its basis; discard it.')
+            self._persist_composer_recovery(canonical, None)
 
     def _translate_legacy_look(self, value: Dict[str, Any]):
         """Import only explicitly selected, pre-translated current-scene exports.

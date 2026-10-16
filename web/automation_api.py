@@ -221,6 +221,7 @@ class AutomationAPI:
                 raise AutomationError('Composer revision changed; refresh before writing.', code='conflict', status=409)
             return self._enqueue('start_scene', {'scene': canonical.scene}, guard,
                                  reconciliation={'canonical': canonical, 'composer_revision': current['composer_revision'],
+                                                 'recovery_generation': self.interface._composer_recovery_generation,
                                                  'opened_look_id': opened_look_id})
 
     def result(self, request_id, *, wait_seconds=0):
@@ -271,7 +272,8 @@ class AutomationAPI:
             if (not current['fresh'] or current['controller_session_id'] != record['guard']['expected_controller_session_id']
                     or (current['requested_scene'] or {}).get('digest') != pending['canonical'].identity.digest):
                 result = {'state': 'conflict', 'error': 'Controller scene changed or became unavailable before reconciliation.'}
-            elif self.interface.composer_live.snapshot()['revision'] != pending['composer_revision']:
+            elif (self.interface.composer_live.snapshot()['revision'] != pending['composer_revision']
+                  or self.interface._composer_recovery_generation != pending['recovery_generation']):
                 result = {'state': 'conflict', 'error': 'Composer changed after command acceptance; newer editor state was preserved.'}
             else:
                 try:

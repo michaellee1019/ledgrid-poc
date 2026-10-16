@@ -288,3 +288,89 @@ def test_result_rejects_wrong_correlation_and_invalid_wait(wall):
     channel.acknowledge_command(command, {'request_id': receipt['request_id'], 'command_id': 1, 'state': 'completed'})
     assert client.get(receipt['result_url']).status_code == 502
     assert manager.output_brightness == 91
+
+
+@pytest.mark.parametrize('operation', ['save_as', 'save', 'patch', 'put', 'delete_look', 'discard'])
+def test_scene_neutral_recovery_changes_prevent_external_reconciliation(wall, operation):
+    interface, manager, channel = wall
+    client = interface.app.test_client()
+    editor = get_starter('aurora')['scene']
+    interface._composer_submit_scene(editor, client_id='phone')
+    opened = client.post('/api/composer/looks', json={'name': 'Phone look', 'scene': editor}).get_json()['look']['id']
+    revision = interface.composer_live.snapshot()['revision']
+    generation = interface._composer_recovery_generation
+    external = deepcopy(editor)
+    external['look']['pace'] = .77
+    receipt = interface.automation.publish_scene(external, {**guard(interface), 'expected_composer_revision': revision})
+    if operation == 'save_as':
+        response = client.post('/api/composer/looks', json={'name': 'New phone save', 'scene': editor})
+        assert response.status_code == 200
+        assert response.get_json()['look']['id'] != opened
+    elif operation == 'save':
+        response = client.post('/api/composer/looks/save', json={'scene': editor})
+    elif operation in {'patch', 'put'}:
+        response = getattr(client, operation)('/api/composer/looks/' + opened, json={'scene': editor})
+    elif operation == 'delete_look':
+        response = client.delete('/api/composer/looks/' + opened)
+    else:
+        response = client.delete('/api/composer/draft')
+    assert response.status_code == 200
+    assert interface.composer_live.snapshot()['revision'] == revision
+    assert interface._composer_recovery_generation > generation
+    expected_recovery = interface.working_draft.get()
+    expected_cursor = interface._composer_opened_look_id
+    execute(manager, channel)
+    result = interface.automation.result(receipt['request_id'])
+    assert result['state'] == 'completed'
+    assert result['reconciliation']['state'] == 'conflict'
+    assert interface.working_draft.get() == expected_recovery
+    assert interface._composer_opened_look_id == expected_cursor
+    assert interface.composer_live.snapshot(include_current_scene=True)['current_scene'] == editor
+
+
+def test_save_opened_lookup_and_recovery_write_hold_publication_lock(wall, monkeypatch):
+    interface, manager, channel = wall
+    client = interface.app.test_client()
+    editor = get_starter('aurora')['scene']
+    opened = client.post('/api/composer/looks', json={'name': 'Phone look', 'scene': editor}).get_json()['look']['id']
+    original_update = interface.composer_looks.update
+    original_save = interface.working_draft.save
+    checked = []
+
+    def update(look_id, canonical):
+        assert interface.composer_live.publication_lock._is_owned()
+        assert interface._composer_opened_look_id == look_id == opened
+        checked.append('lookup/update')
+        return original_update(look_id, canonical)
+
+    def save(*args):
+        assert interface.composer_live.publication_lock._is_owned()
+        checked.append('recovery')
+        return original_save(*args)
+
+    monkeypatch.setattr(interface.composer_looks, 'update', update)
+    monkeypatch.setattr(interface.working_draft, 'save', save)
+    assert client.post('/api/composer/looks/save', json={'scene': editor}).status_code == 200
+    assert checked == ['lookup/update', 'recovery']
+
+
+@pytest.mark.parametrize('endpoint', ['/api/composer/draft', '/api/composer/recovery'])
+def test_cursor_hydration_is_serialized_and_invalidates_pending_reconciliation(wall, endpoint):
+    interface, manager, channel = wall
+    client = interface.app.test_client()
+    editor = get_starter('aurora')['scene']
+    opened = client.post('/api/composer/looks', json={'name': 'Phone look', 'scene': editor}).get_json()['look']['id']
+    # Model the initially unhydrated in-memory cursor. Hydration is a cursor
+    # write even though this endpoint does not publish a new Scene revision.
+    interface._composer_opened_look_id = None
+    external = deepcopy(editor)
+    external['look']['pace'] = .77
+    receipt = interface.automation.publish_scene(external, {**guard(interface), 'expected_composer_revision': 0})
+    recovery = interface.working_draft.get()
+    assert client.get(endpoint).status_code == 200
+    assert interface._composer_opened_look_id == opened
+    execute(manager, channel)
+    result = interface.automation.result(receipt['request_id'])
+    assert result['reconciliation']['state'] == 'conflict'
+    assert interface.working_draft.get() == recovery
+    assert interface._composer_opened_look_id == opened

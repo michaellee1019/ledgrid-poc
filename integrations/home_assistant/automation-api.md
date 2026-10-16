@@ -96,7 +96,10 @@ atomic recovery store. This local reconciliation never sends another wall
 command. The helper is not an advertised HTTP scene action in this increment.
 
 If Composer changed after acceptance, reconciliation reports `conflict` and
-preserves the newer editor/recovery state; the response still reports the true
+preserves the newer editor/recovery state. This includes Save As, Save, opened
+Look updates/deletion, recovery discard and cursor hydration even when the
+Scene publication revision stays unchanged. Recovery/cursor writes and
+reconciliation share one lock and a separate recovery generation; the response still reports the true
 controller execution result separately. A different controller scene/session or
 stale controller observation also prevents reconciliation. Callers must surface
 that reconciliation result, refresh and resolve new intent explicitly. Result
