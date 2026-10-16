@@ -1,0 +1,11 @@
+{
+  "title": "LED Grid Wall",
+  "config": {
+    "step": {
+      "user": {"title": "Connect your LED Grid Wall", "description": "Enter the wall's local HTTP address. Setup only reads current state.", "data": {"url": "Wall URL"}},
+      "reconfigure": {"title": "Change wall address", "description": "The new address must identify the same wall.", "data": {"url": "Wall URL"}}
+    },
+    "error": {"cannot_connect": "Cannot read a fresh wall observation. Check the address and controller.", "invalid_url": "Enter an HTTP or HTTPS origin without a path or credentials.", "wrong_wall": "This address identifies a different wall."},
+    "abort": {"already_configured": "This wall is already configured.", "single_instance_allowed": "Only one installed wall is supported.", "reconfigure_successful": "Wall address updated."}
+  }
+}

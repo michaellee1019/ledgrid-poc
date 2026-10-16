@@ -1,0 +1,9 @@
+{
+  "domain": "led_grid_wall",
+  "name": "LED Grid Wall",
+  "version": "1.0.0",
+  "config_flow": true,
+  "documentation": "https://github.com/michaellee1019/ledgrid-poc",
+  "iot_class": "local_polling",
+  "requirements": []
+}

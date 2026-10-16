@@ -1,0 +1,30 @@
+apply:
+  name: Apply observed wall controls
+  description: Apply supplied controls once and wait for controller acknowledgement. A multi-field request can partially apply before failure; there is no automatic retry or rollback.
+  target:
+    entity:
+      integration: led_grid_wall
+      domain: light
+  fields:
+    brightness:
+      name: Master brightness
+      description: Output brightness 0..255. Zero preserves running playback unless power is also false.
+      selector:
+        number:
+          min: 0
+          max: 255
+          step: 1
+          mode: box
+    power:
+      name: Playback power
+      selector:
+        boolean:
+    multiplier:
+      name: Operator pace
+      description: 1x equals controller speed scale 0.3.
+      selector:
+        number:
+          min: 0.1
+          max: 25
+          step: 0.05
+          mode: box

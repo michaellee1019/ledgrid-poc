@@ -1,5 +1,92 @@
 # Home Assistant wall controls
 
+## Native wall device (prepared for migration)
+
+`custom_components/led_grid_wall` is the native integration for Home Assistant
+2026.10.1 and the matching version 1 wall automation API. It groups the master
+light, pace number and observation sensor into one stable device. The device's
+configuration link opens Composer. Controller acknowledgement describes controller
+playback; it is not proof that all five receivers physically displayed a frame.
+
+Copy the `led_grid_wall` directory into Home Assistant's
+`custom_components/led_grid_wall`, restart HA to discover it, then choose
+**Settings → Devices & services → Add integration → LED Grid Wall**. Enter the
+wall origin, for example `http://ledgridwall.local:5000`. The integration uses
+asynchronous local HTTP requests. Its URL can later be changed with
+**Reconfigure**; the address must identify the same installation. Installation
+identity comes from the wall's persisted identity, independently of URL or
+controller/web-server session. Only one wall is supported.
+
+The existing YAML package below remains available until the final migration.
+Do not install both implementations against the same wall. Public entity ID and
+script migration, registry backups, and live deployment are separate work. The
+native integration suggests `light.led_grid_wall`,
+`number.led_grid_wall_pace` and `sensor.led_grid_wall_observation` on a fresh
+installation; HA may suffix IDs already reserved by the legacy package. Preserve
+the protected mains outlet as its separate device. Use the smarthome repository's
+bounded installation support and configuration checks for the eventual migration.
+
+The native light supports power and master brightness 0..255. Pace is 0.1..25x,
+with 1x equal to controller scale 0.3. Both use current controller observations,
+never optimistic or restored values. All three entities share a single status
+poll every two seconds. Stale, malformed or failed observations make them
+unavailable. Startup, unload/reload and reconnection read current state and send
+no commands. Receiver degradation alone does not make the integration unavailable
+when current controller observations remain valid.
+
+For acknowledged automation, use the native response action:
+
+```yaml
+action: led_grid_wall.apply
+target:
+  entity_id: light.led_grid_wall
+data:
+  brightness: 26
+  power: true
+  multiplier: 1.25
+response_variable: wall_result
+```
+
+At least one control field is required; omitted controls are preserved. A target
+may be the native wall light or device; omitting the target uses the single
+configured wall. No config-entry identifier is needed by a compatibility script. Brightness is
+applied before power starts, avoiding a flash at the old level. Standard HA light
+services interpret brightness zero as off. To keep playback running with exact
+zero output, use `led_grid_wall.apply` with `brightness: 0` and (if needed)
+`power: true`. The observation sensor retains session, revision, timestamp,
+brightness, running state, speed scale and active identity attributes for
+compatibility consumers.
+
+The action returns `success: true` only after a matching completed command
+receipt, along with request/controller identity. A rejected, failed or timed-out
+command returns `success: false` and `error`; invalid action input is an HA
+validation error. Light/number failures raise an HA action error. Polling refreshes
+after explicit commands. Each command first reads a fresh observation and includes
+server session, controller session/revision and a ten-second expiry. It submits
+once and waits at most twelve seconds for acknowledgement; individual HTTP
+requests time out after five seconds. There are no automatic command retries,
+replay, rollback or queued competing HA writes. A request with multiple fields
+can partially apply before a later failure. Observe current state before deciding
+whether to submit a new request. Keep the wall and HA clocks synchronized.
+
+Run the isolated actual-HA lifecycle and behavior checks (loopback only):
+
+```sh
+uv run --python 3.14 --with homeassistant==2026.10.1 --with pyyaml python integrations/home_assistant/check_native_runtime.py
+```
+
+To exercise HA against the actual automation HTTP handlers, file IPC and
+controller dispatcher with a simulated LED output (still loopback only):
+
+```sh
+uv run --python 3.14 --with homeassistant==2026.10.1 --with flask --with numpy --with pillow --with pyserial --with smbus2 python integrations/home_assistant/check_native_runtime.py --real-api-root .
+```
+
+The harness creates temporary HA configuration and wall personal-data directories;
+it does not use the installed wall, saved playback or physical receivers.
+
+## Legacy YAML package (retained until migration)
+
 `led_grid_wall.yaml` is one Home Assistant package for the installed wall. It exposes:
 
 | Entity/action | Meaning |
