@@ -1,6 +1,6 @@
 # Home Assistant wall controls
 
-## Native wall device (prepared for migration)
+## Native wall device
 
 `custom_components/led_grid_wall` is the native integration for Home Assistant
 2026.10.1 and the matching version 1 wall automation API. It groups the master
@@ -17,19 +17,22 @@ asynchronous local HTTP requests. Its URL can later be changed with
 identity comes from the wall's persisted identity, independently of URL or
 controller/web-server session. Only one wall is supported.
 
-The existing YAML package below remains available until the final migration.
-Do not install both implementations against the same wall. Public entity ID and
-script migration, registry backups, and live deployment are separate work. The
-native integration suggests `light.led_grid_wall`,
+The installed wall uses the native integration and the public apply-script
+wrapper in `led_grid_wall_native.yaml`. Follow [migration.md](migration.md) for
+the bounded smarthome installation workflow, registry migration, backups and
+manual recovery. The legacy package below is retained as migration/recovery
+source; do not load both implementations against the same wall. The native
+integration suggests `light.led_grid_wall`,
 `number.led_grid_wall_pace` and `sensor.led_grid_wall_observation` on a fresh
 installation; HA may suffix IDs already reserved by the legacy package. Preserve
-the protected mains outlet as its separate device. Use the smarthome repository's
-bounded installation support and configuration checks for the eventual migration.
+the protected mains outlet as its separate device. The migrated installation
+retains all three public IDs and `script.led_grid_wall_apply` for existing
+automations.
 
 The native light supports power and master brightness 0..255. Pace is 0.1..25x,
 with 1x equal to controller scale 0.3. Both use current controller observations,
-never optimistic or restored values. All three entities share a single status
-poll every two seconds. Stale, malformed or failed observations make them
+never optimistic or restored values. All control/status entities share one
+status poll every two seconds. Stale, malformed or failed observations make them
 unavailable. Startup, unload/reload and reconnection read current state and send
 no commands. Receiver degradation alone does not make the integration unavailable
 when current controller observations remain valid.
@@ -85,7 +88,7 @@ uv run --python 3.14 --with homeassistant==2026.10.1 --with flask --with numpy -
 The harness creates temporary HA configuration and wall personal-data directories;
 it does not use the installed wall, saved playback or physical receivers.
 
-## Legacy YAML package (retained until migration)
+## Legacy YAML package (migration/recovery source)
 
 `led_grid_wall.yaml` is one Home Assistant package for the installed wall. It exposes:
 
@@ -98,7 +101,7 @@ it does not use the installed wall, saved playback or physical receivers.
 
 Master brightness scales physical output independently of the selected Scene's authored brightness. Pace changes the existing operator multiplier, not target FPS or Scene-local pace. Power resumes the retained Scene. The number's 25x bound matches the existing control range; the controller API still accepts any positive finite pace.
 
-## Install
+### Legacy install
 
 Deploy the matching wall code first: the package requires the guarded brightness/pace/power endpoints and `last_applied_command_id` in observed settings. Check that `http://ledgridwall.local:5000/api/v1/composer/settings/observed` is reachable from Home Assistant. This is a trusted local-network API; do not expose it publicly.
 
@@ -113,7 +116,7 @@ The package merges its scripts, template entities and REST commands alongside th
 
 Entity IDs above are the defaults on a fresh installation. If the entity registry already reserves one, check the assigned IDs before using examples. Keep the observation sensor's ID `sensor.led_grid_wall_observation`, since the templates refer to it.
 
-## Use
+### Compatible control examples
 
 Recall approximately 10% brightness (HA's 8-bit rounding is 26/255), retaining the selected animation:
 
@@ -176,7 +179,7 @@ actions:
 
 To wait explicitly for the full command result from another script/automation, call `script.led_grid_wall_apply` directly (not `script.turn_on`). Omitted fields are preserved. The action returns `success: true` only after matching observations, or `success: false` and an `error` message on rejection/acknowledgement timeout. Capture its `response_variable` and check `success` in automations that depend on completion. Network exceptions remain HA action errors; a multi-setting request can partially apply before a later failure, and does not issue a rollback that could overwrite newer manual input.
 
-## State and failure behavior
+### Legacy state and failure behavior
 
 Polling adopts Composer changes every two seconds. Stale/missing controller identity, stale observation (15 seconds), or HTTP failure makes the entities unavailable. Values come from observed controller state, never HA helper restore state. Startup, reload and reconnect do not restore desired brightness or power. No automatic write retry or command queue is installed.
 
@@ -184,7 +187,7 @@ Each command carries its captured controller session/revision and a 10-second ex
 
 These guarantees do not make an external automation's own startup trigger safe: do not add automations that call this script on HA startup/reconnect or restore values from helpers unless that is deliberately desired.
 
-## Validation
+### Legacy validation
 
 Run `uv run python -m unittest tests.unit.test_home_assistant_package`. The focused harness executes the shipped YAML action tree and templates against delayed fake HTTP/controller state, including zero/10% recall, power/pace, manual changes, stale sessions, unavailable responses and no replay. Also run HA's real `hass --script check_config` against an isolated configuration containing the package. Local fake-wall runtime acceptance and independent review are recorded in Bead `ledgrid-poc-ib7.123`.
 
@@ -359,6 +362,6 @@ Run `check_content_runtime.py --advanced --browser` for the isolated native HA,
 real controller and browser synchronization exercise. No simulation or
 per-frame work changes are introduced by these controls.
 
-## Migrating the installed legacy package
+## Migration and recovery
 
 Follow [migration.md](migration.md) for the reviewed package installation, public entity-ID migration, private backups and manual recovery. `led_grid_wall_native.yaml` retains the public apply script for existing automations. Keep the legacy package as recovery source; load only one package implementation at a time.
