@@ -933,8 +933,8 @@
   const paletteForVibe = Object.freeze({quiet: 'mist', neutral: 'neutral', vivid: 'spectrum', celebration: 'spectrum', cozy: 'ember'});
   function observedWallIdentity(_scene = null, observation = state.wall.observation) {
     if (observation?.active_identity?.scene_identity) return observation.active_identity.scene_identity;
-    if (!observation?.scene || !observation.scene_digest) return null;
-    return {revision: Number(observation.controller_state_revision || 0), digest: observation.scene_digest};
+    if (!observation?.scene) return null;
+    return {revision: Number(observation.controller_state_revision || 0), digest: observation.scene_digest || 'controller scene · digest unavailable'};
   }
   function wallStatus(lastError = null) {
     const observation = state.wall.observation;

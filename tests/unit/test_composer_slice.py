@@ -644,7 +644,7 @@ const controls = {scene: structuredClone(state.scene)};
 const published = [];
 let failNext = false;
 const context = {
-  assert, nodes, state, controls, published, structuredClone,
+  assert, nodes, state, controls, published, structuredClone, clearSaveFeedback() {},
   $: (selector) => nodes[selector],
   defaultScene: () => ({value: 0, text: '', enabled: false}),
   boundedTargetFps: (value) => Math.max(1, Math.min(200, Math.round(Number(value) || 200))),
@@ -770,7 +770,7 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
             script.count("control.addEventListener('input', () => dispatchSemanticEdit(control))"),
             2,
         )
-        save_source = script[script.index("async function save(as)") : script.index("async function rewind")]
+        save_source = script[script.index("async function save(as,") : script.index("async function rewind")]
         self.assertNotIn("submit(", save_source)
 
     def test_save_feedback_is_local_accessible_and_survives_status_polling(self) -> None:
@@ -779,7 +779,7 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
         css = Path("web/static/css/composer_slice.css").read_text(encoding="utf-8")
         save_source = script[
             script.index("function saveFeedback") : script.index(
-                "  async function rewind", script.index("function saveFeedback")
+                "  async function restoreSavedSelection", script.index("function saveFeedback")
             )
         ]
         status_source = script[
@@ -800,22 +800,26 @@ const vm = require('node:vm');
 class Node {
   constructor(value = '') { this.value = value; this.textContent = ''; this.hidden = true; this.dataset = {}; this.open = false; this.focused = false; }
   focus() { this.focused = true; }
+  close() { this.open = false; }
 }
 const nodes = {
   '#sceneName': new Node('   '), '#secondaryOperations': new Node(),
   '#saveFeedback': new Node(), '#saveState': new Node(),
+  '#saveScene': new Node(), '#saveAsScene': new Node(), '#sceneCopySubmit': new Node(), '#sceneCopyDialog': new Node(),
 };
 const requests = [];
-const state = {selection: null, dirty: true};
+const state = {selection: null, dirty: true, intent: 0, publication: {inFlight: null}};
 const context = {
-  assert, nodes, state, requests, replies: [], api: '/api/composer', process, console,
+  assert, nodes, state, requests, replies: [], api: '/api/composer', process, console, structuredClone, sceneSaveBarrier: null,
+  sameLocalParameters: (left, right) => JSON.stringify(left) === JSON.stringify(right),
   $: (selector) => nodes[selector],
   sceneFromControls: () => ({schema: 'ledgrid.scene.v2'}),
   loadLibrary: async () => {},
-  fetch: async (url, options) => {
+  requestJson: async (url, options) => {
     requests.push({url, options});
     const next = context.replies.shift();
-    return {ok: next.ok, json: async () => next.body};
+    if (!next.ok) throw new Error(next.body.error);
+    return next.body;
   },
 };
 vm.runInNewContext(process.argv[1] + `
@@ -831,28 +835,28 @@ vm.runInNewContext(process.argv[1] + `
     replies = [{ok: true, body: {look: {id: 'one', name: 'Northern glow'}}}];
     await save(false);
     assert.equal(requests.at(-1).url, '/api/composer/looks');
-    assert.equal(nodes['#saveFeedback'].textContent, 'Saved Northern glow.');
+    assert.equal(nodes['#saveFeedback'].textContent, 'Saved Northern glow · current revision.');
     assert.equal(nodes['#saveFeedback'].dataset.state, 'success');
     assert.equal(nodes['#sceneName'].focused, true, 'successful save must not steal focus');
 
     nodes['#sceneName'].value = 'Northern glow copy';
     replies = [{ok: true, body: {look: {id: 'two', name: 'Northern glow copy'}}}];
-    await save(true);
+    await save(true, 'Northern glow copy');
     assert.equal(requests.at(-1).url, '/api/composer/looks');
-    assert.equal(nodes['#saveFeedback'].textContent, 'Saved Northern glow copy.');
+    assert.equal(nodes['#saveFeedback'].textContent, 'Saved Northern glow copy · current revision.');
 
     state.selection = {kind: 'look', id: 'two', name: 'Northern glow copy'};
     nodes['#sceneName'].value = 'Keep this typed name';
     replies = [{ok: false, body: {error: 'Disk is temporarily unavailable'}}];
     await save(false);
-    assert.equal(requests.at(-1).url, '/api/composer/looks/save');
+    assert.equal(requests.at(-1).url, '/api/composer/looks/two');
     assert.equal(nodes['#sceneName'].value, 'Keep this typed name');
     assert.equal(nodes['#saveFeedback'].textContent, 'Disk is temporarily unavailable');
     assert.equal(nodes['#saveFeedback'].dataset.state, 'error');
 
-    replies = [{ok: true, body: {}}];
+    replies = [{ok: true, body: {look: {id: 'two', name: 'Northern glow copy'}}}];
     await save(false);
-    assert.equal(nodes['#saveFeedback'].textContent, 'Saved Northern glow copy.');
+    assert.equal(nodes['#saveFeedback'].textContent, 'Saved Northern glow copy · current revision.');
     assert.equal(nodes['#saveFeedback'].dataset.state, 'success');
   })().catch((error) => { console.error(error); process.exitCode = 1; });
 `, context);
@@ -1015,7 +1019,7 @@ const nodes = Object.fromEntries([
 ].map(selector => [selector, new Node()]));
 nodes['#targetFps'] = {value: '150'};
 const context = {
-  assert, state, draft, fetch, guardedWallActivation, requestJson, queueMicrotask,
+  assert, state, draft, fetch, guardedWallActivation, requestJson, queueMicrotask, clearSaveFeedback() {}, sceneSaveBarrier: null,
   structuredClone, api: '/api/composer', clientId: 'phone', stats, control,
   queuedActivationStarted, releaseQueuedActivation, nodes,
   $: (selector) => nodes[selector],
