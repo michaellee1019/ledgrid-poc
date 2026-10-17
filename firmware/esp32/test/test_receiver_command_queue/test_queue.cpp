@@ -110,9 +110,9 @@ void test_owned_payloads_survive_dma_and_fec_scratch_reuse_in_order() {
   TEST_ASSERT_FALSE(queue.take(&command));
 }
 
-void test_overflow_is_one_ordered_rejection_and_permanent_admission_fault() {
+void test_overflow_drains_in_order_then_accepts_fresh_off_on_and_frames() {
   Receiver receiver;
-  const std::uint8_t config[] = {0x20};
+  const std::uint8_t config[] = {7, 8, 0, 138, 0, 3, 0, 24};
   receiver.receive(config, sizeof(config));
   Queue::Command command;
   TEST_ASSERT_TRUE(receiver.queue.take(&command));
@@ -125,19 +125,63 @@ void test_overflow_is_one_ordered_rejection_and_permanent_admission_fault() {
   TEST_ASSERT_FALSE(receiver.publish());
   receiver.finish(command);
   for (unsigned i = 0; i < 4; ++i) {
+    TEST_ASSERT_TRUE(receiver.queue.faulted());
     TEST_ASSERT_TRUE(receiver.queue.take(&command));
     TEST_ASSERT_EQUAL_UINT8(i + 1, command.bytes[0]);
     TEST_ASSERT_EQUAL(i == 3, command.rejected);
+    // Neither an accepted command completing nor taking the rejection may
+    // reopen admission early or let new controls overtake the rejection.
+    receiver.receive(config, sizeof(config));
+    TEST_ASSERT_FALSE(receiver.publish());
     receiver.finish(command);
   }
+  TEST_ASSERT_FALSE(receiver.queue.faulted());
   TEST_ASSERT_TRUE(receiver.publish());
   TEST_ASSERT_EQUAL_UINT32(5, receiver.live.operation_sequence);
   TEST_ASSERT_EQUAL(4, receiver.live.last_result);
-  receiver.receive(config, sizeof(config));
+  TEST_ASSERT_EQUAL_UINT32(5, receiver.live.spi_queue_errors);
   TEST_ASSERT_FALSE(receiver.queue.take(&command));
-  TEST_ASSERT_EQUAL_UINT32(2, receiver.live.spi_queue_errors);
+
+  // Real wall controls must work again: all-off uses brightness zero, then
+  // high restores brightness and streams frames. Explicit Stop uses Clear.
+  const std::uint8_t controls[][4] = {{2, 0}, {4}, {2, 255}, {6, 21, 42, 63}};
+  const std::size_t sizes[] = {2, 1, 2, 4};
+  for (unsigned i = 0; i < 4; ++i) {
+    receiver.receive(controls[i], sizes[i]);
+    TEST_ASSERT_TRUE(receiver.queue.take(&command));
+    TEST_ASSERT_FALSE(command.rejected);
+    TEST_ASSERT_EQUAL_UINT32(sizes[i], command.size);
+    TEST_ASSERT_EQUAL_MEMORY(controls[i], command.bytes, sizes[i]);
+    receiver.finish(command);
+  }
+  TEST_ASSERT_EQUAL_UINT32(5, receiver.live.spi_queue_errors);
   TEST_ASSERT_TRUE(receiver.publish());
-  TEST_ASSERT_EQUAL_UINT32(5, receiver.live.operation_sequence);
+  TEST_ASSERT_EQUAL_UINT32(9, receiver.live.operation_sequence);
+  TEST_ASSERT_EQUAL(1, receiver.live.last_result);
+}
+
+void test_repeated_overflow_recovers_without_replaying_rejected_commands() {
+  Queue queue;
+  const std::uint8_t frame[] = {6, 10, 20, 30};
+  const std::uint8_t clear[] = {4};
+  Queue::Command command;
+  for (unsigned episode = 0; episode < 32; ++episode) {
+    for (unsigned i = 0; i < 4; ++i)
+      TEST_ASSERT_EQUAL(Queue::Admission::Accepted, queue.admit(frame, sizeof(frame)));
+    TEST_ASSERT_EQUAL(Queue::Admission::Overflow, queue.admit(clear, sizeof(clear)));
+    queue.complete(); // No command is executing; this must not clear the fault.
+    TEST_ASSERT_TRUE(queue.faulted());
+    for (unsigned i = 0; i < 5; ++i) {
+      TEST_ASSERT_TRUE(queue.take(&command));
+      TEST_ASSERT_EQUAL(i == 4, command.rejected);
+      TEST_ASSERT_EQUAL_UINT8(i == 4 ? 4 : 6, command.bytes[0]);
+      TEST_ASSERT_EQUAL(Queue::Admission::Faulted, queue.admit(clear, sizeof(clear)));
+      queue.complete();
+    }
+    TEST_ASSERT_FALSE(queue.faulted());
+    TEST_ASSERT_FALSE(queue.pending());
+    TEST_ASSERT_FALSE(queue.take(&command));
+  }
 }
 
 void test_failed_command_completes_with_failure_and_reset_has_no_old_work() {
@@ -166,7 +210,8 @@ int main(int, char**) {
   RUN_TEST(test_slow_or_hung_config_freezes_every_status_byte_while_queries_continue);
   RUN_TEST(test_unclassified_receive_and_new_admission_invalidate_snapshot_candidate);
   RUN_TEST(test_owned_payloads_survive_dma_and_fec_scratch_reuse_in_order);
-  RUN_TEST(test_overflow_is_one_ordered_rejection_and_permanent_admission_fault);
+  RUN_TEST(test_overflow_drains_in_order_then_accepts_fresh_off_on_and_frames);
+  RUN_TEST(test_repeated_overflow_recovers_without_replaying_rejected_commands);
   RUN_TEST(test_failed_command_completes_with_failure_and_reset_has_no_old_work);
   return UNITY_END();
 }

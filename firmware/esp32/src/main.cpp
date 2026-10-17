@@ -43,8 +43,8 @@ constexpr std::size_t kSpiFrameBytes = 1 + kMaxRgbBytes + kCrcBytes;
 constexpr std::size_t kSpiBufferSize =
     ledgrid::kAnimationPipelineMaxTransactionBytes;
 constexpr std::size_t kSpiQueueDepth = 2;
-// Four owned mutations cover normal bounded host bursts. Storage commands are
-// host-serialized; exceeding this bound is a counted fail-stop, never a drop.
+// Four owned mutations cover normal bounded host bursts. Overflow closes
+// admission until the accepted FIFO and one counted rejection have drained.
 using CommandQueue = ledgrid::ReceiverCommandQueue<4, kSpiBufferSize>;
 CommandQueue command_queue;
 portMUX_TYPE command_mux = portMUX_INITIALIZER_UNLOCKED;

@@ -18,6 +18,11 @@ SPI uses GPIO 11 MOSI, 13 MISO, 12 clock and 10 chip select. LED lanes use GPIOs
 frame mailbox before the parallel LED driver. Queue errors and dropped or
 superseded frames are observable counters.
 
+Command-queue overflow temporarily closes admission while already accepted
+commands execute in order, followed by one rejection. Admission then reopens
+for fresh host frames and controls; rejected commands are never replayed.
+A transient burst must not leave a connected receiver permanently frozen.
+
 Transport retains aligned envelope v1 and protected FEC v7, bounded to 4096 wire
 bytes. Status retains the LGS8 layout and trailing CRC32 so host transport code
 can retain the proven parser offsets; retired scene/profile/module fields are

@@ -59,7 +59,14 @@ class ReceiverCommandQueue {
     return true;
   }
 
-  void complete() { executing_ = false; }
+  void complete() {
+    if (!executing_) return;
+    executing_ = false;
+    // Keep admission closed through the accepted FIFO and its ordered
+    // rejection. Once that rejection completes, a later host frame/control
+    // can recover output without rebooting. Nothing rejected is replayed.
+    if (faulted_ && count_ == 0 && !rejection_pending_) faulted_ = false;
+  }
   bool pending() const { return executing_ || count_ || rejection_pending_; }
   bool faulted() const { return faulted_; }
 
