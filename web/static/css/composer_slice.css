@@ -198,7 +198,7 @@ dialog li { margin: .5rem 0; }
 .preview-canvas { width: auto; height: 100%; max-width: 100%; object-fit: contain; }
 .scene-save-controls { display: grid; gap: .35rem; margin-bottom: .75rem; padding: .65rem; background: #152a2b; border-radius: 6px; }
 .operations-pane { max-height: 28dvh; overflow-y: auto; }
-.operations-pane > .pane-heading { display: flex; }
+.operations-pane > .pane-heading { display: flex; position: sticky; top: 0; z-index: 1; background: #102025; }
 .operations-pane > .panel-content { margin-top: 0; }
 .operations-summary .operation-row { margin: 0; }
 .playback-playlist-summary { font-size: .8rem; }

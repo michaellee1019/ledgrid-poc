@@ -61,7 +61,7 @@ for (const mode of ['collapsed', 'expanded', 'denied']) {
     def test_playlist_add_waits_for_read_only_wall_bootstrap_and_preserves_click(self) -> None:
         source = self.script[
             self.script.index('function currentPlaylistEntryLabel'):
-            self.script.index('async function startPlaylist()')
+            self.script.index('async function startPlaylist(')
         ]
         runner = r'''
 const assert = require('node:assert/strict');
@@ -102,7 +102,7 @@ vm.runInNewContext(process.argv[1]+';this.add=addCurrentSceneToPlaylist;',contex
 
     def test_playlist_start_stop_and_status_responses_follow_latest_intent(self) -> None:
         source = self.script[
-            self.script.index('function newPlaylistStartIntent()'):
+            self.script.index('function renderPlaylistActionFailure()'):
             self.script.index('\n  function wireLiveRange(')
         ]
         runner = r'''
@@ -113,7 +113,7 @@ function environment({save,run}){
   const status={textContent:'unchanged',dataset:{}};
   const state={playlist:{requestId:null,runId:null,startIntent:null,statusIntent:0,statusPoll:0}};
   let requestCounter=0,runCalls=0,stopCalls=0,statusResponse=null;
-  const context={state,api:'/api',newUuid:()=>`request-${++requestCounter}`,$:()=>status,renderPlaylist:()=>{},
+  const context={state,AbortSignal,api:'/api',newUuid:()=>`request-${++requestCounter}`,$:()=>status,renderPlaylist:()=>{},
     savePlaylist:save,
     requestJson:async(url,options)=>{
       if(url.endsWith('/run')){runCalls++;return run();}
@@ -200,7 +200,7 @@ function environment({save,run}){
         self.assertIn("owns no Scene data", self.layout)
 
     def test_operations_header_keeps_stop_and_short_status_visible(self) -> None:
-        heading_start = self.html.index('<div class="pane-heading"><div><p class="eyebrow">Wall output</p>')
+        heading_start = self.html.index('<div class="pane-heading"><div><p class="eyebrow">Controller playback</p>')
         heading_end = self.html.index('<div class="scene-save-controls">', heading_start)
         heading = self.html[heading_start:heading_end]
         for element_id in ("saveState", "connectionState", "liveAction", "wallActivationFailure"):

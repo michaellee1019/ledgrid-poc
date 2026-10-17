@@ -19,7 +19,7 @@
   // A page lifetime client id makes a reload a new mutation stream.  Reusing
   // an id while resetting its sequence would make the next authored edit stale.
   const clientId = newUuid();
-  const state = { status: {connected: true, running: true, armed: true, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
+  const state = { status: {connected: false, running: false, armed: false, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
     scene: null, history: [], redo: [], sequence: 0, intent: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
     gallery: {entries: [], digest: null, query: '', filter: 'all', favorites: new Set(), detail: null, detailToken: 0},
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
@@ -28,7 +28,7 @@
       adoptedLook: null, adoptedVibeId: null, activationError: null, retryBlocked: false, requestId: null,
     },
     playlist: {id: null, entries: [], saved: [], requestId: null, runId: null,
-      saving: false, switching: false, adding: false, baseline: null, startIntent: null, statusIntent: 0, statusPoll: 0}
+      saving: false, switching: false, adding: false, baseline: null, actionError: null, retryStart: null, dismissedStatusError: null, startIntent: null, stopPromise: null, statusIntent: 0, statusPoll: 0}
   };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const beginIntent = () => ++state.intent;
@@ -930,9 +930,10 @@
     onError: (error) => { $('#previewStatus').textContent = error.message || 'Preview could not render.'; if (error.previewUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); },
   });
   const paletteForVibe = Object.freeze({quiet: 'mist', neutral: 'neutral', vivid: 'spectrum', celebration: 'spectrum', cozy: 'ember'});
-  function observedWallIdentity(scene = state.wall.scene, observation = state.wall.observation) {
-    if (!scene) return null;
-    return {revision: Number(scene.revision || observation?.controller_state_revision || 0), digest: observation?.scene_digest || 'controller scene'};
+  function observedWallIdentity(_scene = null, observation = state.wall.observation) {
+    if (observation?.active_identity?.scene_identity) return observation.active_identity.scene_identity;
+    if (!observation?.scene || !observation.scene_digest) return null;
+    return {revision: Number(observation.controller_state_revision || 0), digest: observation.scene_digest};
   }
   function wallStatus(lastError = null) {
     const observation = state.wall.observation;
@@ -940,7 +941,7 @@
     const connected = Boolean(observation?.controller_session_id && observation.freshness === 'fresh');
     const running = Boolean(connected && observation?.is_running);
     return {connected, running, armed: running,
-      current: selected, desired: state.scene ? {revision: state.sequence, digest: state.scene.animation?.component_id || 'requested scene'} : null,
+      current: selected, desired: state.wall.requested ? {revision: state.sequence, digest: state.wall.requested.animation?.component_id || 'requested scene'} : null,
       observed: running ? selected : null, revision: Number(observation?.controller_state_revision || 0),
       receiver_connectivity: observation?.receiver_connectivity || {}, last_error: lastError || observation?.last_error || null};
   }
@@ -1044,67 +1045,47 @@
     return scenePayload;
   }
   function renderStatus(payload) {
-    // Composer publication can confirm a new desired scene before the wall
-    // accepts it.  While that acknowledgement is failed or pending recovery,
-    // keep the Operations pane anchored to the wall observation rather than
-    // letting a later local Composer poll imply the desired scene is live.
-    const status = {...(state.wall.observation ? wallStatus() : (payload.status || payload))};
-    if (state.wall.observation) {
-      const observed = wallStatus();
-      // Saved Composer publication is desired state, not proof of wall playback.
-      for (const key of ['connected', 'running', 'armed', 'observed']) status[key] = observed[key];
-    }
+    const observation = state.wall.observation;
+    const known = Boolean(!state.wall.statusUnavailable && observation?.controller_session_id && observation.freshness === 'fresh' && typeof observation.is_running === 'boolean');
+    const status = {...(payload.status || payload), ...wallStatus()};
+    status.connected = known; status.running = known && observation.is_running; status.armed = status.running;
     state.status = status;
     state.revision = Math.max(state.revision || 0, status.revision || 0);
-    $('#connectionState').textContent = status.connected ? (status.running ? 'Running' : 'Stopped') : 'Offline';
-    $('#observedIdentity').textContent = identity(status.observed);
-    const receiverState = $('#receiverConnectivity');
-    if (receiverState) receiverState.textContent = JSON.stringify(status.receiver_connectivity || {}); $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
+    const nameOf = scene => {
+      const id = scene?.animation?.component_id || scene?.background?.component_id || scene?.background?.plugin_id;
+      return state.gallery?.entries?.find(item => item.component_id === id)?.name || (id ? id.replaceAll('_', ' ') : 'Scene unavailable');
+    };
+    const activeComponent = observation?.active_identity?.component_identities?.find(item => item.slot_id === 'animation');
+    const observedName = observation?.scene ? nameOf(observation.scene) : activeComponent ? nameOf({animation:activeComponent}) : 'Scene unavailable';
+    const pending = Boolean(state.wall.activating || state.publication.queued || state.publication.afterStop || state.publication.inFlight);
+    const stopping = state.publication.queued?.kind === 'stop' || state.publication.inFlight?.kind === 'stop';
+    $('#observedIdentity').textContent = known ? identity(status.observed) : 'Unknown';
+    $('#desiredIdentity').textContent = identity(status.desired); $('#sceneRevision').textContent = String(status.revision ?? 0);
     $('#sceneIdentity').textContent = identity(status.current); $('#saveState').textContent = state.dirty ? 'Unsaved changes' : (state.selection?.kind === 'look' ? 'Saved scene' : 'Not saved');
-    const live = Boolean(status.running && status.armed);
-    $('#liveAction').textContent = live ? 'Stop output' : 'Stopped';
-    $('#liveAction').disabled = !live || state.wall.activating;
-    const activationFailure = $('#wallActivationFailure');
-    activationFailure.hidden = !state.wall.activationError;
-    activationFailure.replaceChildren();
-    if (state.wall.activationError) {
-      activationFailure.append(document.createTextNode('Live update failed. '));
-      const retry = document.createElement('button');
-      retry.type = 'button'; retry.className = 'button text'; retry.textContent = 'Retry once';
-      retry.disabled = state.wall.activating || Boolean(state.publication.queued || state.publication.afterStop || state.publication.inFlight);
-      retry.addEventListener('click', retryWallActivation);
-      activationFailure.append(retry);
-    }
-    $('#operationMessage').textContent = state.authoredValidationError || state.wall.activationError || status.last_error || (live
-      ? (status.current ? (state.wall.dirty ? 'Publishing the newest valid edit.' : 'Live · every valid edit applies automatically.') : 'Live · choose or edit a scene to begin output.')
-      : 'Output stopped · change any control or choose a scene to resume automatically.');
-    // Names come only from the controller observation, never the selected card
-    // or desired Scene. Keep the last observation distinct during an outage.
-    const playbackTitle = $('#operations-title');
-    const playbackHint = $('#playbackHint');
-    if (playbackTitle && playbackHint) {
-      const observed = state.wall.observation;
-      const active = observed?.active_identity;
-      const components = active?.component_identities || [];
-      const component = components.find(item => item.slot_id === 'animation')
-        || components.find(item => item.slot_id === 'known_python_fallback')
-        || components.find(item => item.slot_id === 'background');
-      const componentId = state.wall.scene?.animation?.component_id || state.wall.scene?.background?.plugin_id || component?.component_id || null;
-      const entry = state.gallery?.entries?.find(item => item.component_id === componentId);
-      const name = entry?.name || (componentId ? componentId.replaceAll('_', ' ') : 'Controller scene');
-      const offline = state.wall.statusUnavailable || !status.connected;
-      const pending = Boolean(state.wall.activating || state.publication.queued || state.publication.afterStop || state.publication.inFlight);
-      playbackTitle.textContent = offline ? 'Wall unavailable' : live ? `Playing · ${name}` : 'Output stopped';
-      playbackHint.textContent = offline
-        ? 'Cannot confirm current output. Reconnecting automatically.'
-        : state.wall.activationError ? 'Update failed. Playback may have been interrupted; retry below.'
-        : state.authoredValidationError ? 'Edit needs attention. The previous output is unchanged.'
-        : pending ? 'Updating the wall… Controller playback is observed separately.'
-        : live ? 'Selections and adjustments update the wall immediately.'
-        : 'Choose a scene or adjust a control to resume live output.';
-      $('#connectionState').textContent = offline ? 'Offline' : pending ? 'Updating…' : live ? 'Controller playing' : 'Stopped';
-    }
-
+    $('#workingSceneContext').textContent = `Editing: ${nameOf(state.scene)} · local preview`;
+    const queued = state.publication.afterStop || state.publication.queued || state.publication.inFlight;
+    $('#requestedSceneSummary').textContent = queued?.kind === 'publish' ? `Requesting: ${nameOf(queued.scene)}` : state.wall.requested ? `Last scene requested: ${nameOf(state.wall.requested)}` : 'No scene requested from this tab.';
+    $('#liveAction').textContent = stopping ? 'Stopping output…' : 'Stop output';
+    $('#liveAction').disabled = !known || !status.running || state.wall.activating || stopping;
+    $('#resumeScene').hidden = !known || status.running;
+    $('#resumeScene').disabled = pending || !state.scene;
+    $('#operations-title').textContent = !known ? 'Playback unknown' : status.running ? `Playing · ${observedName}` : 'Output stopped';
+    $('#playbackHint').textContent = !known ? 'Controller unavailable or stale. Reconnecting automatically.'
+      : state.wall.activationError ? 'Action failed. Check the error below.'
+      : state.authoredValidationError ? 'Edit needs attention. Previous controller playback is unchanged.'
+      : pending ? 'Request pending. Controller playback is observed separately.'
+      : status.running ? 'Controller playback reported; physical output is not verified.'
+      : 'Resume edited scene, or choose or adjust a scene.';
+    $('#connectionState').textContent = known ? 'Controller connected' : 'Controller unavailable';
+    const connectivity = status.receiver_connectivity;
+    const connectedReceivers = Array.isArray(connectivity) && connectivity.length ? connectivity.filter(item => item.receiver_connected === true && Number.isFinite(item.receiver_status_observed_at) && Date.now() / 1000 - item.receiver_status_observed_at >= 0 && Date.now() / 1000 - item.receiver_status_observed_at <= 10) : Array.isArray(connectivity?.connected) ? connectivity.connected : null;
+    $('#receiverSummary').textContent = known && connectedReceivers ? `Receivers: ${connectedReceivers.length}/5 connected` : 'Receivers: status unavailable';
+    $('#receiverConnectivity').textContent = known ? JSON.stringify(connectivity || {}) : 'Unknown';
+    $('#wallActivationFailure').hidden = !state.wall.activationError;
+    $('#wallActionMessage').textContent = state.wall.activationError || '';
+    $('#retryWallAction').textContent = state.wall.actionKind === 'stop' ? 'Retry stop' : 'Retry once';
+    $('#retryWallAction').disabled = pending;
+    $('#operationMessage').textContent = state.authoredValidationError || state.wall.activationError || status.last_error || (!known ? 'Playback is unknown.' : status.running ? 'Valid edits apply automatically.' : 'Output stopped. Resume sends the edited scene.');
   }
   function updateHistoryActions() {
     $('#undoScene').disabled = state.history.length === 0;
@@ -1209,6 +1190,9 @@
         queueMicrotask(flushPublication);
       }
     });
+  }
+  function retryWallAction() {
+    return state.wall.actionKind === 'stop' ? stopOutput() : retryWallActivation();
   }
   function retryWallActivation() {
     if (!state.scene || state.wall.activating || state.publication.queued || state.publication.afterStop || state.publication.inFlight) return Promise.resolve({coalesced: true});
@@ -1356,6 +1340,7 @@
 
 
   async function guardedWallActivation(scene, power, targetFps = boundedTargetFps($('#targetFps').value)) {
+    state.wall.actionKind = 'scene';
     await refreshWallStatus({preserveAuthored: true});
     if (state.wall.bootstrap?.capabilities?.server_actions?.activation_available !== true) {
       state.wall.dirty = false;
@@ -1393,7 +1378,8 @@
     const deadline = Date.now() + 10000;
     const timeout = window.setTimeout(() => controller.abort(), 10000);
     const signal = controller.signal;
-    state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = 'Stopping…';
+    state.wall.actionKind = 'stop';
+    state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = 'Stopping output…';
     $('#operationMessage').textContent = 'Stopping output. The next valid edit resumes automatically.';
     try {
       if (state.wall.bootstrap?.capabilities?.server_actions?.activation_available === true) {
@@ -1520,7 +1506,7 @@
     document.querySelectorAll('#playlistEntries > .playlist-entry').forEach((item, index) => refreshPlaylistEntryIdentity(item, state.playlist.entries[index], index));
   }
   function renderPlaylist() {
-    const busy = state.playlist.saving || state.playlist.switching || state.playlist.adding;
+    const busy = state.playlist.saving || state.playlist.switching || state.playlist.adding || Boolean(state.playlist.retryStart);
     const list = $('#playlistEntries'); list.replaceChildren();
     const total = state.playlist.entries.reduce((sum, entry) => sum + Number(entry.duration_seconds || 0), 0);
     $('#playlistTotal').textContent = formatPlaylistDuration(total);
@@ -1546,7 +1532,7 @@
     $('#playlistAdd').disabled = busy;
     $('#playlistSave').disabled = busy;
     $('#playlistStart').disabled = busy || Boolean(state.playlist.startIntent) || state.playlist.entries.length === 0;
-    renderPlaylistDraftStatus();
+    renderPlaylistDraftStatus(); renderPlaylistActionFailure();
   }
   async function loadPlaylists() {
     const body = await requestJson(`${api}/playlists`); state.playlist.saved = body.playlists || [];
@@ -1565,7 +1551,7 @@
   }
   async function openPlaylist(playlistId) {
     $('#playlistChoice').value = state.playlist.id || '';
-    if (state.playlist.saving || state.playlist.switching || state.playlist.adding) return;
+    if (state.playlist.saving || state.playlist.switching || state.playlist.adding || state.playlist.retryStart) return;
     state.playlist.switching = true; renderPlaylist();
     try {
       if (playlistDirty()) {
@@ -1603,7 +1589,7 @@
   }
   async function addCurrentSceneToPlaylist() {
     const button = $('#playlistAdd');
-    if (state.playlist.saving || state.playlist.switching || state.playlist.adding) { $('#playlistStatus').textContent = 'Wait for the playlist save or operation to finish before editing.'; return; }
+    if (state.playlist.saving || state.playlist.switching || state.playlist.adding || state.playlist.retryStart) { $('#playlistStatus').textContent = 'Wait for the playlist save or operation to finish before editing.'; return; }
     try {
       state.playlist.adding = true; renderPlaylist();
       const selectedScene = structuredClone(sceneFromControls());
@@ -1615,39 +1601,82 @@
     } catch (error) { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }
     finally { state.playlist.adding = false; renderPlaylist(); }
   }
+  function renderPlaylistActionFailure() {
+    const error = state.playlist.actionError;
+    $('#playlistActionFailure').hidden = !error;
+    $('#playlistActionMessage').textContent = error ? `${error.message}${state.playlist.retryStart ? state.playlist.retryStart.cancelled ? ' Start and stop remain unconfirmed. Refresh may locate the run. Unlocking editing abandons automatic recovery; the original request may still run.' : ' Start is unconfirmed. Retry uses the same request.' : error.kind === 'abandoned' ? '' : ' Refresh status or try the action again.'}` : '';
+    const retry = $('#playlistRetryAction');
+    retry.hidden = Boolean(state.playlist.retryStart?.cancelled) || (!state.playlist.retryStart && error?.kind !== 'stop');
+    retry.textContent = state.playlist.retryStart ? 'Retry start' : 'Retry stop';
+    const pending = Boolean(state.playlist.startIntent || state.playlist.stopPromise);
+    retry.disabled = pending;
+    $('#playlistStop').disabled = Boolean(state.playlist.stopPromise);
+    $('#playlistRefreshStatus').disabled = pending;
+    $('#playlistUnlockEditing').hidden = !state.playlist.retryStart?.cancelled;
+    $('#playlistUnlockEditing').disabled = pending;
+    $('#playlistDismissError').disabled = pending;
+    $('#playlistDismissError').hidden = Boolean(state.playlist.retryStart);
+  }
+  function abandonPlaylistStart() {
+    if (!state.playlist.retryStart?.cancelled || state.playlist.startIntent || state.playlist.stopPromise) return;
+    state.playlist.retryStart = null;
+    state.playlist.actionError = {kind: 'abandoned', message: 'Automatic start recovery abandoned. The original request may still run; check controller playback and use Stop output if needed.'};
+    renderPlaylist();
+  }
+  function playlistActionFailed(error, kind) {
+    state.playlist.actionError = {message: error.message || String(error), kind};
+    renderPlaylistActionFailure();
+  }
   function newPlaylistStartIntent() {
     let settle;
     const done = new Promise((resolve) => { settle = resolve; });
     return {cancelled: false, dispatched: false, accepted: null, stopPromise: null, done, settle};
   }
-  async function sendPlaylistStop(runId) {
-    const body = await requestJson(`${api}/playlists/stop`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({run_id: runId})});
-    state.playlist.requestId = body.accepted.request_id; state.playlist.runId = body.accepted.run_id; state.playlist.statusIntent += 1;
-    await refreshPlaylistStatus();
+  function sendPlaylistStop(runId) {
+    if (state.playlist.stopPromise) return state.playlist.stopPromise;
+    const pending = (async () => {
+      const body = await requestJson(`${api}/playlists/stop`, {method: 'POST', signal: AbortSignal.timeout(10000), headers: {'Content-Type': 'application/json'}, body: JSON.stringify({run_id: runId})});
+      state.playlist.requestId = body.accepted.request_id; state.playlist.runId = body.accepted.run_id; state.playlist.statusIntent += 1;
+      state.playlist.actionError = null; renderPlaylistActionFailure();
+      await refreshPlaylistStatus();
+    })();
+    state.playlist.stopPromise = pending; renderPlaylistActionFailure();
+    return pending.finally(() => {
+      if (state.playlist.stopPromise === pending) state.playlist.stopPromise = null;
+      renderPlaylistActionFailure();
+    });
   }
   function stopAcceptedPlaylist(intent) {
     if (!intent.stopPromise) intent.stopPromise = sendPlaylistStop(intent.accepted.run_id);
     return intent.stopPromise;
   }
-  async function startPlaylist() {
+  async function startPlaylist(retry = null) {
     if (state.playlist.startIntent) { $('#playlistStatus').textContent = 'Playlist start is already in progress.'; $('#playlistStatus').dataset.state = 'error'; return; }
+    if (state.playlist.retryStart && (retry !== state.playlist.retryStart || retry.cancelled)) return;
     const intent = newPlaylistStartIntent();
     state.playlist.startIntent = intent; state.playlist.statusIntent += 1; renderPlaylist();
     try {
-      const playlist = await savePlaylist();
+      const playlist = retry ? {id: retry.playlistId} : await savePlaylist();
       if (intent.cancelled) { $('#playlistStatus').textContent = 'Playlist start cancelled.'; $('#playlistStatus').dataset.state = 'stopped'; return; }
-      const requestId = newUuid(); intent.dispatched = true;
-      const body = await requestJson(`${api}/playlists/run`, {method: 'POST', headers: {'Content-Type': 'application/json', 'Idempotency-Key': requestId}, body: JSON.stringify({playlist_id: playlist.id})});
+      const requestId = retry?.requestId || newUuid(); intent.dispatched = true;
+      state.playlist.requestId = requestId; state.playlist.statusIntent += 1;
+      state.playlist.retryStart = {requestId, playlistId: playlist.id}; renderPlaylist();
+      const body = await requestJson(`${api}/playlists/run`, {method: 'POST', signal: AbortSignal.timeout(10000), headers: {'Content-Type': 'application/json', 'Idempotency-Key': requestId}, body: JSON.stringify({playlist_id: playlist.id})});
+      state.playlist.retryStart = null; state.playlist.actionError = null;
       intent.accepted = body.accepted; state.playlist.requestId = body.accepted.request_id; state.playlist.runId = body.accepted.run_id; state.playlist.statusIntent += 1;
       if (intent.cancelled) {
         $('#playlistStatus').textContent = 'Stopping playlist…'; $('#playlistStatus').dataset.state = 'running';
         try { await stopAcceptedPlaylist(intent); }
-        catch (error) { $('#playlistStatus').textContent = error.message || 'Playlist could not stop.'; $('#playlistStatus').dataset.state = 'error'; }
+        catch (error) { playlistActionFailed(error, 'stop'); }
         return;
       }
       $('#playlistStatus').textContent = 'Starting playlist…'; $('#playlistStatus').dataset.state = 'running';
       await refreshPlaylistStatus();
-    } catch (error) { $('#playlistStatus').textContent = error.message || 'Playlist could not start.'; $('#playlistStatus').dataset.state = 'error'; }
+    } catch (error) {
+      if (!intent.dispatched || intent.accepted || (error.status && error.status < 500)) state.playlist.retryStart = null;
+      else if (state.playlist.retryStart) state.playlist.retryStart.cancelled = intent.cancelled;
+      playlistActionFailed(error, 'start');
+    }
     finally {
       if (state.playlist.startIntent === intent) state.playlist.startIntent = null;
       intent.settle(); renderPlaylist();
@@ -1662,9 +1691,10 @@
         if (!intent.accepted) { $('#playlistStatus').textContent = 'Stopping when playlist starts…'; $('#playlistStatus').dataset.state = 'running'; await intent.done; return; }
         await stopAcceptedPlaylist(intent); return;
       }
+      if (state.playlist.retryStart) { state.playlist.retryStart.cancelled = true; playlistActionFailed(new Error('Stop is waiting for the original start result.'), 'stop'); return; }
       if (!state.playlist.runId) throw new Error('No pending or running playlist to stop.');
       await sendPlaylistStop(state.playlist.runId);
-    } catch (error) { $('#playlistStatus').textContent = error.message || 'Playlist could not stop.'; $('#playlistStatus').dataset.state = 'error'; }
+    } catch (error) { playlistActionFailed(error, 'stop'); }
   }
   async function refreshPlaylistStatus() {
     const requestId = state.playlist.requestId;
@@ -1676,6 +1706,16 @@
       const body = await requestJson(`${api}/playlists/status${query}`);
       if (statusPoll !== state.playlist.statusPoll || statusIntent !== state.playlist.statusIntent || requestId !== state.playlist.requestId || runId !== state.playlist.runId) return;
       const requestStatus = body.request; const current = body.current;
+      if (state.playlist.retryStart && !state.playlist.startIntent && requestStatus?.request_id === requestId) {
+        const cancelled = state.playlist.retryStart.cancelled;
+        state.playlist.retryStart = null;
+        if (!['rejected','failed'].includes(requestStatus.phase)) state.playlist.actionError = null;
+        state.playlist.runId = requestStatus.run_id || state.playlist.runId; renderPlaylist();
+        if (cancelled && requestStatus.run_id && ['queued','running'].includes(requestStatus.phase)) {
+          try { await sendPlaylistStop(requestStatus.run_id); } catch (error) { playlistActionFailed(error, 'stop'); }
+          return;
+        }
+      }
       if (requestId && !requestStatus && runId && current?.run_id !== runId) {
         $('#playlistStatus').textContent = 'Playlist request pending…'; $('#playlistStatus').dataset.state = 'running'; return;
       }
@@ -1683,10 +1723,15 @@
       if (!status || status.phase === 'idle') { $('#playlistStatus').textContent = 'No playlist running.'; delete $('#playlistStatus').dataset.state; return; }
       if (status.phase === 'running') {
         const remaining = Math.max(0, Math.ceil(Number(status.remaining_seconds) || 0));
-        $('#playlistStatus').textContent = `Item ${Number(status.current_index) + 1}/${status.entry_count} · ${status.current_entry?.label || 'Scene'} · ${remaining}s remaining · ${status.next_entry ? `Next: ${status.next_entry.label}` : status.next_entry === null ? 'Final item; starting Scene restores afterward' : 'Next entry unavailable'}`;
+        $('#playlistStatus').textContent = `Item ${Number(status.current_index) + 1}/${status.entry_count} · ${status.current_entry?.label || 'Scene'} · ${remaining}s remaining · ${status.next_entry ? `Next: ${status.next_entry.label}` : status.next_entry === null ? 'Final item; output stops afterward' : 'Next entry unavailable'}`;
         $('#playlistStatus').dataset.state = 'running'; state.playlist.runId = status.run_id; return;
       }
-      const messages = {completed: 'Playlist complete. Starting Scene restored.', stopped: 'Playlist stopped.', overridden: 'Live editing took over. Playlist ended.', rejected: status.error || 'Playlist start was rejected.', failed: status.error || 'Playlist failed.'};
+      const messages = {completed: 'Playlist complete. Output stopped.', stopped: 'Playlist stopped.', overridden: 'Live editing took over. Playlist ended.', rejected: status.error || 'Playlist start was rejected.', failed: status.error || 'Playlist failed.'};
+      if (['rejected','failed'].includes(status.phase)) {
+        const key = `${status.request_id || status.run_id}:${status.phase}`;
+        if (key !== state.playlist.dismissedStatusError) { state.playlist.statusErrorKey = key; playlistActionFailed(new Error(messages[status.phase]), 'start'); }
+        if (status.request_id === requestId) state.playlist.retryStart = null; renderPlaylist();
+      }
       $('#playlistStatus').textContent = messages[status.phase] || `Playlist ${status.phase}.`; $('#playlistStatus').dataset.state = ['rejected','failed'].includes(status.phase) ? 'error' : status.phase;
       if (['completed','stopped','overridden','rejected','failed'].includes(status.phase) && status.run_id === state.playlist.runId) state.playlist.runId = null;
     } catch (error) {
@@ -1726,7 +1771,7 @@
     $('#librarySearch').addEventListener('input', (event) => { state.query = event.target.value; renderLibrary(); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.addEventListener('click', () => { state.filter = button.dataset.libraryFilter; renderLibrary(); }));
     $('#gallerySearch').addEventListener('input', (event) => { state.gallery.query = event.target.value; renderGallery(); });
     document.querySelectorAll('[data-gallery-filter]').forEach((button) => button.addEventListener('click', () => { state.gallery.filter = button.dataset.galleryFilter; document.querySelectorAll('[data-gallery-filter]').forEach((candidate) => candidate.classList.toggle('active', candidate.dataset.galleryFilter === state.gallery.filter)); renderGallery(); }));
-    $('#openScene').addEventListener('click', browseScenes); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', stopOutput); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
+    $('#openScene').addEventListener('click', browseScenes); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', stopOutput); $('#resumeScene').addEventListener('click', retryWallActivation); $('#retryWallAction').addEventListener('click', retryWallAction); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
     $('#playlistChoice').addEventListener('change', (event) => { void openPlaylist(event.target.value).catch((error) => { $('#playlistDraftError').textContent = `${error.message} Your playlist is still open.`; }); });
     $('#playlistName').addEventListener('input', renderPlaylistDraftStatus);
     window.addEventListener('beforeunload', (event) => { if (playlistDirty()) { event.preventDefault(); event.returnValue = ''; } });
@@ -1734,6 +1779,10 @@
     $('#playlistSave').addEventListener('click', () => { $('#playlistDraftError').textContent = ''; void savePlaylist().catch((error) => { $('#playlistDraftError').textContent = `${error.message} Your edits are kept. Try Save again.`; }); });
     $('#playlistStart').addEventListener('click', () => { void startPlaylist(); });
     $('#playlistStop').addEventListener('click', () => { void stopPlaylist(); });
+    $('#playlistRetryAction').addEventListener('click', () => { if (state.playlist.retryStart) void startPlaylist(state.playlist.retryStart); else void stopPlaylist(); });
+    $('#playlistUnlockEditing').addEventListener('click', abandonPlaylistStart);
+    $('#playlistRefreshStatus').addEventListener('click', () => { void refreshPlaylistStatus(); });
+    $('#playlistDismissError').addEventListener('click', () => { state.playlist.actionError = null; state.playlist.dismissedStatusError = state.playlist.statusErrorKey; renderPlaylistActionFailure(); });
     document.addEventListener('keydown', handleSceneHistoryShortcut);
   }
   installPixelChaseControls(); installPlantGlowControls(); installMediaControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); updateHistoryActions(); applyScene(defaultScene()); authoredTargetFps = boundedTargetFps($('#targetFps').value);

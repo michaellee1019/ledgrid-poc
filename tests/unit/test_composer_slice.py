@@ -501,12 +501,12 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         self.assertIn("renderStatus(result.status || result);", script)
         self.assertIn("refreshInFlight", script)
 
-    def test_browser_defaults_live_and_coalesces_to_the_newest_valid_scene(self) -> None:
+    def test_browser_defaults_unknown_and_coalesces_to_the_newest_valid_scene(self) -> None:
         html = Path("web/templates/composer.html").read_text(encoding="utf-8")
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
 
-        self.assertIn('id="liveAction" class="button primary" type="button">Stop</button>', html)
-        self.assertIn("status: {connected: true, running: true, armed: true", script)
+        self.assertIn('id="liveAction" class="button primary" type="button" disabled>Stop output</button>', html)
+        self.assertIn("status: {connected: false, running: false, armed: false", script)
         self.assertIn("publication: {queued: null, afterStop: null, inFlight: null, scheduled: false}", script)
         self.assertIn("replacement?.resolve({coalesced: true});", script)
         self.assertNotIn("await submit(state.scene)", script[script.index("async function hydrateCurrentScene"):])
@@ -1011,6 +1011,7 @@ class Node {
 const nodes = Object.fromEntries([
   '#connectionState', '#observedIdentity', '#desiredIdentity', '#sceneRevision',
   '#sceneIdentity', '#saveState', '#liveAction', '#wallActivationFailure', '#operationMessage',
+  '#workingSceneContext', '#requestedSceneSummary', '#resumeScene', '#operations-title', '#playbackHint', '#receiverSummary', '#receiverConnectivity', '#wallActionMessage', '#retryWallAction',
 ].map(selector => [selector, new Node()]));
 nodes['#targetFps'] = {value: '150'};
 const context = {
@@ -1033,11 +1034,11 @@ const run = vm.runInNewContext(source + `
     assert.equal(state.wall.retryBlocked, true);
     assert.equal(state.wall.dirty, true);
     assert.deepEqual(state.scene, draft);
-    assert.equal(nodes['#wallActivationFailure'].children[1].disabled, false,
+    assert.equal(nodes['#retryWallAction'].disabled, false,
       'settled failure must enable the visible retry before any status poll');
     state.publication.queued = {kind: 'publish'};
     renderStatus(state.status);
-    assert.equal(nodes['#wallActivationFailure'].children[1].disabled, true,
+    assert.equal(nodes['#retryWallAction'].disabled, true,
       'a newer queued intent must keep the retry disabled');
     state.publication.queued = null;
     renderStatus(state.status);

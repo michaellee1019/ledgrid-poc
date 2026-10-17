@@ -9,44 +9,33 @@ class PlaybackPresentationTests(unittest.TestCase):
         script = Path('web/static/js/composer_slice.js').read_text()
         source = script[script.index('function renderStatus'):script.index('  function updateHistoryActions')]
         runner = r'''
-const assert = require('node:assert/strict');
-const vm = require('node:vm');
+const assert = require('node:assert/strict'), vm = require('node:vm');
 const nodes = new Map();
-const node = () => ({textContent:'',children:[],replaceChildren(){this.children=[];},append(child){this.children.push(child);},addEventListener(){}});
-const $ = id => {if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};
-const prior = {digest:'prior',revision:1};
-const state = {wall:{scene:{},observation:{active_identity:{scene_identity:prior,component_identities:[{slot_id:'animation',component_id:'aurora_curtains'}]}},activating:false},
- publication:{},gallery:{entries:[{component_id:'aurora_curtains',name:'Aurora Curtains'}]},selection:{name:'Requested Fireworks'},dirty:false};
-const wallStatus = () => ({connected:true,running:true,armed:true,observed:prior,current:prior});
-const context = {state,$,wallStatus,identity:x=>x?.digest || 'None',document:{createElement:node,createTextNode:text=>({textContent:text})},retryWallActivation(){}};
+const $ = id => {if(!nodes.has(id))nodes.set(id,{textContent:'',replaceChildren(){},append(){},addEventListener(){}});return nodes.get(id);};
+const scene = id => ({animation:{component_id:id}});
+const observation = {controller_session_id:'session',freshness:'fresh',is_running:true,scene:scene('aurora_curtains')};
+const state = {scene:scene('fireworks'),wall:{observation,requested:scene('tetris'),scene:scene('fireworks')},publication:{},gallery:{entries:[{component_id:'aurora_curtains',name:'Aurora Curtains'},{component_id:'fireworks',name:'Fireworks'},{component_id:'tetris',name:'Tetris'}]}};
+const context = {state,$,wallStatus:()=>({connected:!state.wall.statusUnavailable&&state.wall.observation?.freshness==='fresh',running:state.wall.observation?.is_running,armed:state.wall.observation?.is_running,receiver_connectivity:{connected:[0,1,2,3]},observed:{digest:'prior'}}),identity:x=>x?.digest || 'None'};
 vm.runInNewContext(process.argv[1]+';this.render=renderStatus;',context);
-const render = () => context.render({connected:true,running:true,armed:true,current:{digest:'requested'}});
+const render = () => context.render({connected:true,running:true,current:{digest:'requested'}});
 render();
-assert.equal($('#operations-title').textContent,'Playing · Aurora Curtains');
-assert.equal($('#connectionState').textContent,'Live');
-state.publication.inFlight = {scene:'Fireworks'};
-render();
-assert.equal($('#operations-title').textContent,'Playing · Aurora Curtains');
-assert.match($('#playbackHint').textContent,/last confirmed output/);
-assert.equal($('#connectionState').textContent,'Updating…');
-state.publication.inFlight = null;
-state.wall.activationError = 'Rejected';
-render();
-assert.equal($('#operations-title').textContent,'Playing · Aurora Curtains');
-assert.match($('#playbackHint').textContent,/not confirmed/);
-assert.equal($('#wallActivationFailure').hidden,false);
-state.wall.statusUnavailable = true;
-render();
-assert.equal($('#operations-title').textContent,'Wall unavailable');
-assert.equal($('#connectionState').textContent,'Offline');
-assert.match($('#playbackHint').textContent,/Cannot confirm/);
-state.wall.statusUnavailable = false;
-state.wall.activationError = null;
-context.wallStatus = () => ({connected:true,running:false,armed:false});
-render();
-assert.equal($('#operations-title').textContent,'Output stopped');
-assert.match($('#playbackHint').textContent,/adjust a control to resume/);
-assert.equal($('#liveAction').disabled,true);
+assert.equal($('#operations-title').textContent,'Playing · Aurora Curtains','requested wall.scene cannot supply observed name');
+assert.equal($('#workingSceneContext').textContent,'Editing: Fireworks · local preview');
+assert.equal($('#requestedSceneSummary').textContent,'Last scene requested: Tetris');
+assert.equal($('#receiverSummary').textContent,'Receivers: 4/5 connected');
+assert.equal($('#liveAction').textContent,'Stop output');assert.equal($('#liveAction').disabled,false);
+state.publication.inFlight={kind:'publish',scene:scene('fireworks')};render();
+assert.equal($('#operations-title').textContent,'Playing · Aurora Curtains');assert.match($('#playbackHint').textContent,/pending/);assert.match($('#requestedSceneSummary').textContent,/Requesting: Fireworks/);
+state.publication.inFlight=null;state.wall.activationError='Rejected';render();render();
+assert.equal($('#wallActivationFailure').hidden,false);assert.equal($('#wallActionMessage').textContent,'Rejected');
+state.wall.actionKind='stop';render();assert.equal($('#retryWallAction').textContent,'Retry stop');
+for(const condition of ['stale','offline','missing']) {
+  observation.freshness=condition==='stale'?'stale':'fresh';state.wall.statusUnavailable=condition==='offline';state.wall.observation=condition==='missing'?null:observation;render();
+  assert.equal($('#operations-title').textContent,'Playback unknown');assert.equal($('#liveAction').textContent,'Stop output');assert.equal($('#liveAction').disabled,true);assert.equal($('#resumeScene').hidden,true);assert.equal($('#observedIdentity').textContent,'Unknown');
+}
+state.wall.observation=observation;state.wall.statusUnavailable=false;observation.freshness='fresh';observation.is_running=false;state.wall.activationError=null;render();
+assert.equal($('#operations-title').textContent,'Output stopped');assert.equal($('#resumeScene').hidden,false);assert.equal($('#resumeScene').disabled,false);assert.equal($('#liveAction').disabled,true);
+state.publication.queued={kind:'publish',scene:state.scene};render();assert.equal($('#resumeScene').disabled,true);
 '''
         result = subprocess.run(['node', '-e', runner, source],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
