@@ -38,6 +38,8 @@
       <div class="pane-heading"><div><p class="eyebrow">Playback</p><h2 id="playlist-title">Playlist</h2></div><output id="playlistTotal" class="playlist-total">0:00</output></div>
       <label>Saved playlist <select id="playlistChoice"><option value="">New playlist</option></select></label>
       <label>Name <input id="playlistName" maxlength="80" placeholder="Evening rotation"></label>
+      <p id="playlistDraftStatus" class="status-line" role="status">New playlist</p>
+      <p id="playlistDraftError" class="status-line" role="alert"></p>
       <ol id="playlistEntries" class="playlist-entries" aria-live="polite"></ol>
       <p class="muted">Choose a scene in Browse, then add it here. Browsing and editing take over from a running playlist.</p>
       <button id="playlistBrowse" type="button" class="button secondary">Choose scenes</button>
@@ -87,6 +89,15 @@
     </aside>
   </div>
 </main>
+<dialog id="playlistUnsavedDialog" aria-labelledby="playlist-unsaved-title">
+  <h2 id="playlist-unsaved-title">Save playlist changes?</h2>
+  <p>Changing playlists will replace your unsaved edits.</p>
+  <form method="dialog" class="operation-row">
+    <button class="button primary" value="save">Save changes</button>
+    <button class="button secondary" value="discard">Discard</button>
+    <button class="button text" value="keep" autofocus>Keep editing</button>
+  </form>
+</dialog>
 <dialog id="readinessDialog" aria-labelledby="readiness-title"><h2 id="readiness-title">Live update needs attention</h2><p id="readinessMessage">Resolve these items, then try another edit.</p><ul id="readinessList"></ul><button class="button primary" data-dialog-close type="button">Close</button></dialog>
 <dialog id="checkDialog" aria-labelledby="check-title"><h2 id="check-title">Scene check</h2><p id="checkMessage"></p><dl id="checkDetails"></dl><button class="button primary" data-dialog-close type="button">Close</button></dialog>
 <script src="{{ url_for('static', filename='js/composer_preview_scheduler.js', v=shell_version) }}"></script>

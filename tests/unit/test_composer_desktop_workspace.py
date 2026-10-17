@@ -75,7 +75,7 @@ const context={state,newUuid:()=> 'entry-1',
   structuredClone,
   sceneFromControls:()=>({schema:'ledgrid.scene.v2',selected}),
   browserSceneForWall:(scene)=>{assert(state.wall.bootstrap);assert(state.wall.observation);captured = scene; return {scene};},
-  renderPlaylist:()=>{},
+  renderPlaylist:()=>{button.disabled=Boolean(state.playlist.saving || state.playlist.adding || state.playlist.switching);},
   refreshWallStatus:()=>new Promise(resolve=>{release=()=>{state.wall.bootstrap={ready:true};state.wall.observation={ready:true};resolve();};}),
   $:(selector)=>selector==='#playlistAdd'?button:selector==='#playlistStatus'?status:{value:'',selectedOptions:[{textContent:'Aurora'}]},
 };
@@ -94,7 +94,7 @@ vm.runInNewContext(process.argv[1]+';this.add=addCurrentSceneToPlaylist;',contex
   state.playlist.saving=true;
   await context.add();
   assert.equal(state.playlist.entries.length,1,'editing is blocked while save response can replace the snapshot');
-  assert.match(status.textContent,/save to finish/);
+  assert.match(status.textContent,/operation to finish/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''
         result = subprocess.run(['node', '-e', runner, source], capture_output=True, text=True)

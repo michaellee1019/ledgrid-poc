@@ -155,7 +155,12 @@ dialog li { margin: .5rem 0; }
 .playlist-total { color: #b9e9dc; font-variant-numeric: tabular-nums; }
 .playlist-entries { display: grid; gap: .3rem; margin: .35rem 0; padding: 0; list-style: none; }
 .playlist-entry { display: grid; grid-template-columns: minmax(0,1fr) 4.5rem auto; gap: .3rem; align-items: center; padding: .35rem; border: 1px solid #39565c; border-radius: 3px; background: #0d181c; }
-.playlist-entry strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.playlist-entry-description { display: flex; gap: .4rem; min-width: 0; align-items: center; }
+.playlist-entry-description > div { min-width: 0; }
+.playlist-entry-description .gallery-thumb { width: 18px; height: 74px; flex-shrink: 0; }
+.playlist-entry-description small { display: block; overflow-wrap: anywhere; color: #b9d0d4; }
+#playlistDraftError { color: #ffd3b8; }
+.playlist-entry strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .playlist-entry label { display: grid; gap: .12rem; min-width: 4.5rem; line-height: 1.1; }
 .playlist-entry input { width: 100%; min-width: 4.5rem; font-variant-numeric: tabular-nums; }
 .playlist-entry-actions { display: flex; gap: .12rem; }

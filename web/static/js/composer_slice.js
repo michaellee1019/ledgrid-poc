@@ -28,7 +28,7 @@
       adoptedLook: null, adoptedVibeId: null, activationError: null, retryBlocked: false, requestId: null,
     },
     playlist: {id: null, entries: [], saved: [], requestId: null, runId: null,
-      saving: false, startIntent: null, statusIntent: 0, statusPoll: 0}
+      saving: false, switching: false, adding: false, baseline: null, startIntent: null, statusIntent: 0, statusPoll: 0}
   };
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const beginIntent = () => ++state.intent;
@@ -509,7 +509,7 @@
     status.textContent = selected ? `Preset: ${selected.name}.` : choices.length ? `Custom remix — ${componentLabel(componentId)} parameters differ from every authored preset.` : `No authored presets for ${componentLabel(componentId)}.`;
     buildControlDisclosure(componentId);
   }
-  function rememberComponentPresets(componentId, presets) { state.componentPresets[componentId] = presets; syncComponentPresetUI(); }
+  function rememberComponentPresets(componentId, presets) { state.componentPresets[componentId] = presets; syncComponentPresetUI(); refreshPlaylistIdentities(); }
   function clockWidgets(scene = state.scene) { return (scene?.widgets || []).filter((widget) => widget.component?.component_id === 'clock_overlay'); }
   function syncClockPresetUI() {
     const clocks = clockWidgets(); const selected = (state.componentPresets.clock_overlay || []).find((choice) => clocks.length === 1 && sameLocalParameters(choice.parameters, clocks[0].component?.parameters));
@@ -666,7 +666,7 @@
   async function loadGallery() {
     try {
       const response = await fetch(`${api}/gallery`, {cache: 'no-store'}); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Gallery is unavailable.');
-      state.gallery.entries = Array.isArray(body.entries) ? body.entries : []; state.gallery.digest = body.catalog_digest; state.gallery.favorites = readGalleryFavorites(); renderGallery();
+      state.gallery.entries = Array.isArray(body.entries) ? body.entries : []; state.gallery.digest = body.catalog_digest; state.gallery.favorites = readGalleryFavorites(); renderGallery(); refreshPlaylistIdentities();
     } catch (error) { $('#galleryCount').textContent = 'Unavailable'; $('#galleryEmpty').hidden = false; $('#galleryEmpty').textContent = error.message || 'Gallery is unavailable.'; }
   }
   function syncPlantOpticControl(optic) {
@@ -1479,31 +1479,66 @@
   function playlistDefinition() {
     return {name: $('#playlistName').value.trim(), entries: state.playlist.entries.map((entry) => structuredClone(entry))};
   }
+  function playlistDirty() {
+    return JSON.stringify(playlistDefinition()) !== (state.playlist.baseline || JSON.stringify({name: '', entries: []}));
+  }
+  function renderPlaylistDraftStatus() {
+    $('#playlistDraftStatus').textContent = playlistDirty() ? 'Unsaved playlist changes' : state.playlist.id ? 'Playlist saved' : 'New playlist';
+  }
+  function playlistEntryIdentity(entry) {
+    const animation = entry.scene?.animation || entry.scene?.background;
+    const componentId = animation?.component_id;
+    const catalog = state.gallery.entries.find((item) => item.component_id === componentId);
+    const preset = (state.componentPresets[componentId] || []).find((item) => sameLocalParameters(item.parameters, animation?.parameters));
+    const name = catalog?.name || componentId || 'Unknown animation';
+    return {catalog, preset, text: `${name} · ${preset ? preset.name : state.componentPresets[componentId] ? 'Custom settings' : 'Preset details unavailable'}`};
+  }
+  function refreshPlaylistEntryIdentity(item, entry, index) {
+    const details = playlistEntryIdentity(entry);
+    const description = item.querySelector('.playlist-entry-description');
+    description.replaceChildren();
+    const title = document.createElement('strong'); title.textContent = entry.label;
+    const identity = document.createElement('small'); identity.textContent = details.text;
+    if (details.catalog) description.append(galleryThumbnail(details.catalog, details.preset));
+    else { const fallback = document.createElement('span'); fallback.className = 'gallery-thumb-unavailable'; fallback.textContent = 'Preview unavailable'; fallback.setAttribute('aria-label', `${details.text} preview unavailable`); description.append(fallback); }
+    const text = document.createElement('div'); text.append(title, identity); description.append(text);
+    const accessibleLabel = `${index + 1}. ${entry.label} · ${details.text}`;
+    item.querySelector('input').setAttribute('aria-label', `${accessibleLabel} duration in seconds`);
+    item.querySelectorAll('[data-playlist-action]').forEach(button => button.setAttribute('aria-label', `${button.dataset.playlistAction} ${accessibleLabel}`));
+  }
+  function refreshPlaylistIdentities() {
+    // Metadata may arrive while a duration field is being edited. Update only
+    // descriptions and accessible names, retaining controls and their focus.
+    document.querySelectorAll('#playlistEntries > .playlist-entry').forEach((item, index) => refreshPlaylistEntryIdentity(item, state.playlist.entries[index], index));
+  }
   function renderPlaylist() {
+    const busy = state.playlist.saving || state.playlist.switching || state.playlist.adding;
     const list = $('#playlistEntries'); list.replaceChildren();
     const total = state.playlist.entries.reduce((sum, entry) => sum + Number(entry.duration_seconds || 0), 0);
     $('#playlistTotal').textContent = formatPlaylistDuration(total);
     $('#playlistEmpty').hidden = state.playlist.entries.length > 0;
     state.playlist.entries.forEach((entry, index) => {
       const item = document.createElement('li'); item.className = 'playlist-entry';
-      const title = document.createElement('strong'); title.textContent = entry.label;
+      const description = document.createElement('div'); description.className = 'playlist-entry-description';
       const durationLabel = document.createElement('label'); durationLabel.append('Seconds ');
-      const duration = document.createElement('input'); duration.type = 'number'; duration.min = '1'; duration.max = '86400'; duration.step = '1'; duration.value = String(entry.duration_seconds); duration.disabled = state.playlist.saving;
-      duration.setAttribute('aria-label', `${entry.label} duration in seconds`);
+      const duration = document.createElement('input'); duration.type = 'number'; duration.min = '1'; duration.max = '86400'; duration.step = '1'; duration.value = String(entry.duration_seconds); duration.disabled = busy;
+      duration.addEventListener('input', () => { entry.duration_seconds = duration.value === '' ? '' : Number(duration.value); renderPlaylistDraftStatus(); });
       duration.addEventListener('change', () => { entry.duration_seconds = Math.max(1, Math.min(86400, Math.round(Number(duration.value) || 60))); renderPlaylist(); });
       durationLabel.append(duration);
       const actions = document.createElement('div'); actions.className = 'playlist-entry-actions';
       [['↑', -1, 'Move up'], ['↓', 1, 'Move down']].forEach(([text, offset, label]) => {
-        const button = document.createElement('button'); button.type = 'button'; button.className = 'button text'; button.textContent = text; button.title = label; button.setAttribute('aria-label', `${label} ${entry.label}`); button.disabled = state.playlist.saving || index + offset < 0 || index + offset >= state.playlist.entries.length;
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'button text'; button.textContent = text; button.title = label; button.dataset.playlistAction = label; button.disabled = busy || index + offset < 0 || index + offset >= state.playlist.entries.length;
         button.addEventListener('click', () => { const [moved] = state.playlist.entries.splice(index, 1); state.playlist.entries.splice(index + offset, 0, moved); renderPlaylist(); }); actions.append(button);
       });
-      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button text'; remove.textContent = 'Remove'; remove.disabled = state.playlist.saving; remove.setAttribute('aria-label', `Remove ${entry.label}`); remove.addEventListener('click', () => { state.playlist.entries.splice(index, 1); renderPlaylist(); }); actions.append(remove);
-      item.append(title, durationLabel, actions); list.append(item);
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button text'; remove.textContent = 'Remove'; remove.disabled = busy; remove.dataset.playlistAction = 'Remove'; remove.addEventListener('click', () => { state.playlist.entries.splice(index, 1); renderPlaylist(); }); actions.append(remove);
+      item.append(description, durationLabel, actions); list.append(item); refreshPlaylistEntryIdentity(item, entry, index);
     });
-    $('#playlistChoice').disabled = state.playlist.saving;
-    $('#playlistAdd').disabled = state.playlist.saving;
-    $('#playlistSave').disabled = state.playlist.saving;
-    $('#playlistStart').disabled = state.playlist.saving || Boolean(state.playlist.startIntent) || state.playlist.entries.length === 0;
+    $('#playlistName').disabled = busy;
+    $('#playlistChoice').disabled = busy;
+    $('#playlistAdd').disabled = busy;
+    $('#playlistSave').disabled = busy;
+    $('#playlistStart').disabled = busy || Boolean(state.playlist.startIntent) || state.playlist.entries.length === 0;
+    renderPlaylistDraftStatus();
   }
   async function loadPlaylists() {
     const body = await requestJson(`${api}/playlists`); state.playlist.saved = body.playlists || [];
@@ -1512,10 +1547,30 @@
     state.playlist.saved.forEach((item) => choice.append(new Option(`${item.name} · ${formatPlaylistDuration(item.total_duration_seconds)}`, item.id)));
     choice.value = state.playlist.saved.some((item) => item.id === selected) ? selected : '';
   }
+  function confirmPlaylistChange() {
+    const dialog = $('#playlistUnsavedDialog');
+    dialog.returnValue = 'keep';
+    return new Promise((resolve) => {
+      dialog.addEventListener('close', () => resolve(dialog.returnValue), {once: true});
+      dialog.showModal();
+    });
+  }
   async function openPlaylist(playlistId) {
-    if (!playlistId) { state.playlist.id = null; state.playlist.entries = []; $('#playlistName').value = ''; renderPlaylist(); return; }
-    const body = await requestJson(`${api}/playlists/${encodeURIComponent(playlistId)}`);
-    state.playlist.id = body.playlist.id; state.playlist.entries = body.playlist.entries.map((entry) => structuredClone(entry)); $('#playlistName').value = body.playlist.name; renderPlaylist();
+    $('#playlistChoice').value = state.playlist.id || '';
+    if (state.playlist.saving || state.playlist.switching || state.playlist.adding) return;
+    state.playlist.switching = true; renderPlaylist();
+    try {
+      if (playlistDirty()) {
+        const action = await confirmPlaylistChange();
+        if (action !== 'discard' && action !== 'save') return;
+        if (action === 'save') await savePlaylist();
+      }
+      // Fetch before replacing the draft; failed loads preserve all edits.
+      const record = playlistId ? (await requestJson(`${api}/playlists/${encodeURIComponent(playlistId)}`)).playlist : {id: null, name: '', entries: []};
+      state.playlist.id = record.id; state.playlist.entries = structuredClone(record.entries); $('#playlistName').value = record.name;
+      state.playlist.baseline = JSON.stringify(playlistDefinition());
+      $('#playlistChoice').value = record.id || ''; $('#playlistDraftError').textContent = '';
+    } finally { state.playlist.switching = false; renderPlaylist(); }
   }
   async function savePlaylist() {
     if (state.playlist.saving) throw new Error('Playlist save is already in progress.');
@@ -1525,7 +1580,8 @@
       const body = await requestJson(state.playlist.id ? `${api}/playlists/${encodeURIComponent(state.playlist.id)}` : `${api}/playlists`, {
         method: state.playlist.id ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(definition),
       });
-      state.playlist.id = body.playlist.id; state.playlist.entries = body.playlist.entries.map((entry) => structuredClone(entry));
+      state.playlist.id = body.playlist.id; state.playlist.entries = structuredClone(body.playlist.entries); $('#playlistName').value = body.playlist.name;
+      state.playlist.baseline = JSON.stringify(playlistDefinition()); $('#playlistDraftError').textContent = '';
       await loadPlaylists(); $('#playlistStatus').textContent = `Saved ${body.playlist.name}.`; $('#playlistStatus').dataset.state = 'saved'; return body.playlist;
     } finally {
       state.playlist.saving = false; renderPlaylist();
@@ -1539,8 +1595,9 @@
   }
   async function addCurrentSceneToPlaylist() {
     const button = $('#playlistAdd');
+    if (state.playlist.saving || state.playlist.switching || state.playlist.adding) { $('#playlistStatus').textContent = 'Wait for the playlist save or operation to finish before editing.'; return; }
     try {
-      if (state.playlist.saving) throw new Error('Wait for the playlist save to finish before editing.');
+      state.playlist.adding = true; renderPlaylist();
       const selectedScene = structuredClone(sceneFromControls());
       const selectedLabel = currentPlaylistEntryLabel();
       button.disabled = true; $('#playlistStatus').textContent = 'Adding the selected Scene…'; $('#playlistStatus').dataset.state = 'running';
@@ -1548,7 +1605,7 @@
       state.playlist.entries.push({entry_id: newUuid(), label: selectedLabel, duration_seconds: 60, scene: browserSceneForWall(selectedScene)});
       renderPlaylist(); $('#playlistStatus').textContent = 'Added the current Scene.'; delete $('#playlistStatus').dataset.state;
     } catch (error) { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }
-    finally { button.disabled = state.playlist.saving; }
+    finally { state.playlist.adding = false; renderPlaylist(); }
   }
   function newPlaylistStartIntent() {
     let settle;
@@ -1662,9 +1719,11 @@
     $('#gallerySearch').addEventListener('input', (event) => { state.gallery.query = event.target.value; renderGallery(); });
     document.querySelectorAll('[data-gallery-filter]').forEach((button) => button.addEventListener('click', () => { state.gallery.filter = button.dataset.galleryFilter; document.querySelectorAll('[data-gallery-filter]').forEach((candidate) => candidate.classList.toggle('active', candidate.dataset.galleryFilter === state.gallery.filter)); renderGallery(); }));
     $('#openScene').addEventListener('click', browseScenes); $('#saveScene').addEventListener('click', () => save(false)); $('#saveAsScene').addEventListener('click', () => save(true)); $('#undoScene').addEventListener('click', () => rewind('undo')); $('#redoScene').addEventListener('click', () => rewind('redo')); $('#liveAction').addEventListener('click', stopOutput); $('#checkScene').addEventListener('click', check); document.querySelectorAll('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
-    $('#playlistChoice').addEventListener('change', (event) => { void openPlaylist(event.target.value).catch((error) => { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }); });
+    $('#playlistChoice').addEventListener('change', (event) => { void openPlaylist(event.target.value).catch((error) => { $('#playlistDraftError').textContent = `${error.message} Your playlist is still open.`; }); });
+    $('#playlistName').addEventListener('input', renderPlaylistDraftStatus);
+    window.addEventListener('beforeunload', (event) => { if (playlistDirty()) { event.preventDefault(); event.returnValue = ''; } });
     $('#playlistAdd').addEventListener('click', addCurrentSceneToPlaylist);
-    $('#playlistSave').addEventListener('click', () => { void savePlaylist().catch((error) => { $('#playlistStatus').textContent = error.message; $('#playlistStatus').dataset.state = 'error'; }); });
+    $('#playlistSave').addEventListener('click', () => { $('#playlistDraftError').textContent = ''; void savePlaylist().catch((error) => { $('#playlistDraftError').textContent = `${error.message} Your edits are kept. Try Save again.`; }); });
     $('#playlistStart').addEventListener('click', () => { void startPlaylist(); });
     $('#playlistStop').addEventListener('click', () => { void stopPlaylist(); });
     document.addEventListener('keydown', handleSceneHistoryShortcut);
