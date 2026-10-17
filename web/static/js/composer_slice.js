@@ -338,7 +338,15 @@
   }
   function decorateNumeric(label, control) {
     if (control.min === '' || control.max === '') return;
-    const range = document.createElement('input'); range.type = 'range'; range.className = 'semantic-range'; range.min = control.min; range.max = control.max; range.step = control.step && control.step !== 'any' ? control.step : '0.01'; range.setAttribute('aria-label', `${controlLabelText(label)} adjustment`);
+    // Both inputs need explicit names: an implicit label only names its first
+    // labelable descendant, which becomes the slider after decoration.
+    const section = label.closest('.inspector')?.querySelector('h2')?.textContent.trim();
+    const setting = [section, controlLabelText(label)].filter(Boolean).join(': ');
+    const rangeDescription = `Range ${control.min} to ${control.max}.`;
+    const range = document.createElement('input'); range.type = 'range'; range.className = 'semantic-range'; range.min = control.min; range.max = control.max; range.step = control.step && control.step !== 'any' ? control.step : '0.01';
+    range.setAttribute('aria-label', `${setting} adjustment`);
+    control.setAttribute('aria-label', `${setting} exact value`);
+    range.setAttribute('aria-description', rangeDescription); control.setAttribute('aria-description', rangeDescription);
     const wrap = document.createElement('span'); wrap.className = 'semantic-number'; control.classList.add('semantic-exact'); control.before(wrap); wrap.append(range, control);
     const record = {kind: 'number', control, range, lastValue: control.value}; semanticControls.push(record);
     range.addEventListener('pointerdown', () => beginControlEdit(control));
