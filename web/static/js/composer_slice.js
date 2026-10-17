@@ -1394,6 +1394,7 @@
     state.wall.activating = true; $('#liveAction').disabled = true; $('#liveAction').textContent = 'Stopping output…';
     $('#operationMessage').textContent = 'Stopping output. The next valid edit resumes automatically.';
     try {
+      if (!state.wall.bootstrap) state.wall.bootstrap = await requestJson('/api/v1/composer/bootstrap', {signal});
       if (state.wall.bootstrap?.capabilities?.server_actions?.activation_available === true) {
         const accepted = await requestJson('/api/v1/scene', {method: 'DELETE', signal});
         if (signal.aborted) throw new Error('Stop timed out; refresh to check output.');

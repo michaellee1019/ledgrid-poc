@@ -25,7 +25,8 @@ class AsyncStopTests(unittest.TestCase):
         script=r'''
 const assert=require('node:assert/strict'),vm=require('node:vm');
 const calls=[],nodes={'#liveAction':{},'#operationMessage':{}};
-const state={status:{},wall:{bootstrap:{capabilities:{server_actions:{activation_available:true}}},observation:{is_running:true}}};
+const cold=process.argv[2]==='cold';
+const state={status:{},wall:{bootstrap:cold?null:{capabilities:{server_actions:{activation_available:true}}},observation:{is_running:true}}};
 let observations=0,paused,release;
 const atFirstObservation=new Promise(resolve=>paused=resolve);
 const transient=new Promise(resolve=>release=resolve);
@@ -33,6 +34,7 @@ const context={state,Date,AbortController,window:{setTimeout,clearTimeout},encod
  $:selector=>nodes[selector],sleep:async()=>{},renderStatus(){},wallStatus:()=>({}),blockers(){},
  requestJson:async(url,options)=>{
   calls.push({url,method:options?.method});
+  if(url.endsWith('/bootstrap')){assert.ok(options.signal);return {capabilities:{server_actions:{activation_available:true}}};}
   if(options?.method==='DELETE')return {request_id:'stop-1'};
   if(url.includes('/settings/observed')){
    observations+=1;if(observations===1){paused();await transient;return {freshness:'fresh',is_running:false,command_result:{request_id:'prior-edit',state:'completed'}};}
@@ -42,8 +44,10 @@ const context={state,Date,AbortController,window:{setTimeout,clearTimeout},encod
  }};
 vm.runInNewContext(process.argv[1]+';this.stopNow=stopOutputNow;',context);
 (async()=>{
- const stopping=context.stopNow({});await atFirstObservation;
- assert.equal(calls[0].method,'DELETE','Stop must be sent before any status read');
+ const stopping=context.stopNow({});
+ await Promise.race([atFirstObservation,stopping.then(()=>{throw new Error('Stop settled without a controller command');})]);
+ assert.equal(calls[cold?1:0].method,'DELETE','Stop must be sent before any status read');
+ if(cold)assert.equal(calls[0].url,'/api/v1/composer/bootstrap');
  assert.equal(state.wall.activating,true,'a transient idle state must keep Stop pending');
  assert.equal(calls.some(call=>call.url==='/api/composer/stop'),false);
  release();await stopping;
@@ -52,8 +56,10 @@ vm.runInNewContext(process.argv[1]+';this.stopNow=stopOutputNow;',context);
  assert.equal(calls.at(-1).url,'/api/composer/stop');
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''
-        result=subprocess.run(['node','-e',script,functions],capture_output=True,text=True)
-        self.assertEqual(result.returncode,0,result.stderr)
+        for bootstrap in ('warm', 'cold'):
+            with self.subTest(bootstrap=bootstrap):
+                result=subprocess.run(['node','-e',script,functions,bootstrap],capture_output=True,text=True,timeout=3)
+                self.assertEqual(result.returncode,0,result.stderr)
 
     def test_entire_stop_operation_aborts_stalled_network_requests(self):
         source=Path('web/static/js/composer_slice.js').read_text()
@@ -62,14 +68,14 @@ vm.runInNewContext(process.argv[1]+';this.stopNow=stopOutputNow;',context);
         script=r'''
 const assert=require('node:assert/strict'),vm=require('node:vm');
 (async()=>{
- for(const stalledAt of ['delete','observation','local-stop']){
+ for(const stalledAt of ['bootstrap','delete','observation','local-stop']){
   const requests=[],nodes={'#liveAction':{},'#operationMessage':{}},alerts=[];let aborted=0,cleared=0;
   const state={status:{},wall:{bootstrap:{capabilities:{server_actions:{activation_available:true}}},observation:{is_running:true}}};
   const context={state,Date,AbortController,encodeURIComponent,api:'/api/composer',clientId:'client',
    window:{setTimeout:(callback,milliseconds)=>{assert.equal(milliseconds,10000);return setTimeout(callback,20)},clearTimeout:timer=>{cleared+=1;clearTimeout(timer)}},
    $:selector=>nodes[selector],sleep:async()=>{},renderStatus(){},wallStatus:()=>({}),blockers:alert=>alerts.push(alert),
    fetch:(url,options)=>{
-    const phase=options.method==='DELETE'?'delete':url.includes('/settings/observed')?'observation':'local-stop';
+    const phase=url.endsWith('/bootstrap')?'bootstrap':options.method==='DELETE'?'delete':url.includes('/settings/observed')?'observation':'local-stop';
     assert.ok(options.signal,'every Stop fetch must share the deadline signal');
     if(requests.length)assert.equal(options.signal,requests[0].signal);
     requests.push({url,signal:options.signal,phase});
@@ -81,6 +87,7 @@ const assert=require('node:assert/strict'),vm=require('node:vm');
     const body=phase==='delete'?{request_id:'stop-1'}:phase==='observation'?{freshness:'fresh',is_running:false,command_result:{request_id:'stop-1',state:'completed'}}:{status:{running:false}};
     return Promise.resolve({ok:true,json:async()=>body});
    }};
+  if(stalledAt==='bootstrap')state.wall.bootstrap=null;
   vm.runInNewContext(process.argv[1]+process.argv[2]+';this.stopNow=stopOutputNow;',context);
   const started=Date.now();await context.stopNow({});
   assert.ok(Date.now()-started<500,`stalled ${stalledAt} must terminate on the shared deadline`);

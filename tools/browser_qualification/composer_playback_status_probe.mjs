@@ -40,8 +40,11 @@ try {
  const title=page.locator('#operations-title'),stop=page.locator('#liveAction');
  await page.waitForFunction(()=>document.querySelector('#operations-title').textContent==='Playback unknown');
  assert.equal(await stop.textContent(),'Stop output');assert.equal(await stop.isDisabled(),true);assert.equal(await page.locator('#resumeScene').isVisible(),false);
- observation.freshness='fresh';observation.is_running=false;
+ observation.freshness='fresh';observation.is_running=true;
+ await page.waitForFunction(()=>document.querySelector('#operations-title').textContent.includes('Playing'));
+ stopFails=false;await stop.click();
  await page.waitForFunction(()=>document.querySelector('#operations-title').textContent==='Output stopped');
+ assert.equal(deleteCount,1,'fresh-page Stop loads capabilities and sends a controller command');stopFails=true;
  await page.locator('#resumeScene').evaluate(button=>{button.click();button.click();});
  await page.waitForFunction(()=>document.querySelector('#operations-title').textContent.includes('Playing'));
  assert.equal(putCount,1,'rapid Resume clicks coalesce');
@@ -55,7 +58,7 @@ try {
  offline=false;await page.waitForFunction(()=>document.querySelector('#operations-title').textContent.includes('Playing'));
  await stop.click();await page.locator('#readinessDialog').waitFor({state:'visible'});await page.locator('#readinessDialog [data-dialog-close]').click();
  assert.equal(await page.locator('#retryWallAction').textContent(),'Retry stop');stopFails=false;await page.locator('#retryWallAction').click();
- await page.waitForFunction(()=>document.querySelector('#operations-title').textContent==='Output stopped');assert.equal(deleteCount,2);assert.equal(putCount,2,'retry Stop cannot activate scene');
+ await page.waitForFunction(()=>document.querySelector('#operations-title').textContent==='Output stopped');assert.equal(deleteCount,3);assert.equal(putCount,2,'retry Stop cannot activate scene');
  await page.locator('[data-workspace-view="playlists"]').click();await page.locator('#playlistChoice').selectOption('saved-a');await page.waitForSelector('.playlist-entry');
  await page.locator('#playlistStart').click();await page.locator('#playlistActionFailure').waitFor({state:'visible'});
  const failure=await page.locator('#playlistActionMessage').textContent();await page.waitForTimeout(1200);
