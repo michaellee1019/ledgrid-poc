@@ -303,3 +303,39 @@ label, .semantic-palette, .semantic-choice { font-size: .88rem; }
 .playlist-picker-choice span { min-width: 0; overflow-wrap: anywhere; }
 .playlist-picker-choice strong, .playlist-picker-choice small { display: block; }
 .playlist-picker-choice small { color: #abc0c5; }
+/* Persistent editing context and jumps preserve the continuous control workspace. */
+.compact-editor-context { position: sticky; top: 0; z-index: 5; padding: .4rem; gap: .3rem; margin-bottom: .5rem; box-shadow: 0 3px 8px #0006; }
+.editor-scene-heading { display: flex; align-items: center; justify-content: space-between; gap: .35rem; }
+.editor-scene-heading > div { min-width: 0; }
+.editor-scene-heading #workingSceneContext, #editorSceneTitle { margin: 0; font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 20rem; }
+.editor-scene-heading #saveState { display: block; width: fit-content; padding: 0; background: transparent; font-size: .7rem; }
+.compact-editor-context .button, .editor-group-navigation select { min-height: 44px; }
+.editor-group-navigation { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .3rem; }
+.editor-group-navigation select { width: 100%; min-width: 0; }
+.editor-group-navigation .button { padding-inline: .45rem; font-size: .78rem; }
+#editorSceneDetails { max-height: 86dvh; overflow-y: auto; width: min(34rem, calc(100vw - 1.5rem)); }
+#editorSceneDetails > * { margin-block: .5rem; }
+#editorSceneDetails h3 { font-size: 1rem; }
+#editorSceneDetails .button, #editorSceneDetails input { min-height: 44px; }
+#editorSceneDetails li { margin-block: .45rem; overflow-wrap: anywhere; }
+#editorSceneDetails::backdrop, #editorLargePreview::backdrop { background: #000b; }
+#editorLargePreview { max-height: 94dvh; text-align: center; }
+#editorLargePreview .preview-canvas { display: block; height: min(72dvh, 620px); width: auto; max-width: 75vw; margin: .5rem auto 0; }
+#editorLargePreview .button, .editor-enlarge-preview { min-height: 44px; min-width: 44px; }
+@media (max-width: 760px) {
+  .editor-scene-heading #workingSceneContext, #editorSceneTitle { max-width: 8.5rem; }
+  .preview-pane { overflow: hidden; display: flex; flex-direction: column; }
+  .preview-pane > .pane-heading { flex: 0 0 auto; flex-wrap: wrap; gap: .15rem; }
+  .preview-pane > .panel-content { min-height: 0; display: flex; flex-direction: column; flex: 1 1 auto; }
+  .preview-pane .preview-stage { min-height: 0; height: auto; max-height: 220px; flex: 1 1 auto; }
+  .preview-pane .preview-canvas { height: 100%; min-height: 0; max-height: 100%; }
+  .preview-pane .status-line { max-height: 3.6em; overflow: hidden; flex: 0 0 auto; }
+}
+@media (max-width: 760px) {
+  .operations-pane > .pane-heading { flex-direction: column; align-items: stretch; }
+  .operations-pane > .pane-heading > .operations-summary { order: -1; width: 100%; }
+}
+#editorSavedTitle { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; max-width: 20rem; }
+@media (max-width: 760px) { #editorSavedTitle { max-width: 8.5rem; } }
+
+#editorSaveFeedback:not([hidden]) { position: sticky; top: 0; padding: .5rem; background: #152a2b; z-index: 1; }

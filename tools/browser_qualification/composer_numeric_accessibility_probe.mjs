@@ -30,6 +30,9 @@ try {
     }
     assert.equal(new Set(names).size, names.length, 'numeric names must be unique');
     assert.equal(await page.evaluate(() => { const ids = [...document.querySelectorAll('[id]')].map((e) => e.id); return new Set(ids).size === ids.length; }), true, 'no duplicate IDs');
+    await page.locator('[data-workspace-view="browse"]').click();
+    await page.locator('#gallerySearch').fill('Aurora');
+    await page.locator('.gallery-select').first().click();
     await page.locator('[data-workspace-view="edit"]').click();
     // Use the actual browser accessibility tree, not only the authored attributes.
     const cdp = await page.context().newCDPSession(page);

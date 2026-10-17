@@ -30,6 +30,7 @@
     playlist: {id: null, entries: [], saved: [], requestId: null, runId: null,
       saving: false, switching: false, adding: false, baseline: null, actionError: null, retryStart: null, dismissedStatusError: null, startIntent: null, stopPromise: null, statusIntent: 0, statusPoll: 0}
   };
+  window.ComposerEditorContext = Object.freeze({snapshot: () => structuredClone({scene: state.scene, selection: state.selection, dirty: state.dirty, intent: state.intent})});
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const beginIntent = () => ++state.intent;
   const intentIsCurrent = (intent) => intent === state.intent;

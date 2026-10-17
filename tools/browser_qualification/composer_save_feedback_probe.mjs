@@ -18,8 +18,11 @@ try {
     await page.locator('#gallerySearch').fill('Aurora');
     await page.locator('.gallery-select').first().click();
     await page.locator('[data-workspace-view="edit"]').click();
+    const sceneDetails=async()=>{const trigger=page.locator('[aria-controls="editorSceneDetails"]');if(await trigger.count()&&!await page.locator('#editorSceneDetails').evaluate(e=>e.open))await trigger.click();};
+    await sceneDetails();
     await page.locator('#sceneName').fill(name);
     // Start with a copy so repeated runs cannot overwrite a prior fixture selection.
+    await sceneDetails();
     await page.locator('#saveAsScene').click();
     await page.locator('#sceneCopyDialog').waitFor({state:'visible'});
     assert.equal(await page.locator('#sceneCopyName').inputValue(), `${name} copy`);
@@ -41,6 +44,7 @@ try {
     await page.locator('[data-workspace-view="browse"]').click();
     await page.locator('[data-workspace-view="edit"]').click();
     assert.equal(await page.locator('#saveFeedback').isVisible(), false);
+    await sceneDetails();
     await page.locator('#saveAsScene').click();
     assert.equal(await page.locator('#sceneCopyName').inputValue(), `${name} copy`);
     await page.locator('#sceneCopyName').fill(name);
@@ -82,6 +86,7 @@ try {
     release();
     await page.waitForFunction(()=>document.querySelector('#saveFeedback').dataset.state==='dirty');
     assert.match(await page.locator('#saveFeedback').textContent(), /earlier revision.*unsaved/);
+    assert.equal(await page.locator('#saveFeedback').isVisible(),true,'delayed save feedback remains accessible outside scene details');
     await page.waitForFunction(async () => { const response=await fetch('/api/composer/recovery'); const body=await response.json(); return body.recovery?.scene.animation.parameters.curtain_density===.39; });
     await page.reload();
     await page.waitForFunction(expected=>document.querySelector('#sceneName').value===expected,copyName);
