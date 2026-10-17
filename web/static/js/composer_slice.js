@@ -1696,7 +1696,22 @@
       state.wall.statusUnavailable = false;
       syncFrameRateObservation(observation);
       renderStatus(status);
-      if (status.undo_invalidated) await acknowledgeUndo(status.undo_invalidation_revision);
+      if (status.undo_invalidated && !state.submitting && !state.publication.inFlight && !state.publication.queued) {
+        const remoteIntent = state.intent;
+        const recovered = await requestJson(`${api}/recovery?client_id=${encodeURIComponent(clientId)}`);
+        if (remoteIntent === state.intent && recovered.recovery?.authoritative
+            && recovered.status.revision === status.revision) {
+          const current = recovered.recovery.scene;
+          state.scene = current;
+          state.selection = recovered.recovery.opened_look_id ? {kind: 'look', id: recovered.recovery.opened_look_id} : null;
+          state.dirty = false; state.wall.dirty = false; state.wall.requestId = null;
+          state.wall.activationError = null; state.wall.retryBlocked = false;
+          state.wall.adoptedLook = structuredClone(current.look);
+          clearHistory(); applyScene(current); schedulePreview(); renderLibrary();
+          $('#sceneName').value = state.selection ? 'Saved scene' : `Currently playing · ${current.animation.component_id.replaceAll('_', ' ')}`;
+          await acknowledgeUndo(status.undo_invalidation_revision);
+        }
+      }
 
     } catch (error) { state.wall.statusUnavailable = true; renderStatus({...state.status, last_error: error.message}); }
     finally { state.refreshInFlight = false; }

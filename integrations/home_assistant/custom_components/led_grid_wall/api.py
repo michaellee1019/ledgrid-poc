@@ -64,7 +64,12 @@ class WallApi:
                 timeout=aiohttp.ClientTimeout(total=5), allow_redirects=False, **kwargs,
             ) as response:
                 if not 200 <= response.status < 300:
-                    raise WallError(f"Wall returned HTTP {response.status}; no retry sent")
+                    try:
+                        details = await response.json()
+                        error = details.get('error') if isinstance(details, dict) else None
+                    except (ValueError, aiohttp.ClientError):
+                        error = None
+                    raise WallError(f"Wall returned HTTP {response.status}: {error or 'request rejected'}; no retry sent")
                 data = await response.json()
                 if not isinstance(data, dict):
                     raise WallError("Invalid wall response")
@@ -84,16 +89,35 @@ class WallApi:
     async def status(self, installation_id=None):
         return validate_status(await self.request("GET", "/status"), installation_id)
 
+    async def catalog(self, installation_id):
+        data = await self.request("GET", "/catalog")
+        if (data.get("schema") != "ledgrid.automation-catalog" or data.get("schema_version") != 1
+                or data.get("installation_id") != installation_id or not isinstance(data.get("content"), list)):
+            raise WallError("Invalid wall content catalog")
+        identities = set()
+        for item in data['content']:
+            if (not isinstance(item, dict) or not isinstance(item.get('id'), str)
+                    or item['id'] in identities or not isinstance(item.get('label'), str)
+                    or type(item.get('supported')) is not bool):
+                raise WallError("Invalid or duplicate wall content identity")
+            identities.add(item['id'])
+        return data
+
     async def apply(self, before, fields):
-        """Submit once; poll only the command receipt until acknowledged or bounded failure."""
+        return await self.command(before, {("pace" if key == "multiplier" else key): value for key, value in fields.items()})
+
+    async def command(self, before, fields, *, action="set_device_state"):
+        """Submit once; poll only its receipt. Catalog changes never enqueue work."""
         payload = {
-            "action": "set_device_state",
+            "action": action,
             "expected_server_session_id": before["server_session_id"],
             "expected_controller_session_id": before["controller_session_id"],
             "expected_controller_state_revision": before["controller_state_revision"],
             "expires_at": time.time() + 10,
-            **{("pace" if key == "multiplier" else key): value for key, value in fields.items()},
+            **fields,
         }
+        if action != 'set_device_state':
+            payload['expected_composer_revision'] = before['composer_revision']
         try:
             async with asyncio.timeout(12):
                 receipt = await self.request("POST", "/commands", json=payload)
@@ -115,6 +139,9 @@ class WallApi:
                         or type(receipt.get("controller_state_revision")) is not int
                         or receipt["controller_state_revision"] != before["controller_state_revision"] + 1):
                     raise WallError("Wall acknowledgement did not match the guarded controller revision")
+                reconciliation = receipt.get('reconciliation')
+                if isinstance(reconciliation, dict) and reconciliation.get('state') not in {'completed', 'following'}:
+                    raise WallError(str(reconciliation.get('error') or 'Composer reconciliation failed'))
                 return receipt
         except TimeoutError as err:
             raise WallError("Wall command acknowledgement timed out; no retry sent") from err

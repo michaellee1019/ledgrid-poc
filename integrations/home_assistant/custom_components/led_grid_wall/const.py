@@ -3,6 +3,8 @@ from datetime import timedelta
 
 DOMAIN = "led_grid_wall"
 CONF_URL = "url"
-PLATFORMS = ["light", "number", "sensor"]
+PLATFORMS = ["light", "number", "sensor", "select", "button"]
 POLL_INTERVAL = timedelta(seconds=2)
 PACE_BASELINE = 0.3
+
+CATALOG_INTERVAL = timedelta(seconds=60)

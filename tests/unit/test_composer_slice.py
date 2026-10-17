@@ -516,7 +516,9 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         self.assertNotIn("queueTargetFps", script)
         self.assertNotIn("Check authorization", script)
         self.assertIn("window.addEventListener('online', refreshStatus);", script)
-        self.assertIn("if (status.undo_invalidated) await acknowledgeUndo(status.undo_invalidation_revision);", script)
+        self.assertIn("if (status.undo_invalidated && !state.submitting", script)
+        self.assertIn("recovered.recovery?.authoritative", script)
+        self.assertIn("await acknowledgeUndo(status.undo_invalidation_revision)", script)
         self.assertIn("`${api}/stop`", script)
         self.assertNotIn("`${api}/go-live`", script)
 

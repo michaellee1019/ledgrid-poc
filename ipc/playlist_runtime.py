@@ -12,6 +12,7 @@ from ipc.runtime_control import (
     ControllerCommandConflictError,
     controller_activation_coordinator,
     normalize_managed_scene,
+    normalize_controller_command_guard,
     start_scene,
 )
 
@@ -42,6 +43,9 @@ def normalize_playlist_command(value: Any) -> dict[str, Any]:
         "action": action,
         "requested_at": float(value.get("requested_at", 0)),
     }
+    if 'expires_at' in value:
+        guard = normalize_controller_command_guard(value)
+        normalized.update(guard)
     if action == "stop":
         run_id = value.get("run_id")
         if run_id is not None and (not isinstance(run_id, str) or not run_id):
@@ -159,12 +163,12 @@ class PlaylistRunner:
     def _validate_scene(self, scene: Mapping[str, Any]) -> dict[str, Any]:
         return normalize_managed_scene(self.manager, scene)
 
-    def _start_entry(self, scene, *, entry_index, expected_revision, session_id, operation_id):
+    def _start_entry(self, scene, *, entry_index, expected_revision, session_id, operation_id, command_guard=None):
         """Issue a single host Scene command; a failure may leave partial output."""
         if self.coordinator.session_id != session_id:
             raise ControllerCommandConflictError('controller session changed during playlist')
         failure = None
-        with self.coordinator.legacy_mutation_guard(self._guard(expected_revision)) as mutation:
+        with self.coordinator.legacy_mutation_guard(command_guard or self._guard(expected_revision)) as mutation:
             try:
                 if not start_scene(self.manager, dict(scene)):
                     raise PlaylistError(f'controller rejected playlist entry {entry_index+1}')
@@ -188,7 +192,17 @@ class PlaylistRunner:
                     )
                 self._request_results.move_to_end(request_id)
                 return deepcopy(cached_result)
-            result = self.start(command) if command["action"] == "start" else self.stop(command)
+            if 'expires_at' in command:
+                guard = normalize_controller_command_guard(command, now=time.time())
+                if (guard['expected_controller_session_id'] != self.coordinator.session_id
+                        or guard['expected_controller_state_revision'] != self.coordinator.state_revision):
+                    raise ControllerCommandConflictError('playlist controller session or command revision changed')
+            if command['action'] == 'stop' and 'expires_at' in command:
+                with self.coordinator.legacy_mutation_guard(command):
+                    result = self.stop(command)
+            else:
+                result = self.start(command) if command["action"] == "start" else self.stop(command)
+            result['controller_state_revision'] = self.coordinator.state_revision
             self._request_results[request_id] = (deepcopy(command), deepcopy(result))
             while len(self._request_results) > 512:
                 self._request_results.popitem(last=False)
@@ -212,6 +226,7 @@ class PlaylistRunner:
                     expected_revision=command["expected_controller_state_revision"],
                     session_id=command["expected_controller_session_id"],
                     operation_id=command["run_id"],
+                    command_guard=command if "expires_at" in command else None,
                 )
                 if not transition["started"]:
                     return self._request_result(

@@ -86,14 +86,14 @@ counter degradation does not alone make the controller unavailable.
 
 ## Shared Scene publication helper
 
-Later content and advanced actions reuse `AutomationAPI.publish_scene`, passing
+Content and advanced actions reuse `AutomationAPI.publish_scene`, passing
 a complete current Scene v2 and the same guards plus
 `expected_composer_revision` from status. It normalizes through the existing
 Composer catalog and queues `start_scene` once, preserving master brightness
 and other global settings. A successful correlated result is required before
 `result()` reconciles the exact scene into the existing Composer live state and
 atomic recovery store. This local reconciliation never sends another wall
-command. The helper is not an advertised HTTP scene action in this increment.
+command. The content HTTP action uses this helper; arbitrary Scene submission is not advertised by this API.
 
 If Composer changed after acceptance, reconciliation reports `conflict` and
 preserves the newer editor/recovery state. This includes Save As, Save, opened
@@ -104,3 +104,47 @@ controller execution result separately. A different controller scene/session or
 stale controller observation also prevents reconciliation. Callers must surface
 that reconciliation result, refresh and resolve new intent explicitly. Result
 polling is required; there is no background retry or scene restoration task.
+
+
+## Content commands and observed selection
+
+`GET /catalog` adds `content`, a list of records with `id`, `kind`, `name`,
+`label`, `supported` and optional `error`. It includes every current Animation,
+checked authored/user component preset, saved Look and saved playlist.
+Unsupported saved references are retained with diagnostics. Stable IDs are
+`animation:python:<component>:v<version>`,
+`preset:python:<component>:<preset_id>`, `look:<UUID>` and `playlist:<UUID>`.
+Labels include IDs to disambiguate equal names; renames preserve IDs.
+
+`POST /commands` accepts `action: play_content` with `content_id`, or
+`action: stop_playlist` with the observed `run_id`. Both require the existing
+web/controller session, revision and expiry guards plus
+`expected_composer_revision` from fresh status. The common accepted/result
+receipt contract applies. Resolve against the current store at dispatch,
+never a cached name. Missing/unsupported content fails explicitly. A nonempty
+unsupported current scene also fails instead of substituting a base scene.
+An initial explicit animation/preset choice without a selected scene starts
+from the existing complete starter scaffold and replaces the chosen component.
+
+Animation/preset publication and complete saved Looks start playback while
+preserving master brightness and other global settings. Scene fields outside
+the requested component/preset effects remain unchanged. A sole matching
+Widget keeps its ID and placement; adding a missing clock uses the stable
+`automation-clock_overlay` ID. Multiple matching Widgets fail as ambiguous.
+
+Status adds `active_content: {animation, preset, look, playlist}` with stable
+IDs or null. Scene matches come from actual controller Scene v2 bytes,
+parameters/effects and identity, never accepted intent. Ambiguous matches are
+null. `playlist` also exposes immutable current/next entry summaries, phase,
+progress, errors and reconciliation status.
+
+Playlist commands use the existing immutable file queue and controller runner.
+New API commands include an execution expiry for start and stop. A guarded
+stop advances the controller ordering revision while retaining current Scene
+playback. Existing Composer queue clients remain supported. Starting another
+playlist while one runs is rejected with a stop-current-first error, preserving
+the current run and reconciliation context. Accepted starts are not renewed or
+replayed by HA. Observed advances from an accepted run reconcile into Composer
+and recovery while its captured editor/recovery generation remains current;
+a newer editor change blocks further reconciliation with a visible conflict.
+No alternate scheduler or playlist transition subsystem is added.

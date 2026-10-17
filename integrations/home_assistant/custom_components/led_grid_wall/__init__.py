@@ -58,6 +58,14 @@ async def async_setup_entry(hass, entry):
         raise ConfigEntryNotReady(str(err)) from err
     coordinator = WallCoordinator(hass, entry, api)
     await coordinator.async_config_entry_first_refresh()
+    coordinator.supports_content = 'play_content' in capabilities['commands']
+    if coordinator.supports_content:
+        try:
+            await coordinator.async_refresh_catalog()
+        except HomeAssistantError as err:
+            from homeassistant.exceptions import ConfigEntryNotReady
+            raise ConfigEntryNotReady(str(err)) from err
+        coordinator.async_start_catalog_poll(entry)
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -85,6 +93,40 @@ async def async_setup_entry(hass, entry):
                 return {"success": False, "error": str(err)}
 
         hass.services.async_register(DOMAIN, "apply", async_apply, schema=APPLY_SCHEMA, supports_response=SupportsResponse.OPTIONAL)
+    if coordinator.supports_content:
+        for service in ('play_content', 'stop_playlist', 'refresh_catalog'):
+            if hass.services.has_service(DOMAIN, service):
+                continue
+            async def content_action(call):
+                loaded = [item for item in hass.config_entries.async_entries(DOMAIN)
+                          if getattr(item, 'runtime_data', None) is not None]
+                if len(loaded) != 1:
+                    raise HomeAssistantError('Exactly one loaded LED Grid Wall is required')
+                selected = loaded[0]
+                registry, devices = er.async_get(hass), dr.async_get(hass)
+                for entity_id in call.data.get('entity_id', []):
+                    entity = registry.async_get(entity_id)
+                    if entity is None or entity.config_entry_id != selected.entry_id:
+                        raise HomeAssistantError('Target must belong to this wall integration')
+                for device_id in call.data.get('device_id', []):
+                    device = devices.async_get(device_id)
+                    if device is None or (DOMAIN, selected.unique_id) not in device.identifiers:
+                        raise HomeAssistantError('Target must be this wall device')
+                try:
+                    if call.service == 'play_content':
+                        return await selected.runtime_data.async_play_content(call.data['content_id'])
+                    if call.service == 'stop_playlist':
+                        return await selected.runtime_data.async_stop_playlist()
+                    await selected.runtime_data.async_refresh_catalog()
+                    return {'success': True}
+                except HomeAssistantError as err:
+                    return {'success': False, 'error': str(err)}
+            fields = {vol.Optional('entity_id'): cv.entity_ids,
+                      vol.Optional('device_id'): vol.All(cv.ensure_list, [cv.string])}
+            if service == 'play_content':
+                fields[vol.Required('content_id')] = cv.string
+            hass.services.async_register(DOMAIN, service, content_action, schema=vol.Schema(fields),
+                                         supports_response=SupportsResponse.OPTIONAL)
     return True
 
 
@@ -92,5 +134,6 @@ async def async_unload_entry(hass, entry):
     if unloaded := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         entry.runtime_data = None
         if not any(item.runtime_data is not None for item in hass.config_entries.async_entries(DOMAIN) if hasattr(item, "runtime_data")):
-            hass.services.async_remove(DOMAIN, "apply")
+            for service in ('apply', 'play_content', 'stop_playlist', 'refresh_catalog'):
+                hass.services.async_remove(DOMAIN, service)
     return unloaded

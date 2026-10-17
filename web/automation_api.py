@@ -73,6 +73,8 @@ class AutomationAPI:
         self.identity_path = data_root / 'run_state' / 'installation.json'
         self._lock = threading.RLock()
         self._commands = {}
+        from web.automation_content import AutomationContent
+        self.content = AutomationContent(self)
 
     @property
     def installation_id(self):
@@ -81,7 +83,7 @@ class AutomationAPI:
     def capabilities(self):
         return {'schema': 'ledgrid.automation-capabilities', 'schema_version': 1,
                 'installation_id': self.installation_id, 'server_session_id': self.server_session_id,
-                'configuration_url': '/composer', 'commands': ['set_device_state'],
+                'configuration_url': '/composer', 'commands': ['set_device_state', 'play_content', 'stop_playlist'],
                 'controls': {'power': {}, 'brightness': {'min': 0, 'max': 255},
                              'pace': {'min': 0.1, 'max': 25}},
                 'guard_max_seconds': GUARD_SECONDS, 'completion_wait_max_seconds': 2,
@@ -118,6 +120,9 @@ class AutomationAPI:
         playback = raw.get('controller_playback') or {}
         scene = raw.get('scene_state')
         scene_digest = canonical_json_sha256(scene) if isinstance(scene, dict) else None
+        with self._lock:
+            reconciliation = self.content.observe_playlist(raw, playlist) if fresh else None
+            active_content = self.content.active(raw, playlist, fresh=fresh)
         return {'schema': 'ledgrid.automation-status', 'schema_version': 1,
                 'installation_id': self.installation_id, 'server_session_id': self.server_session_id,
                 'observed_at': timestamp, 'fresh': fresh,
@@ -140,7 +145,8 @@ class AutomationAPI:
                                         'error': playback.get('error') or raw.get('last_error'),
                                         'actual_fps': raw.get('actual_fps')},
                 'receiver_connectivity': receivers,
-                'playlist': {key: playlist.get(key) for key in ('phase', 'run_id', 'playlist_id', 'playlist_name', 'current_index', 'entry_count', 'remaining_seconds', 'error')} if isinstance(playlist, dict) else None,
+                'active_content': active_content,
+                'playlist': {**{key: playlist.get(key) for key in ('phase', 'run_id', 'playlist_id', 'playlist_name', 'current_index', 'current_entry', 'next_entry', 'entry_count', 'remaining_seconds', 'error')}, 'reconciliation': reconciliation} if isinstance(playlist, dict) else None,
                 'physical_display_verified': False}
 
     def catalog(self):
@@ -157,6 +163,7 @@ class AutomationAPI:
         return {'schema': 'ledgrid.automation-catalog', 'schema_version': 1,
                 'installation_id': self.installation_id, 'components': components,
                 'presets': presets, 'preset_errors': errors,
+                'content': self.content.catalog(),
                 'looks': self.interface.composer_looks.list(),
                 'playlists': self.interface.composer_playlists.list()}
 
@@ -181,6 +188,14 @@ class AutomationAPI:
     def submit(self, payload):
         if not isinstance(payload, dict):
             raise AutomationError('Command must be an object.')
+        if payload.get('action') in {'play_content', 'stop_playlist'}:
+            allowed = {'action', 'content_id' if payload['action'] == 'play_content' else 'run_id',
+                       'expected_server_session_id', 'expected_controller_session_id',
+                       'expected_controller_state_revision', 'expected_composer_revision', 'expires_at'}
+            if set(payload) - allowed:
+                raise AutomationError('Unsupported command fields.')
+            with self._lock, self.interface.composer_live.publication_lock:
+                return self.content.play(payload) if payload['action'] == 'play_content' else self.content.playlist_command(payload)
         allowed = {'action', 'power', 'brightness', 'pace', 'expected_server_session_id',
                    'expected_controller_session_id', 'expected_controller_state_revision', 'expires_at'}
         if set(payload) - allowed or payload.get('action') != 'set_device_state':
@@ -190,7 +205,7 @@ class AutomationAPI:
             guard, _ = self._guard(payload)
             return self._enqueue('automation_device_state', settings, guard)
 
-    def _enqueue(self, action, data, guard, *, reconciliation=None):
+    def _reserve_command_slot(self):
         if len(self._commands) >= 256:
             # Never lose metadata for an accepted, unobserved completion. Client
             # intent cannot silently disappear to make room for another write.
@@ -200,10 +215,16 @@ class AutomationAPI:
                     break
             else:
                 raise AutomationError('Command history is full; observe pending commands first.', code='busy', status=503)
+    @staticmethod
+    def _receipt(request_id, command_id):
+        return {'schema': 'ledgrid.automation-command', 'schema_version': 1,
+                'request_id': request_id, 'command_id': command_id, 'state': 'accepted',
+                'result_url': f'{PREFIX}/commands/{request_id}'}
+
+    def _enqueue(self, action, data, guard, *, reconciliation=None):
+        self._reserve_command_slot()
         command = self.channel.send_command(action, **data, _controller_guard=guard)
-        receipt = {'schema': 'ledgrid.automation-command', 'schema_version': 1,
-                   'request_id': command['request_id'], 'command_id': command['command_id'],
-                   'state': 'accepted', 'result_url': f"{PREFIX}/commands/{command['request_id']}"}
+        receipt = self._receipt(command['request_id'], command['command_id'])
         self._commands[command['request_id']] = {'receipt': receipt, 'guard': guard, 'reconciliation': reconciliation}
         return dict(receipt)
 
@@ -239,12 +260,28 @@ class AutomationAPI:
                 if record is None:
                     raise AutomationError('Request is unknown to this web session; do not replay it.', code='unknown_request', status=404)
                 receipt = dict(record['receipt'])
-                result = self.channel.read_command_result(request_id)
+                if 'playlist_run_id' in record:
+                    observed = self.channel.read_playlist_request_status(request_id)
+                    result = None
+                    if observed is not None:
+                        if observed.get('request_id') != request_id or observed.get('run_id') != record['playlist_run_id']:
+                            raise AutomationError('Playlist result correlation is invalid.', code='invalid_result', status=502)
+                        result = {'request_id': request_id, 'command_id': receipt['command_id'],
+                                  'state': 'completed' if observed.get('phase') in {'running', 'stopped'} else 'failed',
+                                  'error': observed.get('error'), 'completed_at': observed.get('updated_at'),
+                                  'controller_session_id': observed.get('controller_session_id'),
+                                  'controller_state_revision': observed.get('controller_state_revision')}
+                else:
+                    result = self.channel.read_command_result(request_id)
                 if result is not None:
                     if result.get('request_id') != request_id or result.get('command_id') != receipt['command_id'] or result.get('state') not in {'completed', 'failed'}:
                         raise AutomationError('Controller result correlation is invalid.', code='invalid_result', status=502)
                     receipt.update({key: result.get(key) for key in ('state', 'error', 'completed_at', 'controller_session_id', 'controller_state_revision')})
-                    receipt['reconciliation'] = self._reconcile(record) if result['state'] == 'completed' else None
+                    if 'playlist_run_id' in record:
+                        current = self.status()
+                        receipt['reconciliation'] = (current.get('playlist') or {}).get('reconciliation')
+                    else:
+                        receipt['reconciliation'] = self._reconcile(record) if result['state'] == 'completed' else None
                     record['terminal'] = True
                     return {**receipt, 'status': self.status()}
                 current = self.status()

@@ -28,3 +28,29 @@ apply:
           max: 25
           step: 0.05
           mode: box
+
+play_content:
+  name: Play wall content
+  description: Resolve a current catalog ID, start playback once, and wait for controller acknowledgement and Composer reconciliation. Master brightness is preserved, including zero.
+  target:
+    device:
+      integration: led_grid_wall
+  fields:
+    content_id:
+      name: Content ID
+      description: Stable ID from the wall catalog or selector content_id attribute.
+      required: true
+      selector:
+        text:
+stop_playlist:
+  name: Stop wall playlist
+  description: Cancel the observed controller playlist while retaining its current scene.
+  target:
+    device:
+      integration: led_grid_wall
+refresh_catalog:
+  name: Refresh wall content catalog
+  description: Read current animations, presets, saved Looks and playlists without starting playback.
+  target:
+    device:
+      integration: led_grid_wall

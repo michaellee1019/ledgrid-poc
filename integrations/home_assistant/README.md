@@ -197,3 +197,57 @@ uv run --python 3.14 --with homeassistant==2026.9.2 --with pyyaml python integra
 For future authorized live acceptance: capture fresh wall selection/settings, exercise a 10% scene and a pace automation through HA, verify matching controller observations and retained Scene, and restore the captured state. Historical 0/26/255 examples are not restoration instructions.
 
 References: [HA packages](https://www.home-assistant.io/docs/configuration/packages/), [template entities](https://www.home-assistant.io/integrations/template/), [REST commands](https://www.home-assistant.io/integrations/rest_command/), [HA scripts and responses](https://www.home-assistant.io/docs/scripts/).
+
+## Native content controls
+
+The native device adds four dynamic selectors:
+`select.led_grid_wall_animation`, `select.led_grid_wall_preset`,
+`select.led_grid_wall_look` and `select.led_grid_wall_playlist`. Selecting an
+option starts playback and preserves master brightness, including zero.
+Animation selection uses the component defaults and preserves the current
+background, palette, scene pace/brightness, plants and Widgets. A component
+preset applies its parameters and declared installation effects. A clock preset
+updates the sole matching Widget while preserving its ID and placement; an
+ambiguous multi-clock scene requires an explicit Widget choice in Composer.
+A saved Look applies its complete scene.
+
+Options include stable content IDs, so equal names are unambiguous. The
+`content_id` attribute reports the observed match; it is never the last chosen
+option. If multiple identical saved scenes or presets match, the selector has
+no unique current option. Unsupported saved references remain recoverable and
+appear with explicit errors in the catalog; selecting a deleted or unsupported
+ID fails without substitution.
+
+Catalogs refresh every 60 seconds. `button.led_grid_wall_refresh_catalog` or
+`led_grid_wall.refresh_catalog` refreshes them immediately without changing
+playback. Renaming content changes its displayed label, preserving its ID.
+Use IDs for durable automation references:
+
+```yaml
+action: led_grid_wall.play_content
+data:
+  content_id: animation:python:gradient:v1
+response_variable: wall_result
+```
+
+The action returns a correlated controller acknowledgement and successful
+Composer reconciliation, or `success: false` with an error. The same guarded
+10-second expiry and no-retry rules apply. HA polls observed selection every
+two seconds; Composer adopts accepted external scenes and clears stale undo.
+Newer Composer recovery/cursor edits are preserved and report a reconciliation
+conflict separately from controller execution.
+
+Playlists use the controller's existing finite runner. Progress, errors and
+manual takeover appear in the playlist selector's `playlist` attribute.
+`button.led_grid_wall_stop_playlist` or `led_grid_wall.stop_playlist` cancels the
+observed run while retaining its current scene and output. Turning the wall
+light off stops output. Starting a playlist while another is running fails
+explicitly: stop the current run first. That rejection leaves the current run,
+scene, brightness and observed selector unchanged. There is no pause, skip,
+shuffle or automatic playlist restoration on startup.
+
+Run the native content/controller exercise on loopback with
+`integrations/home_assistant/check_content_runtime.py`; add `--browser` for the
+focused native-HA-to-Composer and Composer-to-HA smoke. Browser dependencies are
+those installed for `tools/browser_qualification`. This is simulated controller
+acceptance; installed-wall evidence belongs to the migration task.

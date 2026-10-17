@@ -249,6 +249,13 @@ def process_playlist_commands(channel, runner: PlaylistRunner) -> int:
                 "entry_count": 0, "current_entry": None, "entry_started_at": None,
                 "entry_deadline_at": None, "remaining_seconds": None, "error": str(exc),
             }
+        status['controller_state_revision'] = runner.coordinator.state_revision
+        previous = channel.read_status() or {}
+        current = (controller_status_payload(runner.manager)
+                   if callable(getattr(runner.manager, 'get_current_status', None))
+                   else runner.coordinator.controller_status())
+        current.update({key: previous.get(key) for key in ('command_result', 'last_command_id', 'last_applied_command_id')})
+        channel.write_status(current)
         channel.write_playlist_request_status(status)
         channel.acknowledge_playlist_poll(request_id)
         completed += 1
