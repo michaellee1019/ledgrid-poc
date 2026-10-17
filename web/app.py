@@ -1439,7 +1439,7 @@ class AnimationWebInterface:
                 'profile': profile,
                 'command_id': command.get('command_id') if isinstance(command, dict) else None,
             })
-        
+
         @self.app.route('/api/v1/receivers/status/refresh', methods=['POST'])
         def api_refresh_receiver_status():
             """Request a fresh controller-side SPI status drain on every receiver."""
