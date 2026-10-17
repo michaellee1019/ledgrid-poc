@@ -17,7 +17,7 @@ from animation.core.presentation_contracts import (
     SceneState,
 )
 from animation.core.plant_awareness import INSTALLATION_GEOMETRY_CONTACT_INPUT
-from animation.plugins.lava_lamp import LavaLampAnimation
+from animation.plugins.lava_lamp import PALETTES, LavaLampAnimation
 from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
 from web.app import AnimationWebInterface
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
@@ -86,6 +86,55 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         for expected, actual in zip(left_frames, right_frames): np.testing.assert_array_equal(expected, actual)
         self.assertEqual(left_frames[-1].shape, (33 * 138, 3))
         self.assertLessEqual(left.cadence_snapshot()["simulation_hz"], 100.0)
+
+    def test_color_pass_preserves_broadcast_reference_pixels_and_thermal_state(self) -> None:
+        # The former RGB-broadcast equations are the byte-level radiometry
+        # oracle for the faster scalar-field color pass, including refraction.
+        for stress in (False, True):
+            lamp = LavaLampAnimation(self.controller, {
+                "blob_count": 12 if stress else 7,
+                "blob_scale": 1.8 if stress else 1.0,
+                "glow": 1.0 if stress else .58,
+            })
+            lamp.set_presentation_context(self._resolved("refract"))
+            for palette_id in LavaLampAnimation.SCENE_PALETTES:
+                for alpha in (0.0, .37, .95):
+                    with self.subTest(stress=stress, palette=palette_id, alpha=alpha):
+                        lamp._step(.01)
+                        lamp.temperature[lamp.active] = np.linspace(
+                            0.0, 1.0, int(np.count_nonzero(lamp.active)), dtype=np.float32,
+                        )
+                        state = {
+                            name: value.copy() for name, value in vars(lamp).items()
+                            if not name.startswith("_") and isinstance(value, np.ndarray)
+                        }
+                        rng = copy.deepcopy(lamp.rng.bit_generator.state)
+                        actual = lamp._render(lamp.simulation_time, alpha, palette_id).copy()
+                        temperature = np.divide(
+                            lamp._temperature_field, lamp._field,
+                            out=np.zeros_like(lamp._field), where=lamp._field > 1e-6,
+                        )
+                        wax = np.clip((lamp._field - .48) / .78, 0.0, 1.0)
+                        wax *= wax * (3.0 - 2.0 * wax)
+                        halo = np.clip((lamp._field - .12) / .52, 0.0, 1.0) * lamp.params["glow"]
+                        cool, warm, hot, glow = (
+                            np.asarray(color, dtype=np.float32)
+                            for color in PALETTES[LavaLampAnimation.SCENE_PALETTES[palette_id]]
+                        )
+                        heat = np.clip(temperature, 0.0, 1.0)[..., None]
+                        color = cool + (warm - cool) * np.minimum(1.0, heat * 1.5)
+                        color += (hot - color) * np.clip((heat - .55) / .45, 0.0, 1.0)
+                        lamp._background(lamp.simulation_time)
+                        lamp._canvas_float += glow * halo[..., None] * (1.0 - wax[..., None]) * .34
+                        lamp._canvas_float *= 1.0 - wax[..., None]
+                        lamp._canvas_float += color * wax[..., None]
+                        lamp._apply_foliage_refraction()
+                        expected = np.clip(lamp._canvas_float, 0, 255).astype(np.uint8)
+                        expected = expected[::-1].transpose(1, 0, 2).reshape(-1, 3)
+                        np.testing.assert_array_equal(actual, expected)
+                        for name, value in state.items():
+                            np.testing.assert_array_equal(getattr(lamp, name), value)
+                        self.assertEqual(lamp.rng.bit_generator.state, rng)
 
     def test_strict_live_manager_accepts_and_renders_lava_lamp(self) -> None:
         manager = AnimationManager(self.controller, auto_start=False)

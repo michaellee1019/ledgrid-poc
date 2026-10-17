@@ -640,14 +640,18 @@ class LavaLampAnimation(AnimationBase):
             np.asarray(color, dtype=np.float32)
             for color in PALETTES[palette]
         )
-        heat_mix = np.clip(temperature, 0.0, 1.0)[..., None]
-        wax_color = cool + (warm - cool) * np.minimum(1.0, heat_mix * 1.5)
+        heat_mix = np.clip(temperature, 0.0, 1.0)
+        warm_mix = np.minimum(1.0, heat_mix * 1.5)
         hot_mix = np.clip((heat_mix - 0.55) / 0.45, 0.0, 1.0)
-        wax_color += (hot - wax_color) * hot_mix
+        clear_wax = 1.0 - wax
         self._background(elapsed)
-        self._canvas_float += glow_color * halo[..., None] * (1.0 - wax[..., None]) * 0.34
-        self._canvas_float *= 1.0 - wax[..., None]
-        self._canvas_float += wax_color * wax[..., None]
+        # Avoid broadcasting scalar fields into full RGB intermediates.
+        for channel in range(3):
+            wax_color = cool[channel] + (warm[channel] - cool[channel]) * warm_mix
+            wax_color += (hot[channel] - wax_color) * hot_mix
+            self._canvas_float[:, :, channel] += glow_color[channel] * halo * clear_wax * 0.34
+            self._canvas_float[:, :, channel] *= clear_wax
+            self._canvas_float[:, :, channel] += wax_color * wax
         self._apply_foliage_refraction()
 
         np.clip(self._canvas_float, 0.0, 255.0, out=self._canvas_float)
