@@ -40,9 +40,9 @@
       <p id="playlistDraftStatus" class="status-line" role="status">New playlist</p>
       <p id="playlistDraftError" class="status-line" role="alert"></p>
       <ol id="playlistEntries" class="playlist-entries" aria-live="polite"></ol>
-      <p class="muted">Choose a scene in Browse, then add it here. Browsing and editing take over from a running playlist.</p>
-      <button id="playlistBrowse" type="button" class="button secondary">Choose scenes</button>
-      <p id="playlistEmpty" class="empty">Add the current Scene to begin.</p>
+      <p class="muted">Add scenes to prepare this playlist without changing playback. Play playlist starts it.</p>
+      <button id="playlistBrowse" type="button" class="button secondary">Add scenes</button>
+      <p id="playlistEmpty" class="empty">Add scenes to begin.</p>
       <div class="operation-row"><button id="playlistAdd" class="button secondary" type="button">Add current Scene</button><button id="playlistSave" class="button secondary" type="button">Save</button></div>
       <div class="operation-row"><button id="playlistStart" class="button primary" type="button">Play playlist</button><button id="playlistStop" class="button text" type="button">Stop</button></div>
       <p id="playlistStatus" class="status-line playlist-status" role="status" aria-live="polite">No playlist running.</p>
@@ -99,6 +99,14 @@
     <p id="sceneCopyError" role="alert"></p>
     <div class="operation-row"><button id="sceneCopySubmit" class="button primary" type="submit">Save copy</button><button id="sceneCopyCancel" class="button secondary" type="button">Cancel</button></div>
   </form>
+</dialog>
+<dialog id="playlistPickerDialog" aria-labelledby="playlist-picker-title" aria-describedby="playlistPickerMessage">
+  <h2 id="playlist-picker-title">Add scenes to playlist</h2>
+  <p id="playlistPickerMessage" role="status">Playback stays unchanged.</p>
+  <label>Find scenes <input id="playlistPickerSearch" type="search" placeholder="Search built-in and saved scenes"></label>
+  <div id="playlistPickerList" class="playlist-picker-list"></div>
+  <p id="playlistPickerEmpty" class="empty">No matching scenes.</p>
+  <div class="operation-row"><button id="playlistPickerAdd" type="button" class="button primary" disabled>Add selected (0)</button><button id="playlistPickerCancel" type="button" class="button text">Cancel</button></div>
 </dialog>
 <dialog id="playlistUnsavedDialog" aria-labelledby="playlist-unsaved-title">
   <h2 id="playlist-unsaved-title">Save playlist changes?</h2>

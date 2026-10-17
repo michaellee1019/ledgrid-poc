@@ -650,12 +650,12 @@
     grid.replaceChildren();
     entries.forEach((entry) => {
       const card = document.createElement('div'); card.className = 'gallery-card'; card.dataset.galleryKey = entry.key; card.setAttribute('role', 'listitem');
-      const select = document.createElement('button'); select.type = 'button'; select.className = 'gallery-select'; select.setAttribute('aria-current', String(state.scene?.animation?.component_id === entry.component_id)); select.disabled = !entry.available;
+      const select = document.createElement('button'); select.type = 'button'; select.className = 'gallery-select'; select.setAttribute('aria-current', String(state.scene?.animation?.component_id === entry.component_id)); select.disabled = !entry.available; select.setAttribute('aria-label', `Play & edit ${entry.name}`);
       const thumbnail = galleryThumbnail(entry);
       const copy = document.createElement('span'); copy.className = 'gallery-card-copy';
       const title = document.createElement('span'); title.className = 'gallery-card-title'; title.textContent = entry.name;
       const description = document.createElement('span'); description.className = 'gallery-card-description'; description.textContent = entry.description;
-      const meta = document.createElement('span'); meta.className = 'gallery-card-meta'; meta.textContent = entry.available ? `${entry.preset_count} presets · available` : 'Unavailable';
+      const meta = document.createElement('span'); meta.className = 'gallery-card-meta'; meta.textContent = entry.available ? `${entry.preset_count} presets · Play & edit` : 'Unavailable';
       copy.append(title, description, meta); select.append(thumbnail, copy);
       select.addEventListener('click', () => { showGalleryDetail(entry); selectGalleryEntry(entry); });
       const favorite = document.createElement('button'); favorite.type = 'button'; favorite.className = 'gallery-favorite'; favorite.setAttribute('aria-label', `Favorite ${entry.name}`); favorite.setAttribute('aria-pressed', String(state.gallery.favorites.has(entry.key))); favorite.textContent = state.gallery.favorites.has(entry.key) ? '★' : '☆';
@@ -1609,6 +1609,7 @@
     $('#playlistName').disabled = busy;
     $('#playlistChoice').disabled = busy;
     $('#playlistAdd').disabled = busy;
+    $('#playlistBrowse').disabled = busy;
     $('#playlistSave').disabled = busy;
     $('#playlistStart').disabled = busy || Boolean(state.playlist.startIntent) || state.playlist.entries.length === 0;
     renderPlaylistDraftStatus(); renderPlaylistActionFailure();
@@ -1659,6 +1660,76 @@
     } finally {
       state.playlist.saving = false; renderPlaylist();
     }
+  }
+  let playlistPicker = null;
+  function renderPlaylistPicker() {
+    const picker = playlistPicker; if (!picker) return;
+    const query = $('#playlistPickerSearch').value.trim().toLocaleLowerCase();
+    const list = $('#playlistPickerList'); list.replaceChildren();
+    picker.items.filter(item => item.name.toLocaleLowerCase().includes(query)).forEach(item => {
+      const row = document.createElement('label'); row.className = 'playlist-picker-choice';
+      const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = picker.selected.has(item.key); checkbox.disabled = picker.adding;
+      checkbox.addEventListener('change', () => { if (checkbox.checked) picker.selected.add(item.key); else picker.selected.delete(item.key); updatePlaylistPickerCount(); });
+      const text = document.createElement('span'); const title = document.createElement('strong'); title.textContent = item.name;
+      const kind = document.createElement('small'); kind.textContent = item.kind === 'look' ? 'Saved scene' : item.kind === 'starter' ? 'Built-in scene' : 'Built-in animation · factory settings';
+      text.append(title, kind); row.append(checkbox, text); list.append(row);
+    });
+    $('#playlistPickerEmpty').hidden = list.childElementCount > 0;
+    updatePlaylistPickerCount();
+  }
+  function updatePlaylistPickerCount() {
+    const picker = playlistPicker; if (!picker) return;
+    $('#playlistPickerAdd').textContent = picker.adding ? 'Adding…' : `Add selected (${picker.selected.size})`;
+    $('#playlistPickerAdd').disabled = picker.adding || !picker.selected.size;
+  }
+  async function openPlaylistPicker() {
+    if (playlistPicker || state.playlist.saving || state.playlist.switching || state.playlist.adding || state.playlist.retryStart) return;
+    const pane = $('.playlist-pane');
+    const picker = {items: [], selected: new Set(), adding: false, scrollTop: pane.scrollTop}; playlistPicker = picker;
+    const dialog = $('#playlistPickerDialog');
+    $('#playlistPickerSearch').value = ''; $('#playlistPickerMessage').textContent = 'Loading scenes…';
+    renderPlaylistPicker();
+    dialog.addEventListener('close', () => { if (playlistPicker === picker) playlistPicker = null; pane.scrollTop = picker.scrollTop; }, {once: true});
+    openDialog(dialog);
+    try {
+      const library = await requestJson(`${api}/library`, {signal: AbortSignal.timeout(10000)});
+      if (playlistPicker !== picker) return;
+      picker.items = [
+        ...(library.items || []).filter(item => ['starter', 'look'].includes(item.kind)).map(item => ({...item, key: `${item.kind}:${item.id}`})),
+        ...state.gallery.entries.filter(entry => entry.available).map(entry => ({kind: 'animation', id: entry.component_id, name: entry.name, key: `animation:${entry.key}`, entry})),
+      ];
+      $('#playlistPickerMessage').textContent = 'Selections are added to this draft. Playback stays unchanged.'; renderPlaylistPicker();
+    } catch (error) { if (playlistPicker === picker) $('#playlistPickerMessage').textContent = `${error.message} Close and reopen to retry.`; }
+  }
+  async function addPickedPlaylistScenes() {
+    const picker = playlistPicker; if (!picker || picker.adding || !picker.selected.size) return;
+    picker.adding = true; renderPlaylistPicker();
+    try {
+      const entries = [];
+      for (const item of picker.items.filter(item => picker.selected.has(item.key))) {
+        let scene;
+        if (item.kind === 'animation') {
+          scene = defaultScene();
+          scene.background.parameters.gain = .62;
+          scene.look = {palette_id: 'mist', pace: .7, presentation_brightness: .82};
+          scene.animation = {component_id: item.entry.component_id, version: item.entry.version, provider: item.entry.provider, role: 'animation', parameters: structuredClone(item.entry.parameters)};
+        } else {
+          const body = await requestJson(`${api}/${item.kind === 'look' ? 'looks' : 'starters'}/${encodeURIComponent(item.id)}`, {signal: AbortSignal.timeout(10000)});
+          scene = (item.kind === 'look' ? body.look : body.starter)?.scene;
+          if (!scene) throw new Error(`${item.name} is unavailable. No entries were added.`);
+        }
+        if (playlistPicker !== picker || !$('#playlistPickerDialog').open) return;
+        entries.push({entry_id: newUuid(), label: item.name, duration_seconds: 60, scene: browserSceneForWall(scene)});
+      }
+      // Publish only to the playlist draft after every read succeeds. Cancellation
+      // or a failed lookup leaves both the existing draft and live scene untouched.
+      state.playlist.entries.push(...entries); renderPlaylist();
+      $('#playlistDraftError').textContent = '';
+      $('#playlistStatus').textContent = `Added ${entries.length}: ${entries.map(entry => entry.label).join(', ')}. Playback unchanged.`;
+      delete $('#playlistStatus').dataset.state;
+      $('#playlistPickerDialog').close();
+    } catch (error) { if (playlistPicker === picker) $('#playlistPickerMessage').textContent = `${error.message} No entries were added; retry or cancel.`; }
+    finally { if (playlistPicker === picker) { picker.adding = false; renderPlaylistPicker(); } }
   }
   function currentPlaylistEntryLabel() {
     const selected = state.library.items?.find((item) => item.kind === state.selection?.kind && item.id === state.selection?.id);
@@ -1859,6 +1930,10 @@
     $('#playlistAdd').addEventListener('click', addCurrentSceneToPlaylist);
     $('#playlistSave').addEventListener('click', () => { $('#playlistDraftError').textContent = ''; void savePlaylist().catch((error) => { $('#playlistDraftError').textContent = `${error.message} Your edits are kept. Try Save again.`; }); });
     $('#playlistStart').addEventListener('click', () => { void startPlaylist(); });
+    $('#playlistBrowse').addEventListener('click', () => { void openPlaylistPicker(); });
+    $('#playlistPickerSearch').addEventListener('input', renderPlaylistPicker);
+    $('#playlistPickerAdd').addEventListener('click', () => { void addPickedPlaylistScenes(); });
+    $('#playlistPickerCancel').addEventListener('click', () => $('#playlistPickerDialog').close());
     $('#playlistStop').addEventListener('click', () => { void stopPlaylist(); });
     $('#playlistRetryAction').addEventListener('click', () => { if (state.playlist.retryStart) void startPlaylist(state.playlist.retryStart); else void stopPlaylist(); });
     $('#playlistUnlockEditing').addEventListener('click', abandonPlaylistStart);

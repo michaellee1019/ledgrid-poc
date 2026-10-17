@@ -295,3 +295,11 @@ label, .semantic-palette, .semantic-choice { font-size: .88rem; }
   input:not([type="range"]):not([type="checkbox"]), select, textarea { font-size: 16px; }
   .composer { padding-top: max(.5rem, env(safe-area-inset-top)); padding-left: max(.5rem, env(safe-area-inset-left)); padding-right: max(.5rem, env(safe-area-inset-right)); }
 }
+
+#playlistPickerDialog { width: min(34rem, calc(100vw - 2rem)); max-width: none; max-height: calc(100dvh - 2rem); overflow-y: auto; }
+.playlist-picker-list { max-height: 45dvh; overflow-y: auto; margin: .75rem 0; }
+.playlist-picker-choice { display: flex; flex-direction: row; align-items: center; gap: .75rem; min-height: 44px; padding: .4rem; border-bottom: 1px solid #29434a; cursor: pointer; }
+.playlist-picker-choice input { width: 22px; height: 22px; flex: 0 0 auto; }
+.playlist-picker-choice span { min-width: 0; overflow-wrap: anywhere; }
+.playlist-picker-choice strong, .playlist-picker-choice small { display: block; }
+.playlist-picker-choice small { color: #abc0c5; }
