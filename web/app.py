@@ -322,6 +322,8 @@ class AnimationWebInterface:
         self._register_routes()
         from web.automation_api import register_automation_routes
         register_automation_routes(self)
+        from web.automation_diagnostics import register_automation_diagnostic_routes
+        register_automation_diagnostic_routes(self)
 
     def _bundled_composer_catalog_digest(self) -> Optional[str]:
         """Return the deployed browser catalog identity without rebuilding it."""

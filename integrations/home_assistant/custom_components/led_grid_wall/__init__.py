@@ -12,6 +12,7 @@ import homeassistant.helpers.config_validation as cv
 from .api import WallApi, WallError
 from .const import CONF_URL, DOMAIN, PLATFORMS
 from .coordinator import WallCoordinator
+from .diagnostics import async_setup_diagnostics, async_unload_diagnostics
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -67,6 +68,7 @@ async def async_setup_entry(hass, entry):
             raise ConfigEntryNotReady(str(err)) from err
         coordinator.async_start_catalog_poll(entry)
     entry.runtime_data = coordinator
+    await async_setup_diagnostics(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     if not hass.services.has_service(DOMAIN, "apply"):
@@ -132,6 +134,7 @@ async def async_setup_entry(hass, entry):
 
 async def async_unload_entry(hass, entry):
     if unloaded := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        await async_unload_diagnostics(entry)
         entry.runtime_data = None
         if not any(item.runtime_data is not None for item in hass.config_entries.async_entries(DOMAIN) if hasattr(item, "runtime_data")):
             for service in ('apply', 'play_content', 'stop_playlist', 'refresh_catalog'):

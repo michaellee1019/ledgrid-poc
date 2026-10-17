@@ -86,7 +86,8 @@ async def main(browser=False):
                 assert commands == []
                 registry = er.async_get(hass)
                 grouped = er.async_entries_for_config_entry(registry, entry.entry_id)
-                assert len(grouped) == 9 and len({item.device_id for item in grouped}) == 1
+                assert len(grouped) >= 9 and len({item.device_id for item in grouped}) == 1
+                assert len({item.unique_id for item in grouped}) == len(grouped)
                 animation = hass.states.get('select.led_grid_wall_animation')
                 assert len(animation.attributes['options']) == 42
                 selected = next(item for item in coord.catalog['content'] if item['id'] == 'animation:python:gradient:v1')

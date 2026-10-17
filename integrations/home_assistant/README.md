@@ -251,3 +251,7 @@ Run the native content/controller exercise on loopback with
 focused native-HA-to-Composer and Composer-to-HA smoke. Browser dependencies are
 those installed for `tools/browser_qualification`. This is simulated controller
 acceptance; installed-wall evidence belongs to the migration task.
+
+## Native diagnostics and controller image
+
+See [diagnostics.md](diagnostics.md) for separate controller/receiver observations, optional counters and an on-demand image of the controller frame. These report observations, not proof of exact all-five physical display.

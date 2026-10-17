@@ -11,6 +11,7 @@ from animation.core.manager import AnimationManager
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.installation_profile_topology import INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
 from ipc.control_channel import FileControlChannel
+from ipc.controller_frame_snapshot import ControllerFrameSnapshot
 from ipc.playlist_runtime import PlaylistRunner, normalize_playlist_command
 from ipc.runtime_control import (ControllerCommandConflictError, controller_activation_coordinator,
     start_scene as _start_scene, normalize_managed_scene, update_scene_component as _update_scene_component,
@@ -128,6 +129,7 @@ def run_controller_mode(args):
             manager.stop_animation(clear_leds=False)
             manager._playback_error=f'Saved playback unavailable: {exc}'
     channel=FileControlChannel(args.control_file,args.status_file)
+    frame_snapshot=ControllerFrameSnapshot(channel,manager)
     coordinator=controller_activation_coordinator(manager,restored_selected_scene=saved.get('scene') if saved else None)
     runner=PlaylistRunner(manager,coordinator,status_sink=channel.write_playlist_current_status)
     channel.write_playlist_current_status(runner.status())
@@ -150,6 +152,7 @@ def run_controller_mode(args):
                 save_status(controller_status_payload(manager),presets_dir=Path(args.presets_dir),state_path=Path(args.saved_state_file))
             process_playlist_commands(channel,runner)
             runner.advance()
+            frame_snapshot.poll()
             if time.monotonic()-last_status>=args.status_interval:
                 # Playback frames already sample status. Probe while stopped so
                 # connectivity does not turn stale merely because the wall is off.

@@ -11,6 +11,7 @@ import asyncio
 import os
 from pathlib import Path
 import shutil
+import socket
 import sys
 import tempfile
 import time
@@ -104,7 +105,12 @@ async def native_hass(config_dir):
     shutil.copytree(Path(__file__).with_name("custom_components"), Path(config_dir) / "custom_components", ignore=shutil.ignore_patterns("__pycache__"))
     hass = HomeAssistant(config_dir)
     loader.async_setup(hass)
-    result = await bootstrap.async_from_config_dict({"homeassistant": {
+    # The image platform starts HA's HTTP server. Use a separate loopback port
+    # for every isolated harness so independent processes cannot collide on 8123.
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        http_port = listener.getsockname()[1]
+    result = await bootstrap.async_from_config_dict({"http": {"server_host": "127.0.0.1", "server_port": http_port}, "homeassistant": {
         "name": "Isolated native wall", "latitude": 40.7, "longitude": -74.,
         "elevation": 0, "unit_system": "metric", "time_zone": "America/New_York",
     }}, hass)
@@ -148,7 +154,9 @@ async def run_fake():
             entities = er.async_get(hass)
             devices = dr.async_get(hass)
             grouped = er.async_entries_for_config_entry(entities, entry.entry_id)
-            assert len(grouped) == 3, grouped
+            core_ids = {f"{wall.identity}_{key}" for key in ('light', 'pace', 'observation')}
+            assert core_ids <= {item.unique_id for item in grouped}, grouped
+            assert len({item.unique_id for item in grouped}) == len(grouped)
             assert len({item.device_id for item in grouped}) == 1
             device = devices.async_get(grouped[0].device_id)
             assert device.identifiers == {(DOMAIN, wall.identity)}
@@ -177,7 +185,7 @@ async def run_fake():
             for mode in ("stale", "unavailable", "malformed"):
                 wall.mode = mode
                 await coord.async_refresh()
-                assert all(hass.states.get(item.entity_id).state == "unavailable" for item in grouped)
+                assert all(hass.states.get(item.entity_id).state == "unavailable" for item in grouped if item.unique_id in core_ids)
             wall.mode = "ok"
             await coord.async_refresh()
             assert len(wall.writes) == count
@@ -221,7 +229,7 @@ async def run_fake():
             assert not hass.services.has_service(DOMAIN, "apply")
             assert await hass.config_entries.async_setup(entry.entry_id)
             await hass.async_block_till_done()
-            assert len(er.async_entries_for_config_entry(entities, entry.entry_id)) == 3
+            assert len(er.async_entries_for_config_entry(entities, entry.entry_id)) == len(grouped)
             assert len(dr.async_entries_for_config_entry(devices, entry.entry_id)) == 1
             assert len(wall.writes) == count
             print("native HA 2026.10.1: flow, duplicate, reconfigure, device grouping, shared poll, light/pace, zero, failures, unload/reload, no replay passed", flush=True)
