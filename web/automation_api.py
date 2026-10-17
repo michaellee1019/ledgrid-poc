@@ -75,6 +75,8 @@ class AutomationAPI:
         self._commands = {}
         from web.automation_content import AutomationContent
         self.content = AutomationContent(self)
+        from web.automation_advanced import AutomationAdvanced
+        self.advanced = AutomationAdvanced(self)
 
     @property
     def installation_id(self):
@@ -83,9 +85,13 @@ class AutomationAPI:
     def capabilities(self):
         return {'schema': 'ledgrid.automation-capabilities', 'schema_version': 1,
                 'installation_id': self.installation_id, 'server_session_id': self.server_session_id,
-                'configuration_url': '/composer', 'commands': ['set_device_state', 'play_content', 'stop_playlist'],
+                'configuration_url': '/composer', 'commands': ['set_device_state', 'play_content', 'stop_playlist', 'patch_scene', 'set_target_fps', 'interact'],
                 'controls': {'power': {}, 'brightness': {'min': 0, 'max': 255},
-                             'pace': {'min': 0.1, 'max': 25}},
+                             'pace': {'min': 0.1, 'max': 25},
+                             'scene_pace': {'min': 0, 'max': 2},
+                             'presentation_brightness': {'min': 0, 'max': 2},
+                             'background_brightness': {'min': 0, 'max': 1},
+                             'target_fps': {'min': 1, 'max': 200}},
                 'guard_max_seconds': GUARD_SECONDS, 'completion_wait_max_seconds': 2,
                 'physical_display_verified': False}
 
@@ -146,6 +152,7 @@ class AutomationAPI:
                                         'actual_fps': raw.get('actual_fps')},
                 'receiver_connectivity': receivers,
                 'active_content': active_content,
+                'scene_controls': self.advanced.controls(raw),
                 'playlist': {**{key: playlist.get(key) for key in ('phase', 'run_id', 'playlist_id', 'playlist_name', 'current_index', 'current_entry', 'next_entry', 'entry_count', 'remaining_seconds', 'error')}, 'reconciliation': reconciliation} if isinstance(playlist, dict) else None,
                 'physical_display_verified': False}
 
@@ -188,6 +195,9 @@ class AutomationAPI:
     def submit(self, payload):
         if not isinstance(payload, dict):
             raise AutomationError('Command must be an object.')
+        if payload.get('action') in {'patch_scene', 'set_target_fps', 'interact'}:
+            with self._lock, self.interface.composer_live.publication_lock:
+                return self.advanced.dispatch(payload)
         if payload.get('action') in {'play_content', 'stop_playlist'}:
             allowed = {'action', 'content_id' if payload['action'] == 'play_content' else 'run_id',
                        'expected_server_session_id', 'expected_controller_session_id',

@@ -62,3 +62,14 @@ class CanonicalReceiverSceneMixin:
             self.is_running = False
             self.stop_event.set()
             return False
+
+    def dispatch_canonical_interaction(self, component_id, scene_digest, kind, x, y, strength=1.0):
+        """Gesture only the exact active host renderer, without activating it."""
+        with self._scene_state_guard():
+            canonical = self._canonical_receiver_scene
+            runtime = self._canonical_receiver_runtime
+            if not self.is_running or not self._canonical_host_full_mode or canonical is None or runtime is None:
+                raise ValueError('No active canonical Scene renderer is available')
+            if canonical.identity.digest != scene_digest or canonical.scene['animation']['component_id'] != component_id:
+                raise ValueError('Active Scene or animation component changed')
+            return runtime.dispatch_animation_interaction(canonical, kind, x, y, strength)

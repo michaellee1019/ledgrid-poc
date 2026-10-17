@@ -6,7 +6,11 @@ from .entity import WallEntity
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities([WallPace(entry.runtime_data)])
+    entities = [WallPace(entry.runtime_data)]
+    if entry.runtime_data.supports_advanced:
+        from .scene_entities import scene_numbers
+        entities.extend(scene_numbers(entry.runtime_data))
+    async_add_entities(entities)
 
 
 class WallPace(WallEntity, NumberEntity):

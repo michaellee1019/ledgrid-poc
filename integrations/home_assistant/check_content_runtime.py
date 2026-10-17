@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-async def main(browser=False):
+async def main(browser=False, advanced=False):
     from animation.core.manager import AnimationManager, PreviewLEDController
     from ipc.control_channel import FileControlChannel
     from ipc.playlist_runtime import PlaylistRunner
@@ -86,7 +86,7 @@ async def main(browser=False):
                 assert commands == []
                 registry = er.async_get(hass)
                 grouped = er.async_entries_for_config_entry(registry, entry.entry_id)
-                assert len(grouped) >= 9 and len({item.device_id for item in grouped}) == 1
+                assert len(grouped) >= (20 if coord.supports_advanced else 9) and len({item.device_id for item in grouped}) == 1
                 assert len({item.unique_id for item in grouped}) == len(grouped)
                 animation = hass.states.get('select.led_grid_wall_animation')
                 assert len(animation.attributes['options']) == 42
@@ -121,13 +121,56 @@ async def main(browser=False):
                 receipt = await hass.services.async_call('led_grid_wall', 'play_content', {'content_id': 'look:' + looks[1]['id']}, blocking=True, return_response=True)
                 assert not receipt['success']
                 assert len(commands) == count
+                if advanced:
+                    async def action(name, body):
+                        result = await hass.services.async_call('led_grid_wall', name, body, blocking=True, return_response=True)
+                        assert result['success'], result
+                        return result
+                    for name, value in [('scene_pace', .4), ('presentation_brightness', .5), ('background_brightness', .2)]:
+                        await hass.services.async_call('number', 'set_value', {'entity_id': 'number.led_grid_wall_' + name, 'value': value}, blocking=True)
+                    await hass.services.async_call('select', 'select_option', {'entity_id': 'select.led_grid_wall_palette', 'option': 'ember'}, blocking=True)
+                    await hass.services.async_call('switch', 'turn_on', {'entity_id': 'switch.led_grid_wall_hue_shift'}, blocking=True)
+                    await hass.services.async_call('number', 'set_value', {'entity_id': 'number.led_grid_wall_hue_shift_strength', 'value': .33}, blocking=True)
+                    assert manager.get_scene_state()['plants']['effects']['strengths']['hue_shift'] == .33
+                    await hass.services.async_call('switch', 'turn_off', {'entity_id': 'switch.led_grid_wall_hue_shift'}, blocking=True)
+                    assert hass.states.get('number.led_grid_wall_hue_shift_strength').state == 'unavailable'
+                    await hass.services.async_call('light', 'turn_off', {'entity_id': 'light.led_grid_wall'}, blocking=True)
+                    await hass.services.async_call('number', 'set_value', {'entity_id': 'number.led_grid_wall_target_fps', 'value': 123}, blocking=True)
+                    assert manager.target_fps == 123 and not manager.is_running
+                    await action('set_scene', {'look': {'pace': .6}, 'plants': {'illuminate': {'enabled': True, 'strength': .3}}})
+                    assert manager.is_running and manager.output_brightness == 0
+                    widget = {'id': 'ha-clock', 'component': {'component_id': 'clock_overlay', 'provider': 'python', 'version': 1,
+                        'role': 'widget', 'parameters': {}}, 'visible': True, 'placement': {'mode': 'auto'}}
+                    await action('configure_widget', {'operation': 'add', 'widget': widget})
+                    await action('update_component', {'target': 'widget', 'widget_id': 'ha-clock', 'component_id': 'clock_overlay', 'parameters': {'show_seconds': False}})
+                    await action('configure_widget', {'operation': 'update', 'id': 'ha-clock', 'component_id': 'clock_overlay',
+                        'placement': {'mode': 'manual', 'strip_translation': 2, 'led_translation': 3}})
+                    await action('configure_widget', {'operation': 'remove', 'id': 'ha-clock'})
+                    assert [item['id'] for item in manager.get_scene_state()['widgets']] == ['clock']
+                    await action('play_content', {'content_id': 'animation:python:ascii_drop:v1'})
+                    await action('update_component', {'target': 'animation', 'component_id': 'ascii_drop', 'parameters': {'phrase': 'HA WALL'}})
+                    assert manager.get_scene_state()['animation']['parameters']['phrase'] == 'HA WALL'
+                    await action('play_content', {'content_id': 'animation:python:lava_lamp:v1'})
+                    active = manager._canonical_receiver_runtime
+                    animation_instance = active._runtime._animation.instance
+                    pending = len(animation_instance._interactions)
+                    await action('interact', {'component_id': 'lava_lamp', 'kind': 'primary', 'x': 12, 'y': 70, 'strength': .7})
+                    assert manager._canonical_receiver_runtime is active
+                    assert len(animation_instance._interactions) == pending + 1
+                    count = len(commands)
+                    failure = await hass.services.async_call('led_grid_wall', 'interact', {'component_id': 'lava_lamp', 'kind': 'invented', 'x': 12, 'y': 70}, blocking=True, return_response=True)
+                    assert failure['success'] is False and len(commands) == count
+                    await action('play_content', {'content_id': 'animation:python:firefly_synchrony:v1'})
+                    print('Native advanced runtime: common bounds/entities, independent stopped FPS, zero-resume Scene edits, stable Widgets, text parameters and real non-resetting gestures passed', flush=True)
                 if browser:
                     # The explicit marker lets the loopback browser finish
                     # hydration before HA changes the current content.
                     marker = fixture / 'browser-ready'
-                    process = await asyncio.create_subprocess_exec('node', str(ROOT / 'tools/browser_qualification/automation_content_probe.mjs'), url, str(marker))
+                    process = await asyncio.create_subprocess_exec('node', str(ROOT / 'tools/browser_qualification/automation_content_probe.mjs'), url, str(marker), 'advanced' if advanced else 'content')
                     while not marker.exists() and process.returncode is None:
                         await asyncio.sleep(.05)
+                    if advanced:
+                        await action('set_scene', {'look': {'palette_id': 'spectrum', 'pace': .9, 'presentation_brightness': .4}, 'background_brightness': .25})
                     receipt = await hass.services.async_call('led_grid_wall', 'play_content', {'content_id': 'animation:python:rainbow:v1'}, blocking=True, return_response=True)
                     assert receipt['success'], receipt
                     assert await process.wait() == 0
@@ -135,6 +178,9 @@ async def main(browser=False):
                     await hass.async_block_till_done()
                     await coord.async_refresh()
                     assert (coord.data['active_content'] or {})['animation'] == 'animation:python:gradient:v1', coord.data['active_content']
+                    if advanced:
+                        assert coord.data['scene_controls']['look']['pace'] == .9
+                        assert coord.data['scene_controls']['background_brightness'] == .25
                 count = len(commands)
                 await hass.config_entries.async_reload(entry.entry_id)
                 await hass.async_block_till_done()
@@ -151,4 +197,6 @@ async def main(browser=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--browser', action='store_true')
-    asyncio.run(main(parser.parse_args().browser))
+    parser.add_argument('--advanced', action='store_true')
+    args = parser.parse_args()
+    asyncio.run(main(args.browser, args.advanced))

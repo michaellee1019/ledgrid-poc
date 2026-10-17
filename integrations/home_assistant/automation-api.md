@@ -149,3 +149,47 @@ replayed by HA. Observed advances from an accepted run reconcile into Composer
 and recovery while its captured editor/recovery generation remains current;
 a newer editor change blocks further reconciliation with a visible conflict.
 No alternate scheduler or playlist transition subsystem is added.
+
+## Advanced Scene operations
+
+Capabilities advertise `patch_scene`, `set_target_fps` and `interact`. Status
+adds a compact `scene_controls` projection: selected canonical digest, Look
+fields, background brightness, active plant effects/strengths, Animation
+identity, stable Widget IDs/identities/placement and supported gesture kinds.
+It carries no frame or component parameter blobs. A selected stopped Scene is
+editable; stale status still makes native controls unavailable.
+
+`patch_scene` requires `patch`, the existing guards,
+`expected_composer_revision` and `expected_scene_digest`. A patch may contain:
+
+- `look`: any nonempty subset of `palette_id` (neutral/mist/ember/spectrum),
+  `pace` (0..2) and `presentation_brightness` (0..2).
+- `background_brightness`: 0..1, mapped to the existing solid background gain.
+- `plants`: effect ID to `{enabled?, strength?}` mappings. Strength is 0..1 and
+  requires that effect to be enabled. Current combination validation applies.
+- `component`: `{target, component_id, parameters, widget_id?}`. Targets are
+  animation/background/widget; Widget targets require their stable ID.
+  Parameters patch only declared local fields and use current normalizers.
+- `widget`: `{operation: add, widget: <complete Scene Widget>}`,
+  `{operation: remove, id}`, or `{operation: update, id, component_id,
+  parameters?, visible?, placement?}`. Every Widget identity is explicit.
+
+The complete candidate is normalized before queueing one current host Scene.
+Omitted Scene/global fields and master zero are preserved. Successful
+correlated execution reconciles into Composer/recovery through the shared
+publication lock and generation guard. Explicit valid Scene edits resume output
+as Composer edits do; invalid or conflicting requests never queue.
+
+`set_target_fps` carries an integer `target_fps` from 1..200 plus the ordinary
+web/controller guard. It uses the independent current controller setting and
+does not require a Scene or start stopped playback.
+
+`interact` requires `component_id`, `kind`, `x`, `y`, optional `strength` (default
+1), ordinary guards, `expected_composer_revision` and `expected_scene_digest`.
+Only active controller Animation gestures are supported. Coordinates satisfy
+`0 <= x < 33`, `0 <= y < 138`; strength is in `(0,1]`. The controller rechecks
+ownership and exact active Scene/component before delegating to the existing
+Scene v2 runtime gesture dispatcher. It cannot publish, start or replace a
+Scene. Correlated completion/failure is distinct from editor preview acceptance.
+Unsupported requests fail explicitly; accepted handler rejection changes no
+Scene or renderer instance (the command ordering revision still advances).

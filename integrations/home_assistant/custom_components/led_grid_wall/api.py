@@ -116,8 +116,13 @@ class WallApi:
             "expires_at": time.time() + 10,
             **fields,
         }
-        if action != 'set_device_state':
+        if action not in {'set_device_state', 'set_target_fps'}:
             payload['expected_composer_revision'] = before['composer_revision']
+        if action in {'patch_scene', 'interact'}:
+            controls = before.get('scene_controls') or {}
+            if not controls.get('digest'):
+                raise WallError('No observed supported Scene is available')
+            payload['expected_scene_digest'] = controls['digest']
         try:
             async with asyncio.timeout(12):
                 receipt = await self.request("POST", "/commands", json=payload)

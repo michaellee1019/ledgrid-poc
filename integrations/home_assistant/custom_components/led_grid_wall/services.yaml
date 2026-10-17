@@ -54,3 +54,116 @@ refresh_catalog:
   target:
     device:
       integration: led_grid_wall
+set_scene:
+  name: Patch wall Scene controls
+  description: Edit only supplied look, background brightness or plant effects against the observed Scene. Resumes playback at existing master brightness, including zero.
+  target:
+    device:
+      integration: led_grid_wall
+  fields:
+    look:
+      name: Look fields
+      description: Any subset of palette_id, pace (0..2), presentation_brightness (0..2).
+      selector:
+        object:
+    background_brightness:
+      name: Background brightness
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.01
+    plants:
+      name: Plant effects
+      description: Map of supported effect IDs to enabled and/or strength fields. Strength requires an enabled effect.
+      selector:
+        object:
+update_component:
+  name: Patch wall component parameters
+  description: Edit current component parameters without changing its identity. Widget targets require an exact widget_id.
+  target:
+    device:
+      integration: led_grid_wall
+  fields:
+    target:
+      required: true
+      selector:
+        select:
+          options: [animation, background, widget]
+    component_id:
+      required: true
+      selector:
+        text:
+    widget_id:
+      selector:
+        text:
+    parameters:
+      required: true
+      selector:
+        object:
+configure_widget:
+  name: Configure one wall Widget
+  description: Add, update or remove an explicit stable Widget ID. Add uses the complete widget object; update requires id and component_id.
+  target:
+    device:
+      integration: led_grid_wall
+  fields:
+    operation:
+      required: true
+      selector:
+        select:
+          options: [add, update, remove]
+    id:
+      selector:
+        text:
+    component_id:
+      selector:
+        text:
+    widget:
+      selector:
+        object:
+    parameters:
+      selector:
+        object:
+    placement:
+      selector:
+        object:
+    visible:
+      selector:
+        boolean:
+interact:
+  name: Send a wall gesture
+  description: Deliver a supported gesture to the active observed Animation without starting or replacing its Scene.
+  target:
+    device:
+      integration: led_grid_wall
+  fields:
+    component_id:
+      required: true
+      selector:
+        text:
+    kind:
+      required: true
+      selector:
+        text:
+    x:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 32.99
+          step: 0.01
+    y:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 137.99
+          step: 0.01
+    strength:
+      default: 1
+      selector:
+        number:
+          min: 0.01
+          max: 1
+          step: 0.01

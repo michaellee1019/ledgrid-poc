@@ -6,8 +6,12 @@ from .entity import WallEntity
 
 async def async_setup_entry(hass, entry, async_add_entities):
     if entry.runtime_data.supports_content:
-        async_add_entities([WallContentSelect(entry.runtime_data, kind, name) for kind, name in
-                            [('animation', 'Animation'), ('preset', 'Preset'), ('look', 'Look'), ('playlist', 'Playlist')]])
+        entities = [WallContentSelect(entry.runtime_data, kind, name) for kind, name in
+                    [('animation', 'Animation'), ('preset', 'Preset'), ('look', 'Look'), ('playlist', 'Playlist')]]
+        if entry.runtime_data.supports_advanced:
+            from .scene_entities import WallPalette
+            entities.append(WallPalette(entry.runtime_data))
+        async_add_entities(entities)
 
 
 class WallContentSelect(WallEntity, SelectEntity):

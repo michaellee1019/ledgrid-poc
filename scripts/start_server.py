@@ -43,6 +43,8 @@ def handle_command(manager, action, data):
     data=dict(data)
     guard=data.pop('_controller_guard',None)
     with coordinator.legacy_mutation_guard(guard):
+        if action == 'automation_interaction':
+            return manager.dispatch_canonical_interaction(**data)
         if action == 'automation_device_state':
             from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
             state = normalize_automation_device_state(data)

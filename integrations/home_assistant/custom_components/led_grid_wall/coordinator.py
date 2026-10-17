@@ -19,6 +19,7 @@ class WallCoordinator(DataUpdateCoordinator):
         self.installation_id = entry.unique_id
         self.command_lock = asyncio.Lock()
         self.supports_content = False
+        self.supports_advanced = False
         self.catalog = None
         self.catalog_error = None
 
@@ -39,6 +40,17 @@ class WallCoordinator(DataUpdateCoordinator):
             except HomeAssistantError:
                 pass
         entry.async_on_unload(async_track_time_interval(self.hass, refresh, CATALOG_INTERVAL))
+
+    async def async_patch_scene(self, patch):
+        return await self._async_command({'patch': patch}, action='patch_scene')
+
+    async def async_set_target_fps(self, value):
+        if type(value) not in {int, float} or not float(value).is_integer():
+            raise HomeAssistantError('Target FPS must be an integer')
+        return await self._async_command({'target_fps': int(value)}, action='set_target_fps')
+
+    async def async_interact(self, fields):
+        return await self._async_command(fields, action='interact')
 
     async def async_play_content(self, content_id):
         return await self._async_command({'content_id': content_id}, action='play_content')

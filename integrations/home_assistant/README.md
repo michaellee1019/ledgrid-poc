@@ -255,3 +255,106 @@ acceptance; installed-wall evidence belongs to the migration task.
 ## Native diagnostics and controller image
 
 See [diagnostics.md](diagnostics.md) for separate controller/receiver observations, optional counters and an on-demand image of the controller frame. These report observations, not proof of exact all-five physical display.
+
+## Advanced Scene controls and actions
+
+The native device adds `select.led_grid_wall_palette`, the Scene-owned numbers
+`scene_pace` (0..2), `presentation_brightness` (0..2) and
+`background_brightness` (0..1), plus the configuration number `target_fps`
+(1..200). Their full number entity IDs begin `number.led_grid_wall_`.
+Operator pace and master brightness remain separate installation controls.
+Target FPS changes cadence without starting playback. A valid Scene edit resumes
+playback at the existing master brightness, including zero.
+
+`switch.led_grid_wall_illuminate`, `switch.led_grid_wall_shadow` and
+`switch.led_grid_wall_hue_shift` edit those Scene effects. Each has a number
+ending `_strength` (0..1). Strength controls are available while the effect is
+enabled; the canonical Scene stores active strengths only. Enabling an effect
+uses its existing strength or the normal 0.5 default. Disabling removes its
+active strength. All supported effects, including the remaining simulation
+modifiers, are available through `set_scene`; incompatible combinations fail.
+
+Structured actions return `success` and a correlated request identity, or
+`success: false` with a useful error. Unnamed fields stay unchanged. A current
+controller session/revision, Scene digest and Composer revision guard every
+Scene action; stale or mismatched component/Widget identities fail explicitly.
+For example:
+
+```yaml
+action: led_grid_wall.set_scene
+data:
+  look:
+    palette_id: mist
+    pace: 0.7
+    presentation_brightness: 0.8
+  background_brightness: 0.25
+  plants:
+    illuminate:
+      enabled: true
+      strength: 0.3
+response_variable: wall_result
+```
+
+Patch only parameters supported by the currently selected component. This works
+for animation-specific text, emoji and packaged GIF settings as well as other
+current parameters:
+
+```yaml
+action: led_grid_wall.update_component
+data:
+  target: animation
+  component_id: ascii_drop
+  parameters:
+    phrase: HELLO FROM HOME
+```
+
+For Widgets, name the stable ID explicitly. Multiple instances are never
+selected by position or silently substituted:
+
+```yaml
+action: led_grid_wall.configure_widget
+data:
+  operation: update
+  id: clock
+  component_id: clock_overlay
+  parameters:
+    show_seconds: false
+  placement:
+    mode: manual
+    strip_translation: 0
+    led_translation: -8
+```
+
+`configure_widget` also accepts `operation: remove` with `id`, or `operation:
+add` with a complete `widget` object containing `id`, `component` (provider,
+component_id, version, role, parameters), `visible` and `placement`. Placement is
+`{mode: auto}` or manual with both signed integer translations. Widget
+parameter patches can also use `update_component` with `target: widget` and
+`widget_id`.
+
+Gestures require a currently running supported Animation. They target the
+observed physical controller renderer, preserve its instance and Scene
+identity, and never start playback or reset a simulation. For an active Lava
+Lamp:
+
+```yaml
+action: led_grid_wall.interact
+data:
+  component_id: lava_lamp
+  kind: primary
+  x: 12
+  y: 70
+  strength: 0.7
+response_variable: wall_result
+```
+
+Coordinates use the 33×138 animation grid (`0 <= x < 33`, `0 <= y < 138`);
+strength is greater than zero and at most one. The status API advertises the
+active Animation's supported gesture kinds. Unsupported/stopped gestures,
+unknown parameters, missing Widget IDs and incompatible plant effects fail
+without selecting alternate content. A controller acknowledgement confirms
+execution, not exact physical display on all five receivers.
+
+Run `check_content_runtime.py --advanced --browser` for the isolated native HA,
+real controller and browser synchronization exercise. No simulation or
+per-frame work changes are introduced by these controls.

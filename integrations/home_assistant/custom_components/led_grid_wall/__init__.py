@@ -59,6 +59,7 @@ async def async_setup_entry(hass, entry):
         raise ConfigEntryNotReady(str(err)) from err
     coordinator = WallCoordinator(hass, entry, api)
     await coordinator.async_config_entry_first_refresh()
+    coordinator.supports_advanced = 'patch_scene' in capabilities['commands']
     coordinator.supports_content = 'play_content' in capabilities['commands']
     if coordinator.supports_content:
         try:
@@ -69,6 +70,9 @@ async def async_setup_entry(hass, entry):
         coordinator.async_start_catalog_poll(entry)
     entry.runtime_data = coordinator
     await async_setup_diagnostics(hass, entry)
+    if coordinator.supports_advanced:
+        from .advanced import async_setup_advanced
+        await async_setup_advanced(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     if not hass.services.has_service(DOMAIN, "apply"):
@@ -137,6 +141,6 @@ async def async_unload_entry(hass, entry):
         await async_unload_diagnostics(entry)
         entry.runtime_data = None
         if not any(item.runtime_data is not None for item in hass.config_entries.async_entries(DOMAIN) if hasattr(item, "runtime_data")):
-            for service in ('apply', 'play_content', 'stop_playlist', 'refresh_catalog'):
+            for service in ('apply', 'play_content', 'stop_playlist', 'refresh_catalog', 'set_scene', 'update_component', 'configure_widget', 'interact'):
                 hass.services.async_remove(DOMAIN, service)
     return unloaded

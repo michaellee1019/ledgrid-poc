@@ -1,7 +1,7 @@
 // Focused real Composer ⇄ native HA action smoke against the isolated runtime.
 import {chromium} from './node_modules/playwright/index.mjs';
 import {writeFile} from 'node:fs/promises';
-const [url, marker] = process.argv.slice(2);
+const [url, marker, mode] = process.argv.slice(2);
 const browser = await chromium.launch({headless: true});
 try {
   const page = await browser.newPage({viewport: {width: 1440, height: 1000}, serviceWorkers: 'block'});
@@ -10,6 +10,11 @@ try {
   await page.waitForFunction(() => document.querySelector('#animationChoice').value === 'firefly_synchrony');
   await writeFile(marker, 'ready');
   await page.waitForFunction(() => document.querySelector('#animationChoice').value === 'rainbow', null, {timeout: 20000});
+  if (mode === 'advanced') {
+    await page.waitForFunction(() => document.querySelector('#previewPalette').value === 'spectrum'
+      && Number(document.querySelector('#sceneSpeed').value) === .9
+      && Number(document.querySelector('#backgroundGain').value) === .25);
+  }
   const publication = page.waitForResponse(response => response.url().endsWith('/api/v1/scene') && response.request().method() === 'PUT');
   await page.selectOption('#animationChoice', 'gradient');
   const response = await publication;
