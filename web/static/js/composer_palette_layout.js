@@ -166,8 +166,7 @@
       const active = button.dataset.browseView === collection;
       button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active));
     });
-    if (collection === 'saved') document.querySelector('[data-library-filter="all"]').click();
-    else document.querySelector(`[data-gallery-filter="${collection === 'favorites' ? 'favorites' : 'all'}"]`).click();
+    if (collection !== 'saved') document.querySelector(`[data-gallery-filter="${collection === 'favorites' ? 'favorites' : 'all'}"]`).click();
     remember();
   };
   document.querySelectorAll('[data-workspace-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.workspaceView)));

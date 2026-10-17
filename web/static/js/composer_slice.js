@@ -19,7 +19,7 @@
   // A page lifetime client id makes a reload a new mutation stream.  Reusing
   // an id while resetting its sequence would make the next authored edit stale.
   const clientId = newUuid();
-  const state = { status: {connected: false, running: false, armed: false, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'all', query: '', selection: null,
+  const state = { status: {connected: false, running: false, armed: false, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'look', query: '', selection: null,
     scene: null, history: [], redo: [], sequence: 0, intent: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
     gallery: {entries: [], digest: null, query: '', filter: 'all', favorites: new Set(), detail: null, detailToken: 0},
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
@@ -797,6 +797,7 @@
     return next;
   }
   function applyScene(scene) {
+    clearSaveFeedback();
     state.scene = structuredClone(scene);
     const animation = scene.animation || {};
     const parameters = animation.parameters || {};
@@ -1107,12 +1108,18 @@
     return entry?.scene && Number.isFinite(entry.targetFps) ? historySnapshot(entry.scene, entry.targetFps) : historySnapshot(entry);
   }
   function remember(previous) { state.history.push(normalizeHistoryEntry(previous)); if (state.history.length > 40) state.history.shift(); state.redo = []; updateHistoryActions(); }
+  let sceneSaveBarrier = null;
   async function flushPublication() {
     state.publication.scheduled = false;
+    // Save also writes recovery. Later authored edits must reach the server
+    // after that snapshot, so a slow save cannot erase their recoverable draft.
+    if (sceneSaveBarrier && state.publication.queued?.kind !== 'stop') await sceneSaveBarrier;
     if (state.publication.inFlight || !state.publication.queued) return;
     const entry = state.publication.queued;
     state.publication.queued = null;
     state.publication.inFlight = entry;
+    let finishAuthored;
+    entry.authoredSettled = new Promise((resolve) => { finishAuthored = resolve; });
     state.submitting = true;
     try {
       if (entry.kind === 'stop') {
@@ -1124,6 +1131,7 @@
       const result = await response.json();
       state.authoredValidationError = response.ok ? null : (result.error || 'Current scene could not be accepted.');
       if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result, status: response.status});
+      finishAuthored();
       // A result always carries the server's authoritative desired/observed
       // snapshot.  Do not infer output state from an old local draft.
       renderStatus(result.status || result);
@@ -1159,6 +1167,7 @@
         state.publication.scheduled = true;
         queueMicrotask(flushPublication);
       }
+      finishAuthored();
       // Release the visible retry immediately after the publication settles.
       // Newer queued work still keeps it disabled through renderStatus.
       renderStatus(state.status || wallStatus());
@@ -1169,6 +1178,7 @@
     const publicationIntent = intentToken == null ? beginIntent() : intentToken;
     if (!automatic) state.wall.retryBlocked = false;
     if (rememberEdit) remember(previous || structuredClone(state.scene || defaultScene()));
+    clearSaveFeedback();
     state.scene = scene; state.wall.dirty = true; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
     const sceneSnapshot = structuredClone(scene);
     const targetFps = boundedTargetFps($('#targetFps').value);
@@ -1313,6 +1323,7 @@
   function renderLibrary() { const target = $('#libraryList'); target.replaceChildren(); const items = filteredItems(); $('#libraryEmpty').hidden = items.length > 0; items.forEach((item) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.setAttribute('aria-current', String(state.selection?.kind === item.kind && state.selection?.id === item.id)); button.innerHTML = `<span>${item.name}</span><span class="library-kind">${item.kind === 'starter' ? 'Built-in' : 'Saved'}</span>`; button.addEventListener('click', () => openItem(item)); const row = document.createElement('li'); row.append(button); target.append(row); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.classList.toggle('active', button.dataset.libraryFilter === state.filter)); }
   async function openItem(item) {
     const intentToken = beginIntent();
+    clearSaveFeedback();
     try {
       // Allocate ordering when the user chooses a Library item, before its
       // lookup completes. A slow earlier lookup can then never beat a newer
@@ -1427,21 +1438,89 @@
     const secondary = $('#secondaryOperations'); if (secondary) secondary.open = true;
     $('#sceneName').focus({preventScroll: true});
   }
-  async function save(as) {
-    const name = $('#sceneName').value.trim();
-    const creatingLook = as || state.selection?.kind !== 'look';
-    if (creatingLook && !name) {
-      saveFeedback('Enter a scene name before saving.', 'error'); focusSceneName(); return;
+  function clearSaveFeedback() {
+    const feedback = $('#saveFeedback');
+    if (feedback) { feedback.hidden = true; feedback.textContent = ''; delete feedback.dataset.state; }
+  }
+  let sceneSaving = false;
+  function uniqueCopyName() {
+    const source = $('#sceneName').value.trim() || state.selection?.name || 'Untitled scene';
+    const names = new Set(state.library.items.filter((item) => item.kind === 'look').map((item) => item.name.toLocaleLowerCase()));
+    for (let index = 1; ; index++) {
+      const suffix = index === 1 ? ' copy' : ` copy ${index}`;
+      const name = `${source.slice(0, 80 - suffix.length)}${suffix}`;
+      if (!names.has(name.toLocaleLowerCase())) return name;
     }
+  }
+  function showCopyDialog() {
+    if (sceneSaving || $('#sceneCopyDialog').open) return;
+    $('#sceneCopyName').value = uniqueCopyName(); $('#sceneCopyError').textContent = '';
+    openDialog($('#sceneCopyDialog')); $('#sceneCopyName').select();
+  }
+  async function save(as, copyName = null) {
+    if (sceneSaving) return false;
+    if (as && copyName == null) { showCopyDialog(); return false; }
+    const name = (copyName ?? $('#sceneName').value).trim();
+    const creatingLook = as || state.selection?.kind !== 'look';
+    const fail = (message) => {
+      if (as) $('#sceneCopyError').textContent = message;
+      else saveFeedback(message, 'error');
+    };
+    if (creatingLook && !name) {
+      fail('Enter a scene name before saving.');
+      if (!as) focusSceneName();
+      return false;
+    }
+    const scene = structuredClone(sceneFromControls());
+    const authoredName = $('#sceneName').value;
+    const intent = state.intent;
+    const selection = state.selection;
+    sceneSaving = true;
+    $('#saveScene').disabled = true; $('#saveAsScene').disabled = true;
+    $('#sceneCopySubmit').disabled = true;
+    let releaseSave;
+    sceneSaveBarrier = new Promise((resolve) => { releaseSave = resolve; });
     try {
-      const scene = sceneFromControls();
-      if (creatingLook) {
-        const response = await fetch(`${api}/looks`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error); state.selection = {kind: 'look', id: result.look.id, name: result.look.name};
-      } else {
-        const response = await fetch(`${api}/looks/save`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({scene})}); const result = await response.json(); if (!response.ok) throw new Error(result.error);
+      await state.publication.inFlight?.authoredSettled;
+      const result = await requestJson(creatingLook ? `${api}/looks` : `${api}/looks/${selection.id}`, {
+        method: creatingLook ? 'POST' : 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(creatingLook ? {name, scene} : {scene}),
+      });
+      sceneSaveBarrier = null; releaseSave();
+      // A save persists its captured revision. A later edit/selection must never
+      // inherit that revision's clean badge or replace its current scene/name.
+      const current = state.intent === intent && state.selection === selection && $('#sceneName').value === authoredName && sameLocalParameters(scene, sceneFromControls());
+      if (current) {
+        state.selection = {kind: 'look', id: result.look.id, name: result.look.name};
+        $('#sceneName').value = result.look.name; state.dirty = false;
+        $('#saveState').textContent = 'Saved scene';
+        saveFeedback(`Saved ${result.look.name} · current revision.`, 'success');
+      } else if (state.selection === selection) {
+        state.dirty = true;
+        saveFeedback(`Saved ${result.look.name} · earlier revision. Current edits are unsaved.`, 'dirty');
       }
-      await loadLibrary(); state.dirty = false; $('#saveState').textContent = 'Saved'; saveFeedback(`Saved ${state.selection?.name || name}.`, 'success');
-    } catch (error) { saveFeedback(error.message || 'This scene could not be saved. Try again.', 'error'); }
+      if (as) $('#sceneCopyDialog').close();
+      // A failed refresh does not undo a successful save or invite duplicate copies.
+      try { await loadLibrary(); } catch (_) { if (current && state.intent === intent) saveFeedback(`Saved ${result.look.name}. Scene list could not refresh; reopen Saved to retry.`, 'success'); }
+      return true;
+    } catch (error) {
+      const message = /already has that name/i.test(error.message) ? 'A scene already has that name. Choose a different name.' : (error.message || 'This scene could not be saved. Try again.');
+      if (state.intent === intent && state.selection === selection) fail(message);
+      return false;
+    } finally {
+      sceneSaveBarrier = null; releaseSave();
+      sceneSaving = false; $('#saveScene').disabled = false; $('#saveAsScene').disabled = false; $('#sceneCopySubmit').disabled = false;
+    }
+  }
+  async function restoreSavedSelection() {
+    if (state.selection?.kind !== 'look') return;
+    const selection = state.selection; const intent = state.intent;
+    try {
+      const {look} = await requestJson(`${api}/looks/${selection.id}`);
+      if (selection !== state.selection || intent !== state.intent) return;
+      state.selection = {...selection, name: look.name}; $('#sceneName').value = look.name;
+      state.dirty = !sameLocalParameters(state.scene, look.scene);
+    } catch (error) { if (selection === state.selection && intent === state.intent) $('#operationMessage').textContent = error.message; }
   }
   async function rewind(direction) {
     const source = direction === 'undo' ? state.history : state.redo;
@@ -1458,7 +1537,7 @@
     if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z' || isNativeTextEditingTarget(event.target)) return;
     event.preventDefault(); rewind(event.shiftKey ? 'redo' : 'undo');
   }
-  async function loadLibrary() { const response = await fetch(`${api}/library`); state.library = await response.json(); renderLibrary(); }
+  async function loadLibrary() { state.library = await requestJson(`${api}/library`); renderLibrary(); }
   function browseScenes() {
     window.ComposerPanelLayout.expand('scenes');
     const search = $('#librarySearch');
@@ -1751,6 +1830,8 @@
     control.addEventListener('change', (event) => { publish(event); finishControlEditAfterEvent(control); });
   }
   function wire() {
+    $('#sceneCopyForm').addEventListener('submit', (event) => { event.preventDefault(); void save(true, $('#sceneCopyName').value); });
+    $('#sceneCopyCancel').addEventListener('click', () => $('#sceneCopyDialog').close());
     ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiLineSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
     [...pixelChaseSelectors, ...plantGlowSelectors, ...Object.values(mediaControls).flat()].forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
     wireLiveRange($('#sceneSpeed'), (event) => { syncSceneSpeed(number('#sceneSpeed')); edit(event); });
@@ -1824,7 +1905,8 @@
           state.wall.activationError = null; state.wall.retryBlocked = false;
           state.wall.adoptedLook = structuredClone(current.look);
           clearHistory(); applyScene(current); schedulePreview(); renderLibrary();
-          $('#sceneName').value = state.selection ? 'Saved scene' : `Currently playing · ${current.animation.component_id.replaceAll('_', ' ')}`;
+          $('#sceneName').value = state.selection ? '' : `Currently playing · ${current.animation.component_id.replaceAll('_', ' ')}`;
+          await restoreSavedSelection();
           await acknowledgeUndo(status.undo_invalidation_revision);
         }
       }
@@ -1851,7 +1933,7 @@
     if (!response.ok) { const error = new Error(body.error || 'Current scene recovery is unavailable.'); if (response.status >= 500) { error.serverUnavailable = true; throw error; } recoverFromInvalidRecovery(body); return; }
     if (body.recovery) {
       state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null;
-      state.dirty = false; applyScene(state.scene);
+      state.dirty = false; applyScene(state.scene); await restoreSavedSelection();
     } else { applyScene(defaultScene()); state.scene = defaultScene(); state.dirty = false; }
     // The legacy Composer may be empty after restart while the canonical wall
     // still has a selected Scene. Hydration must not republish that Scene or

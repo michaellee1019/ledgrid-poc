@@ -20,9 +20,8 @@
       <div class="browse-tabs" role="group" aria-label="Browse collection"><button type="button" class="button active" data-browse-view="animations" aria-pressed="true">Animations</button><button type="button" class="button" data-browse-view="favorites" aria-pressed="false">Favorites</button><button type="button" class="button" data-browse-view="saved" aria-pressed="false">Saved</button></div>
       <button id="browsePlaylistAdd" class="button text wide" type="button">Add to playlist</button>
     <section id="library-pane" class="library-pane" aria-labelledby="library-title" data-panel-id="scenes">
-      <div class="pane-heading"><div><p class="eyebrow">Library</p><h1 id="library-title">Scenes</h1></div><button id="resetComposerLayout" class="button text reset-layout" type="button">Reset layout</button></div>
+      <div class="pane-heading"><div><p class="eyebrow">Library</p><h1 id="library-title">Saved scenes</h1></div><button id="resetComposerLayout" class="button text reset-layout" type="button">Reset layout</button></div>
       <label>Search scenes <input id="librarySearch" type="search" placeholder="Search scenes"></label>
-      <div class="library-filters" role="group" aria-label="Scene collection"><button class="button text active" data-library-filter="all" type="button">All</button><button class="button text" data-library-filter="starter" type="button">Built-ins</button><button class="button text" data-library-filter="look" type="button">Saved</button><button class="button text" data-library-filter="favorites" type="button">Favorites</button></div>
       <ol id="libraryList" class="library-list" aria-live="polite"></ol><p id="libraryEmpty" class="empty">No scenes found.</p>
     </section>
       <section class="gallery" aria-labelledby="gallery-title" data-panel-id="gallery">
@@ -93,6 +92,14 @@
     </aside>
   </div>
 </main>
+<dialog id="sceneCopyDialog" aria-labelledby="scene-copy-title">
+  <h2 id="scene-copy-title">Save a copy</h2>
+  <form id="sceneCopyForm">
+    <label>Scene name <input id="sceneCopyName" maxlength="80" required aria-describedby="sceneCopyError"></label>
+    <p id="sceneCopyError" role="alert"></p>
+    <div class="operation-row"><button id="sceneCopySubmit" class="button primary" type="submit">Save copy</button><button id="sceneCopyCancel" class="button secondary" type="button">Cancel</button></div>
+  </form>
+</dialog>
 <dialog id="playlistUnsavedDialog" aria-labelledby="playlist-unsaved-title">
   <h2 id="playlist-unsaved-title">Save playlist changes?</h2>
   <p>Changing playlists will replace your unsaved edits.</p>
