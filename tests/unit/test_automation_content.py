@@ -293,3 +293,33 @@ def test_playlist_stop_guard_rechecked_after_intervening_controller_change(conte
     assert result['state'] == 'failed' and 'revision changed' in result['error']
     assert manager.get_scene_state() == retained and manager.output_brightness == 0
     assert runner.advance()['phase'] == 'overridden'
+
+
+def test_second_pending_playlist_start_cannot_replace_first_reconciliation_context(content_wall):
+    interface, manager, channel = content_wall
+    first = playlist(interface)
+    second = interface.composer_playlists.save({'name': 'Another playlist', 'entries': [
+        {'entry_id': str(uuid.uuid4()), 'label': 'Other scene', 'duration_seconds': 1,
+         'scene': get_starter('aurora_conway')['scene']}]})
+    runner, clock = runner_for(manager, channel)
+    first_response = request_content(interface, 'playlist:' + first['id'])
+    assert first_response.status_code == 202
+    first_receipt = first_response.get_json()
+    expected_context = interface.automation.content.follow
+    second_response = request_content(interface, 'playlist:' + second['id'])
+    assert second_response.status_code == 409
+    assert 'awaiting controller acknowledgement' in second_response.get_json()['error']
+    assert interface.automation.content.follow is expected_context
+    pending = channel.poll_playlist_commands(runner.coordinator.session_id)
+    assert len(pending) == 1 and pending[0]['request_id'] == first_receipt['request_id']
+    process_playlist_commands(channel, runner)
+    result = interface.automation.result(first_receipt['request_id'])
+    assert result['state'] == 'completed'
+    assert runner.status()['playlist_id'] == first['id']
+    assert interface.automation.content.follow is expected_context
+    assert interface.working_draft.get()['scene'] == manager.get_scene_state()
+    clock[0] = 1.1
+    runner.advance()
+    channel.write_status(controller_status_payload(manager))
+    interface.automation.status()
+    assert interface.working_draft.get()['scene'] == manager.get_scene_state()

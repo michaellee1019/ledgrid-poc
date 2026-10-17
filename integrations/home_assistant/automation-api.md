@@ -143,7 +143,8 @@ New API commands include an execution expiry for start and stop. A guarded
 stop advances the controller ordering revision while retaining current Scene
 playback. Existing Composer queue clients remain supported. Starting another
 playlist while one runs is rejected with a stop-current-first error, preserving
-the current run and reconciliation context. Accepted starts are not renewed or
+the current run and reconciliation context. A second start awaiting controller
+acknowledgement is also rejected before queueing or replacing that context. Accepted starts are not renewed or
 replayed by HA. Observed advances from an accepted run reconcile into Composer
 and recovery while its captured editor/recovery generation remains current;
 a newer editor change blocks further reconciliation with a visible conflict.

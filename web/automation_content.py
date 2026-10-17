@@ -165,6 +165,9 @@ class AutomationContent:
                    'requested_at': time.time(), **guard}
         reconciliation = None
         if playlist_id is not None:
+            if (self.follow is not None and self.follow['state'] == 'pending'
+                    and self.api.channel.read_playlist_request_status(self.follow['request_id']) is None):
+                raise AutomationError('A playlist start is awaiting controller acknowledgement; wait for its result before choosing another playlist.', code='conflict', status=409)
             if (self.api.channel.read_playlist_current_status() or {}).get('phase') == 'running':
                 raise AutomationError('Another playlist is running; stop it before starting a new playlist.', code='conflict', status=409)
             try:
@@ -188,7 +191,7 @@ class AutomationContent:
         self.api._commands[request_id] = {'receipt': receipt, 'guard': guard, 'playlist_run_id': run_id,
                                         'reconciliation': reconciliation}
         if playlist_id is not None:
-            self.follow = {'run_id': run_id, 'guard': guard, 'composer_revision': current['composer_revision'],
+            self.follow = {'run_id': run_id, 'request_id': request_id, 'guard': guard, 'composer_revision': current['composer_revision'],
                            'recovery_generation': self.interface._composer_recovery_generation,
                            'scenes': {canonical_json_sha256(entry['scene']): entry['scene'] for entry in entries},
                            'last_digest': None, 'state': 'pending'}
