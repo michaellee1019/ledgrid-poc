@@ -358,3 +358,7 @@ execution, not exact physical display on all five receivers.
 Run `check_content_runtime.py --advanced --browser` for the isolated native HA,
 real controller and browser synchronization exercise. No simulation or
 per-frame work changes are introduced by these controls.
+
+## Migrating the installed legacy package
+
+Follow [migration.md](migration.md) for the reviewed package installation, public entity-ID migration, private backups and manual recovery. `led_grid_wall_native.yaml` retains the public apply script for existing automations. Keep the legacy package as recovery source; load only one package implementation at a time.
