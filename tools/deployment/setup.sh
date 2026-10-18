@@ -94,19 +94,9 @@ EOF
 
 EXPECTED_ESP32_DEVICES="${EXPECTED_ESP32_DEVICES:-4}"
 REQUIRE_ESP32_DEVICES="${REQUIRE_ESP32_DEVICES:-0}"
-log_info "Detecting connected ESP32 devices (expecting ${EXPECTED_ESP32_DEVICES})..."
-if ! ssh $SSH_OPTS "$PI_HOST" "bash -s" <<EOF
-set -euo pipefail
-export PATH="\$HOME/.local/bin:\$PATH"
-export EXPECTED_ESP32_DEVICES="${EXPECTED_ESP32_DEVICES}"
-export REQUIRE_ESP32_DEVICES="${REQUIRE_ESP32_DEVICES}"
-EOF
-then
-  log_error "ESP32 device probe failed"
-  exit 1
-fi
-
-if ! ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
+log_info "Detecting connected ESP32 devices (expecting ${EXPECTED_ESP32_DEVICES}, require=${REQUIRE_ESP32_DEVICES})..."
+if ! ssh $SSH_OPTS "$PI_HOST" \
+  "EXPECTED_ESP32_DEVICES=${EXPECTED_ESP32_DEVICES} REQUIRE_ESP32_DEVICES=${REQUIRE_ESP32_DEVICES} bash -s" <<'EOF'
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
@@ -144,14 +134,20 @@ for entry in data:
 
 ports = sorted(ports)
 expected = int(os.environ.get("EXPECTED_ESP32_DEVICES", "4") or "4")
+require = os.environ.get("REQUIRE_ESP32_DEVICES", "0") == "1"
 print(f"[INFO] Detected {len(ports)} USB serial device(s): {ports}")
 if len(ports) < expected:
-    print(f"[ERROR] Expected {expected} ESP32 device(s) for flashing")
-    raise SystemExit(1)
+    print(
+        f"[WARNING] Expected {expected} ESP32 device(s) for flashing; "
+        "plug receivers in before a full deploy that flashes firmware"
+    )
+    if require:
+        print(f"[ERROR] REQUIRE_ESP32_DEVICES=1 and only {len(ports)} device(s) found")
+        raise SystemExit(1)
 PY
 EOF
 then
-  log_error "ESP32 devices not ready for flashing"
+  log_error "ESP32 device detection failed"
   exit 1
 fi
 

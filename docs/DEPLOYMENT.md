@@ -50,7 +50,9 @@ just deploy
 ```
 
 After creating a new Pi user (for example `ledgridwall5`), run `just setup` once so
-`sudo -n` works for service install and firmware flashing during deploy.
+`sudo -n` works for service install and firmware flashing during deploy. Setup
+warns when ESP32 receivers are unplugged; set `REQUIRE_ESP32_DEVICES=1` to fail
+instead, or plug in all receivers before a full firmware flash deploy.
 
 Setup installs PlatformIO in a dedicated environment on the Pi and verifies
 serial permissions. The full deployment applies the supported SPI boot
