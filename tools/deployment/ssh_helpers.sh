@@ -1,10 +1,45 @@
 # Shared SSH/sudo helpers for remote deployment.
 # Source after setting PI_HOST if you need a non-default host.
 
-PI_HOST="${PI_HOST:-ledgridwall@ledgridwall.local}"
+PI_HOST="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
 PI_USER="${PI_USER:-${PI_HOST%@*}}"
 SSH_OPTS="${SSH_OPTS:--o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new}"
 SSH_OPTS_TTY="${SSH_OPTS_TTY:--o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new}"
+
+_deployment_repo_root() {
+    cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
+}
+
+_configure_deploy_ssh_identity() {
+    if [[ "${SSH_OPTS:-}" == *" -i "* || "${SSH_OPTS:-}" == "-i "* ]]; then
+        return 0
+    fi
+
+    local root="${DEPLOY_REPO_ROOT:-$(_deployment_repo_root)}"
+    local candidate=""
+
+    if [ -n "${SSH_KEY:-}" ]; then
+        candidate="$SSH_KEY"
+    elif [ -n "${LEDGRID_SSH_KEY:-}" ]; then
+        candidate="$LEDGRID_SSH_KEY"
+    elif [ -f "$root/.gpt-key" ] && [ -r "$root/.gpt-key" ]; then
+        candidate="$root/.gpt-key"
+    else
+        return 0
+    fi
+
+    if [ ! -f "$candidate" ] || [ ! -r "$candidate" ]; then
+        _deploy_log_error "Configured SSH identity is missing or unreadable: $candidate"
+        return 1
+    fi
+
+    local resolved
+    resolved="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+    SSH_OPTS="-i $resolved -o IdentitiesOnly=yes $SSH_OPTS"
+    SSH_OPTS_TTY="-i $resolved -o IdentitiesOnly=yes $SSH_OPTS_TTY"
+}
+
+_configure_deploy_ssh_identity || exit 1
 
 _deploy_log_info() {
     if declare -F log_info >/dev/null 2>&1; then
@@ -123,12 +158,26 @@ EOF
 
 ensure_remote_spi() {
     local deploy_dir="${DEPLOY_DIR:-ledgrid-pod}"
-    local configure_script="/home/${PI_USER}/${deploy_dir}/tools/deployment/configure_spi.sh"
     local output status config_changed
 
     _deploy_log_info "Ensuring boot SPI config (/boot/firmware/config.txt) and device nodes..."
 
-    if ! output=$(ssh $SSH_OPTS "$PI_HOST" "LEDGRID_HAT=${LEDGRID_HAT:-0} bash ${configure_script}" 2>&1); then
+    if ! output=$(ssh $SSH_OPTS "$PI_HOST" "bash -s" <<EOF
+set -euo pipefail
+deploy_dir="${deploy_dir}"
+for candidate in \
+  "\$HOME/\${deploy_dir}/app/tools/deployment/configure_spi.sh" \
+  "\$HOME/\${deploy_dir}/incoming/tools/deployment/configure_spi.sh" \
+  "\$HOME/\${deploy_dir}/tools/deployment/configure_spi.sh"; do
+  if [ -f "\$candidate" ]; then
+    LEDGRID_HAT=${LEDGRID_HAT:-0} bash "\$candidate"
+    exit 0
+  fi
+done
+echo "[ERROR] configure_spi.sh not found under ~/\${deploy_dir}" >&2
+exit 1
+EOF
+    2>&1); then
         _deploy_log_error "SPI configuration failed"
         echo "$output" >&2
         return 1

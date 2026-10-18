@@ -2,17 +2,48 @@ set shell := ["bash", "-euxo", "pipefail", "-c"]
 
 web_venv := ".venv-web"
 python_env := "uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with opencv-python-headless"
+pi_host := "ledgridwall5@ledgridwall5.local"
+captured := "python3 tools/deployment/run_captured.py --log-dir .deploy-logs"
+platformio := "./tools/deployment/run_platformio.sh"
+ai_ssh_key := ".gpt-key"
+
+# Create an ignored, repository-local identity for automated wall operations.
+generate-ai-ssh-key key_path=ai_ssh_key:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	umask 077
+	key="{{key_path}}"
+	if [ -e "$key" ] || [ -e "$key.pub" ]; then
+	  echo "Refusing to overwrite existing AI SSH key: $key or $key.pub" >&2
+	  exit 1
+	fi
+	ssh-keygen -q -t ed25519 -N "" -C "ledgrid-deploy" -f "$key"
+	chmod 600 "$key"
+	chmod 644 "$key.pub"
+	target="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
+	echo "Generated dedicated deploy SSH key: $key"
+	echo "Authorize it once on the Pi:"
+	printf '  ssh-copy-id -i %q %q\n' "$key.pub" "$target"
 
 # Run the complete local gate before a provision/firmware deployment.
 # Set TEST=false for an explicitly requested fast deployment.
 deploy:
 	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just deploy-precheck ;; esac
-	./tools/deployment/deploy.sh
+	PI_HOST="${PI_HOST:-{{pi_host}}}" {{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full
 
 # Sync tracked application/plugin files without provisioning or flashing firmware.
 deploy-python:
 	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just test-unit test-rendering test-deployment ;; esac
-	./tools/deployment/deploy_python.sh
+	PI_HOST="${PI_HOST:-{{pi_host}}}" {{captured}} --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python
+
+# Shell-based deployment (rsync + systemd) without the Python entrypoint orchestrator.
+deploy-shell:
+	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just deploy-precheck ;; esac
+	PI_HOST="${PI_HOST:-{{pi_host}}}" ./tools/deployment/deploy.sh
+
+deploy-shell-python:
+	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just test-unit test-rendering test-deployment ;; esac
+	PI_HOST="${PI_HOST:-{{pi_host}}}" ./tools/deployment/deploy_python.sh
 
 # Compatibility name for the fast Python deployment.
 deploy-no-firmware: deploy-python
@@ -59,8 +90,8 @@ test-rendering:
 
 # Run native firmware tests, build the production target, and enforce dependencies.
 test-firmware:
-	uv run --with platformio pio test -d firmware/esp32 -e native
-	uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1
+	{{platformio}} test -d firmware/esp32 -e native
+	{{platformio}} run -d firmware/esp32 -e esp32-s3-devkitc-1
 	if rg -n 'FastLED|fastled' firmware/esp32/src firmware/esp32/include firmware/esp32/platformio.ini; then exit 1; fi
 	if rg -n 'stable/platform-espressif32' firmware/esp32/platformio.ini; then exit 1; fi
 

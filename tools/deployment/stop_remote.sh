@@ -4,7 +4,7 @@
 set -e
 
 # Configuration
-PI_HOST="ledgridwall@ledgridwall.local"
+PI_HOST="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
 DEPLOY_DIR="ledgrid-pod"
 
 # Colors for output

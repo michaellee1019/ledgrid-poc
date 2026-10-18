@@ -7,7 +7,7 @@ if [ -n "${OUT_FILE}" ]; then
   exec >"${OUT_FILE}" 2>&1
 fi
 
-REMOTE=${REMOTE:-ledgridwall@ledgridwall.local}
+REMOTE=${REMOTE:-ledgridwall5@ledgridwall5.local}
 REMOTE_DIR=${REMOTE_DIR:-"~/ledgrid-pod"}
 PORT=${PORT:-5000}
 ANIMATION=${ANIMATION:-}

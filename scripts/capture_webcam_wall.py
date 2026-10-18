@@ -82,7 +82,7 @@ def show_pattern(base_url: str, index: int, name: str, brightness: float) -> Non
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default="http://ledgridwall.local:5000")
+    parser.add_argument("--base-url", default="http://ledgridwall5.local:5000")
     parser.add_argument("--config", default="config/webcam_wall_calibration.json")
     parser.add_argument("--output-dir", default="calibration_photos")
     parser.add_argument("--prefix", default=datetime.now().strftime("webcam-%Y%m%d-%H%M%S"))

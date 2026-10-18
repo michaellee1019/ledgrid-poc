@@ -1,6 +1,6 @@
 # Deployment
 
-Deployment targets `ledgridwall@ledgridwall.local` and `~/ledgrid-pod` by
+Deployment targets `ledgridwall5@ledgridwall5.local` and `~/ledgrid-pod` by
 default. Override `PI_HOST` or `DEPLOY_DIR` for another installation.
 
 ## Command surface
@@ -18,8 +18,10 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just test` | Run every required local gate |
 | `just preflight` | Alias for the full test gate |
 | `just deploy-precheck` | Full test gate used by deployment |
-| `just deploy` | Precheck, sync the application, provision, flash changed firmware, and restart |
-| `just deploy-python` | Sync application files and restart without provisioning or firmware flash |
+| `just deploy` | Precheck, stage/upload via `deploy_entrypoint.py`, install on the Pi, flash receivers, restart |
+| `just deploy-python` | Same entrypoint in Python-only mode (no receiver firmware flash) |
+| `just deploy-shell` | Legacy shell `deploy.sh` flow (direct rsync + systemd) |
+| `just deploy-shell-python` | Legacy fast shell sync via `deploy_python.sh` |
 | `just fetch-presets` | Fetch Pi-saved runtime presets for review |
 
 `deploy-no-firmware` is retained as a compatibility alias for
@@ -30,17 +32,27 @@ Use `just` recipes rather than invoking deployment helpers directly:
 Prerequisites:
 
 - Raspberry Pi OS with SSH enabled
-- passwordless SSH for `ledgridwall@ledgridwall.local`
+- passwordless SSH for `ledgridwall5@ledgridwall5.local`
 - the deploy user able to obtain passwordless sudo after setup
+
+SSH uses your normal agent/config by default. To pin a repository-local
+automation key instead, run `just generate-ai-ssh-key` once and authorize
+`.gpt-key.pub` on the Pi, or set `SSH_KEY` / `LEDGRID_SSH_KEY` to another
+private key path.
 - all expected ESP32 USB serial devices attached when firmware must be flashed
 - a reboot window if SPI device-tree settings need to change
 
 Run:
 
 ```bash
-just setup
+just setup    # once per Pi user: passwordless sudo, PlatformIO on the Pi, serial access
 just deploy
 ```
+
+After creating a new Pi user (for example `ledgridwall5`), run `just setup` once so
+`sudo -n` works for service install and firmware flashing during deploy. Setup
+warns when ESP32 receivers are unplugged; set `REQUIRE_ESP32_DEVICES=1` to fail
+instead, or plug in all receivers before a full firmware flash deploy.
 
 Setup installs PlatformIO in a dedicated environment on the Pi and verifies
 serial permissions. The full deployment applies the supported SPI boot
@@ -102,7 +114,7 @@ must not be curated.
 
 ## Verification after deployment
 
-1. Confirm `http://ledgridwall.local:5000/api/status` is current and the UI
+1. Confirm `http://ledgridwall5.local:5000/api/status` is current and the UI
    lists the expected manifest-backed plugins.
 2. Check `driver_stats.device_map`, geometry, and receiver integrity counters.
 3. For transport or firmware changes, run:
@@ -141,6 +153,13 @@ tools/deployment/stop_remote.sh stop
 ## Failure handling
 
 - If precheck fails, fix the local failure; do not bypass it.
+- If `test-firmware` fails with PlatformIO Python 3.12/3.13 or `littlefs` import
+  errors, use `./tools/deployment/run_platformio.sh` (via `just test-firmware`) so
+  the global `~/.platformio/penv` interpreter is used instead of `uv`’s default.
+- If PlatformIO reports an obsolete Core (for example 6.1.18) or
+  `IncompatiblePlatform`, upgrade the canonical install:
+  `~/.platformio/penv/bin/python -m pip install -U 'platformio>=6.1.19'` and open a
+  new shell so PATH does not prefer an older `pio` shim.
 - If setup changes boot configuration, reboot and verify device nodes before
   continuing.
 - If firmware flash fails, the source hash is not recorded, so the next full

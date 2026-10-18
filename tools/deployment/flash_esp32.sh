@@ -119,9 +119,9 @@ PY
 )"
 
 if [ -z "$ports" ]; then
-  log_warning "No ESP32 devices detected; skipping flash"
+  log_warning "No ESP32 devices detected; skipping flash (plug in receivers and redeploy to flash)"
   [ "$DEBUG" = "1" ] && echo "[DEBUG] Hint: check USB connections, try 'ls /dev/ttyACM* /dev/ttyUSB*' and 'lsusb'"
-  exit 1
+  exit 0
 fi
 
 port_count="$(echo "$ports" | wc -l | tr -d ' ')"
