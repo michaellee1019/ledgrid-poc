@@ -148,6 +148,9 @@ tools/deployment/stop_remote.sh stop
 ## Failure handling
 
 - If precheck fails, fix the local failure; do not bypass it.
+- If `test-firmware` fails with PlatformIO Python 3.12/3.13 or `littlefs` import
+  errors, use `./tools/deployment/run_platformio.sh` (via `just test-firmware`) so
+  the global `~/.platformio/penv` interpreter is used instead of `uv`’s default.
 - If setup changes boot configuration, reboot and verify device nodes before
   continuing.
 - If firmware flash fails, the source hash is not recorded, so the next full
