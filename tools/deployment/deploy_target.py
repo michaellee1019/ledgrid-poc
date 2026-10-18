@@ -217,7 +217,10 @@ def main() -> int:
     try:
         deploy(root, args.mode, args.timeout)
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
-        print(f"Deployment failed: {exc}. Data remains in {root / 'data'}; rerun deployment.", file=sys.stderr)
+        message = str(exc)
+        if "sudo" in message and "password" in message.lower():
+            message += "; run `just setup` from your Mac to configure passwordless sudo on the Pi"
+        print(f"Deployment failed: {message}. Data remains in {root / 'data'}; rerun deployment.", file=sys.stderr)
         return 1
     return 0
 

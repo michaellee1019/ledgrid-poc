@@ -133,20 +133,42 @@ def fetch_calibration(stage: Path, target: str, deploy_dir: str, options: list[s
         )
 
 
+def ensure_passwordless_sudo(root: Path, target: str) -> None:
+    """Match ``deploy.sh``: sudo -n is required for remote install/restart steps."""
+    env = os.environ.copy()
+    env["PI_HOST"] = target
+    subprocess.run(
+        ["bash", str(root / "tools/deployment/ensure_passwordless_sudo.sh")],
+        cwd=root,
+        env=env,
+        check=True,
+    )
+
+
 def run_deployment(root: Path, args: argparse.Namespace) -> None:
     deploy_dir = safe_deploy_dir(args.deploy_dir)
     options = ssh_options(root, args.ssh_key)
     if args.target.startswith("-"):
         raise ValueError("Invalid SSH target")
-    remote_root = f'"$HOME/{deploy_dir}"'
-    remote_incoming = f'"$HOME/{deploy_dir}/incoming"'
+    ensure_passwordless_sudo(root, args.target)
+    remote_deploy_command = (
+        f'python3 "$HOME/{deploy_dir}/incoming/tools/deployment/deploy_target.py" '
+        f'--root "$HOME/{deploy_dir}" --mode {shlex.quote(args.mode)} '
+        f"--timeout {args.timeout}"
+    )
     with tempfile.TemporaryDirectory(prefix="ledgrid-copy-") as temporary:
         stage = Path(temporary)
         stage_source(root, stage)
         fetch_calibration(stage, args.target, deploy_dir, options)
         maybe_build_browser_assets(stage)
         subprocess.run(
-            ["ssh", *options, args.target, f"mkdir -p {remote_root}; rm -rf -- {remote_incoming}; mkdir -p {remote_incoming}"],
+            [
+                "ssh",
+                *options,
+                args.target,
+                f'mkdir -p "$HOME/{deploy_dir}"; rm -rf -- "$HOME/{deploy_dir}/incoming"; '
+                f'mkdir -p "$HOME/{deploy_dir}/incoming"',
+            ],
             check=True,
         )
         subprocess.run(
@@ -163,11 +185,7 @@ def run_deployment(root: Path, args: argparse.Namespace) -> None:
             ],
             check=True,
         )
-        command = (
-            f"python3 {remote_incoming}/tools/deployment/deploy_target.py "
-            f"--root {remote_root} --mode {args.mode} --timeout {args.timeout}"
-        )
-        subprocess.run(["ssh", *options, args.target, command], check=True)
+        subprocess.run(["ssh", *options, args.target, remote_deploy_command], check=True)
 
 
 def main() -> int:

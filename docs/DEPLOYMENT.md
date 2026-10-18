@@ -45,9 +45,12 @@ private key path.
 Run:
 
 ```bash
-just setup
+just setup    # once per Pi user: passwordless sudo, PlatformIO on the Pi, serial access
 just deploy
 ```
+
+After creating a new Pi user (for example `ledgridwall5`), run `just setup` once so
+`sudo -n` works for service install and firmware flashing during deploy.
 
 Setup installs PlatformIO in a dedicated environment on the Pi and verifies
 serial permissions. The full deployment applies the supported SPI boot
