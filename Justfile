@@ -4,6 +4,7 @@ set quiet := true
 web_venv := ".venv-web"
 python_env := "uv run --frozen --group test --group calibration"
 captured := "python3 tools/deployment/run_captured.py --log-dir .deploy-logs"
+pi_host := "ledgridwall5@ledgridwall5.local"
 ai_ssh_key := ".gpt-key"
 
 # Create an ignored, repository-local identity for automated wall operations.
@@ -23,7 +24,7 @@ generate-ai-ssh-key key_path=ai_ssh_key:
 	ssh-keygen -q -t ed25519 -N "" -C "codex-ledgrid-poc" -f "$key"
 	chmod 600 "$key"
 	chmod 644 "$key.pub"
-	target="${PI_HOST:-ledgridwall@ledgridwall.local}"
+	target="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
 	echo "Generated dedicated AI SSH key: $key"
 	echo "Authorize it once using your normal SSH handling:"
 	printf '  ssh-copy-id -i %q %q\n' "$key.pub" "$target"
@@ -32,7 +33,7 @@ generate-ai-ssh-key key_path=ai_ssh_key:
 
 # Stop, copy/build, flash the explicitly mapped receivers, start, and check HTTP.
 deploy:
-	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full
+	PI_HOST="${PI_HOST:-{{pi_host}}}" {{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full
 
 deploy-dirty: deploy
 
@@ -45,7 +46,7 @@ deploy-plan:
 
 # Application-only deployment uses the same persistent data and startup path.
 deploy-python:
-	{{captured}} --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python
+	PI_HOST="${PI_HOST:-{{pi_host}}}" {{captured}} --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python
 
 deploy-python-dirty: deploy-python
 

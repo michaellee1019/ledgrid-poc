@@ -300,8 +300,8 @@ reproducing, or replacing a carrier or power assembly.
 2. Power and flash one receiver over USB:
 
    ```bash
-   uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1
-   uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1 -t upload
+   just test-firmware
+   ./tools/deployment/run_platformio.sh run -d firmware/esp32 -e esp32-s3-devkitc-1 -t upload
    ```
 
 3. On the Pi, verify the expected device nodes:

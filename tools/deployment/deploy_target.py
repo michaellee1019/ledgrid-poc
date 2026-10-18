@@ -133,7 +133,11 @@ def write_service(root: Path, app: Path) -> dict[str, str]:
     return preserved
 
 
-def readiness(timeout: float, api_url: str = "http://127.0.0.1:5000/api/v1/composer/operations/telemetry") -> None:
+def composer_readiness_url(port: str) -> str:
+    return f"http://127.0.0.1:{port}/api/v1/composer/operations/telemetry"
+
+
+def readiness(timeout: float, api_url: str) -> None:
     deadline = time.monotonic() + timeout
     error = "No response"
     while time.monotonic() < deadline:
@@ -149,27 +153,100 @@ def readiness(timeout: float, api_url: str = "http://127.0.0.1:5000/api/v1/compo
     raise RuntimeError(f"Readiness timed out: {error}; inspect journalctl -u ledgrid.service")
 
 
+def requirements_file(app: Path) -> Path:
+    locked = app / "requirements-pi.lock"
+    if locked.is_file():
+        return locked
+    default = app / "requirements.txt"
+    if default.is_file():
+        return default
+    raise RuntimeError("No requirements-pi.lock or requirements.txt in uploaded application")
+
+
+def flash_firmware(app: Path, root: Path, mode: str) -> None:
+    if mode != "full":
+        return
+    flash_receivers = app / "tools/deployment/flash_receivers.py"
+    if flash_receivers.is_file():
+        command(sys.executable, flash_receivers, "--root", root)
+        return
+    flash_script = app / "tools/deployment/flash_esp32.sh"
+    if flash_script.is_file():
+        env = os.environ.copy()
+        env["DEPLOY_DIR"] = str(app)
+        print("Running:", "bash", flash_script, flush=True)
+        subprocess.run(["bash", str(flash_script)], cwd=app, env=env, check=True)
+        return
+    raise RuntimeError("Full deploy requires flash_receivers.py or flash_esp32.sh")
+
+
+def ensure_python_build_dependencies() -> None:
+    """Install headers/toolchain needed to build ``spidev`` wheels on the Pi."""
+    subprocess.run(
+        ["bash", "-s"],
+        input=(
+            "set -euo pipefail\n"
+            "missing=()\n"
+            "for package in python3-dev build-essential git; do\n"
+            '  dpkg-query -W -f\'${Status}\' "$package" 2>/dev/null | grep -q \'ok installed\' '
+            "|| missing+=(\"$package\")\n"
+            "done\n"
+            'if [ "${#missing[@]}" -gt 0 ]; then\n'
+            "  sudo -n apt-get update\n"
+            '  sudo -n apt-get install -y "${missing[@]}"\n'
+            "fi\n"
+        ),
+        text=True,
+        check=True,
+    )
+
+
+def stop_ledgrid_service() -> None:
+    """Stop an existing unit; ignore first-install state where the service is absent."""
+    result = subprocess.run(
+        ["sudo", "-n", "systemctl", "stop", "ledgrid.service"],
+        check=False,
+    )
+    # 5 = unit not loaded (fresh Pi or renamed user); 0 = stopped cleanly.
+    if result.returncode not in (0, 5):
+        command("sudo", "-n", "systemctl", "stop", "ledgrid.service")
+
+
 def deploy(root: Path, mode: str, timeout: float) -> None:
-    command("sudo", "-n", "systemctl", "stop", "ledgrid.service")
+    stop_ledgrid_service()
     app = install_app(root)
     # Save the last published controls, including brightness zero, after the
     # service is stopped and before launching the new controller.
     status = root / "data/run_state/status.json"
+    python = root / "venv/bin/python"
+    if not python.is_file():
+        python = Path(sys.executable)
     if status.exists():
-        command(sys.executable, app / "tools/deployment/preserve_deploy_settings.py", "save", "--status", status,
-                "--state", root / "data/run_state/before_deploy.json", "--presets", root / "data/presets/animations")
-    if not (root / "venv/bin/python").is_file():
+        command(
+            python,
+            app / "tools/deployment/preserve_deploy_settings.py",
+            "save",
+            "--status",
+            status,
+            "--state",
+            root / "data/run_state/before_deploy.json",
+            "--presets",
+            root / "data/presets/animations",
+        )
+    ensure_python_build_dependencies()
+    created_venv = not (root / "venv/bin/python").is_file()
+    if created_venv:
         command("python3", "-m", "venv", root / "venv")
-    command(root / "venv/bin/python", "-m", "pip", "install", "-r", app / "requirements-pi.lock")
+        command(root / "venv/bin/python", "-m", "pip", "install", "--upgrade", "pip")
+    command(root / "venv/bin/python", "-m", "pip", "install", "-r", requirements_file(app))
     environment = write_service(root, app)
-    if mode == "full":
-        command(sys.executable, app / "tools/deployment/flash_receivers.py", "--root", root)
+    flash_firmware(app, root, mode)
     command("sudo", "-n", "systemctl", "enable", "ledgrid.service")
     command("sudo", "-n", "systemctl", "start", "ledgrid.service")
     port = environment.get("PORT", "5000")
     if not port.isdigit() or not 0 < int(port) < 65536:
         raise RuntimeError("Invalid service HTTP port")
-    readiness(timeout, f"http://127.0.0.1:{port}/api/v1/composer/operations/telemetry")
+    readiness(timeout, composer_readiness_url(port))
 
 
 def main() -> int:
@@ -187,7 +264,10 @@ def main() -> int:
     try:
         deploy(root, args.mode, args.timeout)
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
-        print(f"Deployment failed: {exc}. Data remains in {root / 'data'}; rerun deployment.", file=sys.stderr)
+        message = str(exc)
+        if "sudo" in message and "password" in message.lower():
+            message += "; run `just setup` from your Mac to configure passwordless sudo on the Pi"
+        print(f"Deployment failed: {message}. Data remains in {root / 'data'}; rerun deployment.", file=sys.stderr)
         return 1
     return 0
 

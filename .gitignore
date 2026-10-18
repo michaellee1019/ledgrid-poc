@@ -1,4 +1,7 @@
 .DS_Store
+.gpt-key
+.gpt-key.pub
+.deploy-logs/
 .cache/
 .idea/
 .venv

@@ -10,7 +10,6 @@ from pathlib import Path
 import subprocess
 import sys
 
-
 DEFAULT_TAIL_LINES = 40
 LIVE_PROGRESS_PREFIX = "[deploy"
 
@@ -59,20 +58,10 @@ def run_captured(
             process = subprocess.Popen(
                 command,
                 stdout=log,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
                 env=env,
             )
-            assert process.stderr is not None
-            try:
-                for line in process.stderr:
-                    log.write(line)
-                    log.flush()
-                    if line.startswith(LIVE_PROGRESS_PREFIX):
-                        sys.stderr.write(line)
-                        sys.stderr.flush()
-            finally:
-                process.stderr.close()
             return_code = process.wait()
 
     if return_code:

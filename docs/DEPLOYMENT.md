@@ -1,20 +1,25 @@
 # Deployment and recovery
 
-The installed wall uses `ledgridwall@ledgridwall.local`, with application code
-under `~/ledgrid-pod/app` and personal data under `~/ledgrid-pod/data`.
-Deployment may interrupt playback. Failures report the failing command and may
-leave the service stopped; rerun deployment after correcting the problem.
+The installed wall uses `ledgridwall5@ledgridwall5.local` by default, with
+application code under `~/ledgrid-pod/app` and personal data under
+`~/ledgrid-pod/data`. Override `PI_HOST` or `DEPLOY_DIR` for another
+installation. Deployment may interrupt playback. Failures report the failing
+command and may leave the service stopped; rerun deployment after correcting the
+problem.
 
-Use the dedicated SSH key:
+SSH uses your normal agent/config by default. To pin a repository-local
+automation key, run `just generate-ai-ssh-key` once and authorize `.gpt-key.pub`
+on the Pi, or set `SSH_KEY` / `LEDGRID_SSH_KEY`:
 
 ```sh
-SSH_KEY=/Users/rtimmons/Projects/ledgrid-poc/.gpt-key just deploy-python
+SSH_KEY="$PWD/.gpt-key" just deploy-python
 ```
 
-The key must exist and be readable. Operations use `IdentitiesOnly=yes`,
-`BatchMode=yes`, and non-interactive `sudo -n`; they never fall back to another
-identity or a password. `PI_HOST` and `DEPLOY_DIR` override the target and its
-named directory below the target user's home.
+When a dedicated key is configured, operations use `IdentitiesOnly=yes` and
+`BatchMode=yes`. Remote install steps require non-interactive `sudo -n`; run
+`just setup` once on a new Pi user to configure passwordless sudo and SPI boot
+support. Full deployment applies SPI device-tree settings when needed and may
+require a reboot before `/dev/spidev*` nodes appear.
 
 | Command | Action |
 | --- | --- |
@@ -77,15 +82,14 @@ use the application's connectivity status and a visual wall check for playback.
 Inspect service and application logs with the same dedicated identity:
 
 ```sh
-ssh -i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 \
-  ledgridwall@ledgridwall.local -- journalctl -u ledgrid.service -n 100 --no-pager
+ssh ledgridwall5@ledgridwall5.local -- journalctl -u ledgrid.service -n 100 --no-pager
 ```
 
 Rerunning `just deploy-python` replaces incomplete application code. Rerunning
 `just deploy` also rebuilds and reflashes the mapped receivers. If needed, stop
-the service and remove **only** `/home/ledgridwall/ledgrid-pod/app`, then deploy
-again. Keep `/home/ledgridwall/ledgrid-pod/data` and its backups. The deployer
-never selects an old release or restores prior playback automatically.
+the service and remove **only** `~/ledgrid-pod/app`, then deploy again. Keep
+`~/ledgrid-pod/data` and its backups. The deployer never selects an old release
+or restores prior playback automatically.
 
 `tools/deployment/stop_remote.sh stop|restart|status` provides the corresponding
 service operation using the same SSH policy. If system provisioning, USB access,
