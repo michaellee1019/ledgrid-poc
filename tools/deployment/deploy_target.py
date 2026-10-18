@@ -133,7 +133,11 @@ def write_service(root: Path, app: Path) -> dict[str, str]:
     return preserved
 
 
-def readiness(timeout: float, api_url: str = "http://127.0.0.1:5000/api/v1/composer/operations/telemetry") -> None:
+def readiness_url(port: str) -> str:
+    return f"http://127.0.0.1:{port}/api/status"
+
+
+def readiness(timeout: float, api_url: str) -> None:
     deadline = time.monotonic() + timeout
     error = "No response"
     while time.monotonic() < deadline:
@@ -149,6 +153,33 @@ def readiness(timeout: float, api_url: str = "http://127.0.0.1:5000/api/v1/compo
     raise RuntimeError(f"Readiness timed out: {error}; inspect journalctl -u ledgrid.service")
 
 
+def requirements_file(app: Path) -> Path:
+    locked = app / "requirements-pi.lock"
+    if locked.is_file():
+        return locked
+    default = app / "requirements.txt"
+    if default.is_file():
+        return default
+    raise RuntimeError("No requirements-pi.lock or requirements.txt in uploaded application")
+
+
+def flash_firmware(app: Path, root: Path, mode: str) -> None:
+    if mode != "full":
+        return
+    flash_receivers = app / "tools/deployment/flash_receivers.py"
+    if flash_receivers.is_file():
+        command(sys.executable, flash_receivers, "--root", root)
+        return
+    flash_script = app / "tools/deployment/flash_esp32.sh"
+    if flash_script.is_file():
+        env = os.environ.copy()
+        env["DEPLOY_DIR"] = str(app)
+        print("Running:", "bash", flash_script, flush=True)
+        subprocess.run(["bash", str(flash_script)], cwd=app, env=env, check=True)
+        return
+    raise RuntimeError("Full deploy requires flash_receivers.py or flash_esp32.sh")
+
+
 def deploy(root: Path, mode: str, timeout: float) -> None:
     command("sudo", "-n", "systemctl", "stop", "ledgrid.service")
     app = install_app(root)
@@ -160,16 +191,15 @@ def deploy(root: Path, mode: str, timeout: float) -> None:
                 "--state", root / "data/run_state/before_deploy.json", "--presets", root / "data/presets/animations")
     if not (root / "venv/bin/python").is_file():
         command("python3", "-m", "venv", root / "venv")
-    command(root / "venv/bin/python", "-m", "pip", "install", "-r", app / "requirements-pi.lock")
+    command(root / "venv/bin/python", "-m", "pip", "install", "-r", requirements_file(app))
     environment = write_service(root, app)
-    if mode == "full":
-        command(sys.executable, app / "tools/deployment/flash_receivers.py", "--root", root)
+    flash_firmware(app, root, mode)
     command("sudo", "-n", "systemctl", "enable", "ledgrid.service")
     command("sudo", "-n", "systemctl", "start", "ledgrid.service")
     port = environment.get("PORT", "5000")
     if not port.isdigit() or not 0 < int(port) < 65536:
         raise RuntimeError("Invalid service HTTP port")
-    readiness(timeout, f"http://127.0.0.1:{port}/api/v1/composer/operations/telemetry")
+    readiness(timeout, readiness_url(port))
 
 
 def main() -> int:

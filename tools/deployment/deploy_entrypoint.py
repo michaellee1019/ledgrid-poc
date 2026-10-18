@@ -95,6 +95,18 @@ def stage_source(root: Path, destination: Path) -> None:
         shutil.copy2(root / relative, target)
 
 
+def maybe_build_browser_assets(stage: Path) -> None:
+    """Build Composer browser assets when this checkout includes that toolchain."""
+    script = stage / "tools/build_browser_composer_assets.py"
+    if not script.is_file():
+        return
+    subprocess.run(
+        ["uv", "run", "--frozen", "--group", "calibration", "python", "tools/build_browser_composer_assets.py"],
+        cwd=stage,
+        check=True,
+    )
+
+
 def fetch_calibration(stage: Path, target: str, deploy_dir: str, options: list[str]) -> None:
     """Build previews from the same editable calibration used by the wall."""
     remote_root = f'"$HOME/{deploy_dir}"'
@@ -132,11 +144,7 @@ def run_deployment(root: Path, args: argparse.Namespace) -> None:
         stage = Path(temporary)
         stage_source(root, stage)
         fetch_calibration(stage, args.target, deploy_dir, options)
-        subprocess.run(
-            ["uv", "run", "--frozen", "--group", "calibration", "python", "tools/build_browser_composer_assets.py"],
-            cwd=stage,
-            check=True,
-        )
+        maybe_build_browser_assets(stage)
         subprocess.run(
             ["ssh", *options, args.target, f"mkdir -p {remote_root}; rm -rf -- {remote_incoming}; mkdir -p {remote_incoming}"],
             check=True,
@@ -169,7 +177,7 @@ def main() -> int:
     parser.add_argument("--target", default=None)
     parser.add_argument("--deploy-dir", default=os.environ.get("DEPLOY_DIR", DEFAULT_DEPLOY_DIR))
     parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY"))
-    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--timeout", type=float, default=60)
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
