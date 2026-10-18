@@ -4,6 +4,7 @@ web_venv := ".venv-web"
 python_env := "uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with opencv-python-headless"
 pi_host := "ledgridwall5@ledgridwall5.local"
 captured := "python3 tools/deployment/run_captured.py --log-dir .deploy-logs"
+platformio := "./tools/deployment/run_platformio.sh"
 ai_ssh_key := ".gpt-key"
 
 # Create an ignored, repository-local identity for automated wall operations.
@@ -89,8 +90,8 @@ test-rendering:
 
 # Run native firmware tests, build the production target, and enforce dependencies.
 test-firmware:
-	uv run --with platformio pio test -d firmware/esp32 -e native
-	uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1
+	{{platformio}} test -d firmware/esp32 -e native
+	{{platformio}} run -d firmware/esp32 -e esp32-s3-devkitc-1
 	if rg -n 'FastLED|fastled' firmware/esp32/src firmware/esp32/include firmware/esp32/platformio.ini; then exit 1; fi
 	if rg -n 'stable/platform-espressif32' firmware/esp32/platformio.ini; then exit 1; fi
 
