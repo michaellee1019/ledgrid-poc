@@ -32,6 +32,13 @@ class DeployEntrypointCompatTests(unittest.TestCase):
             deploy_target.stop_ledgrid_service()
             run.assert_called_once()
 
+    def test_build_dependencies_install_python3_dev(self):
+        with patch.object(deploy_target.subprocess, "run") as run:
+            deploy_target.ensure_python_build_dependencies()
+            script = run.call_args.kwargs["input"]
+            self.assertIn("python3-dev", script)
+            self.assertIn("build-essential", script)
+
 
 if __name__ == "__main__":
     unittest.main()

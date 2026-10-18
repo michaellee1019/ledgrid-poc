@@ -180,6 +180,27 @@ def flash_firmware(app: Path, root: Path, mode: str) -> None:
     raise RuntimeError("Full deploy requires flash_receivers.py or flash_esp32.sh")
 
 
+def ensure_python_build_dependencies() -> None:
+    """Install headers/toolchain needed to build ``spidev`` wheels on the Pi."""
+    subprocess.run(
+        ["bash", "-s"],
+        input=(
+            "set -euo pipefail\n"
+            "missing=()\n"
+            "for package in python3-dev build-essential git; do\n"
+            '  dpkg-query -W -f\'${Status}\' "$package" 2>/dev/null | grep -q \'ok installed\' '
+            "|| missing+=(\"$package\")\n"
+            "done\n"
+            'if [ "${#missing[@]}" -gt 0 ]; then\n'
+            "  sudo -n apt-get update\n"
+            '  sudo -n apt-get install -y "${missing[@]}"\n'
+            "fi\n"
+        ),
+        text=True,
+        check=True,
+    )
+
+
 def stop_ledgrid_service() -> None:
     """Stop an existing unit; ignore first-install state where the service is absent."""
     result = subprocess.run(
@@ -200,8 +221,11 @@ def deploy(root: Path, mode: str, timeout: float) -> None:
     if status.exists():
         command(sys.executable, app / "tools/deployment/preserve_deploy_settings.py", "save", "--status", status,
                 "--state", root / "data/run_state/before_deploy.json", "--presets", root / "data/presets/animations")
-    if not (root / "venv/bin/python").is_file():
+    ensure_python_build_dependencies()
+    created_venv = not (root / "venv/bin/python").is_file()
+    if created_venv:
         command("python3", "-m", "venv", root / "venv")
+        command(root / "venv/bin/python", "-m", "pip", "install", "--upgrade", "pip")
     command(root / "venv/bin/python", "-m", "pip", "install", "-r", requirements_file(app))
     environment = write_service(root, app)
     flash_firmware(app, root, mode)
