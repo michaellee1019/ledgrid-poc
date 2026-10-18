@@ -18,8 +18,10 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just test` | Run every required local gate |
 | `just preflight` | Alias for the full test gate |
 | `just deploy-precheck` | Full test gate used by deployment |
-| `just deploy` | Precheck, sync the application, provision, flash changed firmware, and restart |
-| `just deploy-python` | Sync application files and restart without provisioning or firmware flash |
+| `just deploy` | Precheck, stage/upload via `deploy_entrypoint.py`, install on the Pi, flash receivers, restart |
+| `just deploy-python` | Same entrypoint in Python-only mode (no receiver firmware flash) |
+| `just deploy-shell` | Legacy shell `deploy.sh` flow (direct rsync + systemd) |
+| `just deploy-shell-python` | Legacy fast shell sync via `deploy_python.sh` |
 | `just fetch-presets` | Fetch Pi-saved runtime presets for review |
 
 `deploy-no-firmware` is retained as a compatibility alias for

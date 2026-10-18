@@ -22,6 +22,36 @@ except ModuleNotFoundError:  # Direct ``python tools/deployment/deploy_entrypoin
 
 DEFAULT_TARGET = "ledgridwall5@ledgridwall5.local"
 DEFAULT_DEPLOY_DIR = "ledgrid-pod"
+_LEGACY_TARGETS = frozenset(
+    {
+        "ledgridwall@ledgridwall.local",
+        "ledgridwall.local",
+    }
+)
+
+
+def normalize_pi_host(value: str) -> str:
+    """Map retired Pi 4 mDNS names to the Pi 5 wall host."""
+    trimmed = value.strip()
+    if not trimmed:
+        return DEFAULT_TARGET
+    if trimmed in _LEGACY_TARGETS:
+        return DEFAULT_TARGET
+    if trimmed.endswith("@ledgridwall.local"):
+        user = trimmed.split("@", 1)[0]
+        if user == "ledgridwall":
+            return DEFAULT_TARGET
+        return f"{user}@ledgridwall5.local"
+    return trimmed
+
+
+def resolve_deploy_target(explicit: str | None) -> str:
+    if explicit:
+        return normalize_pi_host(explicit)
+    env_value = os.environ.get("PI_HOST")
+    if env_value:
+        return normalize_pi_host(env_value)
+    return DEFAULT_TARGET
 SOURCE_ROOTS = {"animation", "config", "drivers", "ipc", "scripts", "tools", "web", "firmware"}
 SOURCE_FILES = {
     "pyproject.toml",
@@ -136,7 +166,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["run", "plan"])
     parser.add_argument("--mode", choices=["full", "python"], default="full")
-    parser.add_argument("--target", default=os.environ.get("PI_HOST", DEFAULT_TARGET))
+    parser.add_argument("--target", default=None)
     parser.add_argument("--deploy-dir", default=os.environ.get("DEPLOY_DIR", DEFAULT_DEPLOY_DIR))
     parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY"))
     parser.add_argument("--timeout", type=float, default=30)
@@ -144,6 +174,7 @@ def main() -> int:
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     root = Path(__file__).resolve().parents[2]
+    args.target = resolve_deploy_target(args.target)
     try:
         safe_deploy_dir(args.deploy_dir)
         ssh_options(root, args.ssh_key)

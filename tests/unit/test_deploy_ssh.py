@@ -8,10 +8,40 @@ import unittest
 from pathlib import Path
 import tempfile
 
+from tools.deployment.deploy_entrypoint import normalize_pi_host, resolve_deploy_target
 from tools.deployment.deploy_ssh import ssh_options
 
 
 class DeploySSHTests(unittest.TestCase):
+    def test_legacy_hostname_maps_to_pi5_target(self):
+        self.assertEqual(
+            normalize_pi_host("ledgridwall@ledgridwall.local"),
+            "ledgridwall5@ledgridwall5.local",
+        )
+        previous = os.environ.get("PI_HOST")
+        os.environ.pop("PI_HOST", None)
+        try:
+            self.assertEqual(resolve_deploy_target(None), "ledgridwall5@ledgridwall5.local")
+        finally:
+            if previous is None:
+                os.environ.pop("PI_HOST", None)
+            else:
+                os.environ["PI_HOST"] = previous
+
+    def test_pi_host_env_legacy_value_is_upgraded(self):
+        previous = os.environ.get("PI_HOST")
+        os.environ["PI_HOST"] = "ledgridwall@ledgridwall.local"
+        try:
+            self.assertEqual(
+                resolve_deploy_target(None),
+                "ledgridwall5@ledgridwall5.local",
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("PI_HOST", None)
+            else:
+                os.environ["PI_HOST"] = previous
+
     def test_falls_back_to_default_ssh_without_dedicated_key(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

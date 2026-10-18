@@ -2,6 +2,8 @@ set shell := ["bash", "-euxo", "pipefail", "-c"]
 
 web_venv := ".venv-web"
 python_env := "uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with opencv-python-headless"
+pi_host := "ledgridwall5@ledgridwall5.local"
+captured := "python3 tools/deployment/run_captured.py --log-dir .deploy-logs"
 ai_ssh_key := ".gpt-key"
 
 # Create an ignored, repository-local identity for automated wall operations.
@@ -26,12 +28,21 @@ generate-ai-ssh-key key_path=ai_ssh_key:
 # Set TEST=false for an explicitly requested fast deployment.
 deploy:
 	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just deploy-precheck ;; esac
-	./tools/deployment/deploy.sh
+	PI_HOST="${PI_HOST:-{{pi_host}}}" {{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full
 
 # Sync tracked application/plugin files without provisioning or flashing firmware.
 deploy-python:
 	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just test-unit test-rendering test-deployment ;; esac
-	./tools/deployment/deploy_python.sh
+	PI_HOST="${PI_HOST:-{{pi_host}}}" {{captured}} --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python
+
+# Shell-based deployment (rsync + systemd) without the Python entrypoint orchestrator.
+deploy-shell:
+	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just deploy-precheck ;; esac
+	PI_HOST="${PI_HOST:-{{pi_host}}}" ./tools/deployment/deploy.sh
+
+deploy-shell-python:
+	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just test-unit test-rendering test-deployment ;; esac
+	PI_HOST="${PI_HOST:-{{pi_host}}}" ./tools/deployment/deploy_python.sh
 
 # Compatibility name for the fast Python deployment.
 deploy-no-firmware: deploy-python
