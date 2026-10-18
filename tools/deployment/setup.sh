@@ -93,7 +93,19 @@ echo "[SUCCESS] Added user to dialout group; re-login may be required"
 EOF
 
 EXPECTED_ESP32_DEVICES="${EXPECTED_ESP32_DEVICES:-4}"
+REQUIRE_ESP32_DEVICES="${REQUIRE_ESP32_DEVICES:-0}"
 log_info "Detecting connected ESP32 devices (expecting ${EXPECTED_ESP32_DEVICES})..."
+if ! ssh $SSH_OPTS "$PI_HOST" "bash -s" <<EOF
+set -euo pipefail
+export PATH="\$HOME/.local/bin:\$PATH"
+export EXPECTED_ESP32_DEVICES="${EXPECTED_ESP32_DEVICES}"
+export REQUIRE_ESP32_DEVICES="${REQUIRE_ESP32_DEVICES}"
+EOF
+then
+  log_error "ESP32 device probe failed"
+  exit 1
+fi
+
 if ! ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
