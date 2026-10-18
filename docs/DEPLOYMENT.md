@@ -151,6 +151,10 @@ tools/deployment/stop_remote.sh stop
 - If `test-firmware` fails with PlatformIO Python 3.12/3.13 or `littlefs` import
   errors, use `./tools/deployment/run_platformio.sh` (via `just test-firmware`) so
   the global `~/.platformio/penv` interpreter is used instead of `uv`’s default.
+- If PlatformIO reports an obsolete Core (for example 6.1.18) or
+  `IncompatiblePlatform`, upgrade the canonical install:
+  `~/.platformio/penv/bin/python -m pip install -U 'platformio>=6.1.19'` and open a
+  new shell so PATH does not prefer an older `pio` shim.
 - If setup changes boot configuration, reboot and verify device nodes before
   continuing.
 - If firmware flash fails, the source hash is not recorded, so the next full
