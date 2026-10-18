@@ -180,8 +180,19 @@ def flash_firmware(app: Path, root: Path, mode: str) -> None:
     raise RuntimeError("Full deploy requires flash_receivers.py or flash_esp32.sh")
 
 
+def stop_ledgrid_service() -> None:
+    """Stop an existing unit; ignore first-install state where the service is absent."""
+    result = subprocess.run(
+        ["sudo", "-n", "systemctl", "stop", "ledgrid.service"],
+        check=False,
+    )
+    # 5 = unit not loaded (fresh Pi or renamed user); 0 = stopped cleanly.
+    if result.returncode not in (0, 5):
+        command("sudo", "-n", "systemctl", "stop", "ledgrid.service")
+
+
 def deploy(root: Path, mode: str, timeout: float) -> None:
-    command("sudo", "-n", "systemctl", "stop", "ledgrid.service")
+    stop_ledgrid_service()
     app = install_app(root)
     # Save the last published controls, including brightness zero, after the
     # service is stopped and before launching the new controller.
