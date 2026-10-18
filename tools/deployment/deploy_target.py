@@ -218,9 +218,21 @@ def deploy(root: Path, mode: str, timeout: float) -> None:
     # Save the last published controls, including brightness zero, after the
     # service is stopped and before launching the new controller.
     status = root / "data/run_state/status.json"
+    python = root / "venv/bin/python"
+    if not python.is_file():
+        python = Path(sys.executable)
     if status.exists():
-        command(sys.executable, app / "tools/deployment/preserve_deploy_settings.py", "save", "--status", status,
-                "--state", root / "data/run_state/before_deploy.json", "--presets", root / "data/presets/animations")
+        command(
+            python,
+            app / "tools/deployment/preserve_deploy_settings.py",
+            "save",
+            "--status",
+            status,
+            "--state",
+            root / "data/run_state/before_deploy.json",
+            "--presets",
+            root / "data/presets/animations",
+        )
     ensure_python_build_dependencies()
     created_venv = not (root / "venv/bin/python").is_file()
     if created_venv:

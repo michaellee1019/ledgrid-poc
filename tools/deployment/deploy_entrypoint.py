@@ -133,6 +133,18 @@ def fetch_calibration(stage: Path, target: str, deploy_dir: str, options: list[s
         )
 
 
+def ensure_spi_boot(root: Path, target: str) -> None:
+    env = os.environ.copy()
+    env["PI_HOST"] = target
+    env.setdefault("DEPLOY_DIR", DEFAULT_DEPLOY_DIR)
+    subprocess.run(
+        ["bash", str(root / "tools/deployment/ensure_spi_boot.sh")],
+        cwd=root,
+        env=env,
+        check=True,
+    )
+
+
 def ensure_passwordless_sudo(root: Path, target: str) -> None:
     """Match ``deploy.sh``: sudo -n is required for remote install/restart steps."""
     env = os.environ.copy()
@@ -185,6 +197,7 @@ def run_deployment(root: Path, args: argparse.Namespace) -> None:
             ],
             check=True,
         )
+        ensure_spi_boot(root, args.target)
         subprocess.run(["ssh", *options, args.target, remote_deploy_command], check=True)
 
 
@@ -195,7 +208,7 @@ def main() -> int:
     parser.add_argument("--target", default=None)
     parser.add_argument("--deploy-dir", default=os.environ.get("DEPLOY_DIR", DEFAULT_DEPLOY_DIR))
     parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY"))
-    parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--timeout", type=float, default=120)
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")

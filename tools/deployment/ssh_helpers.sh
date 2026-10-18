@@ -158,12 +158,26 @@ EOF
 
 ensure_remote_spi() {
     local deploy_dir="${DEPLOY_DIR:-ledgrid-pod}"
-    local configure_script="/home/${PI_USER}/${deploy_dir}/tools/deployment/configure_spi.sh"
     local output status config_changed
 
     _deploy_log_info "Ensuring boot SPI config (/boot/firmware/config.txt) and device nodes..."
 
-    if ! output=$(ssh $SSH_OPTS "$PI_HOST" "LEDGRID_HAT=${LEDGRID_HAT:-0} bash ${configure_script}" 2>&1); then
+    if ! output=$(ssh $SSH_OPTS "$PI_HOST" "bash -s" <<EOF
+set -euo pipefail
+deploy_dir="${deploy_dir}"
+for candidate in \
+  "\$HOME/\${deploy_dir}/app/tools/deployment/configure_spi.sh" \
+  "\$HOME/\${deploy_dir}/incoming/tools/deployment/configure_spi.sh" \
+  "\$HOME/\${deploy_dir}/tools/deployment/configure_spi.sh"; do
+  if [ -f "\$candidate" ]; then
+    LEDGRID_HAT=${LEDGRID_HAT:-0} bash "\$candidate"
+    exit 0
+  fi
+done
+echo "[ERROR] configure_spi.sh not found under ~/\${deploy_dir}" >&2
+exit 1
+EOF
+    2>&1); then
         _deploy_log_error "SPI configuration failed"
         echo "$output" >&2
         return 1
