@@ -112,7 +112,7 @@ automated canary gate with:
 
 ```bash
 python tools/benchmarks/receiver_acceptance.py \
-  --base-url http://ledgridwall.local:5000 \
+  --base-url http://ledgridwall5.local:5000 \
   --device 0 --duration 60 --animation rainbow
 ```
 

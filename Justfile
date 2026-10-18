@@ -2,6 +2,25 @@ set shell := ["bash", "-euxo", "pipefail", "-c"]
 
 web_venv := ".venv-web"
 python_env := "uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with opencv-python-headless"
+ai_ssh_key := ".gpt-key"
+
+# Create an ignored, repository-local identity for automated wall operations.
+generate-ai-ssh-key key_path=ai_ssh_key:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	umask 077
+	key="{{key_path}}"
+	if [ -e "$key" ] || [ -e "$key.pub" ]; then
+	  echo "Refusing to overwrite existing AI SSH key: $key or $key.pub" >&2
+	  exit 1
+	fi
+	ssh-keygen -q -t ed25519 -N "" -C "ledgrid-deploy" -f "$key"
+	chmod 600 "$key"
+	chmod 644 "$key.pub"
+	target="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
+	echo "Generated dedicated deploy SSH key: $key"
+	echo "Authorize it once on the Pi:"
+	printf '  ssh-copy-id -i %q %q\n' "$key.pub" "$target"
 
 # Run the complete local gate before a provision/firmware deployment.
 # Set TEST=false for an explicitly requested fast deployment.

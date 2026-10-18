@@ -5,7 +5,7 @@
 set -euo pipefail  # Exit on any error and fail on unset vars
 
 # Configuration
-PI_HOST="${PI_HOST:-ledgridwall@ledgridwall.local}"
+PI_HOST="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
 DEPLOY_DIR="${DEPLOY_DIR:-ledgrid-pod}"
 LOCAL_DIR="${LOCAL_DIR:-.}"
 # shellcheck source=ssh_helpers.sh
@@ -48,7 +48,7 @@ check_ssh_connection() {
         log_error "  1. Raspberry Pi is powered on and connected to network"
         log_error "  2. SSH is enabled on the Pi"
         log_error "  3. Passwordless SSH is configured (ssh-copy-id)"
-        log_error "  4. Hostname 'ledgridwall.local' resolves correctly"
+        log_error "  4. Hostname 'ledgridwall5.local' resolves correctly"
         exit 1
     fi
 

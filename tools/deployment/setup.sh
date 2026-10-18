@@ -4,7 +4,7 @@
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
-PI_HOST="${PI_HOST:-ledgridwall@ledgridwall.local}"
+PI_HOST="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
 DEPLOY_DIR="${DEPLOY_DIR:-ledgrid-pod}"
 # shellcheck source=ssh_helpers.sh
 source "$(dirname "$0")/ssh_helpers.sh"

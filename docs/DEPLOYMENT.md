@@ -1,6 +1,6 @@
 # Deployment
 
-Deployment targets `ledgridwall@ledgridwall.local` and `~/ledgrid-pod` by
+Deployment targets `ledgridwall5@ledgridwall5.local` and `~/ledgrid-pod` by
 default. Override `PI_HOST` or `DEPLOY_DIR` for another installation.
 
 ## Command surface
@@ -30,8 +30,13 @@ Use `just` recipes rather than invoking deployment helpers directly:
 Prerequisites:
 
 - Raspberry Pi OS with SSH enabled
-- passwordless SSH for `ledgridwall@ledgridwall.local`
+- passwordless SSH for `ledgridwall5@ledgridwall5.local`
 - the deploy user able to obtain passwordless sudo after setup
+
+SSH uses your normal agent/config by default. To pin a repository-local
+automation key instead, run `just generate-ai-ssh-key` once and authorize
+`.gpt-key.pub` on the Pi, or set `SSH_KEY` / `LEDGRID_SSH_KEY` to another
+private key path.
 - all expected ESP32 USB serial devices attached when firmware must be flashed
 - a reboot window if SPI device-tree settings need to change
 
@@ -102,7 +107,7 @@ must not be curated.
 
 ## Verification after deployment
 
-1. Confirm `http://ledgridwall.local:5000/api/status` is current and the UI
+1. Confirm `http://ledgridwall5.local:5000/api/status` is current and the UI
    lists the expected manifest-backed plugins.
 2. Check `driver_stats.device_map`, geometry, and receiver integrity counters.
 3. For transport or firmware changes, run:

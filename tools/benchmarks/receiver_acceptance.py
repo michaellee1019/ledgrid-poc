@@ -110,7 +110,7 @@ def _post_json(url, payload):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://ledgridwall.local:5000")
+    parser.add_argument("--base-url", default="http://ledgridwall5.local:5000")
     parser.add_argument(
         "--device",
         type=int,

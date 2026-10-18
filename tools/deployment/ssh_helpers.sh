@@ -1,10 +1,45 @@
 # Shared SSH/sudo helpers for remote deployment.
 # Source after setting PI_HOST if you need a non-default host.
 
-PI_HOST="${PI_HOST:-ledgridwall@ledgridwall.local}"
+PI_HOST="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
 PI_USER="${PI_USER:-${PI_HOST%@*}}"
 SSH_OPTS="${SSH_OPTS:--o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new}"
 SSH_OPTS_TTY="${SSH_OPTS_TTY:--o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new}"
+
+_deployment_repo_root() {
+    cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
+}
+
+_configure_deploy_ssh_identity() {
+    if [[ "${SSH_OPTS:-}" == *" -i "* || "${SSH_OPTS:-}" == "-i "* ]]; then
+        return 0
+    fi
+
+    local root="${DEPLOY_REPO_ROOT:-$(_deployment_repo_root)}"
+    local candidate=""
+
+    if [ -n "${SSH_KEY:-}" ]; then
+        candidate="$SSH_KEY"
+    elif [ -n "${LEDGRID_SSH_KEY:-}" ]; then
+        candidate="$LEDGRID_SSH_KEY"
+    elif [ -f "$root/.gpt-key" ] && [ -r "$root/.gpt-key" ]; then
+        candidate="$root/.gpt-key"
+    else
+        return 0
+    fi
+
+    if [ ! -f "$candidate" ] || [ ! -r "$candidate" ]; then
+        _deploy_log_error "Configured SSH identity is missing or unreadable: $candidate"
+        return 1
+    fi
+
+    local resolved
+    resolved="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+    SSH_OPTS="-i $resolved -o IdentitiesOnly=yes $SSH_OPTS"
+    SSH_OPTS_TTY="-i $resolved -o IdentitiesOnly=yes $SSH_OPTS_TTY"
+}
+
+_configure_deploy_ssh_identity || exit 1
 
 _deploy_log_info() {
     if declare -F log_info >/dev/null 2>&1; then

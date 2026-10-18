@@ -57,7 +57,7 @@ just deploy            # full application and firmware deployment
 ```
 
 Use `just deploy-python` when firmware and boot configuration are unchanged.
-The deployment target defaults to `ledgridwall@ledgridwall.local`.
+The deployment target defaults to `ledgridwall5@ledgridwall5.local`.
 
 ## Required checks
 

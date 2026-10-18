@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-ledgridwall@ledgridwall.local}"
+PI_HOST="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
 DEPLOY_DIR="${DEPLOY_DIR:-ledgrid-pod}"
 LOCAL_DIR="${LOCAL_DIR:-.}"
 

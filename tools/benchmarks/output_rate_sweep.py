@@ -38,7 +38,7 @@ def _wait_for_target(base_url, target, timeout=5.0):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://ledgridwall.local:5000")
+    parser.add_argument("--base-url", default="http://ledgridwall5.local:5000")
     parser.add_argument("--rates", default="120,140,160,180,200")
     parser.add_argument("--seconds", type=float, default=15.0)
     parser.add_argument("--animation", default="rainbow")
