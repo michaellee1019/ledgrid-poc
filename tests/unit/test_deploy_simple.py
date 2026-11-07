@@ -119,10 +119,39 @@ def test_flash_uses_explicit_serial_order_and_refuses_missing_or_duplicate(tmp_p
         flash_receivers.mapped_ports(mapping, devices)
 
 
+def test_flash_accepts_spi1_hat_mapping(tmp_path):
+    mapping = {
+        "identities": [
+            {"logical_device": 0, "spi_route": [1, 0], "hardware_serial": "00:00:00:00:00:00"},
+            {"logical_device": 1, "spi_route": [1, 1], "hardware_serial": "00:00:00:00:00:01"},
+        ]
+    }
+    devices = [
+        {"port": "/dev/ttyACM1", "hwid": "USB VID:PID=303A:1001 SER=000000000001 LOCATION=1-1"},
+        {"port": "/dev/ttyACM0", "hwid": "USB VID:PID=303A:1001 SER=000000000000 LOCATION=1-0"},
+    ]
+    assert flash_receivers.mapped_ports(mapping, devices) == ["/dev/ttyACM0", "/dev/ttyACM1"]
+
+
+def test_flash_accepts_spi0_hat_mapping(tmp_path):
+    mapping = {
+        "identities": [
+            {"logical_device": 0, "spi_route": [0, 0], "hardware_serial": "00:00:00:00:00:00"},
+            {"logical_device": 1, "spi_route": [0, 1], "hardware_serial": "00:00:00:00:00:01"},
+        ]
+    }
+    devices = [
+        {"port": "/dev/ttyACM1", "hwid": "USB VID:PID=303A:1001 SER=000000000001 LOCATION=1-1"},
+        {"port": "/dev/ttyACM0", "hwid": "USB VID:PID=303A:1001 SER=000000000000 LOCATION=1-0"},
+    ]
+    assert flash_receivers.mapped_ports(mapping, devices) == ["/dev/ttyACM0", "/dev/ttyACM1"]
+
+
 def test_partial_flashing_retries_all_five_without_success_ledger(tmp_path):
     mapping, devices = mapping_and_devices()
     write(tmp_path / "data/run_state/receiver_identity_mapping.json", json.dumps(mapping))
-    write(tmp_path / ".platformio-venv/bin/pio", "pio")
+    pio = tmp_path / ".platformio-venv/bin/pio"
+    write(pio, "pio")
     calls = []
 
     def upload(command, **kwargs):
@@ -130,7 +159,7 @@ def test_partial_flashing_retries_all_five_without_success_ledger(tmp_path):
         if "--upload-port" in command and command[-1] == "/dev/ttyACM2":
             raise subprocess.CalledProcessError(1, command)
 
-    with patch.object(flash_receivers.Path, "home", return_value=tmp_path), patch.object(flash_receivers.subprocess, "check_output", return_value=json.dumps(devices).encode()):
+    with patch.object(flash_receivers, "select_platformio", return_value=pio), patch.object(flash_receivers.subprocess, "check_output", return_value=json.dumps(devices).encode()):
         with patch.object(flash_receivers.subprocess, "run", side_effect=upload):
             with pytest.raises(subprocess.CalledProcessError):
                 flash_receivers.flash(tmp_path)

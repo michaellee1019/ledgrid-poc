@@ -6,8 +6,7 @@ from typing import List, Optional, Tuple
 # Finalized visible geometry: four full 8-strip receivers plus one independent
 # 1-strip tail receiver. Receiver transport capacity is deliberately separate.
 DEFAULT_STRIP_COUNT = 33
-# Alternate HAT compatibility mode: 2 receivers x 8 strips. The carrier's
-# schematic/PCB/BOM are not present in this repository.
+# Optional one-HAT canvas: left 16 columns on SPI1 CE0/CE1. Production is 33.
 HAT_STRIP_COUNT = 16
 STRIPS_PER_DEVICE = 8
 # Camera-verified physical height of the installed strips.
@@ -15,36 +14,46 @@ DEFAULT_LEDS_PER_STRIP = 138
 
 DeviceMapEntry = Tuple[int, int]
 
-# Exact logical-to-transport routes for the installed wall. SPI1 CE0/CE1 are
-# intentionally crossed; receiver 4 is the independently wired SPI1 CE2 tail.
+# Transport identity stays on the V6 jumper map: logical 0-4 are spidev1.0,
+# 1.1, 0.0, 0.1, and 0.3. Physical left-to-right is a different permutation.
+# 2026-11-07 column_sequence after the first remap: 8-16 (SPI1 CE0), 26-17
+# (SPI0 CE1), 27-32 (SPI0 CE0 reversed), 8-1 (SPI1 CE1 reversed), then 33.
+# Physical LTR is SPI1 CE1, SPI1 CE0, SPI0 CE1 reversed, SPI0 CE0 reversed,
+# SPI0 CE3. V6 SPI1 CE0 is GPIO22 (header pin 15); CE1 is GPIO17 (pin 11).
+# The populated third-HAT module is SJ_SPI0_CE3 on GPIO6 (pin 31). SJ_SPI0_CE2
+# on GPIO5 (pin 29) is the empty socket and is not a logical receiver.
 WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
+    (1, 0),
+    (1, 1),
     (0, 0),
     (0, 1),
-    (1, 1),
-    (1, 0),
-    (1, 2),
+    (0, 3),
 )
 
-# The accepted demo tolerates receiver 3's throughput limit. Its 20 MHz link
-# corrupts traffic and can latch a command-queue fault; the bounded installed
-# probe was clean at 8 MHz. Keep the other four routes at their existing speed.
+# One-PCB 16-column canvas is the left HAT: SPI1 CE0/CE1.
+HAT_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
+    (1, 0),
+    (1, 1),
+)
+
+# Keep every SPI1 route at the same Hz so chip-select alternation does not
+# leave the shared controller in the wrong mode. New V6 boards ran SPI1 CE0/CE1
+# and SPI0 CE0/CE1/CE2 cleanly at 20 MHz until a measured shortfall.
 WALL_RECEIVER_SPI_SPEEDS_HZ = (
     20_000_000,
     20_000_000,
     20_000_000,
-    8_000_000,
+    20_000_000,
     20_000_000,
 )
 
-# Camera-measured installed geometry, indexed by logical receiver ID unless the
-# name explicitly says physical order. Transport routes above remain a separate
-# domain: logical receivers 2 and 3 still use crossed SPI1 chip-select routes,
-# but the receivers now appear in logical-ID order from left to right.
-WALL_PHYSICAL_LANE_ORDER = (0, 1, 2, 3, 4)
+# Indexed by logical receiver ID unless the name explicitly says physical order.
+# Physical left-to-right logical IDs from the 2026-11-07 column_sequence pass.
+WALL_PHYSICAL_LANE_ORDER = (1, 0, 3, 2, 4)
 WALL_RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
-WALL_RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 16, 24, 32)
+WALL_RECEIVER_GLOBAL_STRIP_OFFSETS = (8, 0, 24, 16, 32)
 WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER = (
-    False, False, False, False, False,
+    False, False, True, True, False,
 )
 WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER = (
     False, False, True, True, False,
@@ -66,6 +75,23 @@ def default_strip_count() -> int:
     if is_hat_layout():
         return HAT_STRIP_COUNT
     return DEFAULT_STRIP_COUNT
+
+
+def hardware_receiver_count(
+    strips: int, leds_per_strip: int = DEFAULT_LEDS_PER_STRIP
+) -> int:
+    """Return the receiver count for a supported hardware canvas."""
+    if type(strips) is not int or type(leds_per_strip) is not int:
+        raise ValueError("hardware geometry must be integer strip and LED counts")
+    if leds_per_strip != DEFAULT_LEDS_PER_STRIP:
+        raise ValueError("hardware mode requires 138 LEDs per strip")
+    if strips == DEFAULT_STRIP_COUNT:
+        return 5
+    if strips == HAT_STRIP_COUNT:
+        return 2
+    raise ValueError(
+        "hardware mode requires the 33x138 wall or 16x138 SPI1 HAT test"
+    )
 
 
 def device_count_for_strips(
@@ -106,6 +132,13 @@ def wall_device_map(num_devices: int) -> List[DeviceMapEntry]:
             f"wall layout supports 1 through {len(WALL_DEVICE_MAP)} devices"
         )
     return list(WALL_DEVICE_MAP[:num_devices])
+
+
+def hardware_device_map(num_devices: int) -> List[DeviceMapEntry]:
+    """Return SPI routes for the active hardware canvas."""
+    if is_hat_layout() and num_devices == 2:
+        return list(HAT_DEVICE_MAP)
+    return wall_device_map(num_devices)
 
 
 def total_leds(strips: int = DEFAULT_STRIP_COUNT,

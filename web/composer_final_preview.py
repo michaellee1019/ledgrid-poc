@@ -56,6 +56,7 @@ from animation.plugins.rainbow import RainbowAnimation
 from animation.plugins.solid import SolidColorAnimation
 from animation.plugins.sparkle import SparkleAnimation
 from animation.plugins.wave import WaveAnimation
+from animation.plugins.column_sequence import ColumnSequenceAnimation
 from animation.plugins.circadian_window import CircadianWindowAnimation
 from animation.plugins.cloud_canyon import CloudCanyonAnimation
 from animation.plugins.desert_wind import DesertWindAnimation
@@ -119,6 +120,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         SolidColorAnimation.component_descriptor(),
         SparkleAnimation.component_descriptor(),
         WaveAnimation.component_descriptor(),
+        ColumnSequenceAnimation.component_descriptor(),
         CircadianWindowAnimation.component_descriptor(),
         CloudCanyonAnimation.component_descriptor(),
         DesertWindAnimation.component_descriptor(),
@@ -330,6 +332,8 @@ class InstalledFinalSceneRuntime:
             return SparkleAnimation(controller, parameters)
         if descriptor.component_id == WaveAnimation.COMPONENT_ID:
             return WaveAnimation(controller, parameters)
+        if descriptor.component_id == ColumnSequenceAnimation.COMPONENT_ID:
+            return ColumnSequenceAnimation(controller, parameters)
         if descriptor.component_id == CircadianWindowAnimation.COMPONENT_ID:
             animation = CircadianWindowAnimation(controller, parameters)
             animation._clock_now = lambda: self._wall_time

@@ -16,6 +16,7 @@ from drivers.led_layout import (
     DEFAULT_LEDS_PER_STRIP,
     DEFAULT_STRIP_COUNT,
     EXTRA_STRIP_LANE,
+    HAT_STRIP_COUNT,
     MIRROR_EXTRA_STRIP_ON_ALL_LANES,
     STRIPS_PER_DEVICE,
     WALL_PHYSICAL_LANE_ORDER,
@@ -24,7 +25,10 @@ from drivers.led_layout import (
     WALL_RECEIVER_STRIP_COUNTS,
     WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
     WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
+    default_strip_count,
     device_count_for_strips,
+    hardware_device_map,
+    hardware_receiver_count,
     logical_strip_count,
     wall_device_map,
 )
@@ -36,6 +40,7 @@ class LedLayoutTests(unittest.TestCase):
     def test_installed_wall_is_thirty_three_strips_on_five_receivers(self):
         self.assertEqual(DEFAULT_STRIP_COUNT, 33)
         self.assertEqual(DEFAULT_LEDS_PER_STRIP, 138)
+        self.assertEqual(hardware_receiver_count(DEFAULT_STRIP_COUNT), 5)
         self.assertEqual(device_count_for_strips(DEFAULT_STRIP_COUNT), 5)
         self.assertEqual(
             logical_strip_count(5, STRIPS_PER_DEVICE, DEFAULT_STRIP_COUNT),
@@ -46,14 +51,14 @@ class LedLayoutTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             logical_strip_count(4, 8, 33)
 
-    def test_fifth_receiver_prefers_spi1_ce2(self):
+    def test_fifth_receiver_prefers_spi0_ce3(self):
         self.assertEqual(
             wall_device_map(4),
-            [(0, 0), (0, 1), (1, 1), (1, 0)],
+            [(1, 0), (1, 1), (0, 0), (0, 1)],
         )
         self.assertEqual(
             wall_device_map(5),
-            [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)],
+            [(1, 0), (1, 1), (0, 0), (0, 1), (0, 3)],
         )
 
     def test_rightmost_extra_strip_broadcasts_one_semantic_column(self):
@@ -61,7 +66,7 @@ class LedLayoutTests(unittest.TestCase):
         self.assertTrue(MIRROR_EXTRA_STRIP_ON_ALL_LANES)
         self.assertEqual(WALL_RECEIVER_STRIP_COUNTS, (8, 8, 8, 8, 1))
         self.assertEqual(
-            WALL_RECEIVER_GLOBAL_STRIP_OFFSETS, (0, 8, 16, 24, 32)
+            WALL_RECEIVER_GLOBAL_STRIP_OFFSETS, (8, 0, 24, 16, 32)
         )
         self.assertEqual(
             WALL_PHYSICAL_OUTPUT_LANE_MASKS,
@@ -69,14 +74,14 @@ class LedLayoutTests(unittest.TestCase):
         )
 
     def test_camera_measured_runtime_topology_keeps_domains_explicit(self):
-        self.assertEqual(WALL_PHYSICAL_LANE_ORDER, (0, 1, 2, 3, 4))
+        self.assertEqual(WALL_PHYSICAL_LANE_ORDER, (1, 0, 3, 2, 4))
         self.assertEqual(WALL_RECEIVER_STRIP_COUNTS, (8, 8, 8, 8, 1))
         self.assertEqual(
-            WALL_RECEIVER_GLOBAL_STRIP_OFFSETS, (0, 8, 16, 24, 32)
+            WALL_RECEIVER_GLOBAL_STRIP_OFFSETS, (8, 0, 24, 16, 32)
         )
         self.assertEqual(
             WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
-            (False, False, False, False, False),
+            (False, False, True, True, False),
         )
         self.assertEqual(
             WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
@@ -90,6 +95,40 @@ class LedLayoutTests(unittest.TestCase):
     def test_layout_has_no_ce3_fallback(self):
         with self.assertRaisesRegex(ValueError, "supports 1 through 5"):
             wall_device_map(6)
+
+    def test_hat_bring_up_is_sixteen_columns_on_spi1(self):
+        import os
+
+        self.assertEqual(HAT_STRIP_COUNT, 16)
+        self.assertEqual(hardware_receiver_count(HAT_STRIP_COUNT), 2)
+        self.assertEqual(device_count_for_strips(HAT_STRIP_COUNT), 2)
+        self.assertEqual(wall_device_map(2), [(1, 0), (1, 1)])
+        previous = os.environ.pop("LEDGRID_HAT", None)
+        try:
+            self.assertEqual(hardware_device_map(2), [(1, 0), (1, 1)])
+            os.environ["LEDGRID_HAT"] = "1"
+            self.assertEqual(hardware_device_map(2), [(1, 0), (1, 1)])
+        finally:
+            if previous is None:
+                os.environ.pop("LEDGRID_HAT", None)
+            else:
+                os.environ["LEDGRID_HAT"] = previous
+        with self.assertRaisesRegex(ValueError, "16x138 SPI1 HAT test"):
+            hardware_receiver_count(32)
+
+    def test_hat_env_selects_sixteen_column_default(self):
+        import os
+
+        previous = os.environ.pop("LEDGRID_HAT", None)
+        try:
+            self.assertEqual(default_strip_count(), 33)
+            os.environ["LEDGRID_HAT"] = "1"
+            self.assertEqual(default_strip_count(), 16)
+        finally:
+            if previous is None:
+                os.environ.pop("LEDGRID_HAT", None)
+            else:
+                os.environ["LEDGRID_HAT"] = previous
 
 
 class MultiDeviceLayoutTests(unittest.TestCase):
@@ -116,17 +155,17 @@ class MultiDeviceLayoutTests(unittest.TestCase):
         self.assertEqual(frames[4].shape, (2, 3))
         np.testing.assert_array_equal(frames[4], 7)
 
-    def test_build_device_map_appends_spi1_ce2(self):
+    def test_build_device_map_keeps_wall_routes_when_spi0_ce3_exists(self):
         controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
         controller.debug = False
-        existing = {(0, 0), (0, 1), (1, 0), (1, 1), (1, 2)}
+        existing = {(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1)}
         controller._device_exists = staticmethod(
             lambda bus, device: (bus, device) in existing
         )
 
         self.assertEqual(
             controller._build_device_map(5, 0),
-            [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)],
+            [(1, 0), (1, 1), (0, 0), (0, 1), (0, 3)],
         )
 
 

@@ -66,6 +66,7 @@ from animation.plugins.rainbow import RainbowAnimation
 from animation.plugins.solid import SolidColorAnimation
 from animation.plugins.sparkle import SparkleAnimation
 from animation.plugins.wave import WaveAnimation
+from animation.plugins.column_sequence import ColumnSequenceAnimation
 from animation.plugins.circadian_window import CircadianWindowAnimation
 from animation.plugins.cloud_canyon import CloudCanyonAnimation
 from animation.plugins.desert_wind import DesertWindAnimation
@@ -133,7 +134,7 @@ _COMPOSER_GALLERY_CLASSES = (
     FireworksAnimation, FlameBurstAnimation, FluidTankAnimation,
     CyclicReefAnimation, LavaLampAnimation, SnakeAnimation, MazeChaseAnimation,
     PinballAnimation, PixelQuestAnimation, GradientAnimation, RainbowAnimation,
-    SolidColorAnimation, SparkleAnimation, WaveAnimation, CircadianWindowAnimation,
+    SolidColorAnimation, SparkleAnimation, WaveAnimation, ColumnSequenceAnimation, CircadianWindowAnimation,
     CloudCanyonAnimation, DesertWindAnimation, MoonlitFogBanksAnimation,
     RainOnGlassAnimation, TidalBioluminescenceAnimation, WaterfallVeilAnimation,
     CellularTapestryAnimation, FlowFieldSilkAnimation, FrostworkAnimation,

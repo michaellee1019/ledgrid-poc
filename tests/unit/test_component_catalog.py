@@ -35,7 +35,7 @@ class ComponentCatalogTests(unittest.TestCase):
             for descriptor in catalog.descriptors
         }
         self.assertEqual(set(entries), {
-            "solid_background", "aurora_curtains", "canopy_cup", "ascii_drop", "emoji", "christmas_tree", "night_train_windows", "conway_life", "tetris", "firefly_synchrony", "fireworks", "flame_burst", "fluid_tank", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "pixel_chase", "plant_glow", "gif_animation", "gradient", "rainbow", "solid", "sparkle", "wave", "circadian_window", "cloud_canyon", "desert_wind", "moonlit_fog_banks", "rain_on_glass", "tidal_bioluminescence", "waterfall_veil", "cellular_tapestry", "flow_field_silk", "frostwork", "living_stained_glass", "quasicrystal_bloom", "living_ecosystem", "physarum_network", "reaction_diffusion_garden", "wind_in_the_reeds", "clock_overlay", "emoji_arranger",
+            "solid_background", "aurora_curtains", "canopy_cup", "ascii_drop", "emoji", "christmas_tree", "night_train_windows", "conway_life", "tetris", "firefly_synchrony", "fireworks", "flame_burst", "fluid_tank", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "pixel_chase", "plant_glow", "gif_animation", "gradient", "rainbow", "solid", "sparkle", "wave", "column_sequence", "circadian_window", "cloud_canyon", "desert_wind", "moonlit_fog_banks", "rain_on_glass", "tidal_bioluminescence", "waterfall_veil", "cellular_tapestry", "flow_field_silk", "frostwork", "living_stained_glass", "quasicrystal_bloom", "living_ecosystem", "physarum_network", "reaction_diffusion_garden", "wind_in_the_reeds", "clock_overlay", "emoji_arranger",
         })
         self.assertEqual(
             [
@@ -73,6 +73,7 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "preserve", ("none",), ("authored_media_colors",)),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
@@ -112,6 +113,7 @@ class ComponentCatalogTests(unittest.TestCase):
             "pixel_chase": _ROOT / "animation/plugins/pixel_chase/manifest.json",
             "plant_glow": _ROOT / "animation/plugins/plant_glow/manifest.json",
             "gif_animation": _ROOT / "animation/plugins/gif_animation/manifest.json",
+            "column_sequence": _ROOT / "animation/plugins/column_sequence/manifest.json",
             "circadian_window": _ROOT / "animation/plugins/circadian_window/manifest.json",
             "cloud_canyon": _ROOT / "animation/plugins/cloud_canyon/manifest.json",
             "desert_wind": _ROOT / "animation/plugins/desert_wind/manifest.json",

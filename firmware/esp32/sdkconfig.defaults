@@ -13,6 +13,11 @@ CONFIG_SPIFFS_OBJ_NAME_LEN=96
 # Keep app_main's SPI slave dequeue loop on CPU0. The receiver display task is
 # explicitly pinned to CPU1 by receiver_task_policy.hpp.
 CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0=y
+# Assembled HAT USB-C is the ESP32-S3 USB Serial/JTAG PHY (GPIO19 D-, GPIO20 D+).
+# WROOM-1U-N16R8 matches this n16r8 octal-PSRAM target; keep the USB device
+# enumerated after boot so esptool can flash without a USB-UART bridge.
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 # The pinned loader component is present in the baseline, but executable module
 # loading remains disabled until the later audited module phase.
 # CONFIG_ELF_LOADER is not set

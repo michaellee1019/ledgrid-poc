@@ -50,7 +50,7 @@ class Receiver:
 
 def wall(**kwargs):
     with patch('drivers.multi_device.LEDController',Receiver):
-        return MultiDeviceLEDController(device_map=[(0,0),(0,1),(1,1),(1,0),(1,2)],parallel=False,**kwargs)
+        return MultiDeviceLEDController(device_map=[(1,0),(1,1),(0,0),(0,1),(0,3)],parallel=False,**kwargs)
 
 
 def test_exact_33x138_five_receiver_routing_and_broadcast_tail():
@@ -59,10 +59,27 @@ def test_exact_33x138_five_receiver_routing_and_broadcast_tail():
     for strip in range(33):pixels[strip*138:(strip+1)*138,0]=strip
     assert controller.set_all_pixels(pixels)
     assert [len(x.frames[0]) for x in controller.devices]==[1104,1104,1104,1104,138]
-    assert [int(x.frames[0][0,0]) for x in controller.devices]==[0,8,16,24,32]
+    assert controller.receiver_global_strip_offsets == (8, 0, 24, 16, 32)
+    assert controller.reverse_host_strips_by_logical_receiver == (
+        False, False, True, True, False,
+    )
+    # Physical lane 0 of each ESP after host reversal: 9-16, 1-8, 32-25, 24-17, 33.
+    assert [int(x.frames[0][0,0]) for x in controller.devices]==[8,0,31,23,32]
     assert controller.receiver_lane_masks==(255,255,255,255,255)
-    assert controller.devices[3].options['speed']==8_000_000
-    assert controller.devices[3].options['fec_transport'] is True
+    assert controller.devices[3].options['speed']==20_000_000
+    assert controller.devices[3].options['fec_transport'] is False
+    assert controller.device_map == [(1, 0), (1, 1), (0, 0), (0, 1), (0, 3)]
+    assert controller._devices_by_bus[1] == (0, 1)
+    assert controller._devices_by_bus[0] == (2, 3, 4)
+    from drivers.led_layout import WALL_PHYSICAL_LANE_ORDER
+    physical=[]
+    for logical_id in WALL_PHYSICAL_LANE_ORDER:
+        width=controller.receiver_strip_counts[logical_id]
+        lanes=controller.devices[logical_id].frames[0].reshape(width,138,3)[:,0,0]
+        if controller.reverse_host_strips_by_logical_receiver[logical_id]:
+            lanes=lanes[::-1]
+        physical.extend(int(value) for value in lanes)
+    assert physical==list(range(33))
     controller.close()
 
 

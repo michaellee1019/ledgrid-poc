@@ -27,6 +27,9 @@ class AmbientSceneAnimation(AnimationBase):
         "seed": ("int", 0, 999999, "Repeatable field seed"),
     })
     STYLE = "gradient"
+    SIMULATION_HZ = 24.0
+    SPARKLE_BASELINE_HZ = 24.0
+    MAX_CATCH_UP_TICKS = 10
     PALETTES = MappingProxyType({"neutral": ((4.,11.,19.),(32.,164.,148.),(186.,255.,220.)),"mist": ((3.,8.,22.),(61.,146.,220.),(236.,245.,255.)),"spectrum": ((19.,3.,35.),(235.,42.,203.),(48.,240.,224.)),"ember": ((24.,3.,2.),(244.,76.,16.),(255.,209.,78.))})
     def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
         self._authored_config = dict(config or {}); super().__init__(controller, self._authored_config)
@@ -65,7 +68,7 @@ class AmbientSceneAnimation(AnimationBase):
     def render_resolved_scene(self, context): self.set_presentation_context(context); return self.generate_frame(context.phase_time,self.frame_count)
     def generate_frame(self,time_elapsed,frame_count):
         del frame_count; context=self._context; p=self._normalized_parameters(context.parameters if context else self.params); palette_id=str(context.palette["palette_id"]) if context else "neutral"; t=max(0.,float(context.phase_time if context else time_elapsed)); self.params=p
-        tick=int(t*24.); key=(tick,palette_id,tuple(p.items()))
+        tick=int(t*self.SIMULATION_HZ); key=(tick,palette_id,tuple(p.items()))
         if key==self._last_key: return RenderedFrame(self._pixels,changed=False,dirty_ranges=())
         low,primary,accent=(np.asarray(item,dtype=np.float32) for item in self.PALETTES.get(palette_id,self.PALETTES["neutral"])); field=self._field(t,p,tick)
         rgb=low+(primary-low)*field[...,None]+(accent-primary)*np.square(field[...,None])*.62; self._pixels[:]=np.clip(rgb,0,255).astype(np.uint8).reshape((-1,3)); self._last_key=key
@@ -77,7 +80,10 @@ class AmbientSceneAnimation(AnimationBase):
         if self.STYLE=="solid": return np.full((self.width,self.height),p["glow"]*(.62+.38*(.5+.5*math.sin(t*p["breath"]*math.tau))))
         if self.STYLE=="sparkle":
             if self._last_tick is None: self._last_tick=tick
-            while self._last_tick<min(tick,self._last_tick+10): self._spark*=.55+.4*p["linger"]; self._spark[self._rng.random(self._spark.shape)<p["density"]*.08]=1.; self._last_tick+=1
+            baseline=float(self.SPARKLE_BASELINE_HZ); hz=float(self.SIMULATION_HZ)
+            decay=(.55+.4*p["linger"])**(baseline/hz); spawn=min(1., p["density"]*.08*(baseline/hz))
+            while self._last_tick<min(tick,self._last_tick+self.MAX_CATCH_UP_TICKS):
+                self._spark*=decay; self._spark[self._rng.random(self._spark.shape)<spawn]=1.; self._last_tick+=1
             return np.clip(p["night"]+self._spark*(.55+.45*p["twinkle"]),0.,1.)
         axis=self._y if p["axis"]=="vertical" else self._x if p["axis"]=="horizontal" else (self._x+self._y)*.5; return np.broadcast_to(np.clip(.5+.5*np.sin((axis*p["frequency"]+t*p["travel"]*p["direction"])*math.tau)*p["shape"],0.,1.),(self.width,self.height))
-    def cadence_snapshot(self): return MappingProxyType({"simulation_hz":24.,"tick":self._last_tick})
+    def cadence_snapshot(self): return MappingProxyType({"simulation_hz":float(self.SIMULATION_HZ),"tick":self._last_tick})

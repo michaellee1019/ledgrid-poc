@@ -23,7 +23,7 @@ require a reboot before `/dev/spidev*` nodes appear.
 
 | Command | Action |
 | --- | --- |
-| `just setup` | Install Pi runtime/compiler tools and pinned PlatformIO; needs existing sudo access |
+| `just setup` | Install Pi runtime/compiler tools and pinned PlatformIO 6.1.19 + tool-scons 4.40801.0 (6.2.0 breaks ESP-IDF builds on Python 3.13); needs existing sudo access |
 | `just deploy-plan` | Print the full deployment steps without contacting the wall |
 | `just deploy` | Build browser assets, copy application, stop, migrate data, install dependencies, flash all five mapped receivers, start, check service/HTTP |
 | `just deploy-python` | Same application and data path, without firmware flashing |
@@ -73,7 +73,7 @@ firmware while other boards still contain the old version. Correct the cause
 and rerun full deployment: all five mapped receivers are flashed again. There
 is no image ledger, package installation, or automatic firmware rollback.
 
-The service retains receiver 3's FEC setting and installed geometry. Service and
+The service defaults to 33×138 with no FEC allowlist. New V6 boards run every SPI1 clock at 20 MHz. Service and
 HTTP readiness do not assert that all receivers displayed a specific frame;
 use the application's connectivity status and a visual wall check for playback.
 

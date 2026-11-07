@@ -15,6 +15,7 @@
 #include "ledgrid/parallel_led_driver.hpp"
 #include "ledgrid/protocol.hpp"
 #include "ledgrid/receiver_task_policy.hpp"
+#include "ledgrid/startup_animation.hpp"
 #include "ledgrid/ws2812_encoder.hpp"
 
 namespace {
@@ -36,6 +37,7 @@ constexpr std::size_t kMaxRgbBytes = kMaxTotalLeds * 3;
 constexpr std::uint8_t kDefaultStrips = 8;
 constexpr std::uint16_t kDefaultLedsPerStrip = 138;
 constexpr std::uint16_t kInstalledGlobalStrips = 33;
+constexpr std::uint8_t kStartupRainbowBrightness = 200;
 constexpr int kLedPins[kMaxStrips] = {18, 17, 16, 15, 7, 6, 5, 4};
 
 constexpr std::size_t kCrcBytes = 2;
@@ -102,6 +104,8 @@ std::atomic<std::uint32_t> next_sequence{1};
 std::atomic<std::uint8_t> logical_receiver_id{0xFF};
 std::atomic<std::uint16_t> configured_global_strip_offset{0};
 std::atomic<bool> explicit_receiver_topology{false};
+std::atomic<bool> startup_animation_active{true};
+std::uint64_t animation_started_us = 0;
 
 std::atomic<std::uint32_t> packets_received{0};
 std::atomic<std::uint32_t> crc_errors{0};
@@ -187,7 +191,33 @@ void display_task(void*) {
       portENTER_CRITICAL(&mailbox_mux);
       slot = frame_mailbox.begin_read(&metadata);
       portEXIT_CRITICAL(&mailbox_mux);
-      if (slot < 0) break;
+      if (slot < 0) {
+        if (startup_animation_active.load(std::memory_order_relaxed)) {
+          lock_runtime();
+          const auto boot_output = output_configuration;
+          unlock_runtime();
+          if (ledgrid::render_startup_rainbow(
+                  static_cast<std::uint64_t>(esp_timer_get_time()) -
+                      animation_started_us,
+                  boot_output.strip_count, boot_output.leds_per_strip,
+                  working_frame, sizeof(working_frame))) {
+            const std::uint32_t sequence =
+                next_sequence.fetch_add(1, std::memory_order_relaxed);
+            if (led_driver.submit(
+                    working_frame, boot_output.rgb_bytes(),
+                    boot_output.strip_count, boot_output.leds_per_strip,
+                    kStartupRainbowBrightness, sequence) &&
+                led_driver.wait_for_done(pdMS_TO_TICKS(100))) {
+              last_displayed_sequence = sequence;
+            } else {
+              ++display_errors;
+            }
+          } else {
+            ++display_errors;
+          }
+        }
+        break;
+      }
 
       lock_runtime();
       const auto current_output = output_configuration;
@@ -343,14 +373,9 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
     case ledgrid::ReceiverCommand::SetBrightness: {
       if (length != 2) return false;
       lock_runtime();
-      const bool updated = true;
       output_configuration.brightness = data[1];
-      if (updated) {
-        publish_working_frame_locked(output_configuration);
-      }
       unlock_runtime();
-      if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
-      return updated;
+      return true;
     }
 
     case ledgrid::ReceiverCommand::Show: {
@@ -402,6 +427,7 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
         return false;
       }
       std::memcpy(working_frame, data + 1, current_output.rgb_bytes());
+      startup_animation_active.store(false, std::memory_order_relaxed);
       if (!publish_working_frame_locked(current_output)) {
         unlock_runtime();
         return false;
@@ -433,6 +459,7 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
       const bool configured = ledgrid::configure_host_output(data, length, &output_configuration, working_frame, sizeof(working_frame));
       if (!configured) { unlock_runtime(); return false; }
       logical_receiver_id=data[5]; configured_global_strip_offset=offset;
+      startup_animation_active.store(false, std::memory_order_relaxed);
       unlock_runtime(); return true;
     }
     default:
@@ -646,6 +673,8 @@ extern "C" void app_main() {
     ESP_LOGE(kLogTag, "LCD/I80 parallel LED driver initialization failed");
     while (true) vTaskDelay(pdMS_TO_TICKS(1000));
   }
+
+  animation_started_us = static_cast<std::uint64_t>(esp_timer_get_time());
 
   if (xTaskCreatePinnedToCore(
           display_task,

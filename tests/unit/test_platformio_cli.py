@@ -18,16 +18,21 @@ class PlatformIOCLITests(unittest.TestCase):
 
     def test_selects_newest_eligible_core(self):
         old = Path("/tmp/pio-old")
-        new = Path("/tmp/pio-new")
+        pinned = Path("/tmp/pio-pinned")
+        too_new = Path("/tmp/pio-new")
 
         def inspect(path: Path):
             if path == old:
                 return (6, 1, 18), "PlatformIO Core, version 6.1.18"
+            if path == pinned:
+                return (6, 1, 19), "PlatformIO Core, version 6.1.19"
             return (6, 2, 0), "PlatformIO Core, version 6.2.0"
 
-        with patch.object(platformio_cli, "_candidate_paths", return_value=[old, new]):
+        with patch.object(
+            platformio_cli, "_candidate_paths", return_value=[old, pinned, too_new]
+        ):
             with patch.object(platformio_cli, "_inspect", side_effect=inspect):
-                self.assertEqual(platformio_cli.select_platformio(), new)
+                self.assertEqual(platformio_cli.select_platformio(), pinned)
 
     def test_rejects_only_obsolete_cores(self):
         old = Path("/tmp/pio-old")

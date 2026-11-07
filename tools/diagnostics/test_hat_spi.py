@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the two receivers in the alternate HAT software mode over SPI0.
+"""Check the two receivers in the alternate HAT software mode over SPI1.
 
 This verifies host communication only; the HAT hardware design is not included
 in this repository.
@@ -33,10 +33,10 @@ def check_boot_config() -> bool:
             if "spi" in line.lower():
                 print(line.rstrip())
         if os.environ.get("LEDGRID_HAT", "1").lower() in ("1", "true", "yes"):
-            if ACTIVE_SPI_ON.search(text):
-                print("OK: SPI0 enabled (dtparam=spi=on)")
+            if ACTIVE_SPI_ON.search(text) and "dtoverlay=spi1-2cs,cs0_pin=22" in text:
+                print("OK: SPI1 HAT overlay enabled (spi1-2cs,cs0_pin=22)")
                 return True
-            print("ERROR: missing dtparam=spi=on")
+            print("ERROR: missing dtparam=spi=on and dtoverlay=spi1-2cs,cs0_pin=22")
             return False
         return True
     print("WARNING: no boot config file found")
@@ -45,7 +45,7 @@ def check_boot_config() -> bool:
 
 def check_spidev_nodes() -> bool:
     print("--- /dev/spidev* ---")
-    required = [Path("/dev/spidev0.0"), Path("/dev/spidev0.1")]
+    required = [Path("/dev/spidev1.0"), Path("/dev/spidev1.1")]
     ok = True
     for node in required:
         if node.exists():
@@ -110,9 +110,9 @@ def main() -> int:
     print()
     nodes_ok = check_spidev_nodes()
     print()
-    esp1_ok = ping_device("ESP1", bus=0, device=0)
+    esp1_ok = ping_device("ESP1", bus=1, device=0)
     print()
-    esp2_ok = ping_device("ESP2", bus=0, device=1)
+    esp2_ok = ping_device("ESP2", bus=1, device=1)
 
     return 0 if boot_ok and nodes_ok and esp1_ok and esp2_ok else 1
 

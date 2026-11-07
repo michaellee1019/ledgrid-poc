@@ -44,8 +44,8 @@ OPERATIONS_TELEMETRY_URL = (
     "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
 )
 PRODUCTION_STAGGER_PHASES = 3
-FEC_RECEIVER_ID = 3
-DEFAULT_ORDERS = ((0, 1, 2, 3, 4), (0, 1, 3, 2, 4), (0, 1, 2, 3, 4))
+FEC_RECEIVER_ID = None
+DEFAULT_ORDERS = ((0, 1, 2, 3, 4), (0, 1, 4, 2, 3), (0, 1, 2, 3, 4))
 DELTA_FIELDS = (
     "frames_sent",
     "full_frame_transfers",
@@ -256,7 +256,7 @@ def _controller() -> MultiDeviceLEDController:
         reverse_native_strips_by_logical_receiver=(
             WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
         ),
-        fec_receiver_ids=(FEC_RECEIVER_ID,),
+        fec_receiver_ids=() if FEC_RECEIVER_ID is None else (FEC_RECEIVER_ID,),
         parallel=True,
     )
 
@@ -287,8 +287,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             duration=args.warmup_seconds,
         )
         warm = _fresh_snapshots(controller)
-        if warm[FEC_RECEIVER_ID].get("fec_transport_enabled") is not True:
-            raise DispatchDiagnosticError("receiver 3 did not enable FEC during warmup")
+        if FEC_RECEIVER_ID is not None and warm[FEC_RECEIVER_ID].get(
+            "fec_transport_enabled"
+        ) is not True:
+            raise DispatchDiagnosticError(
+                f"receiver {FEC_RECEIVER_ID} did not enable FEC during warmup"
+            )
 
         for target_fps in rates:
             for arm_index, order in enumerate(orders):

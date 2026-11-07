@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 
 MIN_PLATFORMIO_VERSION = (6, 1, 19)
+# 6.2.0 races pioarduino's tool-scons pin and breaks ESP-IDF builds on Python 3.13.
+MAX_PLATFORMIO_VERSION = (6, 2, 0)
 
 
 def _parse_version(text: str) -> tuple[int, ...] | None:
@@ -32,8 +34,9 @@ def _version_tuple(version: tuple[int, ...]) -> tuple[int, int, int]:
     return major, minor, patch
 
 
-def _meets_minimum(version: tuple[int, ...]) -> bool:
-    return _version_tuple(version) >= _version_tuple(MIN_PLATFORMIO_VERSION)
+def _version_in_range(version: tuple[int, ...]) -> bool:
+    vt = _version_tuple(version)
+    return _version_tuple(MIN_PLATFORMIO_VERSION) <= vt < _version_tuple(MAX_PLATFORMIO_VERSION)
 
 
 def _candidate_paths() -> list[Path]:
@@ -67,14 +70,17 @@ def select_platformio() -> Path:
         version, detail = _inspect(path)
         inspected.append((path, version, detail))
 
-    eligible = [(path, version) for path, version, _ in inspected if version and _meets_minimum(version)]
+    eligible = [(path, version) for path, version, _ in inspected if version and _version_in_range(version)]
     if eligible:
         path, _ = max(eligible, key=lambda item: _version_tuple(item[1]))
         return path
 
     lines = [
-        "No PlatformIO Core >= "
-        f"{MIN_PLATFORMIO_VERSION[0]}.{MIN_PLATFORMIO_VERSION[1]}.{MIN_PLATFORMIO_VERSION[2]} is available.",
+        "No PlatformIO Core in "
+        f"{MIN_PLATFORMIO_VERSION[0]}.{MIN_PLATFORMIO_VERSION[1]}.{MIN_PLATFORMIO_VERSION[2]} "
+        f"<= version < {MAX_PLATFORMIO_VERSION[0]}.{MAX_PLATFORMIO_VERSION[1]}.{MAX_PLATFORMIO_VERSION[2]} "
+        "is available.",
+        "Use 6.1.19 on the Pi (just setup); avoid 6.2.0 until tool-scons pairing is fixed.",
         "Multiple installs often leave an obsolete `pio` on PATH (for example 6.1.18).",
         "",
         "Detected:",

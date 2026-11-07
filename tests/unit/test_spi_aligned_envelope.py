@@ -60,6 +60,7 @@ def _controller(*, envelope=True):
     item._writebytes2_supported = None
     item._last_transfer_captured_response = False
     item._last_transfer_status_sampled = False
+    item._last_transfer_status_valid = False
     item._bytes_sent = 0
     item._semantic_bytes_sent = 0
     item._transport_envelope_bytes_sent = 0
@@ -338,30 +339,27 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         item._update_receiver_status = types.MethodType(
             protocol.LEDController._update_receiver_status, item
         )
-        item.spi.miso_responses = [
-            bytes(protocol.RECEIVER_STATUS_BYTES_V8),
-            bytes(protocol.RECEIVER_STATUS_BYTES_V8),
-            _status_v8(20),
-        ]
+        item.spi.miso_responses = [_status_v8(20)]
 
-        item.set_all_pixels(
-            np.zeros((138, 3), dtype=np.uint8),
-            wall_frame_sequence=102,
-        )
-        item.set_all_pixels(
-            np.zeros((138, 3), dtype=np.uint8),
-            wall_frame_sequence=103,
-        )
+        with mock.patch.object(protocol.time, "sleep") as sleep:
+            item.set_all_pixels(
+                np.zeros((138, 3), dtype=np.uint8),
+                wall_frame_sequence=102,
+            )
+            item.set_all_pixels(
+                np.zeros((138, 3), dtype=np.uint8),
+                wall_frame_sequence=103,
+            )
 
-        self.assertEqual(len(item.spi.response_packets), 3)
-        for packet in item.spi.response_packets:
-            self.assertEqual(len(packet), 1260)
-            self.assertEqual(packet[0], protocol.CMD_ALIGNED_ENVELOPE)
+        sleep.assert_not_called()
+        self.assertEqual(len(item.spi.response_packets), 1)
+        self.assertEqual(len(item.spi.response_packets[0]), 1260)
+        self.assertEqual(item.spi.response_packets[0][0], protocol.CMD_ALIGNED_ENVELOPE)
         self.assertEqual(len(item.spi.write_only_packets), 2)
         self.assertTrue(all(
             len(packet) == 424 for packet in item.spi.write_only_packets
         ))
-        self.assertEqual(item._spi_transfers, 5)
+        self.assertEqual(item._spi_transfers, 3)
         self.assertEqual(item._full_frame_transfers, 2)
         self.assertEqual(item._full_frame_status_transfers, 1)
         self.assertEqual(item._full_frame_status_samples, 1)
@@ -369,6 +367,47 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         self.assertEqual(item._full_frame_write_only_transfers, 1)
         self.assertEqual(item._full_frame_frames_since_status_sample, 1)
         self.assertEqual(item._full_frame_max_status_sample_gap, 1)
+
+    def test_tail_valid_status_closes_gap_when_packet_count_repeats(self):
+        item = _controller(envelope=True)
+        item.logical_device_id = 4
+        item.strip_count = 1
+        item.total_leds = 138
+        item._frame_packet = bytearray(1 + 138 * 3 + protocol.CRC_BYTES)
+        item._aligned_frame_packet = bytearray(424)
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V8
+        item._refresh_configuration = lambda: None
+        item._update_receiver_status = types.MethodType(
+            protocol.LEDController._update_receiver_status, item
+        )
+        item.spi.miso_responses = [_status_v8(20), _status_v8(20)]
+
+        with mock.patch.object(protocol.time, "sleep") as sleep:
+            item.set_all_pixels(
+                np.zeros((138, 3), dtype=np.uint8),
+                wall_frame_sequence=102,
+            )
+            for frame in range(103, 102 + protocol.FULL_FRAME_STATUS_SAMPLE_INTERVAL):
+                item.set_all_pixels(
+                    np.zeros((138, 3), dtype=np.uint8),
+                    wall_frame_sequence=frame,
+                )
+            item.set_all_pixels(
+                np.zeros((138, 3), dtype=np.uint8),
+                wall_frame_sequence=102 + protocol.FULL_FRAME_STATUS_SAMPLE_INTERVAL,
+            )
+
+        sleep.assert_not_called()
+        self.assertEqual(item._full_frame_transfers, protocol.FULL_FRAME_STATUS_SAMPLE_INTERVAL + 1)
+        self.assertEqual(item._full_frame_status_transfers, 2)
+        self.assertEqual(item._full_frame_status_samples, 2)
+        self.assertEqual(item._full_frame_status_sample_misses, 0)
+        self.assertEqual(
+            item._full_frame_write_only_transfers,
+            protocol.FULL_FRAME_STATUS_SAMPLE_INTERVAL - 1,
+        )
+        self.assertEqual(len(item.spi.response_packets), 2)
+        self.assertEqual(len(item.spi.write_only_packets), protocol.FULL_FRAME_STATUS_SAMPLE_INTERVAL + 1)
 
     def test_tail_truncated_fallback_is_a_miss_never_a_sample(self):
         item = _controller(envelope=True)

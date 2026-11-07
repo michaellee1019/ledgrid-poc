@@ -15,16 +15,19 @@ log_info() { echo "[INFO] $1"; }
 log_success() { echo "[SUCCESS] $1"; }
 log_warning() { echo "[WARNING] $1"; }
 
-PIO_CMD="pio"
-if ! command -v pio >/dev/null 2>&1; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PIO_CMD=("$SCRIPT_DIR/run_platformio.sh")
+if ! "${PIO_CMD[@]}" --version >/dev/null 2>&1; then
   if [ -x "$HOME/.platformio-venv/bin/pio" ]; then
-    PIO_CMD="$HOME/.platformio-venv/bin/pio"
+    PIO_CMD=("$HOME/.platformio-venv/bin/pio")
+  elif command -v pio >/dev/null 2>&1; then
+    PIO_CMD=(pio)
   else
-    PIO_CMD="python3 -m platformio"
+    PIO_CMD=(python3 -m platformio)
   fi
 fi
 
-if ! $PIO_CMD --version >/dev/null 2>&1; then
+if ! "${PIO_CMD[@]}" --version >/dev/null 2>&1; then
   log_warning "PlatformIO not available; skipping ESP32 flash"
   exit 1
 fi
@@ -73,12 +76,12 @@ if [ "$DEBUG" = "1" ]; then
   echo "[DEBUG] lsusb output:"
   lsusb 2>/dev/null || echo "  (lsusb not available)"
   echo "[DEBUG] pio device list:"
-  $PIO_CMD device list 2>/dev/null || echo "  (pio device list failed)"
+  "${PIO_CMD[@]}" device list 2>/dev/null || echo "  (pio device list failed)"
 fi
 
 # Discover ports: scan /dev directly for ttyACM and ttyUSB devices,
 # then supplement with anything pio device list reports.
-ports="$(DEBUG="$DEBUG" PIO_CMD="$PIO_CMD" python3 - <<'PY'
+ports="$(DEBUG="$DEBUG" PIO_CMD="${PIO_CMD[*]}" python3 - <<'PY'
 import glob, json, os, subprocess, sys
 
 debug = os.environ.get("DEBUG") == "1"
@@ -131,7 +134,10 @@ while IFS= read -r p; do
 done <<< "$ports"
 
 log_info "Building firmware..."
-(cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1)
+if ! (cd "$FIRMWARE_DIR" && "${PIO_CMD[@]}" run -e esp32-s3-devkitc-1); then
+  log_warning "Firmware build failed; leaving installed receiver firmware unchanged"
+  exit 0
+fi
 
 log_info "Flashing firmware to $port_count ESP32 device(s) in parallel..."
 pids=()
@@ -140,7 +146,7 @@ while IFS= read -r port; do
   log_file=$(mktemp)
   flash_logs+=("$port|$log_file")
   log_info "Uploading to $port (background)"
-  (cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1 -t upload --upload-port "$port" > "$log_file" 2>&1) &
+  (cd "$FIRMWARE_DIR" && "${PIO_CMD[@]}" run -e esp32-s3-devkitc-1 -t upload --upload-port "$port" > "$log_file" 2>&1) &
   pids+=($!)
 done <<< "$ports"
 

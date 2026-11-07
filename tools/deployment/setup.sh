@@ -28,29 +28,14 @@ log_info "Ensuring PlatformIO is available on the deploy target..."
 ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
 set -euo pipefail
 
-export PATH="$HOME/.local/bin:$PATH"
-
-if command -v pio >/dev/null 2>&1; then
-  echo "[SUCCESS] PlatformIO already installed"
-  exit 0
-fi
-
 if ! python3 -m venv --help >/dev/null 2>&1; then
   echo "[INFO] python3-venv missing; installing via apt"
   sudo apt-get update
   sudo apt-get install -y python3-venv
 fi
-
-VENV_DIR="$HOME/.platformio-venv"
-python3 -m venv "$VENV_DIR"
-"$VENV_DIR/bin/pip" install --upgrade pip
-"$VENV_DIR/bin/pip" install --upgrade platformio
-
-mkdir -p "$HOME/.local/bin"
-ln -sf "$VENV_DIR/bin/pio" "$HOME/.local/bin/pio"
-
-echo "[SUCCESS] PlatformIO installed (venv at $VENV_DIR)"
 EOF
+
+ssh $SSH_OPTS "$PI_HOST" "bash -s" < "$(dirname "$0")/install_platformio.sh"
 
 log_info "Ensuring PlatformIO is usable..."
 if ! ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'

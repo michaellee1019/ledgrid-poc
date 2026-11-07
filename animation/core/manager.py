@@ -257,6 +257,16 @@ class AnimationManager(CanonicalReceiverSceneMixin):
             self._refresh_active_presentation_context()
         return self.animation_speed_scale
 
+    def _scene_v2_monotonic_elapsed(self) -> float:
+        """Wall-relative Scene v2 clock; look.pace is applied once at resolve.
+
+        Default operator tempo is HA/device pace 1.0 mapped through
+        DEFAULT_ANIMATION_SPEED_SCALE, not an extra slowdown stacked on look.pace.
+        Tempo changes keep integrating from the current scaled value so scene time
+        does not jump.
+        """
+        return self._scaled_elapsed / DEFAULT_ANIMATION_SPEED_SCALE
+
     def _presentation_state_guard(self) -> threading.RLock:
         """Return the manager presentation-state lock, including old test doubles."""
         lock = getattr(self, '_presentation_state_lock', None)
@@ -513,6 +523,13 @@ class AnimationManager(CanonicalReceiverSceneMixin):
     def set_output_brightness(self, brightness: Any) -> int:
         """Apply the installation-wide receiver brightness at runtime."""
         level = self.validate_output_brightness(brightness)
+        applied = getattr(self.controller, 'brightness_is_applied', None)
+        if (
+            callable(applied)
+            and self.output_brightness == level
+            and applied(level) is True
+        ):
+            return level
         setter = getattr(self.controller, 'set_brightness', None)
         if not callable(setter):
             raise RuntimeError('LED controller does not support global brightness')
@@ -1791,7 +1808,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         self._scaled_elapsed += max(0.0, elapsed-self._last_unscaled_elapsed) * self.animation_speed_scale
                         self._last_unscaled_elapsed = elapsed
                         presented = self.render_scene_v2_presentation(self._canonical_receiver_runtime,
-                            self._canonical_receiver_scene, monotonic_elapsed=self._scaled_elapsed,
+                            self._canonical_receiver_scene, monotonic_elapsed=self._scene_v2_monotonic_elapsed(),
                             wall_time=datetime.now().astimezone())
                         frame,changed = presented.pixels,presented.changed
                     elif getattr(self, '_scene_mode', False):

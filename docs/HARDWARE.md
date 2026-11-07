@@ -27,11 +27,10 @@ Use the runtime sources below when a copied value in prose disagrees:
 | Logical receiver-to-`spidev` mapping | [`drivers/multi_device.py`](../drivers/multi_device.py), overridden by `LEDGRID_DEVICE_MAP`; the live `device_map` metric is authoritative for a running installation |
 
 The production build target is PlatformIO board
-`esp32-s3-devkitc1-n16r8`, configured for 16 MB flash and 8 MB PSRAM. The
-repository does not contain an as-built inventory or photographs that verify the
-exact DevKitC PCB revision, module marking, or previously used `N16R8V` suffix.
-Treat the PlatformIO name as the required firmware target, not as a complete BOM
-entry for the physical receiver.
+`esp32-s3-devkitc1-n16r8`, configured for 16 MB flash and 8 MB octal PSRAM. That
+matches ESP32-S3-WROOM-1U-N16R8 on the assembled HAT as well as DevKitC-1-N16R8V.
+HAT USB-C is the ESP32-S3 USB Serial/JTAG PHY (GPIO19 D−, GPIO20 D+). Treat the
+PlatformIO name as the firmware flash target, not as a complete BOM entry.
 
 ## Receiver pins
 
@@ -68,55 +67,59 @@ degraded write-only diagnostics can omit it.
 | SPI0 SCLK | 11 | 23 |
 | SPI0 CE0 | 8 | 24 |
 | SPI0 CE1 | 7 | 26 |
+| SPI0 CE2 | 5 | 29 |
+| SPI0 CE3 | 6 | 31 |
 | SPI1 MOSI | 20 | 38 |
 | SPI1 MISO | 19 | 35 |
 | SPI1 SCLK | 21 | 40 |
-| SPI1 CE0 | 18 | 12 |
+| SPI1 CE0 | 22 | 15 |
 | SPI1 CE1 | 17 | 11 |
-| SPI1 CE2 | 24 | 18 |
 
 The five-device layout expects these device nodes:
 
 ```text
 /dev/spidev0.0
 /dev/spidev0.1
+/dev/spidev0.3
 /dev/spidev1.0
 /dev/spidev1.1
-/dev/spidev1.2
 ```
 
-For the expected topology, when `/dev/spidev0.2` is absent, SPI1 is present, and
-`LEDGRID_DEVICE_MAP` is unset, the host maps logical receivers 0-4 to
-`spidev0.0`, `spidev0.1`, `spidev1.1`, `spidev1.0`, and `spidev1.2`,
-respectively. Logical strips 0-31 stay on the original four boards; strip 32 is
-the rightmost column and remains one logical lane on the fifth board. A custom
-device-node topology can select a different fallback. No software default is
-proof of physical board labels or cable order; use the live `device_map` metric
-and a lane-order test for the running installation.
+The host maps logical receivers 0-4 to `spidev1.0`, `spidev1.1`, `spidev0.0`,
+`spidev0.1`, and `spidev0.3`. Physical left-to-right columns are SPI1 CE1,
+SPI1 CE0, SPI0 CE1 reversed, SPI0 CE0 reversed, then SPI0 CE3. Strip 32 remains
+one logical lane on the fifth board. Stock Raspberry Pi overlays stop at `spi0-2cs`; the wall profile installs
+`spi0-4cs` so CE2/CE3 exist. The unused third-HAT socket is `spidev0.2` and is
+not a logical receiver. A custom device-node topology can select a different
+fallback. No software default is proof of physical board labels or cable order;
+use the live `device_map` metric and a lane-order test for the running
+installation.
 
-The installed carrier routes SPI1 CE2 through solder jumper `SJ_SPI1_CE2` to
-BCM GPIO24 (physical pin 18), not the `spi1-3cs` overlay's default GPIO16. The
-full deployment writes `dtparam=spi=on` and
-`dtoverlay=spi1-3cs,cs2_pin=24` idempotently. A boot-config change requires a Pi
-reboot before CE2 moves and all five device nodes appear. The jumper must be
-bridged or the fifth receiver never sees chip select.
+The V6 carrier routes SPI1 CE0 through `SJ_SPI1_CE0` to BCM GPIO22 (physical pin
+15), SPI0 CE2 through `SJ_SPI0_CE2` to BCM GPIO5 (physical pin 29), and SPI0 CE3
+through `SJ_SPI0_CE3` to BCM GPIO6 (physical pin 31). The full deployment writes
+`dtparam=spi=on`, `dtoverlay=spi0-4cs`, and `dtoverlay=spi1-2cs,cs0_pin=22`
+idempotently. A boot-config change requires a Pi reboot before the extra SPI0
+chip-selects appear. Those jumpers must be bridged or those receivers never see
+chip select.
 
 ### Installed lane and strip orientation
 
 Transport identity, wall position, and pixel direction are separate hardware
-facts. The finalized installed contract as of 2026-08-27 is:
+facts. The finalized installed contract as of 2026-11-07 (column-sequence on the V6
+HATs) is:
 
 | Logical receiver | SPI route | Width | Physical order | Host strip order | Offset | Output mask |
-| ---: | --- | ---: | ---: | --- | ---: | ---: |
-| 0 | `spidev0.0` | 8 | 0 | forward | 0 | `0xff` |
-| 1 | `spidev0.1` | 8 | 1 | forward | 8 | `0xff` |
-| 2 | `spidev1.1` | 8 | 2 | forward | 16 | `0xff` |
-| 3 | `spidev1.0` | 8 | 3 | forward | 24 | `0xff` |
-| 4 | `spidev1.2` | 1 | 4 | forward | 32 | `0xff` broadcast |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | `spidev1.0` | 8 | 1 | forward | 8 | `0xff` |
+| 1 | `spidev1.1` | 8 | 0 | forward | 0 | `0xff` |
+| 2 | `spidev0.0` | 8 | 3 | reversed | 24 | `0xff` |
+| 3 | `spidev0.1` | 8 | 2 | reversed | 16 | `0xff` |
+| 4 | `spidev0.3` | 1 | 4 | forward | 32 | `0xff` broadcast |
 
-Host full-frame direction is forward on all five receivers. Firmware consumes
-already mapped pixels. The measured fixed mapping lives in the host driver;
-USB flashing uses `data/run_state/receiver_identity_mapping.json`.
+Physical lane order is `(1, 0, 3, 2, 4)`. Firmware consumes already mapped
+pixels. The measured fixed mapping lives in the host driver; USB flashing uses
+`data/run_state/receiver_identity_mapping.json`.
 
 The 2026-08-27 Anker-camera diagnostic assigned one color to each logical
 receiver. Photo Booth's live preview was mirrored, and its left-to-right preview
@@ -163,7 +166,9 @@ geometry and report transport counters separately from visual acceptance.
 ## Alternate HAT compatibility mode
 
 The repository also retains an alternate `LEDGRID_HAT=1` software mode. It
-configures two receivers on SPI0 CE0/CE1 and exposes 16 lanes. It is not the
+configures the left 16 columns on SPI1 CE0/CE1 (`spidev1.0` on GPIO22 / pin 15,
+`spidev1.1` on GPIO17 / pin 11). Use that canvas while only one 2-ESP HAT is
+connected. It is not the
 33-lane installed-wall configuration described above. The supplied V4 HAT
 source/evidence and a non-fabrication Rev5 proposal are checked in under
 [`hardware/ledgrid-hat/`](../hardware/ledgrid-hat/). The V4 schematic and PCB
@@ -189,6 +194,10 @@ even when SPI CRC and receiver counters are clean.
 
 Never use maximum-white current as an ordinary operating condition. Apply both
 hardware current protection and conservative software brightness limits.
+
+The current V6 five-receiver map runs without FEC at 20 MHz on every route,
+including SPI1 CE0/CE1 and SPI0 CE0/CE1/CE3. The 2026-08 receiver-3 FEC notes
+below describe the previous wall, not this HAT assignment.
 
 ### Current receiver-3 integrity finding
 
@@ -297,12 +306,17 @@ reproducing, or replacing a carrier or power assembly.
 
 1. With LED power off, continuity-check common ground, every chip select, and
    both bus clock/data pairs.
-2. Power and flash one receiver over USB:
+2. Power and flash one receiver over USB. Assembled HAT modules use USB-C
+   Serial/JTAG (GPIO19/20). Hold BOOT, tap RESET if the port does not appear,
+   then:
 
    ```bash
    just test-firmware
    ./tools/deployment/run_platformio.sh run -d firmware/esp32 -e esp32-s3-devkitc-1 -t upload
    ```
+
+   Repeat for the second ESP on the same HAT. One-PCB bring-up of columns 1-16
+   uses SPI1 CE0/CE1 (`LEDGRID_HAT=1`, 16×138).
 
 3. On the Pi, verify the expected device nodes:
 

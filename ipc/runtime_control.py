@@ -85,7 +85,10 @@ def restore_display_state(manager, state):
     output = state.get('output',{})
     brightness = output.get('brightness')
     if brightness is None and 'master_brightness' in output:
-        brightness = round(float(output['master_brightness'])*255)
+        level = output['master_brightness']
+        if isinstance(level, bool) or not isinstance(level, (int, float)) or not math.isfinite(level) or not 0 <= level <= 1:
+            raise ValueError('master_brightness must be a finite number between 0 and 1')
+        brightness = int(round(float(level) * 255))
     if brightness is not None:
         manager.set_output_brightness(brightness)
     tempo = output.get('animation_speed_scale',output.get('operator_tempo_scale'))

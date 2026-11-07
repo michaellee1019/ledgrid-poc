@@ -183,6 +183,7 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertEqual(len({entry['key'] for entry in entries}), len(entries))
         self.assertNotIn('plant_calibration', {entry['component_id'] for entry in entries})
         self.assertNotIn('strip_order', {entry['component_id'] for entry in entries})
+        self.assertIn('column_sequence', {entry['component_id'] for entry in entries})
         self.assertTrue(all(entry['available'] and isinstance(entry['preset_count'], int) for entry in entries))
         self.assertRegex(payload['catalog_digest'], r'^[0-9a-f]{64}$')
         self.assertEqual(self.interface.working_draft.get(), before_draft)

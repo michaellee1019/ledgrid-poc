@@ -88,6 +88,13 @@
         "showcase"
       ]
     },
+    "column_sequence": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "left-to-right"
+      ]
+    },
     "conway_life": {
       "provider": "python",
       "component_version": 1,

@@ -10,6 +10,7 @@
 
 #include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/protocol.hpp"
+#include "ledgrid/startup_animation.hpp"
 #include "ledgrid/ws2812_encoder.hpp"
 
 namespace {
@@ -1551,8 +1552,71 @@ void test_installed_config_and_status_crc() {
  for(unsigned i=0;i<4;++i)TEST_ASSERT_EQUAL_UINT8(crc>>(24-i*8),bytes[1248+i]);
 }
 
+void test_startup_rainbow_is_45_degrees_and_moves_up_right() {
+  constexpr std::uint8_t strips = 3;
+  constexpr std::uint16_t leds = 4;
+  std::array<std::uint8_t, strips * leds * 3U> initial{};
+  std::array<std::uint8_t, strips * leds * 3U> advanced{};
+  const std::uint32_t one_diagonal_step_us =
+      (2U * ledgrid::kStartupRainbowCycleUs) /
+      ledgrid::kStartupRainbowPeriodPixels;
+
+  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
+      0, strips, leds, initial.data(), initial.size()));
+  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
+      one_diagonal_step_us,
+      strips,
+      leds,
+      advanced.data(),
+      advanced.size()));
+
+  for (std::uint8_t strip = 0; strip + 1 < strips; ++strip) {
+    for (std::uint16_t led = 0; led + 1 < leds; ++led) {
+      const std::size_t source =
+          (static_cast<std::size_t>(strip) * leds + led) * 3U;
+      const std::size_t right =
+          (static_cast<std::size_t>(strip + 1U) * leds + led) * 3U;
+      const std::size_t up =
+          (static_cast<std::size_t>(strip) * leds + led + 1U) * 3U;
+      const std::size_t up_right =
+          (static_cast<std::size_t>(strip + 1U) * leds + led + 1U) * 3U;
+      TEST_ASSERT_EQUAL_MEMORY(initial.data() + right,
+                               initial.data() + up, 3);
+      TEST_ASSERT_EQUAL_MEMORY(initial.data() + source,
+                               advanced.data() + up_right, 3);
+    }
+  }
+}
+
+void test_startup_rainbow_cycles_once_per_second_and_checks_bounds() {
+  constexpr std::uint8_t strips = 8;
+  constexpr std::uint16_t leds = 32;
+  std::array<std::uint8_t, strips * leds * 3U> initial{};
+  std::array<std::uint8_t, strips * leds * 3U> looped{};
+
+  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
+      0, strips, leds, initial.data(), initial.size()));
+  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
+      ledgrid::kStartupRainbowCycleUs,
+      strips,
+      leds,
+      looped.data(),
+      looped.size()));
+  TEST_ASSERT_EQUAL_MEMORY(initial.data(), looped.data(), initial.size());
+  TEST_ASSERT_EQUAL_HEX8(0xFF, initial[0]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, initial[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, initial[2]);
+
+  TEST_ASSERT_FALSE(ledgrid::render_startup_rainbow(
+      0, strips, leds, nullptr, initial.size()));
+  TEST_ASSERT_FALSE(ledgrid::render_startup_rainbow(
+      0, strips, leds, initial.data(), initial.size() - 1U));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_startup_rainbow_is_45_degrees_and_moves_up_right);
+  RUN_TEST(test_startup_rainbow_cycles_once_per_second_and_checks_bounds);
   RUN_TEST(test_installed_config_and_status_crc);
   RUN_TEST(test_repeated_config_preserves_static_pixels_and_brightness);
   RUN_TEST(test_encoder_emits_parallel_grb_waveform);

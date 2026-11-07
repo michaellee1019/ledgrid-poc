@@ -134,7 +134,7 @@ wait_for_remote_ssh() {
 }
 
 remote_spi_devices_ready() {
-    ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
+    ssh $SSH_OPTS "$PI_HOST" "LEDGRID_HAT=${LEDGRID_HAT:-0} bash -s" <<'EOF'
 set -euo pipefail
 is_hat() {
   case "${LEDGRID_HAT:-0}" in
@@ -143,9 +143,9 @@ is_hat() {
   esac
 }
 if is_hat; then
-  required=(/dev/spidev0.0 /dev/spidev0.1)
+  required=(/dev/spidev1.0 /dev/spidev1.1)
 else
-  required=(/dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1 /dev/spidev1.2)
+  required=(/dev/spidev0.0 /dev/spidev0.1 /dev/spidev0.3 /dev/spidev1.0 /dev/spidev1.1)
 fi
 for dev in "${required[@]}"; do
   if [ ! -e "$dev" ]; then
@@ -166,8 +166,8 @@ ensure_remote_spi() {
 set -euo pipefail
 deploy_dir="${deploy_dir}"
 for candidate in \
-  "\$HOME/\${deploy_dir}/app/tools/deployment/configure_spi.sh" \
   "\$HOME/\${deploy_dir}/incoming/tools/deployment/configure_spi.sh" \
+  "\$HOME/\${deploy_dir}/app/tools/deployment/configure_spi.sh" \
   "\$HOME/\${deploy_dir}/tools/deployment/configure_spi.sh"; do
   if [ -f "\$candidate" ]; then
     LEDGRID_HAT=${LEDGRID_HAT:-0} bash "\$candidate"
@@ -219,7 +219,7 @@ EOF
     fi
 
     _deploy_log_error "Required SPI devices still missing after reboot"
-    _deploy_log_error "Expected: /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1 /dev/spidev1.2"
+    _deploy_log_error "Expected: /dev/spidev0.0 /dev/spidev0.1 /dev/spidev0.3 /dev/spidev1.0 /dev/spidev1.1"
     _deploy_log_error "Check boot config on the Pi and run deploy again"
     return 1
 }

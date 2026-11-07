@@ -5,7 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Tuple, Optional
 import numpy as np
-from drivers.spi_controller import LEDController, SPI_BUS, SPI_MODE, SPI_SPEED
+from drivers.spi_controller import ALL_LANES_MASK, LEDController, SPI_BUS, SPI_MODE, SPI_SPEED
 from drivers.led_layout import (DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP,
     STRIPS_PER_DEVICE, DeviceMapEntry, logical_strip_count, wall_device_map,
     WALL_RECEIVER_STRIP_COUNTS, WALL_RECEIVER_GLOBAL_STRIP_OFFSETS,
@@ -20,7 +20,7 @@ class MultiDeviceLEDController:
                  device_map=None, reverse_host_strips_by_logical_receiver=None,
                  receiver_lane_masks=None, receiver_strip_counts=None,
                  receiver_global_strip_offsets=None, receiver_spi_speeds_hz=None,
-                 fec_receiver_ids=(3,), **_removed_options):
+                 fec_receiver_ids=(), **_removed_options):
         if type(num_devices) is not int or not 1 <= num_devices <= 5:
             raise ValueError('wall supports one through five receivers')
         self.num_devices = num_devices
@@ -40,7 +40,12 @@ class MultiDeviceLEDController:
         if len(self.receiver_strip_counts) != num_devices or any(type(x) is not int or not 1 <= x <= 8 for x in self.receiver_strip_counts):
             raise ValueError('one receiver width from one through eight is required')
         if receiver_global_strip_offsets is None:
-            receiver_global_strip_offsets = tuple(sum(self.receiver_strip_counts[:i]) for i in range(num_devices))
+            if installed:
+                receiver_global_strip_offsets = WALL_RECEIVER_GLOBAL_STRIP_OFFSETS
+            else:
+                receiver_global_strip_offsets = tuple(
+                    sum(self.receiver_strip_counts[:i]) for i in range(num_devices)
+                )
         self.receiver_global_strip_offsets = tuple(receiver_global_strip_offsets)
         if len(self.receiver_global_strip_offsets) != num_devices or any(type(x) is not int or x < 0 for x in self.receiver_global_strip_offsets):
             raise ValueError('one nonnegative strip origin per receiver is required')
@@ -55,7 +60,15 @@ class MultiDeviceLEDController:
         self.total_leds = self.strip_count * leds_per_strip
         self.receiver_pixel_counts = tuple(x*leds_per_strip for x in self.receiver_strip_counts)
         self.receiver_pixel_offsets = tuple(x*leds_per_strip for x in self.receiver_global_strip_offsets)
-        self.reverse_host_strips_by_logical_receiver = tuple(reverse_host_strips_by_logical_receiver or (False,)*num_devices)
+        if reverse_host_strips_by_logical_receiver is None:
+            reverse_host_strips_by_logical_receiver = (
+                WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER
+                if installed
+                else (False,) * num_devices
+            )
+        self.reverse_host_strips_by_logical_receiver = tuple(
+            reverse_host_strips_by_logical_receiver
+        )
         if len(self.reverse_host_strips_by_logical_receiver) != num_devices or any(type(x) is not bool for x in self.reverse_host_strips_by_logical_receiver):
             raise ValueError('one host strip direction per receiver is required')
         self.receiver_lane_masks = tuple(receiver_lane_masks or (WALL_PHYSICAL_OUTPUT_LANE_MASKS if installed else tuple((1<<x)-1 for x in self.receiver_strip_counts)))
@@ -69,6 +82,11 @@ class MultiDeviceLEDController:
         self._devices_by_bus = {}
         for i, (device_bus, chip_select) in enumerate(self.device_map):
             self._devices_by_bus.setdefault(device_bus, []).append(i)
+        for bus, logical_ids in list(self._devices_by_bus.items()):
+            # CE0 first on each bus, then remaining chip-selects in Linux order.
+            self._devices_by_bus[bus] = tuple(
+                sorted(logical_ids, key=lambda i: self.device_map[i][1])
+            )
         self._executor = ThreadPoolExecutor(max_workers=len(self._devices_by_bus),thread_name_prefix='led-spi-bus') if parallel and len(self._devices_by_bus)>1 else None
         self._transport_lock = threading.RLock()
         self._logical_frames_sent = 0
@@ -109,18 +127,12 @@ class MultiDeviceLEDController:
         with self._controller_lock():
             frames = self._split_frame(pixels)
             sequence = self._claim_logical_wall_frame_sequence()
-            now = time.perf_counter()
-            skip_receiver3 = stream and self.num_devices == 5 and now-getattr(self,'_receiver3_last_send_at',float('-inf')) < 1/15
-            dispatch = {bus: tuple(i for i in ids if not(skip_receiver3 and i==3)) for bus,ids in self._devices_by_bus.items()}
-            if skip_receiver3:
-                self._host_full_receiver3_frames_skipped += 1
+            dispatch = self._devices_by_bus
             if self._executor is not None:
                 futures = [self._executor.submit(self._send_bus_frames,ids,frames,sequence) for ids in dispatch.values()]
                 results = [future.result() for future in futures]
             else:
                 results = [self._send_bus_frames(ids,frames,sequence) for ids in dispatch.values()]
-            if self.num_devices == 5 and not skip_receiver3:
-                self._receiver3_last_send_at = now
             self._logical_frames_sent += 1
             successful = all(results)
             self._last_full_frame_failure = None if successful else {'error':'one or more RGB receiver transfers failed','wall_frame_sequence':sequence}
@@ -138,9 +150,13 @@ class MultiDeviceLEDController:
 
     def configure(self):
         with self._controller_lock():
-            for device,mask in zip(self.devices,self.receiver_lane_masks):
+            for device, mask in zip(self.devices, self.receiver_lane_masks):
                 device.configure()
-                device.set_lane_mask(mask)
+                # Firmware defaults to all lanes; skip an extra CONFIG+SET_LANE_MASK
+                # pair so startup stays within the ESP32 command-queue depth before
+                # SET_BRIGHTNESS runs (brightness 0 leaves CE0 dark).
+                if int(mask) & 0xFF != ALL_LANES_MASK:
+                    device.set_lane_mask(mask)
 
     def set_lane_mask(self, lane_mask):
         with self._controller_lock():
@@ -364,13 +380,11 @@ class MultiDeviceLEDController:
         if num_devices <= 2:
             return [(primary_bus, device_id) for device_id in range(num_devices)]
 
-        # Wall layout: SPI0 CE0/CE1 plus SPI1, unless the primary bus already
-        # exposes CE2+ (unusual custom overlay).
-        if not self._device_exists(primary_bus, 2) and self._device_exists(1, 0):
+        # Installed wall keeps SPI1 for columns 1-16 even when SPI0 exposes CE2.
+        if self._device_exists(1, 0):
             if self.debug:
                 print(
-                    "[INFO] Using SPI1 fallback for logical receivers 2+ "
-                    "(CE1, CE0, CE2)"
+                    "[INFO] Using installed wall SPI routes"
                 )
             return wall_device_map(num_devices)
 

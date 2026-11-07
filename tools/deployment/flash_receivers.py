@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Build full-frame firmware and flash the five explicitly mapped USB receivers.
+"""Build full-frame firmware and flash mapped USB Serial/JTAG receivers.
 
 Uploads are sequential. A partial flash fails and leaves the service stopped;
-rerunning full deployment flashes all five again. No installed-image ledger.
+rerunning flashes every mapped receiver again. No installed-image ledger.
 """
 from __future__ import annotations
 
@@ -12,8 +12,16 @@ from pathlib import Path
 import re
 import subprocess
 
-ROUTES = [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)]
+try:
+    from platformio_cli import select_platformio
+except ModuleNotFoundError:  # Imported as tools.deployment.flash_receivers in tests.
+    from tools.deployment.platformio_cli import select_platformio
+
+ROUTES = [(1, 0), (1, 1), (0, 0), (0, 1), (0, 3)]
+HAT_ROUTES = [(1, 0), (1, 1)]
+HAT_SPI0_ROUTES = [(0, 0), (0, 1)]
 ENVIRONMENT = "esp32-s3-devkitc-1"
+_SERIAL_PORT = re.compile(r"/dev/tty(?:ACM|USB)\d+")
 
 
 def serial_identity(value: str) -> str:
@@ -25,20 +33,31 @@ def serial_identity(value: str) -> str:
 
 def mapped_ports(mapping: dict, devices: list[dict]) -> list[str]:
     entries = mapping.get("identities")
-    if not isinstance(entries, list) or len(entries) != 5:
-        raise ValueError("Firmware flashing requires five explicit receiver mappings")
+    if not isinstance(entries, list):
+        raise ValueError("Firmware flashing requires explicit receiver mappings")
     selected = sorted(entries, key=lambda item: item["logical_device"])
-    if [item.get("logical_device") for item in selected] != list(range(5)) or [item.get("spi_route") for item in selected] != [list(route) for route in ROUTES]:
-        raise ValueError("Receiver mapping does not match the installed wall routes")
+    routes = [item.get("spi_route") for item in selected]
+    if routes == [list(route) for route in ROUTES]:
+        expected = 5
+    elif routes == [list(route) for route in HAT_ROUTES]:
+        expected = 2
+    elif routes == [list(route) for route in HAT_SPI0_ROUTES]:
+        expected = 2
+    else:
+        raise ValueError(
+            "Receiver mapping does not match the installed wall or 16-column HAT test routes"
+        )
+    if [item.get("logical_device") for item in selected] != list(range(expected)):
+        raise ValueError("Receiver mapping logical devices must be contiguous from 0")
     serials = [serial_identity(item["hardware_serial"]) for item in selected]
-    if len(set(serials)) != 5:
+    if len(set(serials)) != expected:
         raise ValueError("Duplicate mapped receiver serial")
     ports = {}
     for device in devices:
         port = device.get("port", device.get("path", ""))
         hwid = device.get("hwid", "")
         serial = re.search(r"(?:^|\s)SER=([^\s]+)", hwid)
-        if not serial or not re.fullmatch(r"/dev/tty(?:ACM|USB)\d+", port):
+        if not serial or not _SERIAL_PORT.fullmatch(port):
             continue
         identity = serial_identity(serial[1])
         if identity not in serials:
@@ -49,15 +68,16 @@ def mapped_ports(mapping: dict, devices: list[dict]) -> list[str]:
     if any(serial not in ports for serial in serials):
         raise ValueError("A mapped receiver is absent from USB discovery; check connections")
     result = [ports[serial] for serial in serials]
-    if len(set(result)) != 5:
+    if len(set(result)) != expected:
         raise ValueError("Mapped USB receiver ports are not unique")
     return result
 
 
 def flash(root: Path) -> None:
-    pio = Path.home() / ".platformio-venv/bin/pio"
-    if not pio.is_file():
-        raise RuntimeError("PlatformIO is missing; run just setup")
+    try:
+        pio = select_platformio()
+    except SystemExit as exc:
+        raise RuntimeError("PlatformIO is missing or unusable; run just setup") from exc
     mapping_path = root / "data/run_state/receiver_identity_mapping.json"
     mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
     devices = json.loads(subprocess.check_output([str(pio), "device", "list", "--json-output"]))

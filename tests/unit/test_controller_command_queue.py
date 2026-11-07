@@ -192,21 +192,48 @@ def test_live_operator_tempo_changes_continue_scene_time_without_jump(monkeypatc
     manager._canonical_receiver_runtime=object()
     manager._reset_run_counters()
     manager.start_time=0.0
-    manager.animation_speed_scale=1.0
+    default=manager_module.DEFAULT_ANIMATION_SPEED_SCALE
+    manager.animation_speed_scale=default
     clock=[0.0];elapsed=[]
     monkeypatch.setattr(manager_module.time,'perf_counter',lambda:clock[0])
     monkeypatch.setattr(manager_module,'_wait_for_frame_deadline',lambda deadline:None)
     def render(*args,monotonic_elapsed,**kwargs):
         elapsed.append(monotonic_elapsed)
         if len(elapsed)==1:
-            manager.animation_speed_scale=2.0;clock[0]=.1
+            manager.animation_speed_scale=default*2.0;clock[0]=.1
         elif len(elapsed)==2:
-            manager.animation_speed_scale=.5;clock[0]=.2
+            manager.animation_speed_scale=default*.5;clock[0]=.2
         else:manager.is_running=False
         return BaseFrame(np.zeros((1,3),dtype=np.uint8),changed=True)
     manager.render_scene_v2_presentation=render
     manager._animation_loop()
     assert elapsed==[0.0,.2,.25]
+
+
+def test_canonical_scene_v2_clock_treats_default_operator_tempo_as_realtime(monkeypatch):
+    import numpy as np
+    import animation.core.manager as manager_module
+    from animation.core.compositing import BaseFrame
+    manager=manager_module.AnimationManager(manager_module.PreviewLEDController(1,1),auto_start=False)
+    manager._canonical_host_full_mode=True
+    manager._canonical_receiver_scene=object()
+    manager._canonical_receiver_runtime=object()
+    manager._reset_run_counters()
+    manager.start_time=0.0
+    manager.animation_speed_scale=manager_module.DEFAULT_ANIMATION_SPEED_SCALE
+    clock=[0.0];elapsed=[]
+    monkeypatch.setattr(manager_module.time,'perf_counter',lambda:clock[0])
+    monkeypatch.setattr(manager_module,'_wait_for_frame_deadline',lambda deadline:None)
+    def render(*args,monotonic_elapsed,**kwargs):
+        elapsed.append(monotonic_elapsed)
+        if len(elapsed)==1:
+            clock[0]=1.0
+        else:
+            manager.is_running=False
+        return BaseFrame(np.zeros((1,3),dtype=np.uint8),changed=True)
+    manager.render_scene_v2_presentation=render
+    manager._animation_loop()
+    assert elapsed==[0.0,1.0]
 
 
 def test_file_playlist_queue_polls_idle_executes_once_and_never_replays(tmp_path, monkeypatch):
