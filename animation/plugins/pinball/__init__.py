@@ -62,7 +62,7 @@ class PinballAnimation(AnimationBase):
         optional_simulation_inputs=("installation_geometry_contact",), defaults=DEFAULTS,
     )
     _PALETTE_TINTS = MappingProxyType({"neutral": (1.0, .82, .40), "mist": (.48, .82, 1.0),
-                                       "spectrum": (1.0, .42, .94), "ember": (1.0, .45, .18)})
+                                       "spectrum": (1.0, .42, .94), "ember": (1.0, .45, .18), "rainbow": (1.0, .72, .42)})
 
     NAVY = (0, 3, 18)
     BLUE = (0, 34, 92)

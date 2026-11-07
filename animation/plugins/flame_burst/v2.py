@@ -22,7 +22,7 @@ class FlameBurstAnimation(AnimationBase):
     SIM_HZ, MAX_CATCH_UP_STEPS, MAX_IGNITIONS = 30.0, 12, 10
     DEFAULTS = MappingProxyType({"ignition_cadence": .9, "flare_size": .42, "ember_linger": .45, "flicker": .35, "seed": 6201})
     COMPONENT_DESCRIPTOR = ComponentDescriptor(component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="premultiplied_rgba", palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS)
-    SEMANTIC_PALETTES = MappingProxyType({"neutral": ((8.,2.,1.),(238.,55.,9.),(255.,209.,78.)), "mist": ((5.,5.,12.),(248.,73.,18.),(255.,221.,140.)), "spectrum": ((16.,2.,20.),(250.,45.,104.),(255.,185.,64.)), "ember": ((15.,2.,1.),(255.,64.,8.),(255.,225.,108.))})
+    SEMANTIC_PALETTES = MappingProxyType({"neutral": ((8.,2.,1.),(238.,55.,9.),(255.,209.,78.)), "mist": ((5.,5.,12.),(248.,73.,18.),(255.,221.,140.)), "spectrum": ((16.,2.,20.),(250.,45.,104.),(255.,185.,64.)), "ember": ((15.,2.,1.),(255.,64.,8.),(255.,225.,108.)), "rainbow": ((8.,0.,18.),(255.,40.,90.),(40.,255.,140.))})
 
     def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
         self._authored_config = dict(config or {}); super().__init__(controller, self._authored_config); self.params = self._normalized_parameters(self._authored_config)

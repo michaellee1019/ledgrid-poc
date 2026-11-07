@@ -35,6 +35,7 @@ SEMANTIC_PALETTES: Mapping[str, Mapping[str, tuple[float, float, float]]] = {
     "mist": {"low": (3, 9, 20), "mid": (40, 102, 142), "high": (170, 228, 245)},
     "spectrum": {"low": (15, 3, 34), "mid": (84, 38, 194), "high": (54, 238, 230)},
     "ember": {"low": (18, 3, 2), "mid": (156, 42, 14), "high": (255, 202, 92)},
+    "rainbow": {"low": (8, 0, 18), "mid": (255, 40, 90), "high": (40, 255, 140)},
 }
 
 # Per-band gains and analytic tone curves preserve each instrument's authored

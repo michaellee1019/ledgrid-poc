@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -16,9 +17,12 @@ _LEGACY_GLOBAL_FIELDS = frozenset({
     "pace", "palette", "plant_aware", "plant_modifiers", "plants", "scene", "widgets",
 })
 _INSTALLATION_EFFECTS_FIELD = "installation_effects"
+_FIREWORKS_PRESENTATION_FIELD = "presentation"
 _LAVA_INSTALLATION_EFFECTS = frozenset((
     "refract", "bumper", "emitter", "habitat", "portal",
 ))
+_FIREWORKS_PALETTES = frozenset(("neutral", "mist", "ember", "spectrum", "rainbow", "xmas", "fall", "easter", "july4"))
+_LOOK_KEYS = frozenset({"palette_id", "pace", "presentation_brightness"})
 
 
 def _exact_int(value: Any, expected: int) -> bool:
@@ -45,6 +49,48 @@ def _installation_effects(
     ):
         raise ValueError(f"Preset {preset_id} has invalid installation effects")
     return state.to_dict()
+
+
+def _finite_range(value: Any, minimum: float, maximum: float) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and minimum <= float(value) <= maximum
+    )
+
+
+def _fireworks_presentation(
+    component_id: str, raw: Mapping[str, Any], preset_id: str,
+) -> dict[str, Any] | None:
+    """Validate optional Look and background gain owned by one Fireworks card."""
+    payload = raw.get(_FIREWORKS_PRESENTATION_FIELD)
+    if payload is None:
+        return None
+    if component_id != "fireworks" or not isinstance(payload, Mapping):
+        raise ValueError(f"Preset {preset_id} has invalid presentation")
+    if not payload or set(payload) - {"look", "background_gain"}:
+        raise ValueError(f"Preset {preset_id} has invalid presentation")
+    presentation: dict[str, Any] = {}
+    if "look" in payload:
+        look = payload["look"]
+        if not isinstance(look, Mapping) or set(look) != _LOOK_KEYS:
+            raise ValueError(f"Preset {preset_id} has invalid presentation")
+        palette_id = look["palette_id"]
+        if not isinstance(palette_id, str) or palette_id not in _FIREWORKS_PALETTES:
+            raise ValueError(f"Preset {preset_id} has invalid presentation")
+        if not _finite_range(look["pace"], 0.0, 2.0) or not _finite_range(look["presentation_brightness"], 0.0, 2.0):
+            raise ValueError(f"Preset {preset_id} has invalid presentation")
+        presentation["look"] = {
+            "palette_id": palette_id,
+            "pace": float(look["pace"]),
+            "presentation_brightness": float(look["presentation_brightness"]),
+        }
+    if "background_gain" in payload:
+        if not _finite_range(payload["background_gain"], 0.0, 1.0):
+            raise ValueError(f"Preset {preset_id} has invalid presentation")
+        presentation["background_gain"] = float(payload["background_gain"])
+    return presentation
 
 
 class ComponentPresetCatalog:
@@ -125,6 +171,9 @@ class ComponentPresetCatalog:
         effects = _installation_effects(component_id, raw, preset_id)
         if effects is not None:
             choice["installation_effects"] = effects
+        presentation = _fireworks_presentation(component_id, raw, preset_id)
+        if presentation is not None:
+            choice["presentation"] = presentation
         return choice
 
     def choices(self, component_id: str) -> list[dict[str, Any]]:
@@ -197,4 +246,21 @@ class ComponentPresetCatalog:
             updated_plants = dict(plants)
             updated_plants["effects"] = dict(effects)
             result["plants"] = updated_plants
+        presentation = match.get("presentation")
+        if presentation is not None:
+            if "look" in presentation:
+                look = result.get("look")
+                if not isinstance(look, Mapping):
+                    raise ValueError("Fireworks presentation presets require Scene v2 look")
+                result["look"] = {**dict(look), **presentation["look"]}
+            if "background_gain" in presentation:
+                background = result.get("background")
+                parameters = background.get("parameters") if isinstance(background, Mapping) else None
+                if not isinstance(background, Mapping) or not isinstance(parameters, Mapping):
+                    raise ValueError("Fireworks presentation presets require Scene v2 background")
+                updated_background = dict(background)
+                updated_parameters = dict(parameters)
+                updated_parameters["gain"] = presentation["background_gain"]
+                updated_background["parameters"] = updated_parameters
+                result["background"] = updated_background
         return result

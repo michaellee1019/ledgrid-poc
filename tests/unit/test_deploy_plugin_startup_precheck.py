@@ -90,7 +90,7 @@ class DeploymentPluginStartupPrecheckTests(unittest.TestCase):
     def test_healthy_current_tree_loads_every_plugin_and_renders_current_plant_glow(self):
         result = run_plugin_startup_precheck()
 
-        self.assertEqual(len(result.plugins), 52)
+        self.assertEqual(len(result.plugins), 55)
         self.assertIn("plant_glow", result.plugins)
         self.assertIn("ambient_scene", result.plugins)
         self.assertIn("snake", result.plugins)

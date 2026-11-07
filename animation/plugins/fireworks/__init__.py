@@ -13,12 +13,15 @@ import numpy as np
 from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import OverlayFrame, ResolvedScene
+from animation.libraries.scene_palettes import HOLIDAY_TRIPLES, nearest_stop_color
 
 
 @dataclass
 class _Rocket:
     x: float
     y: float
+    vx: float
+    vy: float
     target: float
     hue: float
 
@@ -32,6 +35,7 @@ class _Spark:
     age: float
     lifetime: float
     hue: float
+    size: float = 1.0
     split: bool = False
 
 
@@ -46,7 +50,7 @@ class FireworksAnimation(AnimationBase):
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "premultiplied_rgba_uint8_strip_major", "scaled_context", "semantic"
     CAPABILITIES = frozenset({"semantic_palette_roles", "scaled_context", "effect_intent"})
     PLANT_MODIFIER_SUPPORT = frozenset()
-    SIM_HZ, MAX_CATCH_UP_STEPS, MAX_SPARKS = 24.0, 10, 360
+    SIM_HZ, MAX_CATCH_UP_STEPS, MAX_SPARKS = 24.0, 16, 720
     STYLES = ("mixed", "ring", "willow", "palm", "burst")
     DEFAULTS = MappingProxyType({"launch_cadence": 1.15, "shell_population": 54, "burst_size": .29, "burst_style": "mixed", "gravity": .38, "trails": .72, "crackle": .24, "twinkle": .35, "seed": 1776})
     COMPONENT_DESCRIPTOR = ComponentDescriptor(component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="premultiplied_rgba", palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS)
@@ -55,6 +59,8 @@ class FireworksAnimation(AnimationBase):
         "mist": ((3., 9., 20.), (72., 185., 255.), (244., 237., 255.)),
         "spectrum": ((14., 3., 35.), (245., 42., 238.), (45., 237., 220.)),
         "ember": ((18., 3., 2.), (255., 76., 18.), (255., 206., 74.)),
+        "rainbow": ((8., 0., 18.), (255., 40., 90.), (40., 255., 140.)),
+        **{name: tuple(triple) for name, triple in HOLIDAY_TRIPLES.items()},
     })
 
     def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
@@ -67,7 +73,8 @@ class FireworksAnimation(AnimationBase):
         # makes a palette swap a presentation-only operation and keeps the
         # returned plane transparent wherever the instrument has no light.
         self._pixels = np.zeros((self.get_pixel_count(), 4), dtype=np.uint8)
-        self._trail = np.zeros((self.width, self.height), dtype=np.float32)
+        # Chromatic trail energy, colorized at paint so palette swaps stay presentation-only.
+        self._trail = np.zeros((self.width, self.height, 3), dtype=np.float32)
         self._presentation_context: ResolvedScene | None = None
         self._presentation_only_refresh = False
         self._last_tick: int | None = None; self._last_render_key: tuple[Any, ...] | None = None
@@ -160,89 +167,135 @@ class FireworksAnimation(AnimationBase):
         self._launch_phase, self._burst_count, self._last_tick = 1., 0, None
 
     def _step(self, dt: float) -> None:
-        self._trail *= .62 + .35 * float(self.params["trails"])
+        persist = (0.80 + 0.16 * float(self.params["trails"])) ** (60.0 * dt)
+        self._trail *= persist
         self._launch_phase += dt * float(self.params["launch_cadence"])
         while self._launch_phase >= 1. and len(self._rockets) < 5:
-            self._launch_phase -= 1.; self._rockets.append(_Rocket(float(self._rng.uniform(.08, .92)), 1.04, float(self._rng.uniform(.18, .54)), float(self._rng.random())))
+            self._launch_phase -= 1.
+            launch_speed = 0.72 + float(self.params["burst_size"]) * 0.38
+            self._rockets.append(_Rocket(
+                float(self._rng.uniform(.08, .92)), 1.04,
+                float(self._rng.uniform(-.025, .025)), -launch_speed,
+                float(self._rng.uniform(.18, .54)), float(self._rng.random()),
+            ))
+        gravity = float(self.params["gravity"])
         rising: list[_Rocket] = []
         for rocket in self._rockets:
-            rocket.y -= dt * (.72 + float(self.params["burst_size"]) * .38); self._deposit(rocket.x, rocket.y, .75 + .6 * float(self.params["trails"]))
-            if rocket.y <= rocket.target: self._burst(rocket)
-            else: rising.append(rocket)
+            rocket.x += rocket.vx * dt
+            rocket.y += rocket.vy * dt
+            rocket.vy += gravity * 0.32 * dt
+            color = self._hue_rgb(rocket.hue)
+            self._deposit(rocket.x, rocket.y, color, 1.35 + 0.55 * float(self.params["trails"]))
+            self._deposit(rocket.x, rocket.y + 0.012, tuple(channel * 0.35 for channel in color), 0.7)
+            if rocket.y <= rocket.target or rocket.vy >= -0.04:
+                self._burst(rocket)
+            elif -0.1 <= rocket.x <= 1.1 and rocket.y > -0.1:
+                rising.append(rocket)
         self._rockets = rising
-        gravity, survivors, spawned = float(self.params["gravity"]), [], []
+        drag = 0.965 ** (dt * 60.0)
+        twinkle = float(self.params["twinkle"])
+        trail_gain = 0.55 + 0.85 * float(self.params["trails"])
+        elapsed = (self._last_tick or 0) / self.SIM_HZ
+        survivors, spawned = [], []
         for spark in self._sparks:
-            spark.age += dt; spark.x += spark.vx * dt; spark.y += spark.vy * dt; spark.vx *= .985; spark.vy += gravity * dt * .22
+            spark.age += dt
+            spark.x += spark.vx * dt
+            spark.y += spark.vy * dt
+            spark.vx *= drag
+            spark.vy = spark.vy * drag + gravity * dt
             life = spark.age / spark.lifetime
-            if life >= 1. or not (-.08 <= spark.x <= 1.08 and -.08 <= spark.y <= 1.08): continue
-            if not spark.split and life > .56 and self._rng.random() < float(self.params["crackle"]) * .055:
+            if life >= 1. or not (-.12 <= spark.x <= 1.12 and spark.y < 1.08):
+                continue
+            if not spark.split and life > .55 and self._rng.random() < float(self.params["crackle"]) * .18:
                 spark.split = True
-                for direction in (-1., 1.): spawned.append(_Spark(spark.x, spark.y, spark.vx + direction * float(self._rng.uniform(.04, .13)), spark.vy + float(self._rng.uniform(-.08, .05)), 0., spark.lifetime * .34, (spark.hue + direction * .07) % 1.))
+                for direction in (-1., 1.):
+                    spawned.append(_Spark(
+                        spark.x, spark.y,
+                        spark.vx + direction * float(self._rng.uniform(.025, .07)),
+                        spark.vy + float(self._rng.uniform(-.04, .04)),
+                        0., spark.lifetime * .32, (spark.hue + direction * .07) % 1., 0.65,
+                    ))
+            fade = (1. - life) ** 1.35
+            shimmer = 1. - twinkle + twinkle * (.35 + .65 * abs(math.sin(elapsed * 25. + spark.x * 31.)))
+            self._deposit(spark.x, spark.y, self._hue_rgb(spark.hue), fade * shimmer * spark.size * trail_gain)
             survivors.append(spark)
         self._sparks = (survivors + spawned)[-self.MAX_SPARKS:]
 
     def _burst(self, rocket: _Rocket) -> None:
         style = self.params["burst_style"]
         if style == "mixed": style = self.STYLES[1 + int(self._rng.integers(len(self.STYLES) - 1))]
-        # The public 12–120 range is part of the authored instrument contract.
-        # Bound concurrent work at the separate live-spark ceiling instead of
-        # silently flattening high-density shell choices into one visual value.
         population = int(self.params["shell_population"])
+        if style == "palm":
+            population = max(12, population // 2)
+        size = float(self.params["burst_size"])
         for index in range(population):
-            if style == "ring": angle, velocity = math.tau * index / population + float(self._rng.uniform(-.035, .035)), float(self.params["burst_size"]) * float(self._rng.uniform(.85, 1.12))
-            elif style == "willow": angle, velocity = float(self._rng.uniform(0., math.tau)), float(self.params["burst_size"]) * float(self._rng.uniform(.25, .78))
-            elif style == "palm": angle, velocity = float(self._rng.uniform(math.pi * 1.08, math.pi * 1.92)), float(self.params["burst_size"]) * float(self._rng.uniform(.72, 1.32))
-            else: angle, velocity = float(self._rng.uniform(0., math.tau)), float(self.params["burst_size"]) * float(self._rng.uniform(.25, 1.15))
-            lifetime = float(self._rng.uniform(1.05, 1.8)) * (1.45 if style == "willow" else 1.)
-            self._sparks.append(_Spark(rocket.x, rocket.y, math.cos(angle) * velocity, math.sin(angle) * velocity, 0., lifetime, (rocket.hue + float(self._rng.uniform(-.11, .11))) % 1.))
-        self._deposit(rocket.x, rocket.y, 1.8); self._burst_count += 1
+            if style == "ring":
+                angle = math.tau * index / population + float(self._rng.uniform(-.025, .025))
+                velocity = size * float(self._rng.uniform(.90, 1.08))
+            elif style == "willow":
+                angle = float(self._rng.uniform(0., math.tau))
+                velocity = size * 0.78 * float(self._rng.random() ** 0.35)
+            elif style == "palm":
+                angle = float(self._rng.uniform(math.pi * 1.10, math.pi * 1.90))
+                velocity = size * float(self._rng.uniform(.75, 1.35))
+            else:
+                angle = float(self._rng.uniform(0., math.tau))
+                velocity = size * float(self._rng.random() ** 0.35)
+            lifetime = float(self._rng.uniform(.72, 1.18)) * (1.55 if style == "willow" else 1.8)
+            hue = 0.105 if style == "willow" else rocket.hue
+            self._sparks.append(_Spark(
+                rocket.x, rocket.y, math.cos(angle) * velocity, math.sin(angle) * velocity,
+                0., lifetime, hue, float(self._rng.uniform(.75, 1.25)),
+            ))
+        self._deposit(rocket.x, rocket.y, (255., 255., 240.), 2.2)
+        self._burst_count += 1
 
     def _paint(self, palette_id: str, phase_time: float) -> None:
+        del phase_time
         _background, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
-        # The simulation uses screen coordinates (y=0 at the top), while the
-        # canonical wall frame uses physical LED 0 at the bottom.
         canvas = self._pixels.reshape(self.width, self.height, 4)[:, ::-1]
         canvas.fill(0)
-        trail_alpha = np.clip(self._trail * .78, 0., .92)
-        alpha8 = np.rint(trail_alpha * 255.).astype(np.uint8)
-        trail_color = np.asarray(primary, dtype=np.float32) * .64 + np.asarray(accent, dtype=np.float32) * .36
-        for channel in range(3):
-            canvas[:, :, channel] = np.floor(trail_color[channel] * alpha8 / 255.).astype(np.uint8)
-        canvas[:, :, 3] = alpha8
-        twinkle = float(self.params["twinkle"])
-        for spark in self._sparks:
-            life = spark.age / spark.lifetime; color = self._spark_color(spark.hue, primary, accent)
-            shimmer = 1. - twinkle + twinkle * (.45 + .55 * abs(math.sin(phase_time * 18. + spark.x * 23.)))
-            self._paint_spark(canvas, spark.x, spark.y, color, (1. - life) ** 1.35 * shimmer * (1.1 + float(self.params["trails"])))
+        energy = np.clip(self._trail, 0., 255.)
+        luma = np.max(energy, axis=2, keepdims=True)
+        festive = nearest_stop_color(energy, palette_id)
+        if palette_id == "rainbow":
+            mixed = energy
+        elif festive is not None:
+            mixed = festive
+        else:
+            semantic = np.asarray(primary, dtype=np.float32) * .62 + np.asarray(accent, dtype=np.float32) * .38
+            mixed = energy * .55 + semantic.reshape(1, 1, 3) * (luma / 255.)
+        rgb8 = np.clip(np.rint(mixed), 0., 255.).astype(np.uint8)
+        alpha = np.max(rgb8, axis=2)
+        keep = alpha >= 2
+        rgb8 *= keep[..., None]
+        canvas[:, :, :3] = rgb8
+        canvas[:, :, 3] = np.where(keep, alpha, np.uint8(0))
 
     @staticmethod
-    def _paint_spark(canvas: np.ndarray, x: float, y: float, color: tuple[float, float, float], intensity: float) -> None:
+    def _hue_rgb(hue: float) -> tuple[float, float, float]:
+        red, green, blue = colorsys.hsv_to_rgb(float(hue) % 1., .92, 1.)
+        return red * 255., green * 255., blue * 255.
+
+    def _deposit(self, x: float, y: float, color: tuple[float, float, float], intensity: float) -> None:
+        """Add a sub-pixel light sample with bilinear filtering."""
         if intensity <= 0. or not (0. <= x <= 1. and 0. <= y <= 1.):
             return
-        strip, led = int(round(x * (canvas.shape[0] - 1))), int(round(y * (canvas.shape[1] - 1)))
-        alpha = min(.94, float(intensity) * .84)
-        source_alpha = int(round(alpha * 255.))
-        destination_alpha = int(canvas[strip, led, 3])
-        combined_alpha = source_alpha + (destination_alpha * (255 - source_alpha) + 127) // 255
-        for channel in range(3):
-            source = int(math.floor(float(color[channel]) * source_alpha / 255.))
-            canvas[strip, led, channel] = min(combined_alpha, source + (int(canvas[strip, led, channel]) * (255 - source_alpha) + 127) // 255)
-        canvas[strip, led, 3] = combined_alpha
-
-    @staticmethod
-    def _spark_color(hue: float, primary: tuple[float, float, float], accent: tuple[float, float, float]) -> tuple[float, float, float]:
-        rgb = np.asarray(colorsys.hsv_to_rgb(hue, .62, 1.)) * 255.; semantic = np.asarray(primary) * .62 + np.asarray(accent) * .38
-        return tuple(np.clip(rgb * .45 + semantic * .55, 0., 255.))
-
-    def _deposit(self, x: float, y: float, intensity: float) -> None:
-        if intensity <= 0. or not (0. <= x <= 1. and 0. <= y <= 1.): return
-        strip, led = int(round(x * (self.width - 1))), int(round(y * (self.height - 1)))
-        if 0 <= strip < self.width and 0 <= led < self.height:
-            self._trail[strip, led] += intensity
-            if intensity > .7:
-                for ds, dl in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    target = strip + ds, led + dl
-                    if 0 <= target[0] < self.width and 0 <= target[1] < self.height: self._trail[target] += intensity * .16
+        px = x * max(0, self.width - 1)
+        py = y * max(0, self.height - 1)
+        x0, y0 = int(px), int(py)
+        fx, fy = px - x0, py - y0
+        red, green, blue = (channel * intensity for channel in color)
+        for yy, wy in ((y0, 1.0 - fy), (y0 + 1, fy)):
+            if not 0 <= yy < self.height:
+                continue
+            for xx, wx in ((x0, 1.0 - fx), (x0 + 1, fx)):
+                weight = wx * wy
+                if 0 <= xx < self.width and weight > 0.0:
+                    pixel = self._trail[xx, yy]
+                    pixel[0] += red * weight
+                    pixel[1] += green * weight
+                    pixel[2] += blue * weight
 
     @classmethod
     def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:

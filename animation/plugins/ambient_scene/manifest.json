@@ -1,0 +1,1 @@
+{"plugin_id":"ambient_scene","class":"AmbientSceneAnimation","icon":"🌫️","gallery":"show","vibe":{"color_policy":"semantic","timing_adapter":"scaled_context","capabilities":["palette_roles","tempo"],"semantic_roles":["accent","background_low","primary"]}}

@@ -37,7 +37,7 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         scene["animation"] = {"component_id": "lava_lamp", "version": 1, "provider": "python", "role": "animation", "parameters": {}}
         return scene
 
-    def _resolved(self, effect: str | None = None, strength: float = 1.0) -> ResolvedScene:
+    def _resolved(self, effect: str | None = None, strength: float = 1.0, palette_id: str = "neutral") -> ResolvedScene:
         descriptor = LavaLampAnimation.component_descriptor()
         contact = ComposerFinalPreview(
             current_component_catalog(), ROOT,
@@ -48,7 +48,7 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         return ResolvedScene(
             canonical_scene={"plants": {"effects": effects}}, canonical_bytes=b"lava",
             digest="lava", descriptor=descriptor, parameters=dict(LavaLampAnimation.DEFAULTS),
-            palette={"palette_id": "neutral"}, phase_time=0.0, plant_inputs={},
+            palette={"palette_id": palette_id}, phase_time=0.0, plant_inputs={},
             installation_geometry=contact,
         )
 
@@ -87,6 +87,38 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         self.assertEqual(left_frames[-1].shape, (33 * 138, 3))
         self.assertLessEqual(left.cadence_snapshot()["simulation_hz"], 100.0)
 
+    def test_startup_warmup_precomputes_placements_and_visible_frames_do_not_teleport(self) -> None:
+        left = LavaLampAnimation(self.controller, {"seed": 1977, "blob_count": 7})
+        right = LavaLampAnimation(self.controller, {"seed": 1977, "blob_count": 7})
+        left.set_presentation_context(self._resolved())
+        right.set_presentation_context(self._resolved())
+        left.generate_frame(0.0, 0)
+        right.generate_frame(0.0, 0)
+        self.assertFalse(left._warmup_pending)
+        self.assertAlmostEqual(left.simulation_time, left.WARMUP_STEPS * left.PHYSICS_DT)
+        np.testing.assert_array_equal(left.x, right.x)
+        np.testing.assert_array_equal(left.y, right.y)
+        active = np.flatnonzero(left.active)
+        self.assertGreaterEqual(active.size, 3)
+        spawn_y = left.y[active]
+        self.assertLess(float(np.min(spawn_y)), left.height * 0.35)
+        self.assertGreater(float(np.max(spawn_y)), left.height * 0.70)
+        previous = np.stack((left.x[active], left.y[active]), axis=1).copy()
+        for index in range(1, left.WARMUP_STEPS + 1):
+            left.generate_frame(index / left.SOURCE_FPS, index)
+            live = np.flatnonzero(left.active)
+            shared = np.intersect1d(active, live)
+            self.assertGreaterEqual(shared.size, 3)
+            current = np.stack((left.x[shared], left.y[shared]), axis=1)
+            prior = np.stack(
+                [previous[int(np.where(active == slot)[0][0])] for slot in shared],
+                axis=0,
+            )
+            jump = np.hypot(current[:, 0] - prior[:, 0], current[:, 1] - prior[:, 1])
+            self.assertLessEqual(float(np.max(jump)), 4.0)
+            active = live
+            previous = np.stack((left.x[active], left.y[active]), axis=1).copy()
+
     def test_color_pass_preserves_broadcast_reference_pixels_and_thermal_state(self) -> None:
         # The former RGB-broadcast equations are the byte-level radiometry
         # oracle for the faster scalar-field color pass, including refraction.
@@ -98,6 +130,8 @@ class LavaLampSceneV2Tests(unittest.TestCase):
             })
             lamp.set_presentation_context(self._resolved("refract"))
             for palette_id in LavaLampAnimation.SCENE_PALETTES:
+                if palette_id == "rainbow":
+                    continue
                 for alpha in (0.0, .37, .95):
                     with self.subTest(stress=stress, palette=palette_id, alpha=alpha):
                         lamp._step(.01)
@@ -135,6 +169,51 @@ class LavaLampSceneV2Tests(unittest.TestCase):
                         for name, value in state.items():
                             np.testing.assert_array_equal(getattr(lamp, name), value)
                         self.assertEqual(lamp.rng.bit_generator.state, rng)
+
+    def test_rainbow_paints_per_blob_vertical_gradients_without_changing_the_lamp(self) -> None:
+        ember = LavaLampAnimation(self.controller, {"seed": 404, "blob_count": 7})
+        rainbow = LavaLampAnimation(self.controller, {"seed": 404, "blob_count": 7})
+        ember.set_presentation_context(self._resolved(palette_id="ember"))
+        rainbow.set_presentation_context(self._resolved(palette_id="rainbow"))
+        ember_frame = ember.generate_frame(0.0, 0)
+        rainbow_frame = rainbow.generate_frame(0.0, 0)
+        for name in ("x", "y", "vx", "vy", "temperature", "radius", "cooldown"):
+            np.testing.assert_array_equal(getattr(ember, name), getattr(rainbow, name))
+        self.assertEqual(ember.rng.bit_generator.state, rainbow.rng.bit_generator.state)
+        self.assertFalse(np.array_equal(ember_frame.pixels, rainbow_frame.pixels))
+        hues = [round(float(rainbow._hue_offset[index]), 3) for index in np.flatnonzero(rainbow.active)]
+        self.assertGreaterEqual(len(set(hues)), 3)
+
+        lamp = LavaLampAnimation(self.controller, {"seed": 1, "blob_count": 3})
+        lamp.active[:] = False
+        lamp.active[0] = lamp.active[1] = True
+        lamp.radius[0] = lamp.radius[1] = 6.0
+        lamp.previous_radius[:] = lamp.radius
+        lamp.temperature[0] = lamp.temperature[1] = 0.8
+        lamp.x[0], lamp.y[0] = 8.0, 24.0
+        lamp.x[1], lamp.y[1] = 24.0, 24.0
+        lamp.previous_x[:] = lamp.x
+        lamp.previous_y[:] = lamp.y
+        lamp._hue_offset[0] = 0.0
+        lamp._hue_offset[1] = 0.5
+        lamp._render(0.0, 1.0, "rainbow")
+        left = lamp._canvas_u8[int(round(lamp.y[0])), int(round(lamp.x[0]))]
+        right = lamp._canvas_u8[int(round(lamp.y[1])), int(round(lamp.x[1]))]
+        self.assertGreater(int(np.max(np.abs(left.astype(np.int16) - right.astype(np.int16)))), 40)
+
+        lamp.y[0] = lamp.previous_y[0] = 118.0
+        lamp._render(0.0, 1.0, "rainbow")
+        moved = lamp._canvas_u8[int(round(lamp.y[0])), int(round(lamp.x[0]))]
+        self.assertGreater(int(np.max(np.abs(left.astype(np.int16) - moved.astype(np.int16)))), 40)
+
+        lamp.active[1] = False
+        lamp.x[0] = lamp.previous_x[0] = 16.0
+        lamp.y[0] = lamp.previous_y[0] = 69.0
+        lamp.radius[0] = lamp.previous_radius[0] = 18.0
+        lamp._render(0.0, 1.0, "rainbow")
+        upper = lamp._canvas_u8[50, 16]
+        lower = lamp._canvas_u8[88, 16]
+        self.assertGreater(int(np.max(np.abs(upper.astype(np.int16) - lower.astype(np.int16)))), 25)
 
     def test_strict_live_manager_accepts_and_renders_lava_lamp(self) -> None:
         manager = AnimationManager(self.controller, auto_start=False)

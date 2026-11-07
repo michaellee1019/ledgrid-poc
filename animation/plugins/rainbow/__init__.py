@@ -1,6 +1,6 @@
 """Scene v2 Rainbow ambient instrument."""
 from types import MappingProxyType
-from animation.plugins.ambient_scene import AmbientSceneAnimation
+from animation.libraries.ambient_scene import AmbientSceneAnimation
 class RainbowAnimation(AmbientSceneAnimation):
     ANIMATION_NAME="Rainbow"; ANIMATION_DESCRIPTION="Prismatic bands with a local travel dial"; ANIMATION_VERSION="2.0"; COMPONENT_ID="rainbow"; STYLE="rainbow"
     DEFAULTS=MappingProxyType({"bands":1.4,"travel":.65,"direction":1,"seed":6102})

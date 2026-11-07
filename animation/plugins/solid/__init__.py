@@ -1,6 +1,6 @@
 """Scene v2 Solid ambient instrument."""
 from types import MappingProxyType
-from animation.plugins.ambient_scene import AmbientSceneAnimation
+from animation.libraries.ambient_scene import AmbientSceneAnimation
 class SolidColorAnimation(AmbientSceneAnimation):
     ANIMATION_NAME="Solid"; ANIMATION_DESCRIPTION="A calm semantic wash with optional breath"; ANIMATION_VERSION="2.0"; COMPONENT_ID="solid"; STYLE="solid"
     DEFAULTS=MappingProxyType({"glow":.68,"breath":.0,"seed":6103})

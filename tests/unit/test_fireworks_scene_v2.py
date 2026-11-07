@@ -24,15 +24,29 @@ class FireworksSceneV2Tests(unittest.TestCase):
         scene["widgets"] = [{"id": "message", "component": {"component_id": "emoji_arranger", "version": 1, "provider": "python", "role": "widget", "parameters": {}}, "visible": True, "placement": {"mode": "manual", "strip_translation": 0, "led_translation": 0}}]
         return scene
 
-    def test_catalog_is_exactly_five_choices_and_changes_only_animation_parameters(self) -> None:
+    def test_catalog_is_exactly_six_choices_and_changes_only_animation_parameters(self) -> None:
         choices = self.interface.composer_presets.choices("fireworks")
-        self.assertEqual([choice["preset_id"] for choice in choices], ["golden-willows", "grand-finale", "neon-crackle", "patriotic-salute", "quiet-sparklers"])
+        self.assertEqual([choice["preset_id"] for choice in choices], ["golden-willows", "grand-finale", "neon-crackle", "patriotic-salute", "quiet-sparklers", "rainbow-palm"])
         scene = self._scene(); result = self.interface.composer_presets.apply(scene, "neon-crackle")
         self.assertEqual(result["background"], scene["background"]); self.assertEqual(result["widgets"], scene["widgets"]); self.assertEqual(result["look"], scene["look"])
         self.assertEqual(result["animation"]["component_id"], "fireworks")
         self.assertEqual(result["animation"]["parameters"]["burst_style"], "burst")
         self.assertNotIn("brightness", result["animation"]["parameters"])
         self.assertEqual(self.client.get("/api/composer/components/fireworks/presets").status_code, 200)
+
+    def test_rainbow_palm_sets_palm_shells_rainbow_look_and_black_background(self) -> None:
+        scene = self._scene()
+        scene["look"] = {"palette_id": "ember", "pace": 0.7, "presentation_brightness": 0.82}
+        scene["background"]["parameters"]["gain"] = 0.62
+        result = self.interface.composer_presets.apply(scene, "rainbow-palm")
+        self.assertEqual(result["widgets"], scene["widgets"])
+        self.assertEqual(result["animation"]["parameters"]["burst_style"], "palm")
+        self.assertEqual(result["animation"]["parameters"]["launch_cadence"], 1.5)
+        self.assertEqual(result["animation"]["parameters"]["burst_size"], 0.55)
+        self.assertEqual(result["animation"]["parameters"]["shell_population"], 50)
+        self.assertEqual(result["look"], {"palette_id": "rainbow", "pace": 1.0, "presentation_brightness": 1.5})
+        self.assertEqual(result["background"]["parameters"]["gain"], 0.0)
+        self.assertEqual(result["background"]["parameters"]["seed"], scene["background"]["parameters"]["seed"])
 
     def test_preview_live_stop_auto_resume_and_recovery_preserve_fireworks_identity(self) -> None:
         scene = self.interface.composer_presets.apply(self._scene(), "grand-finale")
@@ -57,6 +71,7 @@ class FireworksSceneV2Tests(unittest.TestCase):
         self.assertIn('id="fireworksPresetCards"', template)
         self.assertIn("components/fireworks/presets", script)
         self.assertIn("next.animation.parameters = preset.parameters", script)
+        self.assertIn("applyAuthoredPresetPresentation(next, preset)", script)
         self.assertIn("'#fireworksCadence'", script)
         self.assertNotIn("output_power", script)
 

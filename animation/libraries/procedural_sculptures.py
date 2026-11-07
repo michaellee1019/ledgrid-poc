@@ -19,6 +19,7 @@ SEMANTIC_PALETTES = {
     "mist": np.array(((3, 9, 20), (40, 102, 142), (170, 228, 245)), np.float32),
     "spectrum": np.array(((15, 3, 34), (84, 38, 194), (54, 238, 230)), np.float32),
     "ember": np.array(((18, 3, 2), (156, 42, 14), (255, 202, 92)), np.float32),
+    "rainbow": np.array(((8, 0, 18), (255, 40, 90), (40, 255, 140)), np.float32),
 }
 _DIRECT_PALETTES = {"quiet": "mist", "showcase": "spectrum", "night": "neutral", "bright": "mist", "pastel": "spectrum", "synthwave": "spectrum", "candlelight": "ember", "aurora": "neutral"}
 

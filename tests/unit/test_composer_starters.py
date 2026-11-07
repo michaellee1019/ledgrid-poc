@@ -39,7 +39,7 @@ class ComposerStarterTests(ComposerLooksTests):
         self.assertEqual([len(scene['widgets']) for scene in scenes], [0, 1, 0, 1, 0, 0, 0, 0, 0])
         self.assertEqual(
             [scene['look']['palette_id'] for scene in scenes],
-            ['mist', 'ember', 'spectrum', 'neutral', 'spectrum', 'mist', 'spectrum', 'mist', 'ember'],
+            ['mist', 'ember', 'rainbow', 'neutral', 'spectrum', 'mist', 'spectrum', 'mist', 'ember'],
         )
         self.assertEqual(
             [scene['background']['parameters']['seed'] for scene in scenes],

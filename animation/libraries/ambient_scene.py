@@ -1,4 +1,4 @@
-"""Small Scene v2 renderer foundation for the five ambient instruments."""
+"""Shared Scene v2 renderer foundation for the five ambient instruments."""
 from __future__ import annotations
 import math
 from types import MappingProxyType
@@ -7,16 +7,13 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.scene_palettes import HOLIDAY_TRIPLES, hsv_to_rgb_field
 
 class AmbientSceneAnimation(AnimationBase):
     """Opaque semantic field renderer; subclasses only declare local controls."""
     COMPONENT_VERSION, PROVIDER, ROLE = 1, "python", "animation"
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
     CAPABILITIES, PLANT_MODIFIER_SUPPORT = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent")), frozenset()
-    # This module remains a shipped gradient ambient renderer in addition to
-    # providing the shared base for the named instruments. Its direct plugin
-    # contract is therefore the same complete local control set as Gradient;
-    # subclasses replace both mappings with their own controls.
     DEFAULTS: Mapping[str, Any] = MappingProxyType({
         "direction": "vertical", "drift": .22, "motion": .72, "seed": 6101,
     })
@@ -30,14 +27,22 @@ class AmbientSceneAnimation(AnimationBase):
     SIMULATION_HZ = 24.0
     SPARKLE_BASELINE_HZ = 24.0
     MAX_CATCH_UP_TICKS = 10
-    PALETTES = MappingProxyType({"neutral": ((4.,11.,19.),(32.,164.,148.),(186.,255.,220.)),"mist": ((3.,8.,22.),(61.,146.,220.),(236.,245.,255.)),"spectrum": ((19.,3.,35.),(235.,42.,203.),(48.,240.,224.)),"ember": ((24.,3.,2.),(244.,76.,16.),(255.,209.,78.))})
+    PALETTES = MappingProxyType({
+        "neutral": ((4.,11.,19.),(32.,164.,148.),(186.,255.,220.)),
+        "mist": ((3.,8.,22.),(61.,146.,220.),(236.,245.,255.)),
+        "spectrum": ((19.,3.,35.),(235.,42.,203.),(48.,240.,224.)),
+        "ember": ((24.,3.,2.),(244.,76.,16.),(255.,209.,78.)),
+        "rainbow": ((8.,0.,18.),(255.,40.,90.),(40.,255.,140.)),
+        **{name: tuple(triple) for name, triple in HOLIDAY_TRIPLES.items()},
+    })
     def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
         self._authored_config = dict(config or {}); super().__init__(controller, self._authored_config)
         self.default_params = dict(self.DEFAULTS); self.params = self._normalized_parameters(self._authored_config)
         self.width, self.height = self.get_strip_info(); self._pixels = np.zeros((self.get_pixel_count(), 3), dtype=np.uint8)
         self._context: ResolvedScene | None = None; self._last_key = None; self._last_tick = None
         self._x = np.linspace(0.,1.,self.width,dtype=np.float32)[:,None]; self._y = np.linspace(0.,1.,self.height,dtype=np.float32)[None,:]
-        self._rng = np.random.default_rng(int(self.params.get("seed",6101))); self._spark = np.zeros((self.width,self.height),dtype=np.float32)
+        seed=int(self.params.get("seed",6101)); self._rng=np.random.default_rng(seed); self._hue_rng=np.random.default_rng(seed+1)
+        self._spark=np.zeros((self.width,self.height),dtype=np.float32); self._spark_hue=np.zeros((self.width,self.height),dtype=np.float32)
     @classmethod
     def component_descriptor(cls):
         return ComponentDescriptor(component_id=cls.COMPONENT_ID,version=1,provider="python",role="animation",timing_policy="scaled_context",alpha_behavior="opaque",palette_policy="semantic",plant_capabilities=("effect_intent",),fidelity_exceptions=(),defaults=cls.DEFAULTS)
@@ -70,8 +75,18 @@ class AmbientSceneAnimation(AnimationBase):
         del frame_count; context=self._context; p=self._normalized_parameters(context.parameters if context else self.params); palette_id=str(context.palette["palette_id"]) if context else "neutral"; t=max(0.,float(context.phase_time if context else time_elapsed)); self.params=p
         tick=int(t*self.SIMULATION_HZ); key=(tick,palette_id,tuple(p.items()))
         if key==self._last_key: return RenderedFrame(self._pixels,changed=False,dirty_ranges=())
-        low,primary,accent=(np.asarray(item,dtype=np.float32) for item in self.PALETTES.get(palette_id,self.PALETTES["neutral"])); field=self._field(t,p,tick)
-        rgb=low+(primary-low)*field[...,None]+(accent-primary)*np.square(field[...,None])*.62; self._pixels[:]=np.clip(rgb,0,255).astype(np.uint8).reshape((-1,3)); self._last_key=key
+        field=self._field(t,p,tick)
+        if self.STYLE=="sparkle" and palette_id=="rainbow":
+            gain=np.clip(self._spark*(.55+.45*float(p["twinkle"])),0.,1.)
+            rgb=hsv_to_rgb_field(self._spark_hue,0.92,gain)
+            rgb=rgb+np.asarray(self.PALETTES["rainbow"][0],dtype=np.float32)*float(p["night"])
+        elif palette_id == "rainbow":
+            hue = np.mod(field * 0.72 + self._x * 0.22 + self._y * 0.08, 1.0)
+            rgb = hsv_to_rgb_field(hue, 0.88, np.clip(0.22 + 0.78 * field, 0.0, 1.0))
+        else:
+            low,primary,accent=(np.asarray(item,dtype=np.float32) for item in self.PALETTES.get(palette_id,self.PALETTES["neutral"]))
+            rgb=low+(primary-low)*field[...,None]+(accent-primary)*np.square(field[...,None])*.62
+        self._pixels[:]=np.clip(rgb,0,255).astype(np.uint8).reshape((-1,3)); self._last_key=key
         return RenderedFrame(self._pixels,changed=True)
     def _field(self,t,p,tick):
         if self.STYLE=="gradient":
@@ -83,7 +98,14 @@ class AmbientSceneAnimation(AnimationBase):
             baseline=float(self.SPARKLE_BASELINE_HZ); hz=float(self.SIMULATION_HZ)
             decay=(.55+.4*p["linger"])**(baseline/hz); spawn=min(1., p["density"]*.08*(baseline/hz))
             while self._last_tick<min(tick,self._last_tick+self.MAX_CATCH_UP_TICKS):
-                self._spark*=decay; self._spark[self._rng.random(self._spark.shape)<spawn]=1.; self._last_tick+=1
+                born=self._rng.random(self._spark.shape)<spawn; self._spark*=decay
+                count=int(np.count_nonzero(born))
+                if count: self._spark_hue[born]=self._hue_rng.random(count,dtype=np.float32)
+                self._spark[born]=1.; self._last_tick+=1
             return np.clip(p["night"]+self._spark*(.55+.45*p["twinkle"]),0.,1.)
         axis=self._y if p["axis"]=="vertical" else self._x if p["axis"]=="horizontal" else (self._x+self._y)*.5; return np.broadcast_to(np.clip(.5+.5*np.sin((axis*p["frequency"]+t*p["travel"]*p["direction"])*math.tau)*p["shape"],0.,1.),(self.width,self.height))
     def cadence_snapshot(self): return MappingProxyType({"simulation_hz":float(self.SIMULATION_HZ),"tick":self._last_tick})
+    def semantic_snapshot(self):
+        payload={"tick":self._last_tick,"seed":int(self.params.get("seed",0))}
+        if self.STYLE=="sparkle": payload["spark"]=self._spark.tobytes()
+        return MappingProxyType(payload)

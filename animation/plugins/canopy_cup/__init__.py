@@ -160,7 +160,7 @@ class CanopyCupAnimation(AnimationBase):
     )
     SEMANTIC_TINTS = MappingProxyType({
         "neutral": (1.00, 1.00, 1.00), "mist": (.74, .91, 1.00),
-        "spectrum": (1.00, .72, 1.00), "ember": (1.00, .76, .48),
+        "spectrum": (1.00, .72, 1.00), "ember": (1.00, .76, .48), "rainbow": (1.00, .72, .42),
     })
 
     RACER_SPECS = (

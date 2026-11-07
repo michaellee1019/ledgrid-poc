@@ -33,6 +33,7 @@ class PixelChaseAnimation(AnimationBase):
         "mist": ((129, 225, 255), (236, 248, 255)),
         "spectrum": ((255, 67, 235), (46, 239, 227)),
         "ember": ((255, 83, 22), (255, 210, 82)),
+        "rainbow": ((255, 40, 90), (40, 255, 140)),
     })
 
     def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):

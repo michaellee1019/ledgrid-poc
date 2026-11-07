@@ -165,7 +165,18 @@
         "grand-finale",
         "neon-crackle",
         "patriotic-salute",
-        "quiet-sparklers"
+        "quiet-sparklers",
+        "rainbow-palm"
+      ]
+    },
+    "fish_tank": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "school",
+        "showcase"
       ]
     },
     "flame_burst": {
@@ -285,6 +296,16 @@
         "nightmare-tunnel"
       ]
     },
+    "mini_metro": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "rush",
+        "weekend"
+      ]
+    },
     "moonlit_fog_banks": {
       "provider": "python",
       "component_version": 1,
@@ -303,6 +324,16 @@
         "moonlit-berth",
         "quiet-sleeper",
         "synthwave-commuter"
+      ]
+    },
+    "ocean_waves": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "night",
+        "quiet",
+        "storm",
+        "surf"
       ]
     },
     "physarum_network": {

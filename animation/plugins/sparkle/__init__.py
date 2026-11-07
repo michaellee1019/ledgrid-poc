@@ -1,6 +1,6 @@
 """Scene v2 Sparkle ambient instrument."""
 from types import MappingProxyType
-from animation.plugins.ambient_scene import AmbientSceneAnimation
+from animation.libraries.ambient_scene import AmbientSceneAnimation
 class SparkleAnimation(AmbientSceneAnimation):
     ANIMATION_NAME="Sparkle"; ANIMATION_DESCRIPTION="A seeded constellation of semantic glitter"; ANIMATION_VERSION="2.0"; COMPONENT_ID="sparkle"; STYLE="sparkle"
     SIMULATION_HZ=120.0
