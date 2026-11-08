@@ -41,11 +41,20 @@ def apply_global_settings(manager, settings):
     if settings.get('vibe') is not None:
         manager.set_vibe(settings['vibe'])
 
-def handle_command(manager, action, data):
+def handle_command(manager, action, data, *, gamepad=None):
     coordinator=controller_activation_coordinator(manager)
     data=dict(data)
     guard=data.pop('_controller_guard',None)
+    if action == 'start_tetris_player':
+        if guard is None or data:
+            raise ValueError('Tetris play requires a guarded request')
+        if gamepad is None or not gamepad.connected:
+            raise ValueError('Turn on the Nimbus and wait for it to connect before starting Tetris.')
     with coordinator.legacy_mutation_guard(guard):
+        if action == 'start_tetris_player':
+            from web.starter_looks import get_starter
+
+            return manager.start_canonical_scene(get_starter('human_avalanche_factory')['scene'], tetris_player=True)
         if action == 'automation_interaction':
             return manager.dispatch_canonical_interaction(**data)
         if action == 'automation_device_state':
@@ -82,12 +91,12 @@ def controller_status_payload(manager, release_id=None, **_unused):
         status['release_id']=release_id
     return status
 
-def process_control_command(channel, manager, command, *, last_applied_command_id=0):
+def process_control_command(channel, manager, command, *, last_applied_command_id=0, gamepad=None):
     """Execute once and publish current state before exposing its receipt."""
     coordinator = controller_activation_coordinator(manager)
     error = None
     try:
-        accepted = handle_command(manager, command['action'], command.get('data') or {})
+        accepted = handle_command(manager, command['action'], command.get('data') or {}, gamepad=gamepad)
         if accepted is False:
             error = getattr(manager, '_playback_error', None) or 'controller rejected command'
     except (RuntimeError, TypeError, ValueError) as exc:
@@ -106,6 +115,7 @@ def process_control_command(channel, manager, command, *, last_applied_command_i
 
 def run_controller_mode(args):
     from drivers.multi_device import MultiDeviceLEDController
+    from drivers.nimbus_gamepad import NimbusGamepad
     num_devices = hardware_receiver_count(args.strips, args.leds_per_strip)
     saved=load_saved_state(state_path=Path(args.saved_state_file),presets_dir=Path(args.presets_dir))
     fec_ids = receiver_fec_ids_for_runtime()
@@ -142,6 +152,7 @@ def run_controller_mode(args):
     frame_snapshot=ControllerFrameSnapshot(channel,manager)
     coordinator=controller_activation_coordinator(manager,restored_selected_scene=saved.get('scene') if saved else None)
     runner=PlaylistRunner(manager,coordinator,status_sink=channel.write_playlist_current_status)
+    gamepad = NimbusGamepad()
     channel.write_playlist_current_status(runner.status())
     last_status=0.0
     last_idle_probe=0.0
@@ -155,13 +166,15 @@ def run_controller_mode(args):
         while True:
             for command in channel.poll_commands():
                 last_result = process_control_command(channel, manager, command,
-                                                      last_applied_command_id=last_applied_command_id)
+                                                      last_applied_command_id=last_applied_command_id,
+                                                      gamepad=gamepad)
                 last_command_id = command['command_id']
                 if last_result['state'] == 'completed':
                     last_applied_command_id = last_command_id
                 save_status(controller_status_payload(manager),presets_dir=Path(args.presets_dir),state_path=Path(args.saved_state_file))
             process_playlist_commands(channel,runner)
             runner.advance()
+            manager.poll_tetris_gamepad(gamepad)
             frame_snapshot.poll()
             if time.monotonic()-last_status>=args.status_interval:
                 # Playback frames already sample status. Probe while stopped so
@@ -179,6 +192,7 @@ def run_controller_mode(args):
                 last_status=time.monotonic()
             time.sleep(args.poll_interval)
     finally:
+        gamepad.close()
         manager.stop_animation(clear_leds=False)
         controller.close()
 

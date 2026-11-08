@@ -34,11 +34,21 @@ class CanonicalReceiverSceneMixin:
         else:
             self._resolve_scene_state(payload)
 
-    def start_canonical_scene(self, payload):
+    def start_canonical_scene(self, payload, *, tetris_player=False):
+        if tetris_player:
+            # A failed game preflight must leave the current scene playing.
+            try:
+                canonical, runtime = self._prepare_canonical_receiver_scene(payload)
+                if canonical.scene['animation']['component_id'] != 'tetris':
+                    raise ValueError('Controller play requires a Tetris scene')
+                runtime.dispatch_tetris_gamepad(canonical.identity.digest, ('toggle-player',))
+            except Exception as exc:
+                raise ValueError(f'Tetris player mode could not be prepared: {exc}') from exc
         self._requested_scene = deepcopy(payload)
         self._playback_error = None
         try:
-            canonical, runtime = self._prepare_canonical_receiver_scene(payload)
+            if not tetris_player:
+                canonical, runtime = self._prepare_canonical_receiver_scene(payload)
             if self.stop_animation(clear_leds=False) is False:
                 raise RuntimeError('previous host playback did not stop')
             self._reset_run_counters()
@@ -73,3 +83,16 @@ class CanonicalReceiverSceneMixin:
             if canonical.identity.digest != scene_digest or canonical.scene['animation']['component_id'] != component_id:
                 raise ValueError('Active Scene or animation component changed')
             return runtime.dispatch_animation_interaction(canonical, kind, x, y, strength)
+
+    def poll_tetris_gamepad(self, gamepad) -> None:
+        """Drain local input on the controller thread, after scene transitions."""
+        with self._scene_state_guard():
+            canonical = self._canonical_receiver_scene
+            runtime = self._canonical_receiver_runtime
+            target = runtime if (
+                self.is_running and self._canonical_host_full_mode and canonical is not None
+                and canonical.scene['animation']['component_id'] == 'tetris'
+            ) else None
+            actions = gamepad.poll(target)
+            if target is not None and actions:
+                target.dispatch_tetris_gamepad(canonical.identity.digest, actions)
