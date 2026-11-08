@@ -1,4 +1,7 @@
-# LED Grid Wall HAT hardware package
+# Archived LED Grid Wall HAT designs
+
+Use the [installed hardware guide](../../docs/HARDWARE.md) for the current
+wall, its V6 carriers, and its Pi 5 wiring.
 
 This directory contains the supplied V4 editable EDA Standard JSON, manufacturing
 evidence, and the Rev5 electrical/layout proposal derived from

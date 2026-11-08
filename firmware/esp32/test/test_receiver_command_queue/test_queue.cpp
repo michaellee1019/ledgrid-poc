@@ -90,7 +90,7 @@ void test_unclassified_receive_and_new_admission_invalidate_snapshot_candidate()
   TEST_ASSERT_TRUE(queue.publication_ticket(&ticket));
 }
 
-void test_owned_payloads_survive_dma_and_fec_scratch_reuse_in_order() {
+void test_owned_payloads_survive_dma_buffer_reuse_in_order() {
   Queue queue;
   std::uint8_t scratch[4096];
   Queue::Command command;
@@ -209,7 +209,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_slow_or_hung_config_freezes_every_status_byte_while_queries_continue);
   RUN_TEST(test_unclassified_receive_and_new_admission_invalidate_snapshot_candidate);
-  RUN_TEST(test_owned_payloads_survive_dma_and_fec_scratch_reuse_in_order);
+  RUN_TEST(test_owned_payloads_survive_dma_buffer_reuse_in_order);
   RUN_TEST(test_overflow_drains_in_order_then_accepts_fresh_off_on_and_frames);
   RUN_TEST(test_repeated_overflow_recovers_without_replaying_rejected_commands);
   RUN_TEST(test_failed_command_completes_with_failure_and_reset_has_no_old_work);

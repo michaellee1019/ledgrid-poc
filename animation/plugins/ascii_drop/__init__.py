@@ -77,6 +77,11 @@ class AsciiDropAnimation(AnimationBase):
         if key == self._key: return RenderedFrame(self._pixels, changed=False, dirty_ranges=())
         background, ink = self._COLORS[params["story"]]
         tint = {"neutral": (1., 1., 1.), "mist": (.65, .85, 1.), "spectrum": (1., .55, 1.), "ember": (1., .55, .35), "rainbow": (1., .72, .42)}.get(palette, (1., 1., 1.))
+        ink_rgb, tint_rgb = np.asarray(ink, dtype=np.float32), np.asarray(tint)
+        ink_levels = tuple(
+            np.clip(ink_rgb * (0.35 + 0.65 * (level / 4)) * tint_rgb, 0, 255).astype(np.uint8)
+            for level in range(5)
+        )
         # Falling glyph rows are top-down; canonical LED indices are bottom-up.
         canvas = self._pixels.reshape(self.width, self.height, 3)[:, ::-1]; canvas[:] = background
         rng = np.random.default_rng(int(params["seed"]) + tick // 2)
@@ -86,8 +91,10 @@ class AsciiDropAnimation(AnimationBase):
         for i, x in enumerate(xs):
             glyph = ord(phrase[i % len(phrase)])
             x = (int(x) + glyph + i) % self.width
-            y = int((offsets[i] + glyph * 3 + phase * speed * (1 + (i % 4) * .18)) % self.height); c = np.asarray(ink, dtype=np.float32) * (0.35 + .65 * ((glyph % 5) / 4)) * np.asarray(tint)
+            y = int((offsets[i] + glyph * 3 + phase * speed * (1 + (i % 4) * .18)) % self.height)
+            color = ink_levels[glyph % 5]
             for dx, dy in ((0, 0), (0, 1), (1, 1), (-1, 1), (0, 2)):
-                if 0 <= x + dx < self.width: canvas[x + dx, (y + dy) % self.height] = np.clip(c, 0, 255)
+                if 0 <= x + dx < self.width:
+                    canvas[x + dx, (y + dy) % self.height] = color
         self.params, self._key = params, key
         return RenderedFrame(self._pixels, changed=True)

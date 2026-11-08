@@ -23,9 +23,7 @@ def receiver(index, stamp):
             'receiver_status_observed_at': stamp, 'receiver_status_integrity_verified': True,
             'receiver_status_integrity_established': True, 'receiver_status_integrity_errors': 4 if index == 3 else 0,
             'receiver_packets': 1000, 'receiver_frames_displayed': 900,
-            'receiver_crc_errors': 17 if index == 3 else 0,
-            'receiver_fec_corrected_packets': 22 if index == 3 else 0,
-            'receiver_fec_uncorrectable_packets': 2 if index == 3 else 0}
+            'receiver_crc_errors': 17 if index == 3 else 0}
 
 
 @pytest.fixture
@@ -56,7 +54,11 @@ def publish(channel, raw, delta=1):
 
 def test_fixed_receiver_projection_r3_degradation_is_not_controller_failure(wall):
     interface, diagnostic, raw, channel = wall
+    # Rolling host updates can still read an older receiver's FEC counters.
+    raw['receiver_connectivity'][3]['receiver_fec_corrected_packets'] = 22
+    channel.write_status(raw)
     result = diagnostic.snapshot()
+    assert not any('fec' in key for item in result['receivers'] for key in item['counters'])
     assert result['controller']['connected'] and result['controller']['playback'] == 'running'
     assert len(result['receivers']) == 5
     assert result['receivers'][3]['connected']

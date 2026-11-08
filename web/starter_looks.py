@@ -167,3 +167,11 @@ def get_starter(starter_id: str) -> dict:
         if identifier == starter_id:
             return deepcopy({"id": identifier, "name": name, "scene": scene})
     raise ValueError("That starting point is unavailable.")
+
+
+def tetris_player_scene() -> dict:
+    """Use the starter's look and Tetris's default cadence for live input."""
+    scene = get_starter("human_avalanche_factory")["scene"]
+    parameters = scene["animation"]["parameters"]
+    del parameters["render_fps"], parameters["high_density_render_fps"]
+    return scene

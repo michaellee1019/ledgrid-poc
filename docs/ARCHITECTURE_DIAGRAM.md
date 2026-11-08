@@ -5,7 +5,7 @@ flowchart LR
  Browser[Composer and browser previews] --> Web[Flask application]
  Web --> Commands[Serialized controller commands]
  Commands --> Pi[Host scene renderer]
- Pi --> SPI[Full RGB frames with CRC/FEC]
+ Pi --> SPI[Full RGB frames with CRC]
  SPI --> Receivers[Five ESP32-S3 receivers]
  Receivers --> Wall[33 by 138 LED wall]
  Data[Personal data and calibration] --> Web

@@ -12,11 +12,12 @@ from pathlib import Path
 
 from animation.core.plugin_loader import AnimationPluginLoader
 from animation.browser_preview.python.runtime import PLUGIN_SPECS as SOURCE_PLUGIN_SPECS
+from tools.build_browser_composer_assets import build_stage
 from tools.build_browser_python_bundle import discover_python_plugins
+from web.composer_final_preview import current_component_catalog
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BUNDLE_PATH = REPO_ROOT / "web/static/generated/composer/ledgrid_python_runtime.zip"
 RESULT_PREFIX = "BROWSER_MATRIX_RESULT="
 
 
@@ -207,9 +208,35 @@ if failures:
 
 
 class BrowserPythonCatalogMatrixTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(temporary.cleanup)
+        cls.stage = Path(temporary.name)
+        build_stage(REPO_ROOT, cls.stage)
+        cls.bundle_path = cls.stage / "ledgrid_python_runtime.zip"
+
+    def test_every_current_composer_animation_is_published_for_browser_execution(self):
+        bootstrap = json.loads((self.stage / "bootstrap.v1.json").read_text(encoding="utf-8"))
+        published = {
+            item["plugin_id"]: item for item in bootstrap["components"]
+            if item["role"] == "animation" and item["provider"] == "python"
+        }
+        expected = {
+            descriptor.component_id for descriptor in current_component_catalog().descriptors
+            if descriptor.role.value == "animation"
+        }
+        self.assertEqual(set(published), expected)
+        for component_id, item in published.items():
+            with self.subTest(component=component_id):
+                self.assertTrue(item["browser_runtime"]["supported"])
+                self.assertEqual(item["scene_compatibility"], {
+                    "selectable": True, "slots": ["animation"], "diagnostic": None,
+                })
+
     def test_widget_role_and_alpha_match_in_source_and_published_runtime(self):
         built = {plugin.plugin_id: plugin for plugin in discover_python_plugins(REPO_ROOT)}
-        with zipfile.ZipFile(BUNDLE_PATH) as archive:
+        with zipfile.ZipFile(self.bundle_path) as archive:
             published = {
                 plugin["pluginId"]: plugin
                 for plugin in json.loads(archive.read("ledgrid_browser_manifest.json"))["plugins"]
@@ -228,7 +255,7 @@ class BrowserPythonCatalogMatrixTests(unittest.TestCase):
 
     def test_event_rgba_defaults_and_representative_presets_render_from_bundle(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:
+            with zipfile.ZipFile(self.bundle_path, "r") as archive:
                 archive.extractall(temp_dir)
             completed = subprocess.run(
                 [
@@ -260,7 +287,7 @@ class BrowserPythonCatalogMatrixTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:
+            with zipfile.ZipFile(self.bundle_path, "r") as archive:
                 archive.extractall(temp_dir)
             completed = subprocess.run(
                 [

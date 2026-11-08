@@ -18,8 +18,6 @@ from ipc.controller_frame_snapshot import request_controller_frame
 PREFIX = '/api/v1/automation'
 COUNTERS = (
     'receiver_frames_displayed', 'receiver_packets', 'receiver_crc_errors',
-    'receiver_fec_corrected_packets', 'receiver_fec_uncorrectable_packets',
-    'receiver_fec_semantic_crc_errors', 'receiver_fec_framing_errors',
     'receiver_status_integrity_errors', 'receiver_status_empty_responses',
     'receiver_display_errors', 'receiver_publish_drops', 'receiver_frames_superseded',
 )

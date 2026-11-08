@@ -22,8 +22,7 @@ device, with no extra per-entity HTTP requests:
   `offline` means no fresh observation, including failed HTTP access. It does not
   imply receiver connectivity or prove physical output.
 - Receiver 0 through 4 connectivity: the existing logical receiver identifiers,
-  kept stable across reconnect/reload. The installation's accepted receiver 3
-  degradation refers to logical ID 3; labels are not shifted to 1 through 5.
+  kept stable across reconnect and reload.
 
 Unavailable/stale controller observations make ordinary state entities
 unavailable. Connectivity and error states are not inferred from a selected Scene.
@@ -44,9 +43,8 @@ available deadline-miss counts. Host cadence describes host work; it is never
 labelled receiver output cadence or installed-wall performance evidence.
 
 Each receiver offers its measured output cadence (`fps`), cadence evidence,
-protected-status summary, CRC errors, FEC corrected/uncorrectable packet counts,
-FEC semantic CRC/framing errors, and status-integrity errors. Counters are sampled diagnostics, rather than live
-per-frame measurements. Controller failure makes these entities unavailable
+protected-status summary, CRC errors, and status-integrity errors. The diagnostics
+poll samples these counters every 30 seconds. Controller failure makes these entities unavailable
 immediately via the routine poll; missing/stale/untrusted receiver data yields
 unknown numeric values independently of the rest of the wall.
 
@@ -64,9 +62,8 @@ retains the last accepted protected sample and a cumulative rejection count; it
 does not timestamp the last invalid packet. Consequently a rejection anywhere
 within an observed interval makes that interval unsuitable for a rate, even if
 another trusted sample subsequently arrived. Untrusted wire fields from a
-rejected status packet are never exposed as authoritative counters. Receiver 3's
-accepted CRC/FEC/rejection/low-rate degradation stays visible without making a
-fresh controller or other receivers unavailable.
+rejected status packet are never exposed as authoritative counters. One receiver's
+diagnostic state is independent of the controller and the other receivers.
 
 ## Optional controller-output image
 

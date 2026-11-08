@@ -2,8 +2,8 @@
 
 Tools are executable support code outside the application runtime:
 
-- `benchmarks/`: headless render, live animation, receiver, and physical output
-  acceptance checks
+- `benchmarks/`: production Scene render timing and read-only receiver
+  output-rate observation
 - `deployment/`: Pi setup, application sync, service control, preset retrieval,
   and firmware flashing
 - `diagnostics/`: SPI tests, remote health collection, payload inspection, and

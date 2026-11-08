@@ -31,92 +31,6 @@ constexpr std::size_t kSpiDmaAlignmentBytes = 4;
 constexpr std::size_t kAlignedEnvelopeMaxSemanticBytes =
     kAnimationPipelineMaxTransactionBytes - kAlignedEnvelopeHeaderBytes -
     kAnimationPipelineCrcBytes;
-// Aligned-envelope v2 protects its four-byte discriminator/inner-length header
-// and the complete canonical v1 wire packet (header, semantic payload, zero
-// alignment, and CRC) in fixed 128-byte systematic data codewords. Eleven
-// Hamming check bits plus one overall even-parity bit make each codeword 130
-// wire bytes. The codeword count is rounded up to an even number so the
-// complete SPI transaction remains 32-bit DMA aligned.
-constexpr std::uint8_t kFecEnvelopeVersionV2 = 2;
-constexpr std::size_t kFecEnvelopeHeaderBytes = 4;
-constexpr std::size_t kFecV2DataBytes = 128;
-constexpr std::size_t kFecV2ParityBytes = 2;
-constexpr std::size_t kFecV2CodewordBytes =
-    kFecV2DataBytes + kFecV2ParityBytes;
-constexpr std::size_t kFecV2ParityBits = 11;
-constexpr std::uint16_t kFecV2ParityMask = (1U << kFecV2ParityBits) - 1U;
-constexpr std::uint16_t kFecV2OverallParityMask = 1U << kFecV2ParityBits;
-constexpr std::size_t kFecV2MaxCodewords = 30;
-constexpr std::size_t kFecV2EnvelopeMaxSemanticBytes =
-    kFecV2MaxCodewords * kFecV2DataBytes - kFecEnvelopeHeaderBytes -
-    kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
-
-// V3 retains the canonical v1 inner packet but uses 16 data symbols plus
-// three GF(256) parity symbols. Codewords are byte-interleaved across the wire,
-// so any contiguous burst no longer than the codeword count changes at most
-// one symbol per codeword. Three independent syndromes correct one arbitrary
-// byte and detect two; separated prefix/suffix discriminators keep framing
-// attributable when one end of the transaction is damaged.
-constexpr std::uint8_t kFecEnvelopeVersionV3 = 3;
-constexpr std::size_t kFecV3DataBytes = 16;
-constexpr std::size_t kFecV3ParityBytes = 3;
-constexpr std::size_t kFecV3CodewordBytes =
-    kFecV3DataBytes + kFecV3ParityBytes;
-constexpr std::size_t kFecWireHeaderBytes = 2U * kFecEnvelopeHeaderBytes;
-constexpr std::size_t kFecV3MaxCodewords = 212;
-constexpr std::size_t kFecV3EnvelopeMaxSemanticBytes =
-    kFecV3MaxCodewords * kFecV3DataBytes - kFecEnvelopeHeaderBytes -
-    kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
-
-// V4 is a shortened systematic Reed-Solomon code. Its 25 data and five parity
-// symbols have distinct GF(256) evaluation points, giving minimum distance six:
-// two arbitrary byte errors per codeword are corrected and three are detected.
-// Interleaving 136 codewords extends contiguous-burst correction to 272 bytes
-// while keeping the full receiver-3 packet within the 4,096-byte SPI limit.
-constexpr std::uint8_t kFecEnvelopeVersionV4 = 4;
-constexpr std::size_t kFecV4DataBytes = 25;
-constexpr std::size_t kFecV4ParityBytes = 5;
-constexpr std::size_t kFecV4CodewordBytes =
-    kFecV4DataBytes + kFecV4ParityBytes;
-constexpr std::size_t kFecV4MaxCodewords = 136;
-constexpr std::size_t kFecV4EnvelopeMaxSemanticBytes =
-    kFecV4MaxCodewords * kFecV4DataBytes - kFecEnvelopeHeaderBytes -
-    kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
-
-// V5 increases the shortened systematic Reed-Solomon distance to eleven.
-// Ten parity symbols correct five arbitrary byte errors in each 50-byte data
-// codeword. Interleaving 68 codewords corrects 340 bytes without assuming an
-// error shape; the bounded contiguous-erasure fallback uses nine syndromes to
-// repair 612 bytes and the tenth to validate that candidate. Bursts through
-// 679 bytes may consume all ten syndromes in a contiguous run of codewords and
-// are accepted only after unique canonical whole-frame CRC validation. Longer
-// repeated-bit spans are repaired only when all ten syndromes identify one
-// unique constant-XOR interval.
-// The installed broad-frame wire size remains 4,088 bytes.
-constexpr std::uint8_t kFecEnvelopeVersionV5 = 5;
-// V6 retains the exact v5 code and 4,088-byte installed wire bound, but rotates
-// logical codeword positions by the symbol row before writing each interleave
-// row. Fixed-position/periodic link interference is therefore distributed
-// across codewords instead of repeatedly consuming one codeword's ten
-// syndromes. Receivers retain ordinary v5 deinterleaving for rollback hosts.
-constexpr std::uint8_t kFecEnvelopeVersionV6 = 6;
-// V7 reserves the final systematic codeword as the XOR of all preceding data
-// codewords. After ordinary RS correction, one otherwise-uncorrectable data
-// codeword can be reconstructed from that protected outer parity shard. The
-// installed frame remains exactly 68 codewords/4,088 wire bytes.
-constexpr std::uint8_t kFecEnvelopeVersion = 7;
-constexpr std::size_t kFecDataBytes = 50;
-constexpr std::size_t kFecParityBytes = 10;
-constexpr std::size_t kFecCodewordBytes =
-    kFecDataBytes + kFecParityBytes;
-constexpr std::size_t kFecMaxCodewords = 68;
-constexpr std::size_t kFecOuterParityBytes = kFecDataBytes;
-constexpr std::size_t kFecV6EnvelopeMaxSemanticBytes =
-    kFecMaxCodewords * kFecDataBytes - kFecEnvelopeHeaderBytes -
-    kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
-constexpr std::size_t kFecEnvelopeMaxSemanticBytes = 3338;
-constexpr std::size_t kFecScratchBytes =
-    kFecV2MaxCodewords * kFecV2DataBytes;
 enum class ReceiverCommand : std::uint8_t {
   SetPixel = 0x01,
   SetBrightness = 0x02,
@@ -135,34 +49,7 @@ struct ReceiverPacketPayload {
   const std::uint8_t* data = nullptr;
   std::size_t size = 0;
   bool aligned_envelope = false;
-  bool fec_envelope = false;
 };
-
-enum class ReceiverPacketDecodeResult : std::uint8_t {
-  Ok = 0,
-  InvalidFraming = 1,
-  CrcError = 2,
-  FecUncorrectable = 3,
-  FecSemanticCrcError = 4,
-};
-
-struct ReceiverPacketDecodeReport {
-  ReceiverPacketDecodeResult result = ReceiverPacketDecodeResult::InvalidFraming;
-  bool fec_envelope_attempted = false;
-  std::uint16_t corrected_codewords = 0;
-  std::uint16_t corrected_bits = 0;
-};
-
-enum class ReceiverFecPacketOutcome : std::uint8_t {
-  NotFec = 0,
-  Accepted = 1,
-  Uncorrectable = 2,
-  SemanticCrcError = 3,
-  FramingError = 4,
-};
-
-ReceiverFecPacketOutcome receiver_fec_packet_outcome(
-    bool decoded_ok, const ReceiverPacketDecodeReport& report);
 
 struct ReceiverStatusV2 {
   std::uint8_t flags = 0;
@@ -195,15 +82,6 @@ struct ReceiverStatusV7 : ReceiverStatusV2 {
   std::uint8_t logical_receiver_id = 0xFF;
   std::uint8_t last_processed_command = 0;
   std::uint32_t operation_sequence = 0;
-  std::uint32_t fec_packets_received = 0;
-  std::uint32_t fec_packets_accepted = 0;
-  std::uint32_t fec_corrected_packets = 0;
-  std::uint32_t fec_corrected_codewords = 0;
-  std::uint32_t fec_uncorrectable_packets = 0;
-  std::uint32_t fec_semantic_crc_errors = 0;
-  std::uint32_t fec_framing_errors = 0;
-  std::uint16_t fec_last_decode_us = 0;
-  std::uint16_t fec_max_decode_us = 0;
 };
 
 bool receiver_packet_crc_valid(
@@ -213,10 +91,7 @@ bool receiver_packet_crc_valid(
 bool decode_receiver_packet_payload(
     const std::uint8_t* packet,
     std::size_t packet_size,
-    ReceiverPacketPayload* payload,
-    ReceiverPacketDecodeReport* report = nullptr,
-    std::uint8_t* scratch = nullptr,
-    std::size_t scratch_size = 0);
+    ReceiverPacketPayload* payload);
 // Decode framing after receiver_packet_crc_valid() has already accepted this
 // exact packet.  Keeping this separate avoids hashing every live frame twice.
 bool decode_crc_valid_receiver_packet_payload(

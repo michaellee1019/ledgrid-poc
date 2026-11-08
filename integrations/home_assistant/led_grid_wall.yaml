@@ -3,11 +3,11 @@
 # occurrences together if the installation address changes.
 rest_command:
   led_grid_wall_observe:
-    url: http://ledgridwall.local:5000/api/v1/composer/settings/observed
+    url: http://ledgridwall5.local:5000/api/v1/composer/settings/observed
     method: get
     timeout: 5
   led_grid_wall_command:
-    url: "http://ledgridwall.local:5000/api/config/{{ route }}"
+    url: "http://ledgridwall5.local:5000/api/config/{{ route }}"
     method: post
     content_type: application/json
     payload: "{{ payload | to_json }}"

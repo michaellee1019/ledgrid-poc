@@ -19,8 +19,7 @@ class MultiDeviceLEDController:
                  leds_per_strip=DEFAULT_LEDS_PER_STRIP, debug=False, parallel=True,
                  device_map=None, reverse_host_strips_by_logical_receiver=None,
                  receiver_lane_masks=None, receiver_strip_counts=None,
-                 receiver_global_strip_offsets=None, receiver_spi_speeds_hz=None,
-                 fec_receiver_ids=(), **_removed_options):
+                 receiver_global_strip_offsets=None, receiver_spi_speeds_hz=None):
         if type(num_devices) is not int or not 1 <= num_devices <= 5:
             raise ValueError('wall supports one through five receivers')
         self.num_devices = num_devices
@@ -92,20 +91,15 @@ class MultiDeviceLEDController:
         self._logical_frames_sent = 0
         self._logical_wall_frame_sequence = 0
         self._last_full_frame_failure = None
-        self._host_full_receiver3_frames_skipped = 0
         self.inline_show = True
         self.current_brightness = None
-        self.fec_receiver_ids = tuple(fec_receiver_ids)
-        if len(set(self.fec_receiver_ids)) != len(self.fec_receiver_ids) or any(type(x) is not int or not 0 <= x < num_devices for x in self.fec_receiver_ids):
-            raise ValueError('FEC receivers must be unique configured logical IDs')
         speeds = tuple(receiver_spi_speeds_hz or (WALL_RECEIVER_SPI_SPEEDS_HZ if installed else (speed,)*num_devices))
         if len(speeds) != num_devices or any(type(x) is not int or x <= 0 for x in speeds):
             raise ValueError('one positive SPI clock per receiver is required')
         self.devices = [LEDController(bus=device_bus, device=chip_select,
             speed=self._resolve_speed(device_bus,speeds[i]), mode=self._resolve_mode(device_bus,mode),
             strips=self.receiver_strip_counts[i], leds_per_strip=leds_per_strip, debug=debug,
-            logical_device_id=i, global_strip_offset=self.receiver_global_strip_offsets[i],
-            fec_transport=i in self.fec_receiver_ids)
+            logical_device_id=i, global_strip_offset=self.receiver_global_strip_offsets[i])
             for i,(device_bus,chip_select) in enumerate(self.device_map)]
 
     def _controller_lock(self):
@@ -188,7 +182,6 @@ class MultiDeviceLEDController:
             'errors':sum(x.get('errors',0) for x in devices),
             'connected_receivers':[x['device_index'] for x in devices if x.get('receiver_connected')],
             'last_full_frame_failure':self._last_full_frame_failure,
-            'host_full_receiver3_frames_skipped':self._host_full_receiver3_frames_skipped,
             'render_mode':'host_full_rgb'}}
 
     def _host_local_pixels(self, receiver_id: int, pixels):

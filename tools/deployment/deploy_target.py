@@ -112,8 +112,7 @@ def write_service(root: Path, app: Path) -> dict[str, str]:
         "[Unit]", "Description=LED plant wall", "After=network.target", "[Service]", "Type=simple",
         f"User={user}", f"WorkingDirectory={app}", f"ExecStart=/bin/bash {app}/scripts/start_systemd.sh",
         f"Environment=LEDGRID_DATA_DIR={root / 'data'}", "Environment=PYTHONUNBUFFERED=1",
-        "Environment=LEDGRID_FEC_RECEIVER_IDS=", "Environment=LEDGRID_HAT=0",
-        "Environment=LEDGRID_SPI1_MODE=0", "Environment=STRIPS=33", "Environment=LEDS_PER_STRIP=138",
+        "Environment=STRIPS=33", "Environment=LEDS_PER_STRIP=138",
         "KillMode=control-group", "Restart=on-failure", "RestartSec=3", "[Install]", "WantedBy=multi-user.target", "",
     ])
     # Preserve the existing unit's operator environment overrides.
@@ -166,31 +165,10 @@ def requirements_file(app: Path) -> Path:
 def flash_firmware(app: Path, root: Path, mode: str) -> None:
     if mode != "full":
         return
-    mapping_path = root / "data/run_state/receiver_identity_mapping.json"
     flash_receivers = app / "tools/deployment/flash_receivers.py"
-    if flash_receivers.is_file() and mapping_path.is_file():
-        command(sys.executable, flash_receivers, "--root", root)
-        return
-    if flash_receivers.is_file() and not mapping_path.is_file():
-        print(
-            "Skipping flash_receivers.py: no receiver_identity_mapping.json; "
-            "using flash_esp32.sh",
-            flush=True,
-        )
-    flash_script = app / "tools/deployment/flash_esp32.sh"
-    if flash_script.is_file():
-        env = os.environ.copy()
-        env["DEPLOY_DIR"] = str(app)
-        print("Running:", "bash", flash_script, flush=True)
-        result = subprocess.run(["bash", str(flash_script)], cwd=app, env=env, check=False)
-        if result.returncode != 0:
-            print(
-                "WARNING: ESP32 flash step exited "
-                f"{result.returncode}; continuing with installed firmware",
-                flush=True,
-            )
-        return
-    raise RuntimeError("Full deploy requires flash_receivers.py or flash_esp32.sh")
+    if not flash_receivers.is_file():
+        raise RuntimeError(f"Uploaded application is missing {flash_receivers}")
+    command(sys.executable, flash_receivers, "--root", root)
 
 
 def ensure_python_build_dependencies() -> None:

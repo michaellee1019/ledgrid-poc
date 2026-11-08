@@ -30,7 +30,6 @@ SPI_BUS = 0  # SPI bus number (0 = /dev/spidev0.X)
 SPI_DEVICE = 0  # CE0 on the selected Raspberry Pi SPI bus
 SPI_SPEED = 20000000  # 20 MHz - CRC-16 protects against corruption
 SPI_MODE = 0  # CPOL=0, CPHA=0 - universal mode supported by all Pi SPI buses
-SPI_INTER_FRAME_DELAY = 0.0  # No delay needed - SPI is stable now
 
 MAX_SPI_TRANSFER = 4096
 SPIDEV_BUFFER_SIZE_PATH = Path("/sys/module/spidev/parameters/bufsiz")
@@ -41,21 +40,6 @@ ALIGNED_ENVELOPE_HEADER_BYTES = 4
 MAX_ALIGNED_SEMANTIC_BYTES = (
     MAX_SPI_TRANSFER - ALIGNED_ENVELOPE_HEADER_BYTES - CRC_BYTES
 )
-FEC_DATA_BYTES = 50
-FEC_PARITY_BYTES = 10
-FEC_CODEWORD_BYTES = FEC_DATA_BYTES + FEC_PARITY_BYTES
-FEC_MAX_CODEWORDS = 68
-FEC_ENVELOPE_VERSION_V5 = 5
-FEC_ENVELOPE_VERSION_V6 = 6
-FEC_ENVELOPE_VERSION = 7
-FEC_ENVELOPE_HEADER_BYTES = 4
-FEC_WIRE_HEADER_BYTES = 2 * FEC_ENVELOPE_HEADER_BYTES
-FEC_OUTER_PARITY_BYTES = FEC_DATA_BYTES
-# V7 reserves the final systematic codeword as an XOR parity shard for all
-# preceding data codewords. The installed 3,313-byte frame still uses the exact
-# 68-codeword/4,088-byte shape. 3,338 is the largest semantic payload whose
-# word-aligned inner envelope leaves that final codeword available.
-MAX_FEC_SEMANTIC_BYTES = 3338
 RECEIVER_STATUS_MAGIC = (ord('L'), ord('G'), ord('S'), ord('1'))
 RECEIVER_STATUS_MAGIC_V2 = (ord('L'), ord('G'), ord('S'), ord('2'))
 RECEIVER_STATUS_MAGIC_V3 = (ord('L'), ord('G'), ord('S'), ord('3'))
@@ -89,11 +73,6 @@ SPI_RESPONSE_QUEUE_DEPTH = 2
 # installed phases are distinct so one wall frame samples at most one receiver.
 FULL_FRAME_STATUS_SAMPLE_INTERVAL = 128
 FULL_FRAME_STATUS_SAMPLE_RECEIVERS = 5
-COMMAND_ACK_MAX_STATUS_QUERIES = 16
-SPARSE_COMMAND_RETRY_BUDGET = 1
-COMMAND_TRANSFER_DIAGNOSTIC_HISTORY = 32
-COMMAND_TRANSFER_DIAGNOSTIC_MAX_SAMPLES = 32
-COMMAND_ACK_POLL_INTERVAL_SECONDS = 0.001
 # A streamed receiver can be inside a roughly 4.5 ms parallel-LED presentation
 # when its completed SPI transaction becomes available to the receiver task.
 # Pace queue-drain queries beyond that installed display cycle so the third
@@ -223,216 +202,10 @@ def _encode_aligned_envelope(payload, output=None):
     return wire
 
 
-def _fec_gf_multiply(left, right):
-    """Multiply two bytes in GF(256) with primitive polynomial 0x11d."""
-    result = 0
-    left = int(left) & 0xFF
-    right = int(right) & 0xFF
-    while right:
-        if right & 1:
-            result ^= left
-        right >>= 1
-        left <<= 1
-        if left & 0x100:
-            left ^= 0x11D
-    return result
-
-
-def _fec_gf_power(value, exponent):
-    result = 1
-    while exponent:
-        if exponent & 1:
-            result = _fec_gf_multiply(result, value)
-        value = _fec_gf_multiply(value, value)
-        exponent >>= 1
-    return result
-
-
-def _fec_gf_inverse(value):
-    if value == 0:
-        raise ValueError("zero has no GF(256) inverse")
-    return _fec_gf_power(value, 254)
-
-
-def _fec_matrix_inverse(matrix):
-    size = len(matrix)
-    augmented = [
-        list(row) + [int(row_index == column) for column in range(size)]
-        for row_index, row in enumerate(matrix)
-    ]
-    for column in range(size):
-        pivot = next(
-            (row for row in range(column, size) if augmented[row][column]),
-            None,
-        )
-        if pivot is None:
-            raise ValueError("singular GF(256) matrix")
-        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
-        inverse = _fec_gf_inverse(augmented[column][column])
-        augmented[column] = [
-            _fec_gf_multiply(value, inverse) for value in augmented[column]
-        ]
-        for row in range(size):
-            if row == column:
-                continue
-            factor = augmented[row][column]
-            if factor:
-                augmented[row] = [
-                    value ^ _fec_gf_multiply(factor, pivot_value)
-                    for value, pivot_value in zip(
-                        augmented[row], augmented[column], strict=True
-                    )
-                ]
-    return tuple(tuple(row[size:]) for row in augmented)
-
-
-def _fec_gf_dot(left, right):
-    result = 0
-    for left_value, right_value in zip(left, right, strict=True):
-        result ^= _fec_gf_multiply(left_value, right_value)
-    return result
-
-
-_FEC_SYMBOL_EVALUATIONS = tuple(range(1, FEC_CODEWORD_BYTES + 1))
-_FEC_PARITY_MATRIX = tuple(
-    tuple(
-        _fec_gf_power(evaluation, power)
-        for evaluation in _FEC_SYMBOL_EVALUATIONS[FEC_DATA_BYTES:]
-    )
-    for power in range(FEC_PARITY_BYTES)
-)
-_FEC_PARITY_MATRIX_INVERSE = _fec_matrix_inverse(_FEC_PARITY_MATRIX)
-_FEC_DATA_TO_PARITY_COEFFICIENTS = tuple(
-    tuple(
-        _fec_gf_dot(
-            _FEC_PARITY_MATRIX_INVERSE[parity],
-            tuple(
-                _fec_gf_power(evaluation, power)
-                for power in range(FEC_PARITY_BYTES)
-            ),
-        )
-        for parity in range(FEC_PARITY_BYTES)
-    )
-    for evaluation in _FEC_SYMBOL_EVALUATIONS[:FEC_DATA_BYTES]
-)
-_FEC_PARITY_TABLES = np.asarray(
-    [
-        [
-            [
-                _fec_gf_multiply(value, coefficient)
-                for coefficient in coefficients
-            ]
-            for value in range(256)
-        ]
-        for coefficients in _FEC_DATA_TO_PARITY_COEFFICIENTS
-    ],
-    dtype=np.uint8,
-)
-_FEC_DATA_SYMBOL_INDICES = np.arange(FEC_DATA_BYTES, dtype=np.intp)[:, None]
-_FEC_V7_LAYOUTS = {}
-
-
-def _fec_v7_layout(codewords):
-    """Return immutable vector indices for one exact v7 wire shape."""
-    cached = _FEC_V7_LAYOUTS.get(codewords)
-    if cached is not None:
-        return cached
-    symbols = np.arange(FEC_CODEWORD_BYTES, dtype=np.intp)[:, None]
-    blocks = np.arange(codewords, dtype=np.intp)[None, :]
-    cached = (symbols, (blocks + symbols) % codewords)
-    _FEC_V7_LAYOUTS[codewords] = cached
-    return cached
-
-
-def _fec_envelope_wire_size(semantic_length):
-    """Return exact DMA-safe v7 FEC wire bytes for one semantic packet."""
-    if isinstance(semantic_length, bool) or not isinstance(semantic_length, int):
-        raise TypeError("semantic_length must be an integer")
-    if semantic_length < 1 or semantic_length > MAX_FEC_SEMANTIC_BYTES:
-        raise ValueError(
-            f"FEC semantic packet must contain 1..{MAX_FEC_SEMANTIC_BYTES} bytes"
-        )
-    inner_size = _aligned_envelope_wire_size(semantic_length)
-    protected_size = FEC_ENVELOPE_HEADER_BYTES + inner_size
-    codewords = (protected_size + FEC_DATA_BYTES - 1) // FEC_DATA_BYTES
-    codewords += 1  # Outer XOR parity occupies the final data codeword.
-    codewords += (-codewords) % 4
-    if codewords > FEC_MAX_CODEWORDS:
-        raise ValueError("FEC packet exceeds the 4096-byte SPI transfer limit")
-    return FEC_WIRE_HEADER_BYTES + codewords * FEC_CODEWORD_BYTES
-
-
-def _encode_fec_envelope(payload, output=None, inner_output=None):
-    """Encode v7 with inner RS protection plus one outer XOR parity shard."""
-    try:
-        semantic = memoryview(payload).cast("B")
-    except (TypeError, ValueError) as exc:
-        raise TypeError("payload must be a contiguous bytes-like object") from exc
-    semantic_length = len(semantic)
-    wire_size = _fec_envelope_wire_size(semantic_length)
-    inner_size = _aligned_envelope_wire_size(semantic_length)
-    if inner_output is not None and (
-        not isinstance(inner_output, bytearray) or len(inner_output) != inner_size
-    ):
-        raise ValueError("inner_output must be a bytearray of the exact v1 wire size")
-    inner = _encode_aligned_envelope(semantic, output=inner_output)
-    if output is None:
-        wire = bytearray(wire_size)
-    else:
-        if not isinstance(output, bytearray) or len(output) != wire_size:
-            raise ValueError("output must be a bytearray of the exact FEC wire size")
-        wire = output
-    header = bytes((
-        CMD_ALIGNED_ENVELOPE,
-        FEC_ENVELOPE_VERSION,
-        (inner_size >> 8) & 0xFF,
-        inner_size & 0xFF,
-    ))
-    wire[:FEC_ENVELOPE_HEADER_BYTES] = header
-    wire[-FEC_ENVELOPE_HEADER_BYTES:] = header
-    codewords = (wire_size - FEC_WIRE_HEADER_BYTES) // FEC_CODEWORD_BYTES
-    data = np.zeros((codewords, FEC_DATA_BYTES), dtype=np.uint8)
-    protected = data[:-1].reshape(-1)
-    protected[:FEC_ENVELOPE_HEADER_BYTES] = np.frombuffer(
-        header, dtype=np.uint8
-    )
-    protected[
-        FEC_ENVELOPE_HEADER_BYTES:FEC_ENVELOPE_HEADER_BYTES + inner_size
-    ] = np.frombuffer(inner, dtype=np.uint8)
-    np.bitwise_xor.reduce(data[:-1], axis=0, out=data[-1])
-
-    # Each data symbol contributes one precomputed ten-byte GF(256) parity
-    # vector.  Gather the complete 50 x codeword contribution matrix in C and
-    # reduce it there instead of executing 3,400 Python byte iterations on the
-    # Pi for every wall frame.
-    contributions = _FEC_PARITY_TABLES[
-        _FEC_DATA_SYMBOL_INDICES, data.T, :
-    ]
-    parity = np.bitwise_xor.reduce(contributions, axis=0)
-    words = np.empty((codewords, FEC_CODEWORD_BYTES), dtype=np.uint8)
-    words[:, :FEC_DATA_BYTES] = data
-    words[:, FEC_DATA_BYTES:] = parity
-
-    # V7 diagonal interleaving rotates logical block positions by symbol row.
-    # The cached scatter indices preserve the byte-for-byte wire contract while
-    # avoiding another 4,080 Python-level assignments per frame.
-    symbols, wire_blocks = _fec_v7_layout(codewords)
-    body = np.frombuffer(wire, dtype=np.uint8)[
-        FEC_ENVELOPE_HEADER_BYTES:-FEC_ENVELOPE_HEADER_BYTES
-    ].reshape(FEC_CODEWORD_BYTES, codewords)
-    body[symbols, wire_blocks] = words.T
-    return wire
-
 CAPABILITY_STATUS_V3 = 1 << 2
 CAPABILITY_STATUS_V5 = 1 << 7
 CAPABILITY_STATUS_V6 = 1 << 8
 CAPABILITY_ALIGNED_ENVELOPE_V1 = 1 << 14
-CAPABILITY_FEC_ENVELOPE_V2 = 1 << 15
-CAPABILITY_FEC_ENVELOPE_V3 = 1 << 16
-CAPABILITY_FEC_ENVELOPE_V4 = 1 << 17
-CAPABILITY_FEC_ENVELOPE_V5 = 1 << 18
-CAPABILITY_FEC_ENVELOPE_V6 = 1 << 19
-CAPABILITY_FEC_ENVELOPE_V7 = 1 << 20
 CAPABILITY_STATUS_CRC32_V8 = 1 << 21
 
 ALL_LANES_MASK = 0xFF
@@ -440,15 +213,12 @@ STAGGER_OFF = 1
 MAX_STAGGER_PHASES = 3
 
 class LEDController:
-    """One full RGB SPI receiver with CRC and optional Reed-Solomon FEC."""
+    """One full RGB SPI receiver with aligned CRC-protected transport."""
 
     def __init__(self, bus=SPI_BUS, device=SPI_DEVICE, speed=SPI_SPEED, mode=SPI_MODE,
                  strips=DEFAULT_NUM_STRIPS, leds_per_strip=DEFAULT_LED_PER_STRIP,
                  debug=False, logical_device_id=None,
-                 global_strip_offset=None, fec_transport=False,
-                 **_unused):
-        if type(fec_transport) is not bool:
-            raise TypeError("fec_transport must be a boolean")
+                 global_strip_offset=None):
         self.debug = debug
         self.bus = bus
         self.device = device
@@ -456,7 +226,6 @@ class LEDController:
         self.global_strip_offset = self._optional_global_strip_offset(
             global_strip_offset
         )
-        self._fec_transport_requested = fec_transport
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
         self.spi.max_speed_hz = speed
@@ -482,7 +251,6 @@ class LEDController:
         self.inline_show = True
         self.current_brightness = None
         self._last_config_refresh = 0.0
-        self._last_brightness_refresh = 0.0
         self._config_refresh_interval = 30.0  # seconds - reduced frequency to avoid LED blanking
         self._last_sent_config = None  # Track last config to avoid unnecessary refreshes
         self._frames_sent = 0
@@ -512,15 +280,6 @@ class LEDController:
         self._receiver_packets = 0
         self._receiver_crc_errors = 0
         self._receiver_crc_ok_packets = 0
-        self._receiver_fec_packets_received = 0
-        self._receiver_fec_packets_accepted = 0
-        self._receiver_fec_corrected_packets = 0
-        self._receiver_fec_corrected_codewords = 0
-        self._receiver_fec_uncorrectable_packets = 0
-        self._receiver_fec_semantic_crc_errors = 0
-        self._receiver_fec_framing_errors = 0
-        self._receiver_fec_last_decode_us = 0
-        self._receiver_fec_max_decode_us = 0
         self._receiver_frames_rendered = 0
         self._receiver_last_crc_us = 0
         self._receiver_last_copy_us = 0
@@ -545,12 +304,6 @@ class LEDController:
         self._receiver_operation_sequence = 0
         self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
         # The installed pair uses one current framing and status contract.
-        self._transport_envelope_enabled = True
-        self._fec_transport_enabled = False
-        self._fec_frames_sent = 0
-        self._fec_codewords_sent = 0
-        self._fec_parity_bytes_sent = 0
-        self._fec_data_padding_bytes_sent = 0
         self._writebytes2_supported = None
         self._last_transfer_captured_response = False
         self._last_transfer_status_sampled = False
@@ -566,22 +319,11 @@ class LEDController:
         self._receiver_status_integrity_last_failure = None
         self._receiver_status_unprotected_rejections = 0
         self._receiver_status_current_peer_rejected = False
-        self._command_transfer_diagnostic_id = 0
-        self._command_transfer_diagnostics = []
         self._full_frame_sequence = 0
-        self._monotonic_ns = time.monotonic_ns
         self._frame_packet = bytearray(1 + self.total_leds * 3 + CRC_BYTES)
         self._aligned_frame_packet = bytearray(
             _aligned_envelope_wire_size(1 + self.total_leds * 3)
         )
-        fec_semantic_size = 1 + self.total_leds * 3
-        self._fec_frame_packet = (
-            bytearray(_fec_envelope_wire_size(fec_semantic_size))
-            if self._fec_transport_requested
-            and fec_semantic_size <= MAX_FEC_SEMANTIC_BYTES
-            else None
-        )
-
         if self.debug:
             print("SPI Controller initialized")
             print(f"  Bus: {bus}, Device: {device}")
@@ -616,84 +358,27 @@ class LEDController:
         if transport_lock is None:
             transport_lock = self._transport_lock = threading.RLock()
         with transport_lock:
-            if payload_length and int(buf[0]) != CMD_STATUS_QUERY:
-                self._require_current_receiver_protocol(buf)
-            envelope_enabled = True
-            fec_enabled = bool(
-                envelope_enabled
-                and getattr(self, "_fec_transport_requested", False)
-                and getattr(self, "_fec_transport_enabled", False)
-                and buf is getattr(self, "_frame_packet", None)
-            )
-            maximum_payload = (
-                MAX_FEC_SEMANTIC_BYTES if fec_enabled else MAX_ALIGNED_SEMANTIC_BYTES
-            )
+            maximum_payload = MAX_ALIGNED_SEMANTIC_BYTES
             if payload_length < 1 or payload_length > maximum_payload:
                 raise ValueError(
                     f"SPI semantic transaction must be 1..{maximum_payload} bytes"
                 )
             if len(buf) != payload_length + CRC_BYTES:
                 raise ValueError("packet buffer must contain exactly payload plus CRC storage")
-            if fec_enabled:
-                reusable = getattr(self, "_fec_frame_packet", None)
-                expected = _fec_envelope_wire_size(payload_length)
-                if not isinstance(reusable, bytearray) or len(reusable) != expected:
-                    reusable = None
-                wire = _encode_fec_envelope(
-                    memoryview(buf)[:payload_length], output=reusable,
-                    inner_output=(
-                        getattr(self, "_aligned_frame_packet", None)
-                        if buf is getattr(self, "_frame_packet", None)
-                        else None
-                    ),
-                )
-                codewords = (
-                    len(wire) - FEC_WIRE_HEADER_BYTES
-                ) // FEC_CODEWORD_BYTES
-                inner_size = _aligned_envelope_wire_size(payload_length)
-                fec_parity_bytes = (
-                    codewords * FEC_PARITY_BYTES + FEC_OUTER_PARITY_BYTES
-                )
-                fec_data_padding_bytes = (
-                    codewords * FEC_DATA_BYTES
-                    - FEC_OUTER_PARITY_BYTES
-                    - FEC_ENVELOPE_HEADER_BYTES
-                    - inner_size
-                )
-                envelope_bytes = (
-                    ALIGNED_ENVELOPE_HEADER_BYTES
-                    + FEC_ENVELOPE_HEADER_BYTES
-                    + FEC_WIRE_HEADER_BYTES
-                )
-                inner_padding_bytes = (
-                    inner_size
-                    - ALIGNED_ENVELOPE_HEADER_BYTES
-                    - payload_length
-                    - CRC_BYTES
-                )
-                padding_bytes = fec_data_padding_bytes + inner_padding_bytes
-            elif envelope_enabled:
-                reusable = None
-                aligned_frame = getattr(self, "_aligned_frame_packet", None)
-                if buf is getattr(self, "_frame_packet", None):
-                    expected = _aligned_envelope_wire_size(payload_length)
-                    if isinstance(aligned_frame, bytearray) and len(aligned_frame) == expected:
-                        reusable = aligned_frame
-                wire = _encode_aligned_envelope(
-                    memoryview(buf)[:payload_length], output=reusable
-                )
-                envelope_bytes = ALIGNED_ENVELOPE_HEADER_BYTES
-                padding_bytes = (
-                    len(wire)
-                    - ALIGNED_ENVELOPE_HEADER_BYTES
-                    - payload_length
-                    - CRC_BYTES
-                )
+            reusable = None
+            aligned_frame = getattr(self, "_aligned_frame_packet", None)
+            if buf is getattr(self, "_frame_packet", None):
+                expected = _aligned_envelope_wire_size(payload_length)
+                if isinstance(aligned_frame, bytearray) and len(aligned_frame) == expected:
+                    reusable = aligned_frame
+            wire = _encode_aligned_envelope(
+                memoryview(buf)[:payload_length], output=reusable
+            )
+            envelope_bytes = ALIGNED_ENVELOPE_HEADER_BYTES
+            padding_bytes = len(wire) - envelope_bytes - payload_length - CRC_BYTES
             # Preserve the established transport-counter contract: these
             # counters describe the one kernel transfer attempt, including an
-            # ambiguous ioctl failure that must never be retried.  FEC's
-            # narrower ``*_sent`` counters are committed separately only once
-            # that attempt returns successfully.
+            # ambiguous ioctl failure that must never be retried.
             self._bytes_sent += len(wire)
             self._semantic_bytes_sent = (
                 getattr(self, "_semantic_bytes_sent", 0) + payload_length
@@ -709,37 +394,7 @@ class LEDController:
             self._crc_bytes_sent += CRC_BYTES
             self._spi_transfers += 1
 
-            def record_successful_fec_transfer():
-                if not fec_enabled:
-                    return
-                self._fec_frames_sent = (
-                    getattr(self, "_fec_frames_sent", 0) + 1
-                )
-                self._fec_codewords_sent = (
-                    getattr(self, "_fec_codewords_sent", 0) + codewords
-                )
-                self._fec_parity_bytes_sent = (
-                    getattr(self, "_fec_parity_bytes_sent", 0)
-                    + fec_parity_bytes
-                )
-                self._fec_data_padding_bytes_sent = (
-                    getattr(self, "_fec_data_padding_bytes_sent", 0)
-                    + fec_data_padding_bytes
-                )
             try:
-                if not response_required and fec_enabled:
-                    # Keep protected full frames on the SPI_IOC_MESSAGE path.
-                    # The spidev write(2) path used by writebytes2 has shown
-                    # repeatable, speed-independent multi-bit corruption on
-                    # the installed receiver-3 route.  xfer2 still clocks one
-                    # exact transaction; its unrelated raw MISO bytes are
-                    # intentionally discarded rather than treated as status.
-                    self.spi.xfer2(wire)
-                    record_successful_fec_transfer()
-                    self._last_transfer_captured_response = False
-                    self._last_transfer_status_sampled = False
-                    self._last_transfer_status_valid = False
-                    return None
                 if not response_required:
                     writer = getattr(self.spi, "writebytes2", None)
                     if self._write_only_fast_path_supported(len(wire)):
@@ -752,7 +407,6 @@ class LEDController:
                             self._writebytes2_supported = False
                         else:
                             self._writebytes2_supported = True
-                            record_successful_fec_transfer()
                             self._last_transfer_captured_response = False
                             self._last_transfer_status_sampled = False
                             self._last_transfer_status_valid = False
@@ -760,7 +414,6 @@ class LEDController:
                     elif not callable(writer):
                         self._writebytes2_supported = False
                 response = self.spi.xfer2(wire)
-                record_successful_fec_transfer()
                 status_sampled = bool(self._update_receiver_status(
                     response, full_status_expected=len(wire) >= RECEIVER_STATUS_BYTES_V8,
                     transfer_bytes=len(wire),
@@ -786,19 +439,8 @@ class LEDController:
         wire_length = self._selected_full_frame_wire_size()
         return wire_length > 0 and self._write_only_fast_path_supported(wire_length)
 
-    def _fec_full_frame_enabled(self):
-        return bool(
-            getattr(self, "_fec_transport_requested", False)
-            and getattr(self, "_fec_transport_enabled", False)
-        )
-
     def _selected_full_frame_wire_size(self):
-        packet = (
-            getattr(self, "_fec_frame_packet", ())
-            if self._fec_full_frame_enabled()
-            else getattr(self, "_aligned_frame_packet", ())
-        )
-        return len(packet) if packet is not None else 0
+        return len(getattr(self, "_aligned_frame_packet", ()))
 
     def _claim_full_frame_sequence(self, wall_frame_sequence):
         """Claim a local sequence or adopt the manager's shared wall sequence."""
@@ -842,13 +484,6 @@ class LEDController:
             | (int(response[offset + 2]) << 8)
             | int(response[offset + 3])
         )
-
-    @staticmethod
-    def _response_u64(response, offset):
-        value = 0
-        for index in range(8):
-            value = (value << 8) | int(response[offset + index])
-        return value
 
     @staticmethod
     def _bounded_uint(name, value, maximum):
@@ -947,7 +582,7 @@ class LEDController:
         self._last_transfer_status_valid = True
         self._receiver_status_integrity_verified = True
         self._receiver_status_observed_at = time.time()
-        fresh = bool(self._update_receiver_status_v7(response))
+        fresh = bool(self._update_receiver_status_base(response))
         if not getattr(self, "_receiver_status_integrity_established", False):
             packets = self._receiver_packets
             previous = getattr(self, "_receiver_status_integrity_last_packets", None)
@@ -979,24 +614,6 @@ class LEDController:
         self._receiver_status_last_packets = receiver_packets
         return previous is None or receiver_packets != previous
 
-    def _update_receiver_status_v7(self, response):
-        """Parse exact FEC transport outcomes after the complete v6 prefix."""
-        fresh = self._update_receiver_status_base(response)
-        for name, offset in (
-            ("packets_received", 1216),
-            ("packets_accepted", 1220),
-            ("corrected_packets", 1224),
-            ("corrected_codewords", 1228),
-            ("uncorrectable_packets", 1232),
-            ("semantic_crc_errors", 1236),
-            ("framing_errors", 1240),
-        ):
-            value = self._response_u32(response, offset)
-            setattr(self, f"_receiver_fec_{name}", value)
-        self._receiver_fec_last_decode_us = self._response_u16(response, 1244)
-        self._receiver_fec_max_decode_us = self._response_u16(response, 1246)
-        return fresh
-
     def _clock_receiver_status_snapshot(self):
         """Transfer one status-length query and parse its returned snapshot."""
         transport_lock = getattr(self, "_transport_lock", None)
@@ -1027,8 +644,7 @@ class LEDController:
                     # Give the receiver task time to parse the preceding query
                     # and queue its requested extended snapshot.  Sending all
                     # three transfers back-to-back can drain the two old slots
-                    # before the new v7 response exists, especially while FEC
-                    # decoding competes for the receiver core.
+                    # before the new protected response exists.
                     time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
                 self._clock_receiver_status_snapshot()
                 sampled = sampled or bool(
@@ -1188,29 +804,12 @@ class LEDController:
 
     def configure(self, *, acknowledged=False):
         self.total_leds = self.strip_count * self.leds_per_strip
-        fec_semantic_size = 1 + self.total_leds * 3
-        if (
-            getattr(self, "_fec_transport_requested", False)
-            and fec_semantic_size > MAX_FEC_SEMANTIC_BYTES
-        ):
-            raise ValueError(
-                "configured SET_ALL exceeds the negotiated FEC semantic limit"
-            )
         expected_packet_size = 1 + self.total_leds * 3 + CRC_BYTES
         if len(self._frame_packet) != expected_packet_size:
             self._frame_packet = bytearray(expected_packet_size)
         expected_aligned_size = _aligned_envelope_wire_size(1 + self.total_leds * 3)
         if len(getattr(self, "_aligned_frame_packet", ())) != expected_aligned_size:
             self._aligned_frame_packet = bytearray(expected_aligned_size)
-        if (
-            getattr(self, "_fec_transport_requested", False)
-            and fec_semantic_size <= MAX_FEC_SEMANTIC_BYTES
-        ):
-            expected_fec_size = _fec_envelope_wire_size(fec_semantic_size)
-            if len(getattr(self, "_fec_frame_packet", ())) != expected_fec_size:
-                self._fec_frame_packet = bytearray(expected_fec_size)
-        else:
-            self._fec_frame_packet = None
         status = self._refresh_configuration(force=True, acknowledged=acknowledged)
         if self.debug:
             print(f"✓ Configuration sent (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
@@ -1271,40 +870,21 @@ class LEDController:
                 ))
                 separate_status_query = (
                     scheduled_status_sample
-                    and (
-                        getattr(self, "_fec_transport_requested", False)
-                        or self._selected_full_frame_wire_size()
-                        < status_query_bytes
-                    )
+                    and self._selected_full_frame_wire_size() < status_query_bytes
                 )
                 if separate_status_query:
                     # The one-strip tail cannot clock v8 status inside SET_ALL.
                     # One status-length query, then the short write-only frame.
-                    # FEC still drains after the protected write because that
-                    # path does not return a usable in-band snapshot.
                     transport_lock = getattr(self, "_transport_lock", None)
                     if transport_lock is None:
                         transport_lock = self._transport_lock = threading.RLock()
                     with transport_lock:
-                        if getattr(self, "_fec_transport_requested", False):
-                            self._xfer_packet(
-                                buf,
-                                payload_length,
-                                response_required=False,
-                            )
-                            self._drain_fresh_receiver_status()
-                        else:
-                            self._clock_receiver_status_snapshot()
+                        self._clock_receiver_status_snapshot()
                         status_sampled = bool(
                             getattr(self, "_last_transfer_status_valid", False)
                             or getattr(self, "_last_transfer_status_sampled", False)
                         )
-                        if not getattr(self, "_fec_transport_requested", False):
-                            self._xfer_packet(
-                                buf,
-                                payload_length,
-                                response_required=False,
-                            )
+                        self._xfer_packet(buf, payload_length, response_required=False)
                         captured_response = True
                 else:
                     self._xfer_packet(
@@ -1358,15 +938,11 @@ class LEDController:
                 self._full_frame_wire_bytes_sent = (
                     getattr(self, "_full_frame_wire_bytes_sent", 0)
                     + (
-                        _fec_envelope_wire_size(payload_length)
-                        if self._fec_full_frame_enabled()
-                        else _aligned_envelope_wire_size(payload_length)
+                        _aligned_envelope_wire_size(payload_length)
                         if aligned_frame
                         else payload_length + CRC_BYTES
                     )
                 )
-                if SPI_INTER_FRAME_DELAY > 0:
-                    time.sleep(SPI_INTER_FRAME_DELAY)
             else:
                 start = 0
                 while start < total_pixels:
@@ -1431,36 +1007,15 @@ class LEDController:
         self._receiver_display_errors = self._response_u32(response, 60)
         self._receiver_capabilities = self._response_u32(response, 64)
         fresh = self._observe_current_receiver_packets(self._receiver_packets)
-        fec_advertised = bool(
-            self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1
-            and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V7
-        )
-        self._fec_transport_enabled = bool(
-            getattr(self, "_fec_transport_requested", False) and fec_advertised
-        )
         self._receiver_last_processed_command = int(response[313])
         self._receiver_stagger_phases = int(response[314])
         self._receiver_operation_sequence = self._response_u32(response, 316)
         self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
         return fresh
 
-    def _require_current_receiver_protocol(self, buf=None):
-        """Require negotiated FEC only before protected full-frame transfers."""
-        if not getattr(self, "_fec_transport_requested", False):
-            return
-        if buf is not getattr(self, "_frame_packet", None):
-            # CONFIG, brightness, lane mask, and other controls use aligned
-            # envelopes and may establish capabilities from their responses.
-            return
-        if self._fec_transport_enabled:
-            return
-        self._drain_fresh_receiver_status()
-        if not self._fec_transport_enabled:
-            raise RuntimeError("receiver does not advertise protected full RGB transport")
-
     def get_stats(self):
         stats = {name[1:]: value for name, value in vars(self).items()
-                 if name.startswith(("_receiver_", "_fec_", "_full_frame_"))
+                 if name.startswith(("_receiver_", "_full_frame_"))
                  and isinstance(value, (int, float, bool, str, type(None)))}
         last_seen = getattr(self, '_receiver_status_observed_at', None)
         stats.update({

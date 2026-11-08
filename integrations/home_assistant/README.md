@@ -11,7 +11,7 @@ playback; it is not proof that all five receivers physically displayed a frame.
 Copy the `led_grid_wall` directory into Home Assistant's
 `custom_components/led_grid_wall`, restart HA to discover it, then choose
 **Settings → Devices & services → Add integration → LED Grid Wall**. Enter the
-wall origin, for example `http://ledgridwall.local:5000`. The integration uses
+wall origin, for example `http://ledgridwall5.local:5000`. The integration uses
 asynchronous local HTTP requests. Its URL can later be changed with
 **Reconfigure**; the address must identify the same installation. Installation
 identity comes from the wall's persisted identity, independently of URL or
@@ -103,7 +103,7 @@ Master brightness scales physical output independently of the selected Scene's a
 
 ### Legacy install
 
-Deploy the matching wall code first: the package requires the guarded brightness/pace/power endpoints and `last_applied_command_id` in observed settings. Check that `http://ledgridwall.local:5000/api/v1/composer/settings/observed` is reachable from Home Assistant. This is a trusted local-network API; do not expose it publicly.
+Deploy the matching wall code first: the package requires the guarded brightness/pace/power endpoints and `last_applied_command_id` in observed settings. Check that `http://ledgridwall5.local:5000/api/v1/composer/settings/observed` is reachable from Home Assistant. This is a trusted local-network API; do not expose it publicly.
 
 Copy `led_grid_wall.yaml` into `new-hass-configs/packages/led_grid_wall.yaml` in the smarthome repository. Add or merge this block in `new-hass-configs/configuration.yaml`:
 

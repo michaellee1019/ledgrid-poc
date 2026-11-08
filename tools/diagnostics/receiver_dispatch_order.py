@@ -33,7 +33,6 @@ from drivers.led_layout import (  # noqa: E402
     WALL_RECEIVER_SPI_SPEEDS_HZ,
     WALL_RECEIVER_STRIP_COUNTS,
     WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
-    WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
 )
 if TYPE_CHECKING:
     from drivers.multi_device import MultiDeviceLEDController
@@ -44,14 +43,12 @@ OPERATIONS_TELEMETRY_URL = (
     "http://127.0.0.1:5000/api/v1/composer/operations/telemetry"
 )
 PRODUCTION_STAGGER_PHASES = 3
-FEC_RECEIVER_ID = None
 DEFAULT_ORDERS = ((0, 1, 2, 3, 4), (0, 1, 4, 2, 3), (0, 1, 2, 3, 4))
 DELTA_FIELDS = (
     "frames_sent",
     "full_frame_transfers",
     "full_frame_status_transfers",
     "full_frame_status_sample_misses",
-    "fec_frames_sent",
     "receiver_packets",
     "receiver_crc_errors",
     "receiver_frames_accepted",
@@ -60,13 +57,6 @@ DELTA_FIELDS = (
     "receiver_spi_queue_errors",
     "receiver_display_errors",
     "receiver_status_misses",
-    "receiver_fec_packets_received",
-    "receiver_fec_packets_accepted",
-    "receiver_fec_corrected_packets",
-    "receiver_fec_corrected_codewords",
-    "receiver_fec_uncorrectable_packets",
-    "receiver_fec_semantic_crc_errors",
-    "receiver_fec_framing_errors",
 )
 
 
@@ -253,10 +243,6 @@ def _controller() -> MultiDeviceLEDController:
         reverse_host_strips_by_logical_receiver=(
             WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER
         ),
-        reverse_native_strips_by_logical_receiver=(
-            WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
-        ),
-        fec_receiver_ids=() if FEC_RECEIVER_ID is None else (FEC_RECEIVER_ID,),
         parallel=True,
     )
 
@@ -286,14 +272,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             target_fps=max(rates),
             duration=args.warmup_seconds,
         )
-        warm = _fresh_snapshots(controller)
-        if FEC_RECEIVER_ID is not None and warm[FEC_RECEIVER_ID].get(
-            "fec_transport_enabled"
-        ) is not True:
-            raise DispatchDiagnosticError(
-                f"receiver {FEC_RECEIVER_ID} did not enable FEC during warmup"
-            )
-
+        _fresh_snapshots(controller)
         for target_fps in rates:
             for arm_index, order in enumerate(orders):
                 applied = apply_dispatch_order(controller, order)

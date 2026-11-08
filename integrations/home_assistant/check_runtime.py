@@ -48,7 +48,7 @@ async def main():
     site = web.TCPSite(runner, '127.0.0.1', 0)
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
-    package = yaml.safe_load(Path(__file__).with_name('led_grid_wall.yaml').read_text().replace('ledgridwall.local:5000', f'127.0.0.1:{port}'))
+    package = yaml.safe_load(Path(__file__).with_name('led_grid_wall.yaml').read_text().replace('ledgridwall5.local:5000', f'127.0.0.1:{port}'))
     package['scene'] = [{'id': 'fake_wall_ten_percent', 'name': 'Fake Wall Ten Percent',
                          'entities': {'light.led_grid_wall': {'state': 'on', 'brightness': 26}}}]
     package['automation'] = [{'id': 'fake_wall_pace', 'alias': 'Fake Wall Pace',

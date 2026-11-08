@@ -1,89 +1,32 @@
-# Metrics and Observability
+# Metrics and observability
 
-This system exposes runtime metrics through the controller status file and
-web API endpoints. These are intended for quick health checks and performance
-triage.
+The controller publishes periodic observations to `data/run_state/status.json`.
+Use `GET /api/v1/composer/operations/telemetry` for deployment and performance
+diagnostics, `GET /api/v1/composer/operations/status` for playback, and
+`GET /api/v1/composer/settings/observed?request_id=<UUID>` for one specific
+command's result.
 
-## Status Payload
+The telemetry response groups the useful fields under `controller` and
+`diagnostics`:
 
-The controller writes `run_state/status.json` at a fixed interval. Key fields:
+- `controller.actual_fps` and `controller.target_fps` describe host tick
+  cadence. A renderer can return an unchanged frame between source updates.
+- `diagnostics.performance` contains host render and send timings.
+- `diagnostics.driver_stats.devices` has one entry per logical receiver,
+  including its `spi_route`, `spi_speed_hz`, and connectivity.
+- A fresh CRC-protected reply supplies receiver accepted/displayed frames,
+  superseded frames, CRC errors, queue errors, publish drops, and display
+  errors. Host-side SPI errors and rejected status replies are counted
+  separately.
+- `diagnostics.driver_stats.aggregate` summarizes wall transfers and errors.
 
-- `is_running`: Whether an animation is active.
-- `current_animation`: Animation name or null.
-- `frame_count`: Total frames generated since start.
-- `target_fps`: Target frames per second.
-- `actual_fps`: Calculated frames per second.
-- `uptime`: Controller uptime in seconds.
-- `animation_stats`: Optional animation-specific stats from the plugin.
-- `performance`: Manager-level performance summary from `AnimationManager`.
-- `driver_stats`: Driver stats payload from the controller.
-- `updated_at`: Timestamp (epoch seconds).
+Use `just output-rate-observation 15` to compare host cadence and receiver
+display counters. Use `--min-fps 150` on
+[`output_rate_sweep.py`](../tools/benchmarks/output_rate_sweep.py) when the
+current Scene should drive continuously changing frames. The check requires
+fresh samples and no new errors on all five receivers. For a static or
+source-rate-limited Scene, read the measured cadence in the context of its
+authored update rate.
 
-Notes:
-- `performance` and `driver_stats` are present even if empty.
-- The web layer normalizes keys and fills defaults when missing.
-- Multi-device driver stats include receiver-side CRC counters and the latest
-  ESP32 CRC/copy/show timings when MISO status is available.
-- Multi-device aggregate stats expose `spi_bus_count` and `device_map`; independent
-  bus groups are presented concurrently, while devices sharing a bus are ordered.
-
-## Web API
-
-### GET /api/metrics
-Returns a summarized performance snapshot.
-
-Example response:
-```json
-{
-  "animation": {
-    "target_fps": 40,
-    "actual_fps": 39.7,
-    "uptime": 123.4
-  },
-  "performance": {
-    "samples": 120,
-    "target_frame_ms": 25.0,
-    "avg_generate_ms": 4.2,
-    "avg_send_ms": 3.1,
-    "avg_frame_ms": 8.1,
-    "last_generate_ms": 4.0,
-    "last_send_ms": 3.0,
-    "last_frame_ms": 7.9
-  },
-  "driver": {
-    "devices": [],
-    "aggregate": {}
-  }
-}
-```
-
-Notes:
-- Single-device controllers return flat fields like `spi_speed_hz` and
-  `frames_sent` instead of `devices`/`aggregate`.
-
-### GET /api/hardware/stats
-Returns the raw driver stats payload as reported by the controller. The shape
-varies by controller type (single device vs multi-device).
-
-Example response:
-```json
-{
-  "devices": [],
-  "aggregate": {}
-}
-```
-
-## Related Code
-
-- Controller status assembly: `animation/core/manager.py`
-- Status file writing: `scripts/start_server.py`
-- Web normalization and endpoints: `web/app.py`
-## Physical-output observability
-
-Receiver CRC, queue, mailbox, encode, and display counters stop at the ESP32
-output peripheral. WS2812 strips do not acknowledge data, so a flash caused by
-a marginal strip data connection, ground reference, level shifter, or power
-transient is not visible in software telemetry. Set one target through the
-guarded operator surface and use the receipt-bound, observation-only output-rate
-tool to correlate visual failures with target FPS; zero receiver errors alone
-does not prove downstream signal integrity.
+Receiver counters reach the ESP32 output peripheral. Observe the LEDs to
+verify physical mapping, smoothness, flicker, and display content.

@@ -1,12 +1,11 @@
 # LED Grid Control System
 
 Controller, web UI, animation plugins, and ESP32-S3 firmware for a 33 x 138
-(4,554-pixel) plant-wall installation. A Raspberry Pi renders frames and sends
+(4,554-pixel) plant-wall installation. A Raspberry Pi 5 renders frames and sends
 them over two SPI buses to five receivers. Four receivers expose eight logical
 WS2812 lanes and the fifth drives the extra rightmost strip as one logical lane
 through an explicit all-output broadcast mask on its otherwise dedicated board.
-The camera-measured physical order is logical receivers `(0,1,2,3,4)` from
-left to right, at global strip offsets `(0,8,16,24,32)`.
+The V6 carriers serve logical receivers `(1,0,3,2,4)` from left to right.
 
 ## Local development
 
@@ -41,10 +40,8 @@ For a Mac-only Composer session with no controller process or LED hardware, run
 - `web/`: Flask application and templates
 - `config/`: production plant-wall geometry and semantic masks
 
-The repository documents the runtime wiring contract for assembled hardware but
-does not contain PCB/schematic source, a BOM, or fabrication outputs. See
-[Hardware and wiring](docs/HARDWARE.md) for the known configuration and the
-explicit as-built gaps.
+See [Hardware and wiring](docs/HARDWARE.md) for the installed SPI routes,
+carrier jumpers, and strip mapping.
 
 The root `presets/animations/` tree is a runtime/user-writable overlay. Curated
 presets belong to the plugin that owns them.

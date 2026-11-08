@@ -159,4 +159,6 @@ def test_explicit_play_rejects_stale_or_unavailable_input_before_switching(monke
     game = manager._canonical_receiver_runtime._runtime._animation.instance
     assert game.player_control
     assert len(game.active_pieces) == 1
+    assert game.get_runtime_stats()["effective_render_fps"] == 150
+    assert get_starter("human_avalanche_factory")["scene"]["animation"]["parameters"]["render_fps"] == 100
     assert "player_control" not in manager.get_scene_state()["animation"]["parameters"]

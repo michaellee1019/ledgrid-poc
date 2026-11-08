@@ -53,8 +53,6 @@ def _controller(*, envelope=True):
         protocol.CAPABILITY_STATUS_CRC32_V8
         | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
     )
-    item._fec_transport_requested = False
-    item._fec_transport_enabled = False
     item.logical_device_id = 0
     item._spidev_buffer_size = protocol.MAX_SPI_TRANSFER
     item._writebytes2_supported = None
@@ -212,19 +210,6 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
 
 
 
-
-    def test_current_steady_state_guard_adds_no_query_or_spi_io(self):
-        item = _controller()
-        item.query_causal_receiver_status = mock.Mock(
-            side_effect=AssertionError("steady-state guard must not query")
-        )
-        before = len(item.spi.packets)
-
-        for _ in range(1000):
-            item._require_current_receiver_protocol()
-
-        item.query_causal_receiver_status.assert_not_called()
-        self.assertEqual(len(item.spi.packets), before)
 
     def test_controller_accounts_semantic_envelope_padding_crc_and_wire_bytes(self):
         item = _controller(envelope=True)

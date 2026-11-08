@@ -138,10 +138,6 @@ def diagnostic_sensors(coordinator):
             ('protected_status', 'Protected status', None),
             ('output_rate_reason', 'Output cadence evidence', None),
             ('crc_errors', 'CRC errors', 'errors'),
-            ('fec_corrected_packets', 'FEC corrected packets', 'packets'),
-            ('fec_uncorrectable_packets', 'FEC uncorrectable packets', 'packets'),
-            ('fec_semantic_crc_errors', 'FEC semantic CRC errors', 'errors'),
-            ('fec_framing_errors', 'FEC framing errors', 'errors'),
             ('status_integrity_errors', 'Status integrity errors', 'errors'),
         ):
             def value(data, key=key, receiver_id=receiver_id):

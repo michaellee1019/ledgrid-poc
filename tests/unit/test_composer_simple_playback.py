@@ -36,10 +36,9 @@ class SimplePlaybackTests(unittest.TestCase):
         self.interface = AnimationWebInterface(self.channel, _PreviewManager(), project_root=Path(self.tmp.name), activation_enabled=True)
         self.client = self.interface.app.test_client()
     def test_deployment_readiness_uses_a_served_current_endpoint(self):
-        import inspect
         from urllib.parse import urlsplit
-        from tools.deployment.deploy_target import readiness
-        url = inspect.signature(readiness).parameters['api_url'].default
+        from tools.deployment.deploy_target import composer_readiness_url
+        url = composer_readiness_url("5000")
         response = self.client.get(urlsplit(url).path)
         self.assertEqual(response.status_code, 200)
         self.assertIn('controller', response.get_json())

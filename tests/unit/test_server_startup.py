@@ -104,7 +104,7 @@ def test_controller_hat_layout_uses_spi1_ce0_and_ce1(tmp_path, monkeypatch):
     assert captured["num_devices"] == 2
     assert captured["strip_count"] == 16
     assert captured["device_map"] == [(1, 0), (1, 1)]
-    assert captured["fec_receiver_ids"] == ()
+    assert "fec_receiver_ids" not in captured
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["is_running"] is False
 

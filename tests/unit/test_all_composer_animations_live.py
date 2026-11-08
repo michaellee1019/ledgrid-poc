@@ -1,174 +1,51 @@
-"""Catalog-wide local-preview and strict live-manager qualification."""
+"""Exercise every current Composer Animation through preview and host playback."""
 
 from __future__ import annotations
 
-import contextlib
-from copy import deepcopy
 from datetime import datetime, timezone
-import io
-import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
+from animation.core.component_catalog import ComponentRole
 from animation.core.manager import AnimationManager, PreviewLEDController
-from animation.core.presentation_contracts import ComponentRef, SceneState
-from ipc.scene_contract import (
-    browser_scene_to_host_scene,
-    normalize_browser_scene_document,
-    normalize_composer_scene,
-)
-from web.composer_final_preview import (
-    ComposerFinalPreview,
-    current_component_catalog,
-)
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
+from tools.benchmarks.animation_render import scene_for
+from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class AllComposerAnimationsLiveTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.catalog = current_component_catalog()
-        cls.animations = tuple(
-            descriptor
-            for descriptor in cls.catalog.descriptors
-            if descriptor.role.value == "animation"
-        )
-
-    def _canonical(self, descriptor):
-        return normalize_composer_scene({
-            "origin": "composer",
-            "scene": {
-                "schema": "ledgrid.scene.v2",
-                "background": {
-                    "component_id": "solid_background",
-                    "version": 1,
-                    "provider": "python",
-                    "role": "background",
-                    "parameters": {"gain": 0.0, "seed": 0},
-                },
-                "animation": {
-                    "component_id": descriptor.component_id,
-                    "version": descriptor.version,
-                    "provider": descriptor.provider.value,
-                    "role": descriptor.role.value,
-                    "parameters": {},
-                },
-                "widgets": [],
-                "plants": {
-                    "effects": {"version": 1, "active": [], "strengths": {}},
-                },
-                "look": {
-                    "palette_id": "neutral",
-                    "pace": 1.0,
-                    "presentation_brightness": 1.0,
-                },
-            },
-        }, self.catalog)
-
-    def test_every_composer_animation_renders_in_installed_local_preview(self) -> None:
-        self.assertEqual(len(self.animations), 43)
-        preview = ComposerFinalPreview(self.catalog, ROOT)
-        wall_time = datetime(2026, 9, 2, 12, tzinfo=timezone.utc)
-        for descriptor in self.animations:
-            with self.subTest(component=descriptor.component_id):
-                preview.render(self._canonical(descriptor), 0.0, wall_time)
-                frame = preview.render(self._canonical(descriptor), 0.2, wall_time)
-                self.assertEqual(frame.pixels.shape, (33 * 138, 3))
-                self.assertEqual(frame.pixels.dtype, np.uint8)
-                self.assertTrue(frame.pixels.flags.c_contiguous)
-
-    def test_every_composer_animation_starts_in_strict_live_manager(self) -> None:
-        controller = PreviewLEDController(strips=33, leds_per_strip=138)
-        with contextlib.redirect_stdout(io.StringIO()):
-            manager = AnimationManager(controller, auto_start=False)
+    def test_every_animation_renders_the_same_installed_preview_and_host_frame(self):
+        catalog = current_component_catalog()
+        animations = [item for item in catalog.descriptors if item.role is ComponentRole.ANIMATION]
+        self.assertTrue(animations)
+        preview = ComposerFinalPreview(catalog, ROOT)
+        controller = PreviewLEDController(DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP)
+        manager = AnimationManager(controller, auto_start=False)
         manager._launch_animation_loop = lambda: None
+        wall_time = datetime(2026, 9, 2, 12, tzinfo=timezone.utc).astimezone()
         try:
-            for revision, descriptor in enumerate(self.animations, 1):
+            for descriptor in animations:
                 with self.subTest(component=descriptor.component_id):
-                    component = ComponentRef(
-                        plugin_id=descriptor.component_id,
-                        provider=descriptor.provider,
-                        resolved_parameters=descriptor.default_parameters(),
-                    )
-                    self.assertTrue(manager.start_scene(SceneState(
-                        revision=revision,
-                        background=component,
-                        overlays=(),
-                        known_python_fallback=component,
-                    )))
-                    frame = manager.render_composed_scene_frame()
-                    self.assertEqual(frame.pixels.shape, (33 * 138, 3))
-                    self.assertEqual(frame.pixels.dtype, np.uint8)
-        finally:
-            manager.stop_animation(clear_leds=False)
-
-    def test_every_published_animation_passes_portable_activation_validation(self) -> None:
-        bootstrap = json.loads((
-            ROOT / "web/static/generated/composer/bootstrap.v1.json"
-        ).read_text(encoding="utf-8"))
-        catalog = bootstrap["components"]
-        by_id = {
-            item["plugin_id"]: item for item in catalog
-            if item.get("provider") == "python"
-        }
-        profile_digest = bootstrap["installation_profile"]["digest"]
-        controller = PreviewLEDController(strips=33, leds_per_strip=138)
-        with contextlib.redirect_stdout(io.StringIO()):
-            manager = AnimationManager(controller, auto_start=False)
-        manager._launch_animation_loop = lambda: None
-        try:
-            for descriptor in self.animations:
-                component_id = descriptor.component_id
-                with self.subTest(component=component_id):
-                    published = by_id[component_id]
-                    if published["role"] == "animation":
-                        # Browser-scene v1 has a background-only activation
-                        # document. Premultiplied Scene-v2 animations publish
-                        # separately into the animation slot instead of being
-                        # coerced through that RGB legacy binding.
-                        self.assertEqual(
-                            published["scene_compatibility"],
-                            {
-                                "selectable": True,
-                                "slots": ["animation"],
-                                "diagnostic": None,
-                            },
+                    canonical = scene_for(catalog, descriptor.component_id, {})
+                    with patch("animation.core.canonical_receiver_scene.datetime") as controller_clock:
+                        controller_clock.now.return_value = wall_time
+                        self.assertTrue(manager.start_canonical_scene(canonical.scene), manager._playback_error)
+                    for elapsed in (0.0, 0.2):
+                        final = preview.render(canonical, elapsed, wall_time)
+                        host = manager.render_scene_v2_presentation(
+                            manager._canonical_receiver_runtime, manager._canonical_receiver_scene,
+                            monotonic_elapsed=elapsed, wall_time=wall_time,
                         )
-                        self.assertTrue(published["browser_runtime"]["supported"])
-                        continue
-                    managed = published["browser_capabilities"]["managed_identity"]
-                    binding = {
-                        "provider": managed["provider"],
-                        "component_id": managed["component_id"],
-                        "component_digest": managed["component_digest"],
-                        "runtime_digest": managed["runtime_digest"],
-                        "parameter_schema_version": managed[
-                            "parameter_schema_version"
-                        ],
-                        "parameters": deepcopy(published.get("defaults") or {}),
-                    }
-                    document = {
-                        "schema": "ledgrid.browser-scene",
-                        "schema_version": 1,
-                        "revision": 1,
-                        "background": binding,
-                        "layers": [],
-                        "installation_profile": {"digest": profile_digest},
-                        "fallback": deepcopy(binding),
-                    }
-                    normalized = normalize_browser_scene_document(
-                        document, catalog=catalog, purpose="activation"
-                    )
-                    host_scene = browser_scene_to_host_scene(
-                        normalized, catalog=catalog
-                    )
-                    self.assertTrue(manager.start_scene(host_scene))
-                    frame = manager.render_composed_scene_frame()
-                    self.assertEqual(frame.pixels.shape, (33 * 138, 3))
+                        self.assertEqual(host.pixels.shape, (controller.total_leds, 3))
+                        self.assertEqual(host.pixels.dtype, np.uint8)
+                        self.assertTrue(host.pixels.flags.c_contiguous)
+                        np.testing.assert_array_equal(host.pixels, final.pixels)
         finally:
             manager.stop_animation(clear_leds=False)
 

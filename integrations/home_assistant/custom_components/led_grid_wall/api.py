@@ -21,7 +21,7 @@ def normalize_url(value):
     if (parsed.scheme not in {"http", "https"} or not parsed.hostname
             or parsed.username or parsed.password or parsed.path
             or parsed.query or parsed.fragment):
-        raise ValueError("Use an http(s) origin, such as http://ledgridwall.local:5000")
+        raise ValueError("Use an http(s) origin, such as http://ledgridwall5.local:5000")
     # Reading the port also rejects malformed ports.
     _ = parsed.port
     return value

@@ -23,7 +23,6 @@ from drivers.led_layout import (
 from tools.deployment.preserve_deploy_settings import load_saved_state,save_status
 
 PRODUCTION_STAGGER_PHASES=3
-FEC_RECEIVER_IDS_ENV='LEDGRID_FEC_RECEIVER_IDS'
 
 def apply_global_settings(manager, settings):
     if not settings:
@@ -52,9 +51,9 @@ def handle_command(manager, action, data, *, gamepad=None):
             raise ValueError('Turn on the Nimbus and wait for it to connect before starting Tetris.')
     with coordinator.legacy_mutation_guard(guard):
         if action == 'start_tetris_player':
-            from web.starter_looks import get_starter
+            from web.starter_looks import tetris_player_scene
 
-            return manager.start_canonical_scene(get_starter('human_avalanche_factory')['scene'], tetris_player=True)
+            return manager.start_canonical_scene(tetris_player_scene(), tetris_player=True)
         if action == 'automation_interaction':
             return manager.dispatch_canonical_interaction(**data)
         if action == 'automation_device_state':
@@ -118,10 +117,9 @@ def run_controller_mode(args):
     from drivers.nimbus_gamepad import NimbusGamepad
     num_devices = hardware_receiver_count(args.strips, args.leds_per_strip)
     saved=load_saved_state(state_path=Path(args.saved_state_file),presets_dir=Path(args.presets_dir))
-    fec_ids = receiver_fec_ids_for_runtime()
     controller=MultiDeviceLEDController(num_devices=num_devices,strip_count=args.strips,
         leds_per_strip=args.leds_per_strip,device_map=hardware_device_map(num_devices),
-        debug=args.controller_debug,fec_receiver_ids=fec_ids,speed=args.spi_speed)
+        debug=args.controller_debug,speed=args.spi_speed)
     controller.configure()
     apply_production_stagger(controller)
     manager=AnimationManager(controller,plugins_dir=args.animations_dir,
@@ -237,25 +235,6 @@ def apply_production_stagger(controller, phases: int = PRODUCTION_STAGGER_PHASES
         return False
     controller.set_stagger_phases(phases)
     return True
-
-
-def receiver_fec_ids_for_runtime(value: str | None = None) -> tuple[int, ...]:
-    """Parse an explicit, fail-closed logical-receiver FEC allowlist."""
-    if value is None:
-        value = os.environ.get(FEC_RECEIVER_IDS_ENV, "")
-    if not isinstance(value, str):
-        raise TypeError(f"{FEC_RECEIVER_IDS_ENV} must be text")
-    if value == "":
-        return ()
-    tokens = value.split(",")
-    if any(not token.isdecimal() or str(int(token)) != token for token in tokens):
-        raise ValueError(
-            f"{FEC_RECEIVER_IDS_ENV} must be canonical comma-separated logical IDs"
-        )
-    receiver_ids = tuple(int(token) for token in tokens)
-    if len(set(receiver_ids)) != len(receiver_ids):
-        raise ValueError(f"{FEC_RECEIVER_IDS_ENV} cannot contain duplicate IDs")
-    return receiver_ids
 
 
 def process_playlist_commands(channel, runner: PlaylistRunner) -> int:

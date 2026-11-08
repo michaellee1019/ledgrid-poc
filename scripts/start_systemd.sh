@@ -27,10 +27,8 @@ PY
 )
 STRIPS=${STRIPS:-$DEFAULT_STRIPS}
 LEDS_PER_STRIP=${LEDS_PER_STRIP:-$DEFAULT_LEDS_PER_STRIP}
-# The output pipeline is capable of 200 FPS, but the physical installation
-# defaults to a conservative ceiling. Use the live rate sweep to qualify a
-# higher value for the installed strips before overriding this environment.
-TARGET_FPS=${TARGET_FPS:-160}
+# Match the Pi controller's default scheduler rate. Saved controls take precedence.
+TARGET_FPS=${TARGET_FPS:-200}
 ANIMATION_SPEED_SCALE=${ANIMATION_SPEED_SCALE:-$DEFAULT_ANIMATION_SPEED_SCALE}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-5000}

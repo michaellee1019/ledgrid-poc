@@ -1,6 +1,6 @@
 # Agent instructions
 
-Deliver useful changes for the installed five-receiver 33x138 wall. Prefer small, verified improvements and fast feedback. Current user instructions override older project decisions and historical handoffs.
+Deliver useful changes for the installed Raspberry Pi 5 and V6-carrier five-receiver 33x138 wall. Prefer small, verified improvements and fast feedback. Current user instructions override older project decisions and historical handoffs.
 
 ## Task tracking and authority
 
@@ -16,10 +16,10 @@ The October 9 simplification decision in `ledgrid-poc-ve0` supersedes older nati
 
 - Serve the installed five-receiver 33x138 wall. Preserve phone/desktop Composer, browser rendering, Widgets, Looks, playlists, manual takeover, controls, calibration and Home Assistant integration. Keep all game animations; retire World Flags and receiver-native-only entries. Saved references to removed components must remain recoverable and report unsupported components rather than silently substitute.
 - Render full RGB frames on the host. Receivers handle transport and LED output; do not rebuild receiver-native modules, sparse overlays, profile libraries, distributed activation transactions, or qualification machinery.
-- Show requested scene, controller playback, receiver connectivity and errors separately. Controller playback is not proof of exact all-five physical display. Preserve command ordering/correlation, CRC/FEC, physical mapping, bounded waits and brightness controls.
+- Show requested scene, controller playback, receiver connectivity and errors separately. Controller playback is not proof of exact all-five physical display. Preserve command ordering/correlation, payload and status CRC, physical mapping, bounded waits and brightness controls.
 - This hobby installation accepts interrupted playback and manual recovery. Deployment is stop/copy/build/flash/start/readiness, with no immutable releases or automatic rollback guarantees. Keep personal data outside replaceable application files: calibration, Looks, playlists, custom presets and settings. Back up migration inputs and preserve current brightness, including zero. No need to restore active playback after a failed operation.
 - One wall configuration and online-only Composer are supported. Browser rendering remains; offline editing and cache migration do not. Preserve inexpensive file-write integrity and input validation.
-- Receiver 3's known CRC/FEC increments, occasional invalid protected status and reduced output rate remain accepted degradation. Report them truthfully; do not initiate physical investigation or block a demo on these alone.
+- Use the same receiver health criteria on all five SPI routes. Report new CRC, protected-status, queue and display faults with fresh interval deltas.
 - Keep 150 FPS as an installed-output goal and prepared switches within five seconds. Visible stutter, failed playback, false status and data loss require correction. Desktop timing is not installed-wall evidence.
 - The approved simplification includes coordinated host/receiver deployments, reflashes and maintenance downtime after focused validation and required independent review. Capture current personal data/settings first. No rewiring, data destruction, Git/Dolt push or main merge is authorized.
 - Remove compatibility after checking current consumers. A legacy name alone does not prove obsolescence. Report maintained implementation, tests, and generated-artifact savings separately; line-count targets never justify broken retained features.

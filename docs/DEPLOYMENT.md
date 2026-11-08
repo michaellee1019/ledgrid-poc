@@ -1,29 +1,29 @@
 # Deployment and recovery
 
-The installed wall uses `ledgridwall5@ledgridwall5.local` by default, with
+The Raspberry Pi 5 for the installed V6 wall uses
+`ledgridwall5@ledgridwall5.local` by default, with
 application code under `~/ledgrid-pod/app` and personal data under
 `~/ledgrid-pod/data`. Override `PI_HOST` or `DEPLOY_DIR` for another
 installation. Deployment may interrupt playback. Failures report the failing
 command and may leave the service stopped; rerun deployment after correcting the
 problem.
 
-SSH uses your normal agent/config by default. To pin a repository-local
-automation key, run `just generate-ai-ssh-key` once and authorize `.gpt-key.pub`
-on the Pi, or set `SSH_KEY` / `LEDGRID_SSH_KEY`:
+Deployment and remote tools require a dedicated SSH key. They use the repository's
+`.gpt-key` by default and accept an explicit path through `SSH_KEY` or
+`LEDGRID_SSH_KEY`. A missing or unreadable key stops the operation.
 
 ```sh
 SSH_KEY="$PWD/.gpt-key" just deploy-python
 ```
 
-When a dedicated key is configured, operations use `IdentitiesOnly=yes` and
-`BatchMode=yes`. Remote install steps require non-interactive `sudo -n`; run
-`just setup` once on a new Pi user to configure passwordless sudo and SPI boot
-support. Full deployment applies SPI device-tree settings when needed and may
-require a reboot before `/dev/spidev*` nodes appear.
+Remote install steps use `sudo -n`. Run `just setup` once for a new Pi user
+with sudo access to prepare runtime and firmware tooling. Both deployment modes
+apply SPI device-tree settings when needed and may reboot the Pi before the
+required `/dev/spidev*` nodes appear.
 
 | Command | Action |
 | --- | --- |
-| `just setup` | Install Pi runtime/compiler tools and pinned PlatformIO 6.1.19 + tool-scons 4.40801.0 (6.2.0 breaks ESP-IDF builds on Python 3.13); needs existing sudo access |
+| `just setup` | Install Pi runtime/compiler tools including `dtc`, plus pinned PlatformIO 6.1.19 and tool-scons 4.40801.0 for ESP-IDF on Python 3.13 |
 | `just deploy-plan` | Print the full deployment steps without contacting the wall |
 | `just deploy` | Build browser assets, copy application, stop, migrate data, install dependencies, flash all five mapped receivers, start, check service/HTTP |
 | `just deploy-python` | Same application and data path, without firmware flashing |
@@ -95,25 +95,32 @@ Disconnecting returns the running Tetris scene to autoplay.
 
 Full deployment builds `esp32-s3-devkitc-1` and uploads sequentially to the
 five receivers listed in `data/run_state/receiver_identity_mapping.json`.
-Each logical receiver has an explicit USB factory serial and SPI route; USB
-port enumeration order is not a physical mapping. Missing or duplicate serials,
-incorrect routes, or missing devices fail before flashing.
+The file's `identities` list has one entry per receiver, with `logical_device`,
+`hardware_serial` (the USB factory serial), and `spi_route` (the numeric bus
+and chip-select pair). The [installed receiver table](HARDWARE.md#spi-routes-and-strip-order)
+gives the required route for each logical ID. Verify the serial associated with
+each physical receiver when provisioning a fresh installation. Full deployment
+requires all five map entries and matching USB devices before the first upload.
+Use `just deploy-python` for application-only changes.
 
 A failed upload stops deployment. Already flashed boards may contain the new
 firmware while other boards still contain the old version. Correct the cause
 and rerun full deployment: all five mapped receivers are flashed again. There
 is no image ledger, package installation, or automatic firmware rollback.
 
-The service defaults to 33×138 with no FEC allowlist. New V6 boards run every SPI1 clock at 20 MHz. Service and
-HTTP readiness do not assert that all receivers displayed a specific frame;
-use the application's connectivity status and a visual wall check for playback.
+The installed service defaults to 33×138 and SPI mode 0 at 20 MHz on all five
+routes, with CRC-16 protection. Readiness checks the systemd service and the
+Composer telemetry endpoint. Use receiver connectivity and a visual wall
+check to verify playback.
 
 ## Manual recovery
 
 Inspect service and application logs with the same dedicated identity:
 
 ```sh
-ssh ledgridwall5@ledgridwall5.local -- journalctl -u ledgrid.service -n 100 --no-pager
+ssh -F /dev/null -i "$PWD/.gpt-key" -o IdentitiesOnly=yes -o IdentityAgent=none \
+  -o BatchMode=yes -o ConnectTimeout=10 ledgridwall5@ledgridwall5.local \
+  -- journalctl -u ledgrid.service -n 100 --no-pager
 ```
 
 Rerunning `just deploy-python` replaces incomplete application code. Rerunning
@@ -122,9 +129,10 @@ the service and remove **only** `~/ledgrid-pod/app`, then deploy again. Keep
 `~/ledgrid-pod/data` and its backups. The deployer never selects an old release
 or restores prior playback automatically.
 
-`tools/deployment/stop_remote.sh stop|restart|status` provides the corresponding
-service operation using the same SSH policy. If system provisioning, USB access,
-or SPI configuration needs repair, fix that specific failure before retrying.
+`tools/deployment/stop_remote.sh stop|restart|status` operates
+`ledgrid.service`. `just diagnose-remote` collects the service journal,
+application logs, and Composer telemetry. `just diagnose-remote-restart`
+restarts the systemd service before collecting those diagnostics.
 
 If an old root-owned diagnostic prevents backup, correct ownership of the
 affected file or run-state directory with `sudo chown`, then rerun deployment.

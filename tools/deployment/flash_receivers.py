@@ -18,8 +18,6 @@ except ModuleNotFoundError:  # Imported as tools.deployment.flash_receivers in t
     from tools.deployment.platformio_cli import select_platformio
 
 ROUTES = [(1, 0), (1, 1), (0, 0), (0, 1), (0, 3)]
-HAT_ROUTES = [(1, 0), (1, 1)]
-HAT_SPI0_ROUTES = [(0, 0), (0, 1)]
 ENVIRONMENT = "esp32-s3-devkitc-1"
 _SERIAL_PORT = re.compile(r"/dev/tty(?:ACM|USB)\d+")
 
@@ -37,16 +35,9 @@ def mapped_ports(mapping: dict, devices: list[dict]) -> list[str]:
         raise ValueError("Firmware flashing requires explicit receiver mappings")
     selected = sorted(entries, key=lambda item: item["logical_device"])
     routes = [item.get("spi_route") for item in selected]
-    if routes == [list(route) for route in ROUTES]:
-        expected = 5
-    elif routes == [list(route) for route in HAT_ROUTES]:
-        expected = 2
-    elif routes == [list(route) for route in HAT_SPI0_ROUTES]:
-        expected = 2
-    else:
-        raise ValueError(
-            "Receiver mapping does not match the installed wall or 16-column HAT test routes"
-        )
+    if routes != [list(route) for route in ROUTES]:
+        raise ValueError("Receiver mapping must match all five installed wall routes")
+    expected = len(ROUTES)
     if [item.get("logical_device") for item in selected] != list(range(expected)):
         raise ValueError("Receiver mapping logical devices must be contiguous from 0")
     serials = [serial_identity(item["hardware_serial"]) for item in selected]
@@ -59,7 +50,7 @@ def mapped_ports(mapping: dict, devices: list[dict]) -> list[str]:
         serial = re.search(r"(?:^|\s)SER=([^\s]+)", hwid)
         if not serial or not _SERIAL_PORT.fullmatch(port):
             continue
-        identity = serial_identity(serial[1])
+        identity = re.sub(r"[:\-]", "", serial[1]).lower()
         if identity not in serials:
             continue
         if identity in ports:
@@ -74,12 +65,14 @@ def mapped_ports(mapping: dict, devices: list[dict]) -> list[str]:
 
 
 def flash(root: Path) -> None:
+    mapping_path = root / "data/run_state/receiver_identity_mapping.json"
+    if not mapping_path.is_file():
+        raise RuntimeError(f"Full deployment requires the five-receiver USB-to-SPI mapping at {mapping_path}")
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
     try:
         pio = select_platformio()
     except SystemExit as exc:
         raise RuntimeError("PlatformIO is missing or unusable; run just setup") from exc
-    mapping_path = root / "data/run_state/receiver_identity_mapping.json"
-    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
     devices = json.loads(subprocess.check_output([str(pio), "device", "list", "--json-output"]))
     ports = mapped_ports(mapping, devices)
     firmware = root / "app/firmware/esp32"
@@ -89,11 +82,16 @@ def flash(root: Path) -> None:
         subprocess.run([str(pio), "run", "-d", str(firmware), "-e", ENVIRONMENT, "-t", "upload", "--upload-port", port], check=True)
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
-    flash(parser.parse_args().root)
+    root = parser.parse_args().root
+    try:
+        flash(root)
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
+        parser.exit(1, f"Receiver flash failed: {exc}\n")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -41,8 +41,6 @@ async def run():
                        'protected_status': 'verified_with_rejections' if index == 3 else 'verified',
                        'output_fps': 30.0 if index == 3 else 148.0, 'output_rate_reason': 'valid',
                        'counters': {'crc_errors': 17 if index == 3 else 0,
-                                    'fec_corrected_packets': 22 if index == 3 else 0,
-                                    'fec_uncorrectable_packets': 2 if index == 3 else 0,
                                     'status_integrity_errors': 4 if index == 3 else 0},
                        'observed_at': time.time()} for index in range(5)],
     }
@@ -81,6 +79,7 @@ async def run():
             registry = er.async_get(hass)
             entries = er.async_entries_for_config_entry(registry, entry.entry_id)
             detailed = [item for item in entries if any(key in item.unique_id for key in ('_host_', '_output_fps', '_crc_errors', '_protected_status', '_controller_output'))]
+            assert not any('_fec_' in item.unique_id for item in entries)
             assert len({item.device_id for item in entries}) == 1
             assert registry.async_get('image.led_grid_wall_controller_output') is not None
             assert detailed and all(item.disabled_by == er.RegistryEntryDisabler.INTEGRATION for item in detailed)

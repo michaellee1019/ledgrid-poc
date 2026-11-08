@@ -11,7 +11,6 @@ import subprocess
 import sys
 
 DEFAULT_TAIL_LINES = 40
-LIVE_PROGRESS_PREFIX = "[deploy"
 
 
 def _safe_phase_name(phase: str) -> str:

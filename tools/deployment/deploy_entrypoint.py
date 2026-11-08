@@ -22,36 +22,10 @@ except ModuleNotFoundError:  # Direct ``python tools/deployment/deploy_entrypoin
 
 DEFAULT_TARGET = "ledgridwall5@ledgridwall5.local"
 DEFAULT_DEPLOY_DIR = "ledgrid-pod"
-_LEGACY_TARGETS = frozenset(
-    {
-        "ledgridwall@ledgridwall.local",
-        "ledgridwall.local",
-    }
-)
-
-
-def normalize_pi_host(value: str) -> str:
-    """Map retired Pi 4 mDNS names to the Pi 5 wall host."""
-    trimmed = value.strip()
-    if not trimmed:
-        return DEFAULT_TARGET
-    if trimmed in _LEGACY_TARGETS:
-        return DEFAULT_TARGET
-    if trimmed.endswith("@ledgridwall.local"):
-        user = trimmed.split("@", 1)[0]
-        if user == "ledgridwall":
-            return DEFAULT_TARGET
-        return f"{user}@ledgridwall5.local"
-    return trimmed
-
-
 def resolve_deploy_target(explicit: str | None) -> str:
-    if explicit:
-        return normalize_pi_host(explicit)
-    env_value = os.environ.get("PI_HOST")
-    if env_value:
-        return normalize_pi_host(env_value)
-    return DEFAULT_TARGET
+    return (explicit or os.environ.get("PI_HOST") or "").strip() or DEFAULT_TARGET
+
+
 SOURCE_ROOTS = {"animation", "config", "drivers", "ipc", "scripts", "tools", "web", "firmware"}
 SOURCE_FILES = {
     "pyproject.toml",
@@ -133,24 +107,9 @@ def fetch_calibration(stage: Path, target: str, deploy_dir: str, options: list[s
         )
 
 
-def ensure_spi_boot(root: Path, target: str) -> None:
-    env = os.environ.copy()
-    env["PI_HOST"] = target
-    env.setdefault("DEPLOY_DIR", DEFAULT_DEPLOY_DIR)
+def run_deploy_helper(root: Path, script: str, env: dict[str, str]) -> None:
     subprocess.run(
-        ["bash", str(root / "tools/deployment/ensure_spi_boot.sh")],
-        cwd=root,
-        env=env,
-        check=True,
-    )
-
-
-def ensure_passwordless_sudo(root: Path, target: str) -> None:
-    """Match ``deploy.sh``: sudo -n is required for remote install/restart steps."""
-    env = os.environ.copy()
-    env["PI_HOST"] = target
-    subprocess.run(
-        ["bash", str(root / "tools/deployment/ensure_passwordless_sudo.sh")],
+        ["bash", str(root / "tools/deployment" / script)],
         cwd=root,
         env=env,
         check=True,
@@ -162,7 +121,8 @@ def run_deployment(root: Path, args: argparse.Namespace) -> None:
     options = ssh_options(root, args.ssh_key)
     if args.target.startswith("-"):
         raise ValueError("Invalid SSH target")
-    ensure_passwordless_sudo(root, args.target)
+    env = {**os.environ, "PI_HOST": args.target, "DEPLOY_DIR": deploy_dir, "SSH_KEY": options[1]}
+    run_deploy_helper(root, "ensure_passwordless_sudo.sh", env)
     remote_deploy_command = (
         f'python3 "$HOME/{deploy_dir}/incoming/tools/deployment/deploy_target.py" '
         f'--root "$HOME/{deploy_dir}" --mode {shlex.quote(args.mode)} '
@@ -197,7 +157,7 @@ def run_deployment(root: Path, args: argparse.Namespace) -> None:
             ],
             check=True,
         )
-        ensure_spi_boot(root, args.target)
+        run_deploy_helper(root, "ensure_spi_boot.sh", env)
         subprocess.run(["ssh", *options, args.target, remote_deploy_command], check=True)
 
 
@@ -216,7 +176,6 @@ def main() -> int:
     args.target = resolve_deploy_target(args.target)
     try:
         safe_deploy_dir(args.deploy_dir)
-        ssh_options(root, args.ssh_key)
         if args.command == "plan":
             print(f"{args.target}: ~/{args.deploy_dir}/app; personal data: ~/{args.deploy_dir}/data")
             print("Build browser assets, upload, stop, back up/migrate data, replace app, install dependencies,")

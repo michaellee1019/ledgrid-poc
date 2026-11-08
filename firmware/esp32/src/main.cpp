@@ -66,9 +66,6 @@ static_assert(kSpiFrameBytes <= kSpiBufferSize,
 static_assert(1U + kMaxRgbBytes <=
                   ledgrid::kAlignedEnvelopeMaxSemanticBytes,
               "maximum RGB frame exceeds aligned semantic bound");
-static_assert(1U + kMaxStrips * kDefaultLedsPerStrip * 3U <=
-                  ledgrid::kFecEnvelopeMaxSemanticBytes,
-              "installed RGB frame exceeds FEC semantic bound");
 static_assert(ledgrid::kStatusBytesV3 + kCrcBytes <= kSpiBufferSize,
               "status query plus CRC exceeds transport buffer");
 static_assert(ledgrid::kStatusBytesV5 + kCrcBytes <= kSpiBufferSize,
@@ -87,8 +84,6 @@ DMA_ATTR std::uint8_t spi_tx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
 spi_slave_transaction_t spi_transactions[kSpiQueueDepth] = {};
 
 std::uint8_t working_frame[kMaxRgbBytes] = {};
-std::uint8_t fec_semantic_buffer[
-    ledgrid::kFecScratchBytes] = {};
 std::uint8_t mailbox_frames[ledgrid::kFrameMailboxSlots][kMaxRgbBytes] = {};
 ledgrid::LatestFrameMailbox frame_mailbox;
 portMUX_TYPE mailbox_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -110,15 +105,6 @@ std::uint64_t animation_started_us = 0;
 std::atomic<std::uint32_t> packets_received{0};
 std::atomic<std::uint32_t> crc_errors{0};
 std::atomic<std::uint32_t> crc_ok_packets{0};
-std::atomic<std::uint32_t> fec_packets_received{0};
-std::atomic<std::uint32_t> fec_packets_accepted{0};
-std::atomic<std::uint32_t> fec_corrected_packets{0};
-std::atomic<std::uint32_t> fec_corrected_codewords{0};
-std::atomic<std::uint32_t> fec_uncorrectable_packets{0};
-std::atomic<std::uint32_t> fec_semantic_crc_errors{0};
-std::atomic<std::uint32_t> fec_framing_errors{0};
-std::atomic<std::uint16_t> fec_last_decode_us{0};
-std::atomic<std::uint16_t> fec_max_decode_us{0};
 std::atomic<std::uint32_t> spi_queue_errors{0};
 std::atomic<std::uint32_t> display_errors{0};
 std::atomic<std::uint16_t> queued_transactions{0};
@@ -290,7 +276,7 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
   status.active_strips = output_configuration.strip_count;
   status.leds_per_strip = output_configuration.leds_per_strip;
   status.lane_mask = applied_lane_mask;
-  status.capabilities = (1U<<14) | (1U<<20) | (1U<<21);
+  status.capabilities = (1U<<14) | (1U<<21);
   status.global_strip_offset = configured_global_strip_offset;
   status.operation_sequence = operation_sequence;
   status.last_processed_command = last_processed_command;
@@ -299,24 +285,6 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
   status.logical_receiver_id = logical_receiver_id.load(std::memory_order_relaxed);
   status.stagger_phases =
       applied_stagger_phases.load(std::memory_order_relaxed);
-  status.fec_packets_received =
-      fec_packets_received.load(std::memory_order_relaxed);
-  status.fec_packets_accepted =
-      fec_packets_accepted.load(std::memory_order_relaxed);
-  status.fec_corrected_packets =
-      fec_corrected_packets.load(std::memory_order_relaxed);
-  status.fec_corrected_codewords =
-      fec_corrected_codewords.load(std::memory_order_relaxed);
-  status.fec_uncorrectable_packets =
-      fec_uncorrectable_packets.load(std::memory_order_relaxed);
-  status.fec_semantic_crc_errors =
-      fec_semantic_crc_errors.load(std::memory_order_relaxed);
-  status.fec_framing_errors =
-      fec_framing_errors.load(std::memory_order_relaxed);
-  status.fec_last_decode_us =
-      fec_last_decode_us.load(std::memory_order_relaxed);
-  status.fec_max_decode_us =
-      fec_max_decode_us.load(std::memory_order_relaxed);
   return status;
 }
 
@@ -481,7 +449,7 @@ void execute_command(const CommandQueue::Command& command) {
 }
 
 void command_executor() {
-  // Executor-owned payload survives every DMA/FEC buffer reuse while storage
+  // Executor-owned payload survives every DMA buffer reuse while storage
   // blocks. The queue counts this executing slot against its fixed capacity.
   static CommandQueue::Command command;
   while (true) {
@@ -541,52 +509,14 @@ void spi_service(void*) {
       const std::uint32_t decode_started =
           static_cast<std::uint32_t>(esp_timer_get_time());
       ledgrid::ReceiverPacketPayload decoded{};
-      ledgrid::ReceiverPacketDecodeReport decode_report{};
       const bool decoded_ok = ledgrid::decode_receiver_packet_payload(
-          packet, bytes, &decoded, &decode_report, fec_semantic_buffer,
-          sizeof(fec_semantic_buffer));
-      const auto fec_outcome = ledgrid::receiver_fec_packet_outcome(
-          decoded_ok, decode_report);
-      const bool fec_shaped =
-          fec_outcome != ledgrid::ReceiverFecPacketOutcome::NotFec;
-      if (fec_shaped) ++fec_packets_received;
-      const std::uint16_t decode_us = duration_u16(
+          packet, bytes, &decoded);
+      last_crc_us = duration_u16(
           static_cast<std::uint32_t>(esp_timer_get_time()) - decode_started);
-      last_crc_us = decode_us;
-      if (fec_shaped) {
-        fec_last_decode_us = decode_us;
-        std::uint16_t prior_max =
-            fec_max_decode_us.load(std::memory_order_relaxed);
-        while (decode_us > prior_max &&
-               !fec_max_decode_us.compare_exchange_weak(
-                   prior_max, decode_us, std::memory_order_relaxed)) {}
-      }
       if (!decoded_ok) {
         ++crc_errors;
-        if (fec_shaped) {
-          switch (fec_outcome) {
-            case ledgrid::ReceiverFecPacketOutcome::Uncorrectable:
-              ++fec_uncorrectable_packets;
-              break;
-            case ledgrid::ReceiverFecPacketOutcome::SemanticCrcError:
-              ++fec_semantic_crc_errors;
-              break;
-            default:
-              ++fec_framing_errors;
-              break;
-          }
-        }
       } else {
         ++crc_ok_packets;
-        if (fec_shaped) {
-          ++fec_packets_accepted;
-          if (decode_report.corrected_codewords != 0U) {
-            ++fec_corrected_packets;
-            fec_corrected_codewords.fetch_add(
-                decode_report.corrected_codewords,
-                std::memory_order_relaxed);
-          }
-        }
         const std::uint8_t* command = decoded.data;
         const std::size_t payload_bytes = decoded.size;
         const bool status_query = command[0] == static_cast<std::uint8_t>(

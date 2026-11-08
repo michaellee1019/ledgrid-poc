@@ -110,6 +110,20 @@ def normalize_dirty_ranges(
     if pixel_count < 0:
         raise ValueError(f"pixel_count must be non-negative, got {pixel_count}")
 
+    # Frame constructors often receive an already canonical tuple from a
+    # component or compositor. Validate that shape without sorting or copying it.
+    if type(ranges) is tuple:
+        previous_end = -1
+        for item in ranges:
+            if type(item) is not tuple or len(item) != 2:
+                break
+            start, end = item
+            if type(start) is not int or type(end) is not int or not previous_end < start < end <= pixel_count:
+                break
+            previous_end = end
+        else:
+            return ranges
+
     validated = []
     for index, item in enumerate(ranges):
         if isinstance(item, (str, bytes)) or not isinstance(item, Sequence) or len(item) != 2:
@@ -144,6 +158,8 @@ def union_dirty_ranges(
 ) -> DirtyRanges:
     """Return the canonical union used for movement and complete clearing."""
 
+    if len(range_groups) == 1:
+        return normalize_dirty_ranges(range_groups[0], pixel_count)
     return normalize_dirty_ranges(
         (item for group in range_groups for item in group), pixel_count
     )
@@ -762,6 +778,9 @@ class HostSceneCompositor:
         strip_offset: int,
         led_offset: int,
     ) -> DirtyRanges:
+        # OverlayFrame already validated these ranges against the same geometry.
+        if strip_offset == 0 and led_offset == 0:
+            return ranges
         slices = self._placement_slices(
             strip_offset=strip_offset, led_offset=led_offset
         )

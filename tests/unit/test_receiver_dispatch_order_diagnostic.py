@@ -43,7 +43,6 @@ class ReceiverDispatchOrderDiagnosticTests(unittest.TestCase):
             "full_frame_transfers": 10,
             "full_frame_status_transfers": 1,
             "full_frame_status_sample_misses": 0,
-            "fec_frames_sent": 10,
             "receiver_packets": 20,
             "receiver_crc_errors": 2,
             "receiver_frames_accepted": 8,
@@ -52,13 +51,6 @@ class ReceiverDispatchOrderDiagnosticTests(unittest.TestCase):
             "receiver_spi_queue_errors": 0,
             "receiver_display_errors": 0,
             "receiver_status_misses": 1,
-            "receiver_fec_packets_received": 10,
-            "receiver_fec_packets_accepted": 8,
-            "receiver_fec_corrected_packets": 0,
-            "receiver_fec_corrected_codewords": 0,
-            "receiver_fec_uncorrectable_packets": 2,
-            "receiver_fec_semantic_crc_errors": 0,
-            "receiver_fec_framing_errors": 0,
         }
         before = [{name: 0 for name in fields}]
         self.assertEqual(counter_deltas(before, [fields])[0]["receiver_crc_errors"], 2)

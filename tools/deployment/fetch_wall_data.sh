@@ -9,17 +9,19 @@ LOCAL_DIR="${LOCAL_DIR:-.}"
 
 # shellcheck source=ssh_helpers.sh
 source "$(dirname "$0")/ssh_helpers.sh"
+rsync_ssh=$(python3 "$_deployment_helper_dir/deploy_ssh.py" --rsync)
 
 local_config_dir="$LOCAL_DIR/config"
 local_presets_dir="$LOCAL_DIR/presets/animations"
-remote_config_dir="~/$DEPLOY_DIR/config"
-remote_presets_dir="~/$DEPLOY_DIR/presets/animations"
+validate_deploy_dir "$DEPLOY_DIR"
+remote_config_dir="~/$DEPLOY_DIR/data/config"
+remote_presets_dir="~/$DEPLOY_DIR/data/presets/animations"
 mask_files=(plant_pixel_map_32x138.json plant_globe_map_32x138.json)
 
 mkdir -p "$local_config_dir" "$local_presets_dir"
 
 echo "[INFO] Checking painter data on $PI_HOST..."
-ssh $SSH_OPTS "$PI_HOST" \
+ssh "${SSH_OPTS[@]}" "$PI_HOST" \
     "test -d $remote_presets_dir && test -f $remote_config_dir/${mask_files[0]} && test -f $remote_config_dir/${mask_files[1]}"
 
 echo "[INFO] Refreshing checked-in plant masks..."
@@ -27,7 +29,7 @@ for mask_file in "${mask_files[@]}"; do
     rsync -az \
         --itemize-changes \
         --omit-dir-times \
-        -e "ssh $SSH_OPTS" \
+        -e "$rsync_ssh" \
         "$PI_HOST:$remote_config_dir/$mask_file" \
         "$local_config_dir/$mask_file"
 done
@@ -38,7 +40,7 @@ fetch_output=$(rsync -az \
     --itemize-changes \
     --omit-dir-times \
     --exclude 'before-deploy.json' \
-    -e "ssh $SSH_OPTS" \
+    -e "$rsync_ssh" \
     "$PI_HOST:$remote_presets_dir/" \
     "$local_presets_dir/")
 

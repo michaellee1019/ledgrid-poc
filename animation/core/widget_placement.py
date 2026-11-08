@@ -80,25 +80,22 @@ def resolve_widget_placement(
     if placement["mode"] != "auto":
         raise ValueError("widget placement mode must be auto or manual")
 
-    candidates = (
-        (strip, led)
-        for strip in range(strip_bounds[0], strip_bounds[1] + 1)
-        for led in range(led_bounds[0], led_bounds[1] + 1)
-    )
-
-    def score(candidate: tuple[int, int]) -> tuple[int, int, int, int, int, int]:
-        strip, led = candidate
-        plant_overlap, widget_overlap = _overlap_counts(
-            occupied, safe, reserved, min_strip, max_strip, min_led, max_led, strip, led,
-        )
-        # Plant clearance is an installation constraint, so prefer preserving
-        # it before resolving an otherwise equivalent Widget collision.
-        return (plant_overlap, widget_overlap, abs(strip) + abs(led), abs(led), strip, led)
-
-    strip, led = min(candidates, key=score)
-    plant_overlap, widget_overlap = _overlap_counts(
-        occupied, safe, reserved, min_strip, max_strip, min_led, max_led, strip, led,
-    )
+    footprint = occupied[min_strip:max_strip + 1, min_led:max_led + 1]
+    windows = np.lib.stride_tricks.sliding_window_view
+    plant_counts = np.einsum("ijkl,kl->ij", windows(~safe, footprint.shape), footprint, dtype=np.int32)
+    widget_counts = np.zeros_like(plant_counts)
+    if np.any(reserved):
+        widget_counts = np.einsum("ijkl,kl->ij", windows(reserved, footprint.shape), footprint, dtype=np.int32)
+    # Resolve both overlap criteria before applying the same translation tie-breaks.
+    best_plants = plant_counts == plant_counts.min()
+    strip_indices, led_indices = np.nonzero(best_plants & (widget_counts == widget_counts[best_plants].min()))
+    strips = strip_indices + strip_bounds[0]
+    leds = led_indices + led_bounds[0]
+    nearest = np.lexsort((leds, strips, np.abs(leds), np.abs(strips) + np.abs(leds)))[0]
+    strip, led = int(strips[nearest]), int(leds[nearest])
+    index = (strip_indices[nearest], led_indices[nearest])
+    plant_overlap = int(plant_counts[index])
+    widget_overlap = int(widget_counts[index])
     overlap = plant_overlap + widget_overlap
     warnings = ["No fully clear placement is available; using the least-overlapping position."] if overlap else []
     if plant_overlap:

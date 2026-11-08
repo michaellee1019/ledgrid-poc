@@ -103,6 +103,12 @@ class LivingEcosystemAnimation(CadencedSculpture):
         self.trees = np.column_stack((self.rng.uniform(0, self._shape[0], trees), self.rng.uniform(0, self._shape[1], trees))).astype(np.float32)
         self.season = float(self.rng.random())
 
+        # Trees stay fixed until the next world reset, so their glow is static.
+        self._tree_accent = np.zeros(self._shape, dtype=self._x.dtype)
+        for tx, ty in self.trees:
+            distance = (self._x - (tx / self._shape[0] * 2 - 1)) ** 2 + (self._y - (ty / self._shape[1] * 2 - 1)) ** 2
+            self._tree_accent = np.maximum(self._tree_accent, np.exp(-distance / .008) * .62)
+
     def reset_simulation(self): super().reset_simulation(); self._init_world()
 
     def get_parameter_schema(self):
@@ -163,10 +169,13 @@ class LivingEcosystemAnimation(CadencedSculpture):
         self.advance_bounded(tick, self._step, 10)
         x, y = self._x, self._y; river = np.exp(-np.square((x - .18 * np.sin(y * 4 + tick*.02)) / .20))
         field = np.clip(.18 + .28*np.sin(y*4 + self.season*math.tau) + .16*np.cos(x*6-y*2), 0., 1.)
-        value, accent = np.maximum(field, river*.62), river*.35
-        for tx, ty in self.trees: accent = np.maximum(accent, np.exp(-((x-(tx/self._shape[0]*2-1))**2 + (y-(ty/self._shape[1]*2-1))**2)/.008) * .62)
-        for hx, hy in self.herd: accent[int(np.clip(round(hx),0,self._shape[0]-1)), int(np.clip(round(hy),0,self._shape[1]-1))] = 1.
-        for hx, hy in self.hunters: value[int(np.clip(round(hx),0,self._shape[0]-1)), int(np.clip(round(hy),0,self._shape[1]-1))] = 1.
+        value = np.maximum(field, river * .62)
+        accent = np.maximum(river * .35, self._tree_accent)
+        pixel_limits = (self._shape[0] - 1, self._shape[1] - 1)
+        herd_x, herd_y = np.clip(np.rint(self.herd).astype(np.intp), 0, pixel_limits).T
+        hunter_x, hunter_y = np.clip(np.rint(self.hunters).astype(np.intp), 0, pixel_limits).T
+        accent[herd_x, herd_y] = 1.
+        value[hunter_x, hunter_y] = 1.
         fireflies = np.maximum(0., np.sin(x*31 + y*17 + tick*.17))**28 * self.params["night_life"]
         return self.finish_frame(tick, self.colorize(value, np.maximum(accent, fireflies)))
 

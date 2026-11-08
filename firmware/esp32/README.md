@@ -8,7 +8,7 @@ Build the installed target with `pio run -e esp32-s3-devkitc-1` and run portable
 transport/encoder/command-queue checks with `pio test -e native` from this directory.
 
 The installed wall is 33×138: logical receivers 0–3 have eight strips each at
-offsets 0, 8, 16, 24; receiver 4 has one strip at offset 32. Host mapping applies
+offsets 8, 0, 24, 16 respectively; receiver 4 has one strip at offset 32. Host mapping applies
 calibrated lane/strip orientation. Receiver 4's one strip broadcasts to the
 configured output mask. Brightness initializes to zero and changes only on an
 explicit host command.
@@ -23,12 +23,11 @@ commands execute in order, followed by one rejection. Admission then reopens
 for fresh host frames and controls; rejected commands are never replayed.
 A transient burst must not leave a connected receiver permanently frozen.
 
-Transport retains aligned envelope v1 and protected FEC v7, bounded to 4096 wire
-bytes. Status retains the LGS8 layout and trailing CRC32 so host transport code
-can retain the proven parser offsets; retired scene/profile/module fields are
-zero and their capability bits are absent. Base counters occupy bytes 5–63,
-capabilities 64–67, global strip offset 80–83, receiver id 312, last command 313,
-stagger 314, operation sequence 316–319, FEC counters 1216–1247 and CRC32 1248–1251.
+Aligned envelope v1 protects payloads with CRC16 and is bounded to 4096 wire
+bytes. LGS8 status uses CRC32 and keeps reserved bytes zero. Base counters
+occupy bytes 5–63, capabilities 64–67, global strip offset 80–83, receiver ID
+312, last command 313, stagger 314, operation sequence 316–319, and CRC32
+1248–1251.
 Status reports transport/output observations, not exact scene-display identity.
 SPI responses are queued before the command they accompany; callers must account
 for queue depth rather than treating the immediately returned bytes as an ACK.

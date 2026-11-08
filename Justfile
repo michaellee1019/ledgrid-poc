@@ -97,7 +97,7 @@ setup:
 	bash tools/deployment/setup.sh
 
 # Run every local regression gate: Python, rendering performance, and firmware.
-test: test-composer-current test-firmware test-deployment
+test: test-composer-current test-rendering test-firmware test-deployment
 
 # Discover unit tests in both shared code and self-contained animation plugins.
 test-unit:
@@ -105,8 +105,8 @@ test-unit:
 
 # Verify the host rendering pipeline and its performance budget.
 test-rendering:
-	{{python_env}} pytest -q animation/core/tests/test_frame_pipeline.py tests/unit/test_spi_crc.py
-	{{python_env}} python tools/benchmarks/animation_render.py --frames 100 --stress --scenes --check --max-p95-ms 4.0 --json
+	{{python_env}} pytest -q animation/core/tests/test_frame_pipeline.py tests/unit/test_all_composer_animations_live.py tests/unit/test_browser_python_catalog_matrix.py tests/unit/test_canonical_scene_runtime.py tests/unit/test_host_scene_compositor.py tests/unit/test_widget_placement.py tests/unit/test_just_acceptance_recipes.py
+	{{python_env}} python tools/benchmarks/animation_render.py --frames 100 --stress --check --max-p95-ms 4.0 --json
 
 # Run native firmware tests, build the production target, and enforce dependencies.
 test-firmware:
@@ -117,8 +117,8 @@ test-firmware:
 
 # Current deployment/data behavior and maintained shell syntax.
 test-deployment:
-	{{python_env}} pytest -q tests/unit/test_deploy_simple.py tests/unit/test_deploy_settings.py tests/unit/test_deploy_captured.py tests/unit/test_configure_spi.py tests/unit/test_server_startup.py
-	for script in tools/deployment/*.sh scripts/start_systemd.sh; do bash -n "$script"; done
+	{{python_env}} pytest -q tests/unit/test_deploy_simple.py tests/unit/test_deploy_settings.py tests/unit/test_deploy_captured.py tests/unit/test_configure_spi.py tests/unit/test_server_startup.py tests/unit/test_deploy_ssh.py tests/unit/test_remote_wall_tools.py tests/unit/test_output_rate_sweep.py
+	for script in tools/deployment/*.sh tools/diagnostics/remote_diagnostics.sh scripts/start_systemd.sh; do bash -n "$script"; done
 
 # Full local readiness gate.
 preflight: test
@@ -129,7 +129,7 @@ test-scene-fast:
 
 # Current phone/desktop Composer and retained browser renderer contracts.
 test-composer-current:
-    {{python_env}} pytest -q tests/unit/test_scene_state_manager.py tests/unit/test_host_compositing_vectors.py tests/unit/test_receiver_status.py tests/unit/test_receiver_status_integrity.py tests/unit/test_browser_scene_contract.py tests/unit/test_spi_fec_envelope.py tests/unit/test_spi_crc.py tests/unit/test_composer_async_stop.py tests/unit/test_composer_simple_playback.py tests/unit/test_browser_composer_asset_publication.py tests/unit/test_composer_runtime_preview.py tests/unit/test_component_catalog.py tests/unit/test_media_composer.py tests/unit/test_composer_slice.py tests/unit/test_host_browser_rendering.py tests/unit/test_host_full_controller.py tests/unit/test_controller_command_queue.py tests/unit/test_retained_simulations.py
+    {{python_env}} pytest -q tests/unit/test_scene_state_manager.py tests/unit/test_host_compositing_vectors.py tests/unit/test_receiver_status.py tests/unit/test_receiver_status_integrity.py tests/unit/test_browser_scene_contract.py tests/unit/test_spi_aligned_envelope.py tests/unit/test_spi_crc.py tests/unit/test_composer_async_stop.py tests/unit/test_composer_simple_playback.py tests/unit/test_browser_composer_asset_publication.py tests/unit/test_composer_runtime_preview.py tests/unit/test_component_catalog.py tests/unit/test_media_composer.py tests/unit/test_composer_slice.py tests/unit/test_host_browser_rendering.py tests/unit/test_host_full_controller.py tests/unit/test_controller_command_queue.py tests/unit/test_retained_simulations.py tests/unit/test_nimbus_gamepad.py
 
 test-demo: test-composer-current test-deployment
 

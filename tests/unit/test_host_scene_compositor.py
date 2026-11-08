@@ -40,6 +40,16 @@ class HostSceneCompositorTest(unittest.TestCase):
         self.assertFalse(np.array_equal(ordered.pixels[0], reversed_frame.pixels[0]))
         self.assertEqual(reversed_frame.dirty_ranges, ((0, 1),))
 
+    def test_unmoved_plane_preserves_fragmented_dirty_ranges(self) -> None:
+        base = self.base()
+        initial = self.overlay({})
+        self.compositor.compose(base, (PlacedOverlay(initial),))
+        pixels = {0: (20, 0, 0, 255), 2: (0, 20, 0, 255), 3: (0, 0, 20, 255)}
+        overlay = self.overlay(pixels, revision=2, dirty_ranges=((3, 4), (0, 1), (2, 3)))
+        result = self.compositor.compose(BaseFrame(base.pixels, changed=False), (PlacedOverlay(overlay),))
+        self.assertEqual(result.dirty_ranges, ((0, 1), (2, 4)))
+        self.assertEqual(self.compositor.aggregate_foreground().dirty_ranges, result.dirty_ranges)
+
     def test_transparent_and_opaque_black_are_byte_exact(self) -> None:
         result = self.compositor.compose(self.base(), (PlacedOverlay(self.overlay({
             0: (0, 0, 0, 0), 1: (0, 0, 0, 255),

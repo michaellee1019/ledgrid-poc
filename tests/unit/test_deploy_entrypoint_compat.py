@@ -24,8 +24,11 @@ class DeployEntrypointCompatTests(unittest.TestCase):
             (app / "requirements.txt").write_text("flask\n", encoding="utf-8")
             self.assertEqual(deploy_target.requirements_file(app).name, "requirements.txt")
 
-    def test_readiness_url_uses_status_endpoint(self):
-        self.assertEqual(deploy_target.readiness_url("5000"), "http://127.0.0.1:5000/api/status")
+    def test_readiness_url_uses_current_telemetry_endpoint(self):
+        self.assertEqual(
+            deploy_target.composer_readiness_url("5000"),
+            "http://127.0.0.1:5000/api/v1/composer/operations/telemetry",
+        )
 
     def test_stop_service_tolerates_missing_unit(self):
         with patch.object(deploy_target.subprocess, "run", return_value=type("R", (), {"returncode": 5})()) as run:

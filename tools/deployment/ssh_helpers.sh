@@ -2,44 +2,24 @@
 # Source after setting PI_HOST if you need a non-default host.
 
 PI_HOST="${PI_HOST:-ledgridwall5@ledgridwall5.local}"
-PI_USER="${PI_USER:-${PI_HOST%@*}}"
-SSH_OPTS="${SSH_OPTS:--o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new}"
-SSH_OPTS_TTY="${SSH_OPTS_TTY:--o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new}"
+_deployment_helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+wall_ssh_options=$(python3 "$_deployment_helper_dir/deploy_ssh.py") || exit 1
+if [[ "$PI_HOST" == -* ]]; then
+    echo "Invalid SSH target" >&2
+    exit 1
+fi
+SSH_OPTS=()
+while IFS= read -r option; do
+    SSH_OPTS+=("$option")
+done <<< "$wall_ssh_options"
 
-_deployment_repo_root() {
-    cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
-}
-
-_configure_deploy_ssh_identity() {
-    if [[ "${SSH_OPTS:-}" == *" -i "* || "${SSH_OPTS:-}" == "-i "* ]]; then
-        return 0
-    fi
-
-    local root="${DEPLOY_REPO_ROOT:-$(_deployment_repo_root)}"
-    local candidate=""
-
-    if [ -n "${SSH_KEY:-}" ]; then
-        candidate="$SSH_KEY"
-    elif [ -n "${LEDGRID_SSH_KEY:-}" ]; then
-        candidate="$LEDGRID_SSH_KEY"
-    elif [ -f "$root/.gpt-key" ] && [ -r "$root/.gpt-key" ]; then
-        candidate="$root/.gpt-key"
-    else
-        return 0
-    fi
-
-    if [ ! -f "$candidate" ] || [ ! -r "$candidate" ]; then
-        _deploy_log_error "Configured SSH identity is missing or unreadable: $candidate"
+validate_deploy_dir() {
+    local dir=$1
+    if [[ ! "$dir" =~ ^[[:alnum:]_.-]+(/[[:alnum:]_.-]+)*$ ]] || [[ "/$dir/" == *"/../"* || "/$dir/" == *"/./"* ]]; then
+        echo "DEPLOY_DIR must be a named directory below the target home" >&2
         return 1
     fi
-
-    local resolved
-    resolved="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
-    SSH_OPTS="-i $resolved -o IdentitiesOnly=yes $SSH_OPTS"
-    SSH_OPTS_TTY="-i $resolved -o IdentitiesOnly=yes $SSH_OPTS_TTY"
 }
-
-_configure_deploy_ssh_identity || exit 1
 
 _deploy_log_info() {
     if declare -F log_info >/dev/null 2>&1; then
@@ -65,16 +45,8 @@ _deploy_log_error() {
     fi
 }
 
-_deploy_log_warning() {
-    if declare -F log_warning >/dev/null 2>&1; then
-        log_warning "$1"
-    else
-        echo "[WARNING] $1"
-    fi
-}
-
 remote_has_passwordless_sudo() {
-    ssh $SSH_OPTS "$PI_HOST" "sudo -n true" >/dev/null 2>&1
+    ssh "${SSH_OPTS[@]}" "$PI_HOST" "sudo -n true" >/dev/null 2>&1
 }
 
 ensure_remote_passwordless_sudo() {
@@ -83,24 +55,18 @@ ensure_remote_passwordless_sudo() {
     fi
 
     _deploy_log_info "Passwordless sudo is not configured on $PI_HOST"
-    _deploy_log_info "SSH keys handle login; sudo still needs your Pi password once on a fresh install"
-    _deploy_log_info "You will be prompted for your Pi user password now..."
+    _deploy_log_info "Setup will ask for the Pi account's sudo password"
 
-    if ! ssh -t $SSH_OPTS_TTY "$PI_HOST" "bash -s" <<EOF
-set -euo pipefail
-SUDOERS_FILE="/etc/sudoers.d/ledgrid-deploy"
-TMP="\$(mktemp)"
-trap 'rm -f "\$TMP"' EXIT
-echo "${PI_USER} ALL=(ALL) NOPASSWD: ALL" > "\$TMP"
-sudo install -m 440 -o root -g root "\$TMP" "\$SUDOERS_FILE"
-sudo visudo -c -f "\$SUDOERS_FILE"
-echo "[SUCCESS] Passwordless sudo configured for \$(whoami)"
-EOF
+    # Pass the setup command as an argument so the interactive sudo prompt
+    # receives input from the workstation terminal.
+    if ! ssh -t "${SSH_OPTS[@]}" "$PI_HOST" 'set -eu
+        tmp=$(mktemp)
+        trap "rm -f -- \"$tmp\"" EXIT
+        printf "%s ALL=(ALL) NOPASSWD: ALL\n" "$(id -un)" > "$tmp"
+        sudo visudo -c -f "$tmp"
+        sudo install -m 440 -o root -g root "$tmp" /etc/sudoers.d/ledgrid-deploy'
     then
         _deploy_log_error "Failed to configure passwordless sudo on $PI_HOST"
-        _deploy_log_error "Run manually on the Pi:"
-        _deploy_log_error "  echo '${PI_USER} ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/ledgrid-deploy"
-        _deploy_log_error "  sudo chmod 440 /etc/sudoers.d/ledgrid-deploy"
         return 1
     fi
 
@@ -109,7 +75,7 @@ EOF
         return 1
     fi
 
-    _deploy_log_success "Passwordless sudo is configured for $PI_USER"
+    _deploy_log_success "Passwordless sudo is configured on $PI_HOST"
 }
 
 wait_for_remote_ssh() {
@@ -121,7 +87,7 @@ wait_for_remote_ssh() {
     sleep 5
 
     while [ "$attempt" -lt "$max_attempts" ]; do
-        if ssh $SSH_OPTS "$PI_HOST" "echo ok" >/dev/null 2>&1; then
+        if ssh "${SSH_OPTS[@]}" "$PI_HOST" "echo ok" >/dev/null 2>&1; then
             sleep 3
             return 0
         fi
@@ -134,19 +100,9 @@ wait_for_remote_ssh() {
 }
 
 remote_spi_devices_ready() {
-    ssh $SSH_OPTS "$PI_HOST" "LEDGRID_HAT=${LEDGRID_HAT:-0} bash -s" <<'EOF'
+    ssh "${SSH_OPTS[@]}" "$PI_HOST" "bash -s" <<'EOF'
 set -euo pipefail
-is_hat() {
-  case "${LEDGRID_HAT:-0}" in
-    1|true|TRUE|yes|YES) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-if is_hat; then
-  required=(/dev/spidev1.0 /dev/spidev1.1)
-else
-  required=(/dev/spidev0.0 /dev/spidev0.1 /dev/spidev0.3 /dev/spidev1.0 /dev/spidev1.1)
-fi
+required=(/dev/spidev0.0 /dev/spidev0.1 /dev/spidev0.3 /dev/spidev1.0 /dev/spidev1.1)
 for dev in "${required[@]}"; do
   if [ ! -e "$dev" ]; then
     exit 1
@@ -159,25 +115,27 @@ EOF
 ensure_remote_spi() {
     local deploy_dir="${DEPLOY_DIR:-ledgrid-pod}"
     local output status config_changed
+    local quoted_dir
+    validate_deploy_dir "$deploy_dir" || return 1
+    printf -v quoted_dir '%q' "$deploy_dir"
 
     _deploy_log_info "Ensuring boot SPI config (/boot/firmware/config.txt) and device nodes..."
 
-    if ! output=$(ssh $SSH_OPTS "$PI_HOST" "bash -s" <<EOF
+    if ! output=$(ssh "${SSH_OPTS[@]}" "$PI_HOST" "bash -s" 2>&1 <<EOF
 set -euo pipefail
-deploy_dir="${deploy_dir}"
+deploy_dir=${quoted_dir}
 for candidate in \
   "\$HOME/\${deploy_dir}/incoming/tools/deployment/configure_spi.sh" \
-  "\$HOME/\${deploy_dir}/app/tools/deployment/configure_spi.sh" \
-  "\$HOME/\${deploy_dir}/tools/deployment/configure_spi.sh"; do
+  "\$HOME/\${deploy_dir}/app/tools/deployment/configure_spi.sh"; do
   if [ -f "\$candidate" ]; then
-    LEDGRID_HAT=${LEDGRID_HAT:-0} bash "\$candidate"
+    LEDGRID_HAT=0 bash "\$candidate"
     exit 0
   fi
 done
 echo "[ERROR] configure_spi.sh not found under ~/\${deploy_dir}" >&2
 exit 1
 EOF
-    2>&1); then
+    ); then
         _deploy_log_error "SPI configuration failed"
         echo "$output" >&2
         return 1
@@ -192,13 +150,9 @@ EOF
         _deploy_log_success "SPI boot config and device nodes are ready on $PI_HOST"
         return 0
     fi
-
-    if [ "${SKIP_SPI_REBOOT:-}" = "1" ]; then
-        _deploy_log_warning "SPI not fully ready; skipping reboot (SKIP_SPI_REBOOT=1)"
-        if [ "$config_changed" = "1" ]; then
-            _deploy_log_warning "Boot config was updated — reboot the Pi manually before starting the controller"
-        fi
-        return 0
+    if [ "$status" != "needs_reboot" ]; then
+        _deploy_log_error "Unexpected SPI boot configuration status: $status"
+        return 1
     fi
 
     if [ "$config_changed" = "1" ]; then
@@ -206,7 +160,7 @@ EOF
     else
         _deploy_log_info "SPI device nodes missing. Rebooting $PI_HOST..."
     fi
-    ssh $SSH_OPTS "$PI_HOST" "sudo reboot" >/dev/null 2>&1 || true
+    ssh "${SSH_OPTS[@]}" "$PI_HOST" "sudo -n reboot" >/dev/null 2>&1 || true
 
     if ! wait_for_remote_ssh; then
         return 1

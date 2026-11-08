@@ -19,6 +19,7 @@ from animation.libraries.scene_palettes import HOLIDAY_TRIPLES, holiday_stop
 
 Cell = tuple[int, int]
 Direction = tuple[int, int]
+RGB = tuple[float, float, float] | np.ndarray
 UP: Direction = (0, -1)
 RIGHT: Direction = (1, 0)
 DOWN: Direction = (0, 1)
@@ -73,7 +74,7 @@ class SnakeAnimation(AnimationBase):
         self._canvas = np.zeros((self.width, self.height, 3), dtype=np.uint8)
         self._trail = np.zeros((self.width, self.height, 3), dtype=np.float32)
         self._snake_palette_cache: dict[
-            float, tuple[str, str, int, tuple[np.ndarray, ...], np.ndarray]
+            float, tuple[str, str, int, tuple[RGB, ...], RGB]
         ] = {}
         self._presentation_context: ResolvedScene | None = None
         self._last_tick: int | None = None
@@ -197,10 +198,11 @@ class SnakeAnimation(AnimationBase):
                 if first not in self.walls and second not in self.walls: self.portals[first] = second; self.portals[second] = first
 
     def _spawn_snake(self, snake: SnakeAgent) -> None:
-        occupied, length = self._occupied(), self.params["initial_length"]
+        blocked = self._occupied() | self.walls | self.portals.keys()
+        length = self.params["initial_length"]
         for _ in range(240):
             direction = self._rng.choice(DIRECTIONS); head = (self._rng.randrange(self.width), self._rng.randrange(self.height)); body = deque((head[0] - direction[0] * offset, head[1] - direction[1] * offset) for offset in range(length))
-            if all(0 <= x < self.width and 0 <= y < self.height and (x, y) not in occupied | self.walls | set(self.portals) for x, y in body): snake.body, snake.direction, snake.target_length, snake.respawn_ticks = body, direction, length, 0; return
+            if all(0 <= x < self.width and 0 <= y < self.height and (x, y) not in blocked for x, y in body): snake.body, snake.direction, snake.target_length, snake.respawn_ticks = body, direction, length, 0; return
         snake.body.clear(); snake.respawn_ticks = 6 + self._rng.randrange(8)
 
     def _occupied(self) -> set[Cell]: return {cell for snake in self.snakes for cell in snake.body}
@@ -222,9 +224,15 @@ class SnakeAnimation(AnimationBase):
         for direction in choices:
             candidate = self._advance(snake.head, direction)
             if candidate is None or candidate in self.walls: continue
-            blocked = occupied - ({snake.body[-1]} if candidate not in self.food and len(snake.body) >= snake.target_length else set())
-            if candidate in blocked: continue
-            exits = sum(self._advance(candidate, step) not in blocked | self.walls for step in DIRECTIONS); distance = min((self._distance(candidate, food) for food in self.food), default=0); candidate_score = exits * 3. - distance * 1.15 + (.18 if direction == snake.direction else 0.) + self._rng.random() * .1 + (30. if candidate in self.food else 0.)
+            eats = candidate in self.food
+            departing_tail = snake.body[-1] if not eats and len(snake.body) >= snake.target_length else None
+            if candidate in occupied and candidate != departing_tail: continue
+            exits = sum(
+                neighbor not in self.walls and (neighbor not in occupied or neighbor == departing_tail)
+                for neighbor in (self._advance(candidate, step) for step in DIRECTIONS)
+            )
+            distance = min((self._distance(candidate, food) for food in self.food), default=0)
+            candidate_score = exits * 3. - distance * 1.15 + (.18 if direction == snake.direction else 0.) + self._rng.random() * .1 + (30. if eats else 0.)
             if candidate_score > score: best, score = direction, candidate_score
         return best
 
@@ -256,12 +264,18 @@ class SnakeAnimation(AnimationBase):
             directions[index] = self._choose_direction(snake, occupied); plans[index] = self._advance(snake.head, directions[index])
         heads, dead = Counter(cell for cell in plans.values() if cell is not None), set()
         for index, candidate in plans.items():
-            snake = self.snakes[index]; blocked = occupied - ({snake.body[-1]} if candidate not in self.food and len(snake.body) >= snake.target_length else set()) if candidate is not None else occupied
-            if candidate is None or candidate in self.walls or heads[candidate] > 1 or candidate in blocked: dead.add(index)
+            snake = self.snakes[index]
+            departing_tail = snake.body[-1] if candidate not in self.food and len(snake.body) >= snake.target_length else None
+            if candidate is None or candidate in self.walls or heads[candidate] > 1 or (
+                candidate in occupied and candidate != departing_tail
+            ):
+                dead.add(index)
         for index, candidate in plans.items():
             snake = self.snakes[index]
             if index in dead:
-                for cell in snake.body: self._trail[cell] = np.maximum(self._trail[cell], self._snake_color(snake.hue_offset, "neutral", .55))
+                color = self._snake_color(snake.hue_offset, "neutral", .55)
+                for cell in snake.body:
+                    self._trail[cell] = np.maximum(self._trail[cell], color)
                 snake.body.clear(); snake.respawn_ticks = 6 + self._rng.randrange(8); self.deaths += 1; continue
             snake.direction = directions[index]; snake.body.appendleft(candidate)
             if candidate in self.food: self.food.remove(candidate); snake.target_length = min(self.params["max_length"], snake.target_length + self.params["growth_per_food"]); self.food_eaten += 1
@@ -272,8 +286,8 @@ class SnakeAnimation(AnimationBase):
         _, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
         self._canvas.fill(0)
         np.maximum(self._canvas, np.clip(self._trail * self.params["trails"], 0., 255.).astype(np.uint8), out=self._canvas)
-        wall = np.asarray(primary) * .18
-        for cell in self.walls: self._canvas[cell] = wall.astype(np.uint8)
+        wall = (np.asarray(primary) * .18).astype(np.uint8)
+        for cell in self.walls: self._canvas[cell] = wall
         for index, cell in enumerate(self.portals): self._paint_cell(cell, np.asarray((primary, accent)[index % 2]), self.params["glow"] * .45)
         food_cells = sorted(self.food)
         self._paint_cells(
@@ -284,12 +298,18 @@ class SnakeAnimation(AnimationBase):
             ),
             self.params["glow"] * .5,
         )
+        body_cells: list[Cell] = []
+        head_cells: list[Cell] = []
+        body_colors: list[RGB] = []
+        head_colors: list[RGB] = []
+        style = self.params["visual_style"]
         for snake in self.snakes:
-            length = max(1, len(snake.body))
-            style = self.params["visual_style"]
+            if not snake.body:
+                continue
+            length = len(snake.body)
             cached = self._snake_palette_cache.get(snake.hue_offset)
             if cached is None or cached[:3] != (palette_id, style, length):
-                body_colors = tuple(
+                gradient = tuple(
                     self._snake_color(
                         (snake.hue_offset + index / length * .32) % 1.,
                         palette_id,
@@ -301,13 +321,17 @@ class SnakeAnimation(AnimationBase):
                     palette_id,
                     style,
                     length,
-                    body_colors,
+                    gradient,
                     self._snake_color((snake.hue_offset + .18) % 1., palette_id, 1.),
                 )
                 self._snake_palette_cache[snake.hue_offset] = cached
-            _, _, _, body_colors, head_color = cached
-            self._paint_cells(tuple(reversed(snake.body)), body_colors, self.params["glow"] * .32)
-            if snake.head is not None: self._paint_cell(snake.head, head_color, self.params["glow"] * .65)
+            _, _, _, gradient, head_color = cached
+            body_cells.extend(reversed(snake.body))
+            body_colors.extend(gradient)
+            head_cells.append(snake.body[0])
+            head_colors.append(head_color)
+        self._paint_cells(body_cells, body_colors, self.params["glow"] * .32)
+        self._paint_cells(head_cells, head_colors, self.params["glow"] * .65)
         self._pixels[:] = self._canvas.reshape(self.get_pixel_count(), 3)
 
     def _paint_background(self, palette_id: str, phase_time: float) -> None:
@@ -326,7 +350,7 @@ class SnakeAnimation(AnimationBase):
     def _paint_cells(
         self,
         cells: tuple[Cell, ...] | list[Cell],
-        colors: tuple[np.ndarray, ...],
+        colors: tuple[RGB, ...] | list[RGB],
         glow: float,
     ) -> None:
         if not cells:
@@ -362,14 +386,21 @@ class SnakeAnimation(AnimationBase):
                 halo[neighbor_valid],
             )
 
-    def _snake_color(self, hue: float, palette_id: str, value: float) -> np.ndarray:
-        _, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"]); style_hue = {"classic": .31, "neon": .61, "fire": .05, "ice": .54, "sunset": .96, "prism": hue * 1.7}.get(self.params["visual_style"], hue); rgb = np.asarray(colorsys.hsv_to_rgb(style_hue % 1., .72 if self.params["visual_style"] == "classic" else .88, value)) * 255.
+    def _snake_color(self, hue: float, palette_id: str, value: float) -> RGB:
+        style = self.params["visual_style"]
+        style_hue = {"classic": .31, "neon": .61, "fire": .05, "ice": .54, "sunset": .96, "prism": hue * 1.7}.get(style, hue)
         if palette_id == "rainbow":
-            return np.clip(np.asarray(colorsys.hsv_to_rgb((style_hue + hue) % 1., .92, value)) * 255., 0., 255.)
+            red, green, blue = colorsys.hsv_to_rgb((style_hue + hue) % 1., .92, value)
+            return red * 255., green * 255., blue * 255.
         festive = holiday_stop(palette_id, hue)
         if festive is not None:
             return np.clip(np.asarray(festive, dtype=np.float32) * value, 0., 255.)
-        return np.clip(rgb * .4 + (np.asarray(primary) * .62 + np.asarray(accent) * .38) * .6, 0., 255.)
+        _, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
+        rgb = colorsys.hsv_to_rgb(style_hue % 1., .72 if style == "classic" else .88, value)
+        return tuple(
+            channel * 255. * .4 + (base * .62 + highlight * .38) * .6
+            for channel, base, highlight in zip(rgb, primary, accent)
+        )
 
     @classmethod
     def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:

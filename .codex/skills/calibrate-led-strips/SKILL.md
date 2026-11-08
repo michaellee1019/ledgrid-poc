@@ -6,13 +6,13 @@ description: Verify and calibrate the installed wall receiver permutation and ho
 # Calibrate LED Strips
 
 Use the current AGENTS.md host RGB contract. Measure one coordinate domain at a
-time and change only a domain proved wrong. Record known receiver-3 CRC/FEC noise;
-controller playback and connectivity do not prove exact physical display.
+time and change only a domain proved wrong. Record fresh receiver counters and
+physical display separately from controller playback and connectivity.
 
 ## Direct camera capture
 
 The documented Anker webcam is attached to the Mac, not the Pi. Use
-`python3 scripts/capture_anker_frame.py --list`, then capture with the exact
+`python3 .codex/skills/calibrate-led-strips/scripts/capture_anker_frame.py --list`, then capture with the exact
 camera name and an absolute output path. The helper enumerates AVFoundation,
 settles exposure and produces an unflipped image. If the documented camera is
 absent, establish which available camera points at the wall before capturing.
@@ -31,8 +31,9 @@ content and report the limitation. Do not silently replace a saved Scene.
 ## Independent geometry checks
 
 The fixed installation has 33 strips of 138 pixels, receiver widths
-`(8,8,8,8,1)`, routes `(0.0,0.1,1.1,1.0,1.2)`, and measured physical order
-`(0,1,2,3,4)`. Host strip direction is forward on every receiver. Check:
+`(8,8,8,8,1)`, routes `(1.0,1.1,0.0,0.1,0.3)`, and measured physical order
+`(1,0,3,2,4)`. Host strip order is reversed on logical receivers 2 and 3.
+Use the route and orientation table in `docs/HARDWARE.md` and check the following.
 
 1. One distinct saturated color per receiver for physical permutation.
 2. The same eight-level luminance ramp within each broad receiver, plus a
@@ -50,6 +51,4 @@ Update the fixed host mapping only when physical evidence establishes a change.
 Keep USB serial flashing identity separate from SPI routing and wall position.
 Run focused layout/configuration checks, deploy the affected layer, and repeat
 the pattern. Save raw captures, hashes, mapping, diagnostic definition, measured
-counters, and the limits of the camera view in the current Bead. Preserve
-hardware design assets and do not turn known receiver-3 degradation into an
-unrequested hardware investigation.
+counters, and the limits of the camera view in the current Bead.

@@ -17,7 +17,7 @@ def status(packets=1):
     reply[7]=255
     reply[8:10]=(138).to_bytes(2,'big')
     reply[12:16]=packets.to_bytes(4,'big')
-    reply[64:68]=(protocol.CAPABILITY_ALIGNED_ENVELOPE_V1|protocol.CAPABILITY_FEC_ENVELOPE_V7|protocol.CAPABILITY_STATUS_CRC32_V8).to_bytes(4,'big')
+    reply[64:68]=(protocol.CAPABILITY_ALIGNED_ENVELOPE_V1|protocol.CAPABILITY_STATUS_CRC32_V8).to_bytes(4,'big')
     reply[314]=3
     reply[-4:]=(binascii.crc32(reply[:-4])&0xffffffff).to_bytes(4,'big')
     return reply
@@ -67,7 +67,7 @@ def test_exact_33x138_five_receiver_routing_and_broadcast_tail():
     assert [int(x.frames[0][0,0]) for x in controller.devices]==[8,0,31,23,32]
     assert controller.receiver_lane_masks==(255,255,255,255,255)
     assert controller.devices[3].options['speed']==20_000_000
-    assert controller.devices[3].options['fec_transport'] is False
+    assert 'fec_transport' not in controller.devices[3].options
     assert controller.device_map == [(1, 0), (1, 1), (0, 0), (0, 1), (0, 3)]
     assert controller._devices_by_bus[1] == (0, 1)
     assert controller._devices_by_bus[0] == (2, 3, 4)
@@ -102,23 +102,23 @@ def test_brightness_zero_and_strict_frame_shape_are_preserved():
     controller.close()
 
 
-def test_only_complete_crc_checked_status_affects_connectivity_and_fec():
+def test_only_complete_crc_checked_status_affects_connectivity():
     with patch.object(protocol.spidev,'SpiDev',SPI):
-        receiver=protocol.LEDController(fec_transport=True)
+        receiver=protocol.LEDController()
         good=status(100)
         good[1216:1220]=(8).to_bytes(4,'big')
         good[1232:1236]=(2).to_bytes(4,'big')
         good[-4:]=(binascii.crc32(good[:-4])&0xffffffff).to_bytes(4,'big')
         assert receiver._update_receiver_status(good)
         assert receiver.get_stats()['receiver_connected']
-        assert receiver._fec_transport_enabled
-        assert receiver._receiver_fec_packets_received==8
-        assert receiver._receiver_fec_uncorrectable_packets==2
+
+
+
         for index in (12,64,1000,1232,1248):
             corrupt=bytearray(good);corrupt[index]^=1
             assert receiver._update_receiver_status(corrupt) is False
             assert receiver._receiver_packets==100
-            assert receiver._receiver_fec_packets_received==8
+
         assert receiver._update_receiver_status(good[:100]) is False
         receiver.close()
 

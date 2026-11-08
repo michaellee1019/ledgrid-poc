@@ -16,8 +16,6 @@ DeviceMapEntry = Tuple[int, int]
 
 # Transport identity stays on the V6 jumper map: logical 0-4 are spidev1.0,
 # 1.1, 0.0, 0.1, and 0.3. Physical left-to-right is a different permutation.
-# 2026-11-07 column_sequence after the first remap: 8-16 (SPI1 CE0), 26-17
-# (SPI0 CE1), 27-32 (SPI0 CE0 reversed), 8-1 (SPI1 CE1 reversed), then 33.
 # Physical LTR is SPI1 CE1, SPI1 CE0, SPI0 CE1 reversed, SPI0 CE0 reversed,
 # SPI0 CE3. V6 SPI1 CE0 is GPIO22 (header pin 15); CE1 is GPIO17 (pin 11).
 # The populated third-HAT module is SJ_SPI0_CE3 on GPIO6 (pin 31). SJ_SPI0_CE2
@@ -36,9 +34,7 @@ HAT_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (1, 1),
 )
 
-# Keep every SPI1 route at the same Hz so chip-select alternation does not
-# leave the shared controller in the wrong mode. New V6 boards ran SPI1 CE0/CE1
-# and SPI0 CE0/CE1/CE2 cleanly at 20 MHz until a measured shortfall.
+# Run all populated V6 carrier routes at the same 20 MHz clock.
 WALL_RECEIVER_SPI_SPEEDS_HZ = (
     20_000_000,
     20_000_000,

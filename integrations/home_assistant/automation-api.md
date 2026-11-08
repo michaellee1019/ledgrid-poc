@@ -81,8 +81,7 @@ Status has nested `settings` (`power`, `brightness`, `pace`,
 `animation_speed_scale`, `scene_digest`, `active_identity`, `last_command_id`
 and `last_applied_command_id` project the current observation for existing HA
 consumers. Stale output power/running is `null` and playback state is
-`unavailable`. Receiver connectivity is independent: receiver 3's accepted
-counter degradation does not alone make the controller unavailable.
+`unavailable`. Receiver connectivity is reported separately for all five routes.
 
 ## Shared Scene publication helper
 

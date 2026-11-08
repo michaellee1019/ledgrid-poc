@@ -42,5 +42,5 @@ class WallConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if self._async_current_entries():
                         return self.async_abort(reason="single_instance_allowed")
                     return self.async_create_entry(title="LED Grid Wall", data={CONF_URL: url})
-        default = entry.data[CONF_URL] if entry else "http://ledgridwall.local:5000"
+        default = entry.data[CONF_URL] if entry else "http://ledgridwall5.local:5000"
         return self.async_show_form(step_id=step, data_schema=vol.Schema({vol.Required(CONF_URL, default=default): str}), errors=errors)

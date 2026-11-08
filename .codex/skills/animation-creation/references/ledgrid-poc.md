@@ -1,7 +1,7 @@
 # Installed wall animation work
 
 Follow AGENTS.md and the October 9 simplification decision in ledgrid-poc-ve0.
-The installed wall has five receivers, 33 strips and 138 LEDs per strip.
+The Raspberry Pi 5 and V6 carriers serve five receivers, 33 strips and 138 LEDs per strip.
 Render full RGB frames on the host. Receiver-native modules, sparse overlays,
 transactional profiles and exact displayed-scene receipts are retired.
 
@@ -21,8 +21,8 @@ are not installed rates. Smooth playback matters; 150 FPS is the output goal.
 Prefer the existing .venv Python for focused tests. Browser smoke is needed for
 changed browser execution or wiring. Generate assets from source in staging.
 Use independent review for changed protocol, persistence or risky live state,
-then a focused wall check for affected physical output. Receiver-3 degradation
-is accepted; it alone does not warrant hardware investigation or rollback.
+then a focused wall check for affected physical output. Use fresh protected
+counter deltas on all five routes.
 
 Curated presets belong in plugin packages. Personal presets and Looks stay
 outside replaceable application files. Avoid broad qualification sweeps without

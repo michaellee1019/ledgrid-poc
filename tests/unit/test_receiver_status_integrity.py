@@ -44,29 +44,33 @@ def test_integrity_diagnostic_is_detached_and_never_treated_as_status():
         receiver.close()
 
 
-def test_fec_lifetime_counters_remain_truthful_across_corruption_and_reset():
-    fields = ('packets_received', 'packets_accepted', 'corrected_packets',
-              'corrected_codewords', 'uncorrectable_packets',
-              'semantic_crc_errors', 'framing_errors')
-    def sample(sequence, counts):
-        packet = bytearray(status(sequence))
-        for offset, value in zip(range(1216, 1244, 4), counts):
-            packet[offset:offset + 4] = value.to_bytes(4, 'big')
-        packet[-4:] = (binascii.crc32(packet[:-4]) & 0xffffffff).to_bytes(4, 'big')
-        return packet
+def test_historical_fec_status_fields_are_ignored_but_still_crc_protected():
+    # An older CRC-only receiver can advertise FEC and retain lifetime counters.
+    # These bytes remain in LGS8 until all peers roll forward independently.
+    packet = bytearray(status(123))
+    capabilities = int.from_bytes(packet[64:68], 'big') | (1 << 20)
+    packet[64:68] = capabilities.to_bytes(4, 'big')
+    packet[1216:1248] = bytes(range(32))
+    packet[-4:] = (binascii.crc32(packet[:-4]) & 0xffffffff).to_bytes(4, 'big')
     with patch.object(protocol.spidev, 'SpiDev', SPI):
         receiver = protocol.LEDController()
         try:
-            counts = (100, 90, 8, 12, 5, 3, 2)
-            assert receiver._update_receiver_status(sample(123, counts))
-            corrupted = sample(124, (999,) * 7)
-            corrupted[1232] ^= 1
-            assert not receiver._update_receiver_status(corrupted, full_status_expected=True)
-            stats = receiver.get_stats()
-            assert tuple(stats['receiver_fec_' + name] for name in fields) == counts
-            # Receiver restart exposes its actual lower lifetime values.
-            assert receiver._update_receiver_status(sample(1, (0,) * 7))
-            stats = receiver.get_stats()
-            assert tuple(stats['receiver_fec_' + name] for name in fields) == (0,) * 7
+            assert receiver._update_receiver_status(packet)
+            assert receiver.get_stats()['receiver_packets'] == 123
+            assert not any('fec' in key for key in receiver.get_stats())
+            packet[1232] ^= 1
+            assert not receiver._update_receiver_status(packet, full_status_expected=True)
+            assert receiver.get_stats()['receiver_packets'] == 123
         finally:
             receiver.close()
+
+
+def test_retired_fec_constructor_options_fail_before_opening_spi():
+    import pytest
+    from drivers.multi_device import MultiDeviceLEDController
+    with patch.object(protocol.spidev, 'SpiDev') as open_spi:
+        with pytest.raises(TypeError, match='fec_transport'):
+            protocol.LEDController(fec_transport=True)
+        with pytest.raises(TypeError, match='fec_receiver_ids'):
+            MultiDeviceLEDController(fec_receiver_ids=(3,))
+        open_spi.assert_not_called()

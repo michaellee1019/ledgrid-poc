@@ -53,6 +53,7 @@ PIECE_COLORS: Dict[str, Color] = {
     "T": (200, 0, 200),
     "Z": (255, 60, 60),
 }
+PIECE_KIND_BY_COLOR = {color: kind for kind, color in PIECE_COLORS.items()}
 
 SEMANTIC_PALETTES: Mapping[str, Mapping[str, Color]] = MappingProxyType({
     "neutral": MappingProxyType({
@@ -927,6 +928,12 @@ class TetrisAnimation(AnimationBase):
         candidates: List[Tuple[int, int, int, float]] = []
         rotations = TETROMINOS[piece.kind]['rotations']
         heights, column_holes, row_fill = self._board_metrics(board)
+        board_score_inputs = (
+            sum(column_holes),
+            sum(heights),
+            max(heights, default=0),
+            sum(abs(left - right) for left, right in zip(heights, heights[1:])),
+        )
         for rotation, coords in enumerate(rotations):
             width = self._shape_extent(coords, axis=0)
             for target_x in range(max(0, self.board_width - width) + 1):
@@ -936,13 +943,12 @@ class TetrisAnimation(AnimationBase):
                 if landing_y is None or landing_y < piece.y:
                     continue
                 score = self._score_placement(
-                    board,
                     coords,
                     target_x,
                     landing_y,
                     heights,
-                    column_holes,
                     row_fill,
+                    board_score_inputs,
                 )
                 candidates.append((rotation, target_x, landing_y, score))
 
@@ -1000,71 +1006,61 @@ class TetrisAnimation(AnimationBase):
         self,
         board: List[List[BoardCell]],
     ) -> Tuple[List[int], List[int], List[int]]:
-        heights: List[int] = []
-        column_holes: List[int] = []
-        for x in range(self.board_width):
-            first_filled: Optional[int] = None
-            holes = 0
-            for y in range(self.board_height):
-                if board[y][x]:
-                    if first_filled is None:
-                        first_filled = y
-                elif first_filled is not None:
-                    holes += 1
-            heights.append(
-                0 if first_filled is None else self.board_height - first_filled
-            )
-            column_holes.append(holes)
-        row_fill = [sum(cell is not None for cell in row) for row in board]
+        heights = [0] * self.board_width
+        occupied = [0] * self.board_width
+        row_fill = [len(row) - row.count(None) for row in board]
+        for y, (row, filled) in enumerate(zip(board, row_fill)):
+            if filled:
+                for x, cell in enumerate(row):
+                    if cell is not None:
+                        if heights[x] == 0:
+                            heights[x] = self.board_height - y
+                        occupied[x] += 1
+        column_holes = [height - count for height, count in zip(heights, occupied)]
         return heights, column_holes, row_fill
 
     def _score_placement(
         self,
-        board: List[List[BoardCell]],
         coords: List[Tuple[int, int]],
         x_offset: int,
         y_offset: int,
         heights: List[int],
-        column_holes: List[int],
         row_fill: List[int],
+        board_score_inputs: tuple[int, int, int, int],
     ) -> float:
-        projected_heights = heights[:]
-        projected_holes = sum(column_holes)
-        cells_by_column: Dict[int, List[int]] = {}
+        projected_holes, aggregate_height, max_height, bumpiness = board_score_inputs
+        # Drop candidates are entirely above the old column surfaces. Only
+        # touched columns and their adjacent edges affect the projected score.
+        projected_heights: Dict[int, int] = {}
+        cells_by_column: Dict[int, int] = {}
         cells_by_row: Dict[int, int] = {}
         for cx, cy in coords:
             px = x_offset + cx
             py = y_offset + cy
-            cells_by_column.setdefault(px, []).append(py)
             if py >= 0:
+                height = self.board_height - py
+                projected_heights[px] = max(height, projected_heights.get(px, 0))
+                cells_by_column[px] = cells_by_column.get(px, 0) + 1
                 cells_by_row[py] = cells_by_row.get(py, 0) + 1
 
-        for x, piece_rows in cells_by_column.items():
-            visible_rows = [y for y in piece_rows if y >= 0]
-            if not visible_rows:
-                continue
-            old_first = self.board_height - heights[x]
-            new_first = min(old_first, min(visible_rows))
-            cells_above_surface = sum(y < old_first for y in visible_rows)
-            empty_rows_exposed = max(0, old_first - new_first) - cells_above_surface
-            holes_filled = sum(
-                y >= old_first and board[y][x] is None
-                for y in visible_rows
-            )
-            projected_holes += empty_rows_exposed - holes_filled
-            projected_heights[x] = self.board_height - new_first
+        for x, height in projected_heights.items():
+            rise = height - heights[x]
+            aggregate_height += rise
+            projected_holes += rise - cells_by_column[x]
+            max_height = max(max_height, height)
+        if projected_heights:
+            first_edge = max(0, min(projected_heights) - 1)
+            last_edge = min(self.board_width - 1, max(projected_heights) + 1)
+            for x in range(first_edge, last_edge):
+                left, right = heights[x], heights[x + 1]
+                bumpiness += abs(projected_heights.get(x, left) - projected_heights.get(x + 1, right))
+                bumpiness -= abs(left - right)
 
         cleared = sum(
             row_fill[y] + added == self.board_width
             for y, added in cells_by_row.items()
         )
 
-        aggregate_height = sum(projected_heights)
-        max_height = max(projected_heights, default=0)
-        bumpiness = sum(
-            abs(left - right)
-            for left, right in zip(projected_heights, projected_heights[1:])
-        )
         return (
             cleared * 12.0
             - projected_holes * 8.0
@@ -1213,10 +1209,8 @@ class TetrisAnimation(AnimationBase):
     def _board_color(self, color: Color) -> Color:
         """Resolve stored piece identity into the current semantic Look palette."""
 
-        for kind, info in TETROMINOS.items():
-            if color == info["color"]:
-                return self.palette_roles(self._palette_id)[kind]
-        return color
+        kind = PIECE_KIND_BY_COLOR.get(color)
+        return self.palette_roles(self._palette_id)[kind] if kind is not None else color
 
     def _set_pixel(self, frame: List[Color], strip: int, led: int, color: Color):
         if strip < 0 or strip >= self.num_strips:

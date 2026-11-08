@@ -38,8 +38,7 @@ def normalize_diagnostics(data, installation_id):
         receiver = {key: item.get(key) for key in ('receiver_id', 'connected', 'fresh', 'protected_status', 'output_fps', 'output_rate_reason')}
         receiver['counters'] = {key: value if type(value) is int and value >= 0 else None
                                 for key, value in counts.items() if key in {
-                                    'frames_displayed', 'packets', 'crc_errors', 'fec_corrected_packets',
-                                    'fec_uncorrectable_packets', 'fec_semantic_crc_errors', 'fec_framing_errors',
+                                    'frames_displayed', 'packets', 'crc_errors',
                                     'status_integrity_errors', 'status_empty_responses', 'display_errors',
                                     'publish_drops', 'frames_superseded'}}
         protected = item.get('protected_status') in {'verified', 'verified_with_rejections', 'rejections_in_interval'}

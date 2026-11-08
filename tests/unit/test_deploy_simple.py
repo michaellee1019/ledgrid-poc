@@ -17,6 +17,7 @@ def candidate(root, tag="new"):
     write(root / "incoming/scripts/start_systemd.sh", "#!/bin/bash\n")
     write(root / "incoming/web/app.py", tag)
     write(root / "incoming/config/default.json", '{"default": true}')
+    write(root / "incoming/requirements-pi.lock", "")
 
 
 def personal_data(root):
@@ -89,10 +90,14 @@ def test_failed_dependency_install_leaves_data_and_service_stopped(tmp_path):
         if "pip" in args:
             raise subprocess.CalledProcessError(1, args)
 
-    with patch.object(deploy_target, "command", side_effect=commands):
+    with (
+        patch.object(deploy_target, "stop_ledgrid_service") as stop,
+        patch.object(deploy_target, "ensure_python_build_dependencies"),
+        patch.object(deploy_target, "command", side_effect=commands),
+    ):
         with pytest.raises(subprocess.CalledProcessError):
             deploy_target.deploy(tmp_path, "python", 1)
-    assert "stop" in calls[0]
+    stop.assert_called_once()
     assert not any("start" in command for command in calls)
     assert (tmp_path / "data/presets/animations/rainbow/mine.json").exists()
     # Rerunning after the failure can replace the incomplete app again.
@@ -107,9 +112,12 @@ def mapping_and_devices():
     return {"identities": entries}, devices
 
 
-def test_flash_uses_explicit_serial_order_and_refuses_missing_or_duplicate(tmp_path):
+def test_flash_uses_explicit_serial_order_and_refuses_missing_or_duplicate():
     mapping, devices = mapping_and_devices()
-    assert flash_receivers.mapped_ports(mapping, devices) == [f"/dev/ttyACM{index}" for index in reversed(range(5))]
+    unrelated = {"port": "/dev/ttyUSB0", "hwid": "USB VID:PID=0403:6001 SER=unrelated"}
+    assert flash_receivers.mapped_ports(mapping, [*devices, unrelated]) == [
+        f"/dev/ttyACM{index}" for index in reversed(range(5))
+    ]
     with pytest.raises(ValueError, match="absent"):
         flash_receivers.mapped_ports(mapping, devices[:-1])
     with pytest.raises(ValueError, match="multiple"):
@@ -119,32 +127,41 @@ def test_flash_uses_explicit_serial_order_and_refuses_missing_or_duplicate(tmp_p
         flash_receivers.mapped_ports(mapping, devices)
 
 
-def test_flash_accepts_spi1_hat_mapping(tmp_path):
+@pytest.mark.parametrize("bus", (0, 1))
+def test_full_flash_rejects_two_receiver_mapping(bus):
     mapping = {
         "identities": [
-            {"logical_device": 0, "spi_route": [1, 0], "hardware_serial": "00:00:00:00:00:00"},
-            {"logical_device": 1, "spi_route": [1, 1], "hardware_serial": "00:00:00:00:00:01"},
+            {"logical_device": 0, "spi_route": [bus, 0], "hardware_serial": "00:00:00:00:00:00"},
+            {"logical_device": 1, "spi_route": [bus, 1], "hardware_serial": "00:00:00:00:00:01"},
         ]
     }
     devices = [
         {"port": "/dev/ttyACM1", "hwid": "USB VID:PID=303A:1001 SER=000000000001 LOCATION=1-1"},
         {"port": "/dev/ttyACM0", "hwid": "USB VID:PID=303A:1001 SER=000000000000 LOCATION=1-0"},
     ]
-    assert flash_receivers.mapped_ports(mapping, devices) == ["/dev/ttyACM0", "/dev/ttyACM1"]
+    with pytest.raises(ValueError, match="all five"):
+        flash_receivers.mapped_ports(mapping, devices)
 
 
-def test_flash_accepts_spi0_hat_mapping(tmp_path):
-    mapping = {
-        "identities": [
-            {"logical_device": 0, "spi_route": [0, 0], "hardware_serial": "00:00:00:00:00:00"},
-            {"logical_device": 1, "spi_route": [0, 1], "hardware_serial": "00:00:00:00:00:01"},
-        ]
-    }
-    devices = [
-        {"port": "/dev/ttyACM1", "hwid": "USB VID:PID=303A:1001 SER=000000000001 LOCATION=1-1"},
-        {"port": "/dev/ttyACM0", "hwid": "USB VID:PID=303A:1001 SER=000000000000 LOCATION=1-0"},
-    ]
-    assert flash_receivers.mapped_ports(mapping, devices) == ["/dev/ttyACM0", "/dev/ttyACM1"]
+def test_missing_receiver_map_fails_before_platformio(tmp_path):
+    with patch.object(flash_receivers, "select_platformio") as select:
+        with pytest.raises(RuntimeError, match="five-receiver USB-to-SPI mapping"):
+            flash_receivers.flash(tmp_path)
+        select.assert_not_called()
+
+
+def test_full_deployment_requires_mapped_flash_helper(tmp_path):
+    app = tmp_path / "app"
+    with patch.object(deploy_target, "command") as command:
+        with pytest.raises(RuntimeError, match="flash_receivers.py"):
+            deploy_target.flash_firmware(app, tmp_path, "full")
+        deploy_target.flash_firmware(app, tmp_path, "python")
+        command.assert_not_called()
+
+        helper = app / "tools/deployment/flash_receivers.py"
+        write(helper, "")
+        deploy_target.flash_firmware(app, tmp_path, "full")
+        assert command.call_args.args[1:] == (helper, "--root", tmp_path)
 
 
 def test_partial_flashing_retries_all_five_without_success_ledger(tmp_path):
@@ -171,10 +188,13 @@ def test_partial_flashing_retries_all_five_without_success_ledger(tmp_path):
     assert not (tmp_path / "data/run_state/receiver_firmware_inventory.json").exists()
 
 
-def test_dedicated_key_is_mandatory_and_deploy_directory_is_bounded(tmp_path):
+def test_dedicated_key_is_mandatory_and_deploy_directory_is_bounded(tmp_path, monkeypatch):
+    monkeypatch.delenv("SSH_KEY", raising=False)
+    monkeypatch.delenv("LEDGRID_SSH_KEY", raising=False)
     with pytest.raises(ValueError, match="Dedicated SSH key"):
         deploy_entrypoint.ssh_options(tmp_path, None)
     write(tmp_path / ".gpt-key", "key")
+    (tmp_path / ".gpt-key").chmod(0o600)
     assert "IdentitiesOnly=yes" in deploy_entrypoint.ssh_options(tmp_path, None)
     for unsafe in ("/", ".", "../root", "wall/../../home", "x; echo secret"):
         with pytest.raises(ValueError):
@@ -198,8 +218,9 @@ def test_source_copy_excludes_personal_data_and_stale_generated_assets(tmp_path)
 def test_readiness_reports_no_display_proof():
     with patch.object(deploy_target.subprocess, "run"), patch.object(deploy_target.urllib.request, "urlopen") as opened:
         opened.return_value.__enter__.return_value.status = 200
-        deploy_target.readiness(1)
-        opened.assert_called_once()
+        url = deploy_target.composer_readiness_url("5012")
+        deploy_target.readiness(1, url)
+        assert opened.call_args.args == (url,)
 
 
 def test_selected_release_calibration_wins_over_stale_root_copy(tmp_path):
@@ -239,7 +260,14 @@ def test_existing_runtime_environment_is_reused(tmp_path):
     candidate(tmp_path)
     write(tmp_path / "existing-venv/bin/python", "python")
     (tmp_path / "venv").symlink_to(tmp_path / "existing-venv")
-    with patch.object(deploy_target, "command") as commands, patch.object(deploy_target, "write_service", return_value={}), patch.object(deploy_target, "readiness"):
+    with (
+        patch.object(deploy_target, "stop_ledgrid_service"),
+        patch.object(deploy_target, "ensure_python_build_dependencies"),
+        patch.object(deploy_target, "command") as commands,
+        patch.object(deploy_target, "write_service", return_value={"PORT": "5012"}),
+        patch.object(deploy_target, "readiness") as readiness,
+    ):
         deploy_target.deploy(tmp_path, "python", 1)
+    readiness.assert_called_once_with(1, deploy_target.composer_readiness_url("5012"))
     assert not any(call.args[:3] == ("python3", "-m", "venv") for call in commands.call_args_list)
     assert any("pip" in call.args for call in commands.call_args_list)

@@ -70,6 +70,19 @@ class WidgetPlacementTests(unittest.TestCase):
         self.assertEqual(first.widget_overlap_pixels, 1)
         self.assertIn("earlier Widget", first.warning or "")
 
+    def test_auto_prefers_plant_clearance_before_widget_clearance(self) -> None:
+        frame = _frame((2, 3), (2, 4))
+        safe = np.zeros(5 * 8, dtype=np.bool_)
+        safe[1 * 8 + 3:1 * 8 + 5] = True
+        resolved = resolve_widget_placement(
+            {"mode": "auto"}, frame, strip_count=5, leds_per_strip=8,
+            safe_flat=safe, reserved_flat=safe,
+        )
+        self.assertEqual((resolved.strip_translation, resolved.led_translation), (-1, 0))
+        self.assertEqual(resolved.plant_overlap_pixels, 0)
+        self.assertEqual(resolved.widget_overlap_pixels, 2)
+        self.assertTrue(resolved.used_fallback)
+
     def test_direct_nudge_is_retained_or_clamped_with_a_warning(self) -> None:
         frame = _frame((0, 0), (1, 1))
         safe = np.ones(5 * 8, dtype=np.bool_)
