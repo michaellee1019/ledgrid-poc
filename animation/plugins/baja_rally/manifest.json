@@ -1,0 +1,10 @@
+{
+  "plugin_id": "baja_rally",
+  "class": "BajaRallyAnimation",
+  "icon": "🛻",
+  "gallery": "show",
+  "preview": {
+    "capture_seconds": [0, 1.2, 3, 6, 10, 16, 24, 36],
+    "simulation_fps": 30
+  }
+}
