@@ -1,0 +1,10 @@
+{
+  "plugin_id": "nj_transit_bus",
+  "class": "NjTransitBusAnimation",
+  "icon": "🚌",
+  "gallery": "show",
+  "preview": {
+    "capture_seconds": [0, 0.25, 0.5, 1, 2, 4],
+    "simulation_fps": 8
+  }
+}
