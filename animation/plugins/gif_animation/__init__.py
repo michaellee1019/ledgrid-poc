@@ -311,6 +311,7 @@ class GifAnimation(AnimationBase):
         fit_mode: str,
         contain_background: int,
     ) -> "Image.Image":
+        image = GifAnimation._drop_opaque_black_tail(image, width, height)
         if fit_mode == "stretch":
             return image.resize((width, height), Image.Resampling.BILINEAR)
 
@@ -334,6 +335,18 @@ class GifAnimation(AnimationBase):
         offset_y = (height - new_h) // 2
         canvas.alpha_composite(resized, (offset_x, offset_y))
         return canvas
+
+    @staticmethod
+    def _drop_opaque_black_tail(image: "Image.Image", width: int, height: int) -> "Image.Image":
+        """Drop the 32→33 black pad so playback fills the installed wall."""
+        src_w, src_h = image.size
+        if (src_w, src_h) != (width, height) or width < 2:
+            return image
+        rgba = image.convert("RGBA")
+        tail = rgba.crop((width - 1, 0, width, height))
+        if tail.tobytes() != bytes((0, 0, 0, 255)) * height:
+            return image
+        return rgba.crop((0, 0, width - 1, height))
 
     @staticmethod
     def _flatten_frame(image_rgba: "Image.Image", flip_y: bool) -> np.ndarray:

@@ -296,17 +296,17 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         with mock.patch.object(protocol.time, "sleep") as sleep:
             item.set_all_pixels(colors, wall_frame_sequence=76)
 
+        self.assertEqual(len(item.spi.write_only_packets), 0)
         self.assertEqual(len(item.spi.response_packets), 4)
-        for packet in item.spi.response_packets[:3]:
+        self.assertEqual(len(item.spi.response_packets[0]), 4088)
+        self.assertEqual(item.spi.response_packets[0][:2], b"\x0b\x07")
+        for packet in item.spi.response_packets[1:]:
             self.assertEqual(
                 len(packet),
                 protocol._aligned_envelope_wire_size(
                     protocol.RECEIVER_STATUS_BYTES_V8
                 ),
             )
-        self.assertEqual(len(item.spi.write_only_packets), 0)
-        self.assertEqual(len(item.spi.response_packets[3]), 4088)
-        self.assertEqual(item.spi.response_packets[3][:2], b"\x0b\x07")
         self.assertEqual(item._spi_transfers, 4)
         self.assertEqual(
             sleep.call_args_list,

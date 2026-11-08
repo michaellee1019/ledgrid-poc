@@ -40,6 +40,9 @@ from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.flame_burst import FlameBurstAnimation
 from animation.plugins.fluid_tank import FluidTankAnimation
+from animation.plugins.fish_tank import FishTankAnimation
+from animation.plugins.ocean_waves import OceanWavesAnimation
+from animation.plugins.mini_metro import MiniMetroAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.maze_chase import MazeChaseAnimation
@@ -56,6 +59,7 @@ from animation.plugins.rainbow import RainbowAnimation
 from animation.plugins.solid import SolidColorAnimation
 from animation.plugins.sparkle import SparkleAnimation
 from animation.plugins.wave import WaveAnimation
+from animation.plugins.column_sequence import ColumnSequenceAnimation
 from animation.plugins.circadian_window import CircadianWindowAnimation
 from animation.plugins.cloud_canyon import CloudCanyonAnimation
 from animation.plugins.desert_wind import DesertWindAnimation
@@ -105,6 +109,9 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         FireworksAnimation.component_descriptor(),
         FlameBurstAnimation.component_descriptor(),
         FluidTankAnimation.component_descriptor(),
+        FishTankAnimation.component_descriptor(),
+        OceanWavesAnimation.component_descriptor(),
+        MiniMetroAnimation.component_descriptor(),
         CyclicReefAnimation.component_descriptor(),
         LavaLampAnimation.component_descriptor(),
         SnakeAnimation.component_descriptor(),
@@ -119,6 +126,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         SolidColorAnimation.component_descriptor(),
         SparkleAnimation.component_descriptor(),
         WaveAnimation.component_descriptor(),
+        ColumnSequenceAnimation.component_descriptor(),
         CircadianWindowAnimation.component_descriptor(),
         CloudCanyonAnimation.component_descriptor(),
         DesertWindAnimation.component_descriptor(),
@@ -302,6 +310,12 @@ class InstalledFinalSceneRuntime:
             return FlameBurstAnimation(controller, parameters)
         if descriptor.component_id == FluidTankAnimation.COMPONENT_ID:
             return FluidTankAnimation(controller, parameters)
+        if descriptor.component_id == FishTankAnimation.COMPONENT_ID:
+            return FishTankAnimation(controller, parameters)
+        if descriptor.component_id == OceanWavesAnimation.COMPONENT_ID:
+            return OceanWavesAnimation(controller, parameters)
+        if descriptor.component_id == MiniMetroAnimation.COMPONENT_ID:
+            return MiniMetroAnimation(controller, parameters)
         if descriptor.component_id == CyclicReefAnimation.COMPONENT_ID:
             return CyclicReefAnimation(controller, parameters)
         if descriptor.component_id == LavaLampAnimation.COMPONENT_ID:
@@ -330,6 +344,8 @@ class InstalledFinalSceneRuntime:
             return SparkleAnimation(controller, parameters)
         if descriptor.component_id == WaveAnimation.COMPONENT_ID:
             return WaveAnimation(controller, parameters)
+        if descriptor.component_id == ColumnSequenceAnimation.COMPONENT_ID:
+            return ColumnSequenceAnimation(controller, parameters)
         if descriptor.component_id == CircadianWindowAnimation.COMPONENT_ID:
             animation = CircadianWindowAnimation(controller, parameters)
             animation._clock_now = lambda: self._wall_time

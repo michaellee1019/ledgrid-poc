@@ -1,0 +1,44 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Extra SPI0 chip-selects for the third V6 HAT.
+ *
+ * Stock overlays stop at spi0-2cs (CE0 GPIO8 / pin 24, CE1 GPIO7 / pin 26).
+ * V4/V6 solder jumpers SJ_SPI0_CE2 and SJ_SPI0_CE3 land on Pi header pins
+ * 29 and 31 (BCM GPIO5 and GPIO6). This overlay keeps those two CS pins and
+ * adds CE2/CE3 so column 33 can sit on SPI0 with the second HAT.
+ */
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target = <&spi0>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			num-cs = <4>;
+			cs-gpios = <&gpio 8 1>, <&gpio 7 1>, <&gpio 5 1>, <&gpio 6 1>;
+			status = "okay";
+
+			spidev@2 {
+				compatible = "spidev";
+				reg = <2>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				spi-max-frequency = <125000000>;
+				status = "okay";
+			};
+
+			spidev@3 {
+				compatible = "spidev";
+				reg = <3>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				spi-max-frequency = <125000000>;
+				status = "okay";
+			};
+		};
+	};
+};

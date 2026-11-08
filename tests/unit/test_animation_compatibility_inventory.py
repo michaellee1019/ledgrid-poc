@@ -57,7 +57,7 @@ class AnimationCompatibilityInventoryTests(unittest.TestCase):
         self.assertSetEqual(set(shipped), AnimationManager.ALLOWED_PLUGINS)
 
     def test_current_compatibility_baseline_is_explicit(self):
-        self.assertEqual(len(self.entries), 51)
+        self.assertEqual(len(self.entries), 55)
         self.assertEqual(
             self.by_id["clock"].classification, COMPATIBILITY_FULL_SCENE
         )
@@ -69,12 +69,12 @@ class AnimationCompatibilityInventoryTests(unittest.TestCase):
             entry for entry in self.entries
             if entry.classification == UNSUPPORTED_DIRECT_HARDWARE_STATEFUL
         ]
-        self.assertEqual(len(ordinary), 49)
+        self.assertEqual(len(ordinary), 54)
         overlays = [
             entry for entry in self.entries
             if entry.classification == PYTHON_OVERLAY
         ]
-        self.assertEqual([entry.plugin_id for entry in overlays], ["clock_overlay"])
+        self.assertEqual([entry.plugin_id for entry in overlays], [])
         self.assertEqual(unsupported, [])
 
     def test_classification_fails_closed_for_direct_or_stateful_ownership(self):

@@ -36,7 +36,7 @@ def test_controller_process_publishes_status_and_polls_real_queues(tmp_path, mon
                          status_interval=.5,poll_interval=.05)
     with pytest.raises(KeyboardInterrupt):server.run_controller_mode(args)
     status=json.loads((tmp_path/'status.json').read_text())
-    assert probes==[True]
+    assert probes==[True, True]
     assert status['brightness']==0
     assert status['is_running'] is False
     assert status['written_at']>0
@@ -72,6 +72,49 @@ def test_file_controller_reports_successful_setting_id_for_home_assistant(tmp_pa
     assert status['last_applied_command_id']==sent[0]['command_id']
     assert status['last_command_id']==sent[1]['command_id']
     assert status['command_result']['state']=='failed'
+
+
+def test_controller_hat_layout_uses_spi1_ce0_and_ce1(tmp_path, monkeypatch):
+    import json
+    import pytest
+    import sys
+    if "spidev" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "spidev", SimpleNamespace(SpiDev=object))
+    import drivers.multi_device
+    import scripts.start_server as server
+    from animation.core.manager import PreviewLEDController
+    controller = PreviewLEDController(16, 138)
+    controller.close = lambda: None
+    captured = {}
+    def factory(**kwargs):
+        captured.update(kwargs)
+        return controller
+    monkeypatch.setenv("LEDGRID_HAT", "1")
+    monkeypatch.setattr(drivers.multi_device, "MultiDeviceLEDController", factory)
+    monkeypatch.setattr(server.time, "sleep", lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()))
+    args = SimpleNamespace(
+        strips=16, leds_per_strip=138, saved_state_file=str(tmp_path / "settings.json"),
+        presets_dir=str(tmp_path / "presets"), controller_debug=False, spi_speed=20000000,
+        brightness=0, animation_speed_scale=.3, animations_dir="animation/plugins",
+        target_fps=150, control_file=str(tmp_path / "control.json"),
+        status_file=str(tmp_path / "status.json"), status_interval=.5, poll_interval=.05,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        server.run_controller_mode(args)
+    assert captured["num_devices"] == 2
+    assert captured["strip_count"] == 16
+    assert captured["device_map"] == [(1, 0), (1, 1)]
+    assert captured["fec_receiver_ids"] == ()
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["is_running"] is False
+
+
+def test_controller_rejects_unsupported_hardware_geometry():
+    import pytest
+    import scripts.start_server as server
+    args = SimpleNamespace(strips=32, leds_per_strip=138)
+    with pytest.raises(ValueError, match="16x138 SPI1 HAT test"):
+        server.run_controller_mode(args)
 
 
 def test_receiver_refresh_reports_command_success_without_display_guarantee():

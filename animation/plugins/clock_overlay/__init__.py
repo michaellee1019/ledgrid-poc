@@ -52,6 +52,7 @@ class ClockOverlayAnimation(AnimationBase):
         "mist": (170, 228, 245),
         "spectrum": (54, 238, 230),
         "ember": (255, 202, 92),
+        "rainbow": (255, 70, 200),
     })
 
     # This overlay deliberately replaces AnimationBase's compatibility

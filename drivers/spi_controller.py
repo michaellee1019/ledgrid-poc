@@ -82,9 +82,11 @@ SPI_RESPONSE_QUEUE_DEPTH = 2
 # Receivers 0-3 capture it in-band on their broad SET_ALL transaction.  The
 # one-strip tail cannot clock the full status block with its shorter SET_ALL, so
 # its scheduled phase uses one status-length query immediately before the
-# write-only frame.  Other explicit status queries and control commands remain
-# full duplex.  The installed phases are distinct so one wall frame samples at
-# most one receiver.
+# write-only frame.  That query must count a CRC-valid v8 snapshot as a sample
+# even when STATUS_QUERY does not advance receiver_packets; otherwise the gap
+# fallback drains SPI0 on every later frame and caps wall send time around 16 ms.
+# Other explicit status queries and control commands remain full duplex.  The
+# installed phases are distinct so one wall frame samples at most one receiver.
 FULL_FRAME_STATUS_SAMPLE_INTERVAL = 128
 FULL_FRAME_STATUS_SAMPLE_RECEIVERS = 5
 COMMAND_ACK_MAX_STATUS_QUERIES = 16
@@ -552,6 +554,7 @@ class LEDController:
         self._writebytes2_supported = None
         self._last_transfer_captured_response = False
         self._last_transfer_status_sampled = False
+        self._last_transfer_status_valid = False
         self._receiver_status_integrity_required = True
         self._receiver_status_integrity_verified = False
         self._receiver_status_integrity_established = False
@@ -614,7 +617,7 @@ class LEDController:
             transport_lock = self._transport_lock = threading.RLock()
         with transport_lock:
             if payload_length and int(buf[0]) != CMD_STATUS_QUERY:
-                self._require_current_receiver_protocol()
+                self._require_current_receiver_protocol(buf)
             envelope_enabled = True
             fec_enabled = bool(
                 envelope_enabled
@@ -735,6 +738,7 @@ class LEDController:
                     record_successful_fec_transfer()
                     self._last_transfer_captured_response = False
                     self._last_transfer_status_sampled = False
+                    self._last_transfer_status_valid = False
                     return None
                 if not response_required:
                     writer = getattr(self.spi, "writebytes2", None)
@@ -751,6 +755,7 @@ class LEDController:
                             record_successful_fec_transfer()
                             self._last_transfer_captured_response = False
                             self._last_transfer_status_sampled = False
+                            self._last_transfer_status_valid = False
                             return None
                     elif not callable(writer):
                         self._writebytes2_supported = False
@@ -890,6 +895,7 @@ class LEDController:
     def _update_receiver_status(self, response, *, full_status_expected=False,
                                 transfer_bytes=None):
         """Accept only the complete CRC-protected current status snapshot."""
+        self._last_transfer_status_valid = False
         magic = tuple(response[:4]) if response is not None else ()
         if response is None or len(response) < RECEIVER_STATUS_BYTES_V8:
             if full_status_expected:
@@ -938,6 +944,7 @@ class LEDController:
                 computed_crc32=checksum,
             )
             return False
+        self._last_transfer_status_valid = True
         self._receiver_status_integrity_verified = True
         self._receiver_status_observed_at = time.time()
         fresh = bool(self._update_receiver_status_v7(response))
@@ -1013,6 +1020,8 @@ class LEDController:
         if transport_lock is None:
             transport_lock = self._transport_lock = threading.RLock()
         with transport_lock:
+            sampled = False
+            valid = False
             for query_index in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
                 if query_index:
                     # Give the receiver task time to parse the preceding query
@@ -1022,6 +1031,14 @@ class LEDController:
                     # decoding competes for the receiver core.
                     time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
                 self._clock_receiver_status_snapshot()
+                sampled = sampled or bool(
+                    getattr(self, "_last_transfer_status_sampled", False)
+                )
+                valid = valid or bool(
+                    getattr(self, "_last_transfer_status_valid", False)
+                )
+            self._last_transfer_status_sampled = sampled
+            self._last_transfer_status_valid = valid
 
     def query_fresh_receiver_status(self):
         """Drain the slave queue and return a causally post-request snapshot."""
@@ -1092,9 +1109,10 @@ class LEDController:
         """Set global brightness (0-255)"""
         level = int(brightness) & 0xFF
         self.current_brightness = level
-        self._refresh_configuration(force=True)
+        # Brightness is an explicit 2-byte command; CONFIG does not carry it.
+        # Forcing CONFIG here queued an extra mutation per receiver and could
+        # overflow the ESP32 command FIFO during whole-wall brightness updates.
         self._xfer([CMD_SET_BRIGHTNESS, level])
-        self._last_brightness_refresh = time.time()
         if self.debug:
             print(f"✓ Brightness set ({level})")
 
@@ -1260,24 +1278,34 @@ class LEDController:
                     )
                 )
                 if separate_status_query:
-                    # A short aligned SET_ALL cannot clock the complete v8
-                    # status snapshot. FEC protects host-to-receiver bytes only,
-                    # so its frame transfer also needs a separate v8 status
-                    # query. Sample first, then retain the write-only fast path.
+                    # The one-strip tail cannot clock v8 status inside SET_ALL.
+                    # One status-length query, then the short write-only frame.
+                    # FEC still drains after the protected write because that
+                    # path does not return a usable in-band snapshot.
                     transport_lock = getattr(self, "_transport_lock", None)
                     if transport_lock is None:
                         transport_lock = self._transport_lock = threading.RLock()
                     with transport_lock:
-                        self._drain_fresh_receiver_status()
-                        captured_response = True
-                        status_sampled = bool(getattr(
-                            self, "_last_transfer_status_sampled", False
-                        ))
-                        self._xfer_packet(
-                            buf,
-                            payload_length,
-                            response_required=False,
+                        if getattr(self, "_fec_transport_requested", False):
+                            self._xfer_packet(
+                                buf,
+                                payload_length,
+                                response_required=False,
+                            )
+                            self._drain_fresh_receiver_status()
+                        else:
+                            self._clock_receiver_status_snapshot()
+                        status_sampled = bool(
+                            getattr(self, "_last_transfer_status_valid", False)
+                            or getattr(self, "_last_transfer_status_sampled", False)
                         )
+                        if not getattr(self, "_fec_transport_requested", False):
+                            self._xfer_packet(
+                                buf,
+                                payload_length,
+                                response_required=False,
+                            )
+                        captured_response = True
                 else:
                     self._xfer_packet(
                         buf,
@@ -1416,12 +1444,19 @@ class LEDController:
         self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V8
         return fresh
 
-    def _require_current_receiver_protocol(self):
-        """The transport is matched-current; connectivity never blocks a send."""
-        if self._fec_transport_requested and not self._fec_transport_enabled:
-            self._drain_fresh_receiver_status()
-            if not self._fec_transport_enabled:
-                raise RuntimeError("receiver does not advertise protected full RGB transport")
+    def _require_current_receiver_protocol(self, buf=None):
+        """Require negotiated FEC only before protected full-frame transfers."""
+        if not getattr(self, "_fec_transport_requested", False):
+            return
+        if buf is not getattr(self, "_frame_packet", None):
+            # CONFIG, brightness, lane mask, and other controls use aligned
+            # envelopes and may establish capabilities from their responses.
+            return
+        if self._fec_transport_enabled:
+            return
+        self._drain_fresh_receiver_status()
+        if not self._fec_transport_enabled:
+            raise RuntimeError("receiver does not advertise protected full RGB transport")
 
     def get_stats(self):
         stats = {name[1:]: value for name, value in vars(self).items()

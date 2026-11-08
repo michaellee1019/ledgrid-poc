@@ -21,7 +21,7 @@ class FluidTankAnimation(AnimationBase):
     SIM_HZ, MAX_CATCH_UP_STEPS, MAX_PULSES = 20.0, 12, 8
     DEFAULTS = MappingProxyType({"flow_rate": .72, "current": .35, "bubble_lift": .42, "surface_energy": .38, "seed": 6211})
     COMPONENT_DESCRIPTOR = ComponentDescriptor(component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="opaque", palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS)
-    SEMANTIC_PALETTES = MappingProxyType({"neutral": ((2.,9.,17.),(12.,108.,178.),(126.,244.,255.)), "mist": ((2.,8.,18.),(24.,104.,170.),(164.,239.,255.)), "spectrum": ((9.,3.,25.),(35.,101.,242.),(114.,248.,230.)), "ember": ((8.,4.,3.),(20.,112.,168.),(169.,241.,190.))})
+    SEMANTIC_PALETTES = MappingProxyType({"neutral": ((2.,9.,17.),(12.,108.,178.),(126.,244.,255.)), "mist": ((2.,8.,18.),(24.,104.,170.),(164.,239.,255.)), "spectrum": ((9.,3.,25.),(35.,101.,242.),(114.,248.,230.)), "ember": ((8.,4.,3.),(20.,112.,168.),(169.,241.,190.)), "rainbow": ((8.,0.,18.),(255.,40.,90.),(40.,255.,140.))})
 
     def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
         self._authored_config=dict(config or {}); super().__init__(controller,self._authored_config); self.params=self._normalized_parameters(self._authored_config)

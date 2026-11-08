@@ -79,7 +79,7 @@ _STARTERS = (
                 "burst_style": "burst", "gravity": .48, "trails": .46,
                 "crackle": .92, "twinkle": .88, "seed": 808,
             }),
-            widgets=[], palette="spectrum", pace=1.05, brightness=.94,
+            widgets=[], palette="rainbow", pace=1.05, brightness=.94,
         ),
     ),
     (

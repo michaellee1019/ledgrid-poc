@@ -11,6 +11,7 @@ import numpy as np
 from animation.core.base import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.scene_palettes import HOLIDAY_ROLE_PALETTES, hsv_to_rgb_field
 
 
 PaletteRoles = Mapping[str, tuple[float, float, float]]
@@ -37,6 +38,15 @@ SEMANTIC_PALETTES: Mapping[str, PaletteRoles] = MappingProxyType({
         "primary": (156.0, 42.0, 14.0),
         "accent": (255.0, 202.0, 92.0),
     }),
+    "rainbow": MappingProxyType({
+        "background_low": (8.0, 0.0, 18.0),
+        "primary": (255.0, 40.0, 90.0),
+        "accent": (40.0, 255.0, 140.0),
+    }),
+    **{
+        name: MappingProxyType(dict(roles))
+        for name, roles in HOLIDAY_ROLE_PALETTES.items()
+    },
 })
 
 
@@ -265,7 +275,7 @@ class AuroraCurtainsAnimation(AnimationBase):
         # component speed factor appears here, so pace is applied exactly once.
         quantized_time = tick / source_fps
         self._paint_curtains(quantized_time, local)
-        self._paint_palette(self.palette_roles(palette_id), float(local["glow_intensity"]))
+        self._paint_palette(self.palette_roles(palette_id), float(local["glow_intensity"]), palette_id)
         frame = self.next_frame_buffer(clear=False)
         np.copyto(frame, self._rgb.reshape((-1, 3)), casting="unsafe")
         self._cached_frame = frame
@@ -298,11 +308,18 @@ class AuroraCurtainsAnimation(AnimationBase):
         self._field += stars * (.035 + .05 * density)
         np.clip(self._field, 0.0, 1.0, out=self._field)
 
-    def _paint_palette(self, roles: PaletteRoles, glow_intensity: float) -> None:
+    def _paint_palette(self, roles: PaletteRoles, glow_intensity: float, palette_id: str = "neutral") -> None:
+        field = self._field
+        if palette_id == "rainbow":
+            hue = np.mod(field * 0.85 + self._y * 0.22, 1.0)
+            value = np.clip(0.16 + field * 0.92, 0.0, 1.0)
+            self._rgb[:] = hsv_to_rgb_field(hue, 0.88, value)
+            self._rgb += np.maximum(field - .12, 0.0)[..., None] * 48.0 * glow_intensity
+            np.clip(self._rgb, 0.0, 255.0, out=self._rgb)
+            return
         low = np.asarray(roles["background_low"], dtype=np.float32)
         primary = np.asarray(roles["primary"], dtype=np.float32)
         accent = np.asarray(roles["accent"], dtype=np.float32)
-        field = self._field
         lower = np.minimum(field * 2.0, 1.0)[..., None]
         upper = np.maximum(field * 2.0 - 1.0, 0.0)[..., None]
         self._rgb[:] = low + (primary - low) * lower + (accent - primary) * upper

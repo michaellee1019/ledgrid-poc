@@ -21,6 +21,7 @@ _SEMANTIC_PALETTES = MappingProxyType({
     "mist": MappingProxyType({"alive": (70.0, 165.0, 220.0), "mature": (190.0, 245.0, 255.0)}),
     "spectrum": MappingProxyType({"alive": (130.0, 60.0, 255.0), "mature": (65.0, 245.0, 230.0)}),
     "ember": MappingProxyType({"alive": (255.0, 100.0, 28.0), "mature": (255.0, 225.0, 110.0)}),
+    "rainbow": MappingProxyType({"alive": (255.0, 50.0, 120.0), "mature": (50.0, 255.0, 140.0)}),
 })
 
 

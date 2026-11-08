@@ -1,6 +1,6 @@
 """Scene v2 Wave ambient instrument."""
 from types import MappingProxyType
-from animation.plugins.ambient_scene import AmbientSceneAnimation
+from animation.libraries.ambient_scene import AmbientSceneAnimation
 class WaveAnimation(AmbientSceneAnimation):
     ANIMATION_NAME="Wave"; ANIMATION_DESCRIPTION="Traveling semantic ribbons"; ANIMATION_VERSION="2.0"; COMPONENT_ID="wave"; STYLE="wave"
     DEFAULTS=MappingProxyType({"axis":"vertical","frequency":2.,"travel":.45,"shape":.8,"direction":1,"seed":6105})

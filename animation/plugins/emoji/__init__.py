@@ -51,7 +51,7 @@ class EmojiAnimation(AnimationBase):
         # quantized phase.  Otherwise the first request in a tick bucket would
         # determine the bytes returned by every later request in that bucket.
         phase=phase_tick/20
-        bg,primary,accent=self._MOOD[params["mood"]]; tint={"neutral":(1,1,1),"mist":(.72,.9,1),"spectrum":(1,.6,1),"ember":(1,.62,.35)}.get(palette,(1,1,1)); canvas=self._pixels.reshape(self.width,self.height,3)[:,::-1]; canvas[:]=bg
+        bg,primary,accent=self._MOOD[params["mood"]]; tint={"neutral":(1,1,1),"mist":(.72,.9,1),"spectrum":(1,.6,1),"ember":(1,.62,.35),"rainbow":(1,.72,.42)}.get(palette,(1,1,1)); canvas=self._pixels.reshape(self.width,self.height,3)[:,::-1]; canvas[:]=bg
         pattern=EMOJI_PATTERNS["heart" if params["face"]=="heart" else "smile"]; h,w=len(pattern),len(pattern[0]); unit=max(1,int(min(self.width/(w+3),self.height/(h+10))*params["scale"])); left=(self.width-w*unit)//2; bottom=(self.height-h*unit)//2; pulse=.72+.28*(.5+.5*math.sin(phase*math.tau*params["pulse_hz"]));
         for row,line in enumerate(pattern):
             for col,cell in enumerate(line):

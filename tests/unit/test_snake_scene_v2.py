@@ -136,6 +136,13 @@ class SnakeSceneV2Tests(unittest.TestCase):
             SnakeAnimation.MAX_CATCH_UP_STEPS,
         )
         self.assertEqual(after["moves"] - before["moves"], SnakeAnimation.MAX_CATCH_UP_STEPS)
+        self.assertEqual(after["tick"], int(100.0 * SnakeAnimation.SIM_HZ))
+        animation.render_resolved_scene(
+            resolve_scene(scene, catalog, monotonic_elapsed=100.0 + 1.0 / SnakeAnimation.SIM_HZ)
+        )
+        resumed = animation.cadence_snapshot()
+        self.assertEqual(resumed["simulation_steps"] - after["simulation_steps"], 1)
+        self.assertEqual(resumed["moves"] - after["moves"], 1)
 
     def test_batched_body_paint_matches_cell_by_cell_composition(self) -> None:
         animation = SnakeAnimation(PreviewLEDController(strips=33, leds_per_strip=138))
@@ -183,6 +190,32 @@ class SnakeSceneV2Tests(unittest.TestCase):
         for name, expected in {"background": "aurora", "visual_style": "prism", "trail_decay": 1.25, "initial_length": 8}.items():
             self.assertEqual(params[name], expected)
 
+    def test_playfield_stays_black_for_every_backdrop_and_palette(self) -> None:
+        catalog = current_component_catalog()
+        for style in SnakeAnimation.BACKGROUNDS:
+            with self.subTest(background=style):
+                scene = self._scene()
+                scene["look"]["pace"] = 1.0
+                scene["look"]["palette_id"] = "ember"
+                scene["background"]["parameters"]["gain"] = 0.8
+                scene["animation"]["parameters"] = {
+                    "background": style, "snake_count": 1, "trails": 0.0, "glow": 0.0,
+                    "obstacles": "none", "food_count": 1, "seed": 1,
+                }
+                animation = SnakeAnimation(
+                    PreviewLEDController(strips=33, leds_per_strip=138),
+                    scene["animation"]["parameters"],
+                )
+                animation.render_resolved_scene(resolve_scene(scene, catalog, monotonic_elapsed=0.0))
+                animation.snakes = []
+                animation.food.clear()
+                animation.walls.clear()
+                animation.portals.clear()
+                animation._trail.fill(0)
+                animation._last_render_key = None
+                frame = animation.generate_frame(0.0, 1)
+                self.assertEqual(int(frame.pixels.max()), 0)
+
     def test_composer_card_keeps_snake_controls_local(self) -> None:
         root = __import__("pathlib").Path(__file__).resolve().parents[2]
         template = (root / "web" / "templates" / "composer.html").read_text(encoding="utf-8")
@@ -190,6 +223,8 @@ class SnakeSceneV2Tests(unittest.TestCase):
         self.assertIn('id="snakePresetCards"', template); self.assertIn("components/snake/presets", script)
         self.assertIn("next.animation.parameters = preset.parameters", script); self.assertIn("'#snakeCadence'", script)
         self.assertIn("snakeParameters(next.animation.parameters)", script)
+        self.assertIn("if (choice === 'snake')", script)
+        self.assertIn("gain: 0", script)
         self.assertNotIn("output_power", script)
 
 

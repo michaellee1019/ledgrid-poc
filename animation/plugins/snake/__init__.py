@@ -15,6 +15,7 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.scene_palettes import HOLIDAY_TRIPLES, holiday_stop
 
 Cell = tuple[int, int]
 Direction = tuple[int, int]
@@ -48,12 +49,19 @@ class SnakeAnimation(AnimationBase):
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
     CAPABILITIES = frozenset({"semantic_palette_roles", "scaled_context", "effect_intent"})
     PLANT_MODIFIER_SUPPORT = frozenset()
-    SIM_HZ, MAX_CATCH_UP_STEPS = 24.0, 16
+    SIM_HZ, MAX_CATCH_UP_STEPS = 24.0, 48
     RULESETS, OBSTACLES = ("classic", "wrap", "portal", "battle"), ("none", "pillars", "gates", "zigzag")
     STYLES, BACKGROUNDS = ("classic", "rainbow", "neon", "fire", "ice", "sunset", "prism"), ("void", "stars", "grid", "aurora")
     DEFAULTS = MappingProxyType({"move_cadence": 9.0, "snake_count": 3, "initial_length": 7, "max_length": 180, "food_count": 5, "growth_per_food": 3, "ruleset": "wrap", "obstacles": "none", "visual_style": "rainbow", "background": "void", "trails": .72, "trail_decay": 2.5, "glow": .55, "seed": 1976})
     COMPONENT_DESCRIPTOR = ComponentDescriptor(component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="opaque", palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS)
-    SEMANTIC_PALETTES = MappingProxyType({"neutral": ((3., 9., 14.), (77., 232., 123.), (255., 95., 91.)), "mist": ((3., 9., 20.), (73., 188., 255.), (243., 242., 255.)), "spectrum": ((13., 3., 34.), (237., 53., 234.), (42., 237., 218.)), "ember": ((18., 3., 2.), (255., 84., 25.), (255., 205., 74.))})
+    SEMANTIC_PALETTES = MappingProxyType({
+        "neutral": ((3., 9., 14.), (77., 232., 123.), (255., 95., 91.)),
+        "mist": ((3., 9., 20.), (73., 188., 255.), (243., 242., 255.)),
+        "spectrum": ((13., 3., 34.), (237., 53., 234.), (42., 237., 218.)),
+        "ember": ((18., 3., 2.), (255., 84., 25.), (255., 205., 74.)),
+        "rainbow": ((8., 0., 18.), (255., 40., 90.), (40., 255., 140.)),
+        **{name: tuple(triple) for name, triple in HOLIDAY_TRIPLES.items()},
+    })
 
     def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
         self._authored_config = dict(config or {})
@@ -126,10 +134,14 @@ class SnakeAnimation(AnimationBase):
         candidate = self._normalized_parameters(parameters)
         if candidate != self.params: self.update_parameters(candidate)
         tick = int(math.floor(phase_time * self.SIM_HZ + 1.e-9))
-        if self._last_tick is None or tick < self._last_tick: self._reset_world(); self._last_tick = tick
+        if self._last_tick is None or tick < self._last_tick:
+            self._reset_world()
         else:
+            # Bound work per frame, then snap to the presentation clock so a
+            # slow host/SPI frame cannot permanently lag Composer preview.
             for _ in range(min(tick - self._last_tick, self.MAX_CATCH_UP_STEPS)):
-                self._step_game(); self._last_tick += 1
+                self._step_game()
+        self._last_tick = tick
         key = (self._last_tick, palette_id, tuple(self.params.items()))
         if key == self._last_render_key: return RenderedFrame(self._pixels, changed=False, dirty_ranges=())
         self._paint(palette_id, phase_time); self._last_render_key = key
@@ -257,8 +269,10 @@ class SnakeAnimation(AnimationBase):
         self._replenish_food()
 
     def _paint(self, palette_id: str, phase_time: float) -> None:
-        background, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"]); self._canvas[:] = np.asarray(background, dtype=np.uint8); self._paint_background(palette_id, phase_time); np.maximum(self._canvas, np.clip(self._trail * self.params["trails"], 0., 255.).astype(np.uint8), out=self._canvas)
-        wall = np.asarray(primary) * .18 + np.asarray(background) * .82
+        _, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
+        self._canvas.fill(0)
+        np.maximum(self._canvas, np.clip(self._trail * self.params["trails"], 0., 255.).astype(np.uint8), out=self._canvas)
+        wall = np.asarray(primary) * .18
         for cell in self.walls: self._canvas[cell] = wall.astype(np.uint8)
         for index, cell in enumerate(self.portals): self._paint_cell(cell, np.asarray((primary, accent)[index % 2]), self.params["glow"] * .45)
         food_cells = sorted(self.food)
@@ -297,13 +311,9 @@ class SnakeAnimation(AnimationBase):
         self._pixels[:] = self._canvas.reshape(self.get_pixel_count(), 3)
 
     def _paint_background(self, palette_id: str, phase_time: float) -> None:
-        style = self.params["background"]; background, primary, _ = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
-        if style == "stars":
-            rng = random.Random(self.params["seed"] + 101)
-            for _ in range(max(3, self.width * self.height // 58)): self._canvas[rng.randrange(self.width), rng.randrange(self.height)] = np.asarray(background) * .65 + np.asarray(primary) * .14
-        elif style == "grid": self._canvas[::8, :] = np.asarray(primary) * .12; self._canvas[:, ::8] = np.asarray(primary) * .12
-        elif style == "aurora":
-            x, y = np.arange(self.width, dtype=np.float32)[:, None], np.arange(self.height, dtype=np.float32)[None, :]; strength = (np.sin(x * .42 + y * .075 + phase_time * .35) + 1.) * .09; self._canvas[:] = np.clip(np.asarray(background) + strength[..., None] * (np.asarray(primary) - np.asarray(background)), 0, 255).astype(np.uint8)
+        del palette_id, phase_time
+        # FOR TESTING / operator request: Snake Garden is always a black field.
+        # Stars, grid, and aurora remain selectable parameters but do not light the wall.
 
     def _paint_cell(self, cell: Cell, color: np.ndarray, glow: float) -> None:
         x, y = cell
@@ -353,7 +363,13 @@ class SnakeAnimation(AnimationBase):
             )
 
     def _snake_color(self, hue: float, palette_id: str, value: float) -> np.ndarray:
-        _, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"]); style_hue = {"classic": .31, "neon": .61, "fire": .05, "ice": .54, "sunset": .96, "prism": hue * 1.7}.get(self.params["visual_style"], hue); rgb = np.asarray(colorsys.hsv_to_rgb(style_hue % 1., .72 if self.params["visual_style"] == "classic" else .88, value)) * 255.; return np.clip(rgb * .4 + (np.asarray(primary) * .62 + np.asarray(accent) * .38) * .6, 0., 255.)
+        _, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"]); style_hue = {"classic": .31, "neon": .61, "fire": .05, "ice": .54, "sunset": .96, "prism": hue * 1.7}.get(self.params["visual_style"], hue); rgb = np.asarray(colorsys.hsv_to_rgb(style_hue % 1., .72 if self.params["visual_style"] == "classic" else .88, value)) * 255.
+        if palette_id == "rainbow":
+            return np.clip(np.asarray(colorsys.hsv_to_rgb((style_hue + hue) % 1., .92, value)) * 255., 0., 255.)
+        festive = holiday_stop(palette_id, hue)
+        if festive is not None:
+            return np.clip(np.asarray(festive, dtype=np.float32) * value, 0., 255.)
+        return np.clip(rgb * .4 + (np.asarray(primary) * .62 + np.asarray(accent) * .38) * .6, 0., 255.)
 
     @classmethod
     def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:

@@ -97,6 +97,12 @@ class PlantGlowAnimation(AnimationBase):
                 "globe": (255, 232, 105),
                 "globe_halo": (255, 103, 18),
             },
+            "rainbow": {
+                "foliage": (40, 255, 120),
+                "foliage_halo": (255, 40, 90),
+                "globe": (255, 220, 40),
+                "globe_halo": (80, 90, 255),
+            },
         }
     )
 

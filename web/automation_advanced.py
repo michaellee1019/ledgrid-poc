@@ -6,7 +6,7 @@ from animation.core.plant_awareness import PLANT_MODIFIER_IDS
 from ipc.scene_contract import canonical_json_sha256, validate_bounded_browser_json
 from web.automation_api import AutomationError
 
-PALETTES = ('neutral', 'mist', 'ember', 'spectrum')
+PALETTES = ('neutral', 'mist', 'ember', 'spectrum', 'rainbow', 'xmas', 'fall', 'easter', 'july4')
 
 
 def finite(value, minimum, maximum, name):

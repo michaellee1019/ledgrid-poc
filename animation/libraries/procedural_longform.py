@@ -38,6 +38,7 @@ SEMANTIC_PALETTES = {
     "mist": ((3, 9, 20), (40, 102, 142), (170, 228, 245)),
     "spectrum": ((15, 3, 34), (84, 38, 194), (54, 238, 230)),
     "ember": ((18, 3, 2), (156, 42, 14), (255, 202, 92)),
+    "rainbow": ((8, 0, 18), (255, 40, 90), (40, 255, 140)),
 }
 
 # low/mid/high gains and field/background shaping.  These only affect

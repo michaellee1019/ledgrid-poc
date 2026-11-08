@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import colorsys
 import math
 import threading
 from collections import deque
@@ -29,7 +30,23 @@ PALETTES = {
     "candy": ((65, 2, 60), (255, 42, 175), (80, 255, 240), (255, 70, 210)),
     "solar": ((80, 12, 0), (255, 115, 0), (255, 250, 150), (255, 155, 15)),
     "mono": ((24, 24, 28), (145, 150, 165), (255, 255, 255), (190, 200, 225)),
+    "holly": ((12, 48, 18), (200, 16, 28), (255, 210, 70), (255, 40, 36)),
+    "harvest": ((48, 18, 6), (232, 92, 18), (255, 230, 90), (255, 140, 24)),
+    "blossom": ((40, 12, 48), (255, 120, 180), (255, 255, 160), (180, 255, 140)),
+    "parade": ((6, 10, 48), (220, 24, 36), (240, 244, 255), (40, 80, 220)),
 }
+
+
+def _rainbow_lut() -> np.ndarray:
+    table = np.empty((256, 3), dtype=np.float32)
+    for index in range(256):
+        red, green, blue = colorsys.hsv_to_rgb(index / 256.0, 0.92, 1.0)
+        table[index] = (red * 255.0, green * 255.0, blue * 255.0)
+    return table
+
+
+RAINBOW_LUT = _rainbow_lut()
+_HUE_GOLDEN = np.float32(0.6180339887)
 
 
 class LavaLampAnimation(AnimationBase):
@@ -44,6 +61,7 @@ class LavaLampAnimation(AnimationBase):
     ))
     SOURCE_FPS = 100.0
     PHYSICS_DT = 0.01
+    WARMUP_STEPS = 200
     MAX_BLOBS = 16
     INTERACTION_TYPES = frozenset(("primary",))
     # Scene v2 owns installation geometry and effect intent.  Lava only
@@ -68,7 +86,8 @@ class LavaLampAnimation(AnimationBase):
         defaults=DEFAULTS,
     )
     SCENE_PALETTES = MappingProxyType({
-        "neutral": "classic", "mist": "ocean", "spectrum": "violet", "ember": "solar",
+        "neutral": "classic", "mist": "ocean", "spectrum": "violet", "ember": "solar", "rainbow": "candy",
+        "xmas": "holly", "fall": "harvest", "easter": "blossom", "july4": "parade",
     })
 
     def __init__(self, controller, config: Optional[Mapping[str, Any]] = None):
@@ -92,6 +111,8 @@ class LavaLampAnimation(AnimationBase):
         self._rows, self._cols = np.indices((self.height, self.width), dtype=np.float32)
         self._field = np.zeros((self.height, self.width), dtype=np.float32)
         self._temperature_field = np.zeros_like(self._field)
+        self._color_field = np.zeros((self.height, self.width, 3), dtype=np.float32)
+        self._row_phase = 1.0 - self._rows / max(1.0, self.height - 1.0)
         self._canvas_float = np.zeros((self.height, self.width, 3), dtype=np.float32)
         self._canvas_u8 = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self._foliage = np.zeros((self.height, self.width), dtype=bool)
@@ -119,18 +140,38 @@ class LavaLampAnimation(AnimationBase):
         self.cooldown = np.zeros(self.MAX_BLOBS, dtype=np.float32)
         self.phase = np.zeros(self.MAX_BLOBS, dtype=np.float32)
         self.active = np.zeros(self.MAX_BLOBS, dtype=bool)
+        self._hue_offset = np.mod(
+            np.arange(self.MAX_BLOBS, dtype=np.float32) * _HUE_GOLDEN, np.float32(1.0)
+        )
         count = max(3, min(12, int(self.params.get("blob_count", 7))))
         scale = float(self.params.get("blob_scale", 1.0))
         for index in range(count):
             self.active[index] = True
+            heater = index % 2 == 0
             self.x[index] = (index + 0.5) * self.width / count
             self.x[index] += self.rng.uniform(-1.2, 1.2)
-            self.y[index] = self.height - 7.0 - self.rng.uniform(0.0, 20.0)
+            # Stagger heater and cooler blobs so the first visible frame is already
+            # a column of wax, not a bottom pile that launches together. Stay out of
+            # the planter-bowl band (y 39-102) so a first physics tick cannot portal
+            # or split a spawn into a globe.
+            if heater:
+                self.y[index] = self.height - 7.0 - self.rng.uniform(0.0, 20.0)
+            else:
+                self.y[index] = 8.0 + self.rng.uniform(0.0, 20.0)
             self.radius[index] = scale * self.rng.uniform(3.0, 5.0)
-            self.temperature[index] = self.rng.uniform(0.48, 0.92)
+            if heater:
+                self.temperature[index] = self.rng.uniform(0.48, 0.92)
+            else:
+                self.temperature[index] = self.rng.uniform(0.08, 0.38)
             self.vx[index] = self.rng.uniform(-0.5, 0.5)
-            self.vy[index] = self.rng.uniform(-1.8, 0.2)
+            if heater:
+                self.vy[index] = self.rng.uniform(-1.8, 0.2)
+            else:
+                self.vy[index] = self.rng.uniform(0.2, 1.8)
             self.phase[index] = self.rng.uniform(0.0, math.tau)
+            radius = float(self.radius[index])
+            self.x[index] = float(np.clip(self.x[index], radius, self.width - 1 - radius))
+            self.y[index] = float(np.clip(self.y[index], radius, self.height - 1 - radius))
         self.previous_x = self.x.copy()
         self.previous_y = self.y.copy()
         self.previous_radius = self.radius.copy()
@@ -153,6 +194,7 @@ class LavaLampAnimation(AnimationBase):
         self._emitter_clock = 0.0
         self._emitter_region = 0
         self._initial_wax_area = self.wax_area
+        self._warmup_pending = True
 
     @property
     def wax_area(self) -> float:
@@ -344,6 +386,23 @@ class LavaLampAnimation(AnimationBase):
         self._plant_strengths = strengths
         self._pending_plant_geometry = None
 
+    def _finish_startup_warmup(self) -> bool:
+        """Settle spawn motion before the first visible frame.
+
+        Blobs already start in both the heater and cooler bands; these silent
+        steps only integrate that arrangement so frame 1 is not a launch pile.
+        """
+        if not getattr(self, "_warmup_pending", False):
+            return False
+        for _ in range(self.WARMUP_STEPS):
+            self._step(self.PHYSICS_DT)
+        self.previous_x[:] = self.x
+        self.previous_y[:] = self.y
+        self.previous_radius[:] = self.radius
+        self._accumulator = 0.0
+        self._warmup_pending = False
+        return True
+
     def _free_slot(self) -> Optional[int]:
         free = np.flatnonzero(~self.active)
         return int(free[0]) if free.size else None
@@ -368,6 +427,7 @@ class LavaLampAnimation(AnimationBase):
         self.temperature[slot] = self.temperature[index]
         self.cooldown[slot] = self.cooldown[index] = 0.8
         self.phase[slot] = self.phase[index] + math.pi
+        self._hue_offset[slot] = (float(self._hue_offset[index]) + 0.14) % 1.0
         self.previous_x[slot] = self.x[slot]
         self.previous_y[slot] = self.y[slot]
         self.previous_radius[slot] = self.radius[slot]
@@ -618,6 +678,9 @@ class LavaLampAnimation(AnimationBase):
     def _render(self, elapsed: float, alpha: float, palette_id: str) -> np.ndarray:
         self._field.fill(0.0)
         self._temperature_field.fill(0.0)
+        rainbow = palette_id == "rainbow"
+        if rainbow:
+            self._color_field.fill(0.0)
         interp_x = self.previous_x + (self.x - self.previous_x) * alpha
         interp_y = self.previous_y + (self.y - self.previous_y) * alpha
         interp_radius = self.previous_radius + (self.radius - self.previous_radius) * alpha
@@ -627,6 +690,12 @@ class LavaLampAnimation(AnimationBase):
             contribution = (interp_radius[index] ** 2) / (dx * dx + dy * dy + 1.0)
             self._field += contribution
             self._temperature_field += contribution * self.temperature[index]
+            if rainbow:
+                lut_index = np.mod(
+                    np.rint((float(self._hue_offset[index]) + self._row_phase) * 255.0).astype(np.int32),
+                    256,
+                )
+                self._color_field += contribution[..., None] * RAINBOW_LUT[lut_index]
         temperature = np.divide(
             self._temperature_field, self._field,
             out=np.zeros_like(self._field), where=self._field > 1e-6,
@@ -635,23 +704,35 @@ class LavaLampAnimation(AnimationBase):
         wax *= wax * (3.0 - 2.0 * wax)
         glow_strength = float(self.params.get("glow", 0.58))
         halo = np.clip((self._field - 0.12) / 0.52, 0.0, 1.0) * glow_strength
-        palette = self.SCENE_PALETTES.get(palette_id, self.SCENE_PALETTES["neutral"])
-        cool, warm, hot, glow_color = (
-            np.asarray(color, dtype=np.float32)
-            for color in PALETTES[palette]
-        )
         heat_mix = np.clip(temperature, 0.0, 1.0)
-        warm_mix = np.minimum(1.0, heat_mix * 1.5)
-        hot_mix = np.clip((heat_mix - 0.55) / 0.45, 0.0, 1.0)
         clear_wax = 1.0 - wax
         self._background(elapsed)
-        # Avoid broadcasting scalar fields into full RGB intermediates.
-        for channel in range(3):
-            wax_color = cool[channel] + (warm[channel] - cool[channel]) * warm_mix
-            wax_color += (hot[channel] - wax_color) * hot_mix
-            self._canvas_float[:, :, channel] += glow_color[channel] * halo * clear_wax * 0.34
-            self._canvas_float[:, :, channel] *= clear_wax
-            self._canvas_float[:, :, channel] += wax_color * wax
+        if rainbow:
+            mixed = np.divide(
+                self._color_field, self._field[..., None],
+                out=np.zeros_like(self._color_field), where=self._field[..., None] > 1e-6,
+            )
+            brightness = 0.62 + 0.38 * heat_mix
+            for channel in range(3):
+                wax_color = mixed[:, :, channel] * brightness
+                self._canvas_float[:, :, channel] += wax_color * halo * clear_wax * 0.34
+                self._canvas_float[:, :, channel] *= clear_wax
+                self._canvas_float[:, :, channel] += wax_color * wax
+        else:
+            palette = self.SCENE_PALETTES.get(palette_id, self.SCENE_PALETTES["neutral"])
+            cool, warm, hot, glow_color = (
+                np.asarray(color, dtype=np.float32)
+                for color in PALETTES[palette]
+            )
+            warm_mix = np.minimum(1.0, heat_mix * 1.5)
+            hot_mix = np.clip((heat_mix - 0.55) / 0.45, 0.0, 1.0)
+            # Avoid broadcasting scalar fields into full RGB intermediates.
+            for channel in range(3):
+                wax_color = cool[channel] + (warm[channel] - cool[channel]) * warm_mix
+                wax_color += (hot[channel] - wax_color) * hot_mix
+                self._canvas_float[:, :, channel] += glow_color[channel] * halo * clear_wax * 0.34
+                self._canvas_float[:, :, channel] *= clear_wax
+                self._canvas_float[:, :, channel] += wax_color * wax
         self._apply_foliage_refraction()
 
         np.clip(self._canvas_float, 0.0, 255.0, out=self._canvas_float)
@@ -672,24 +753,29 @@ class LavaLampAnimation(AnimationBase):
         candidate = self._normalized_parameters(parameters)
         if candidate != self.params:
             self.update_parameters(candidate)
+        warmed_this_frame = self._finish_startup_warmup()
         source_tick = int(math.floor(phase_time * self.SOURCE_FPS + 1e-9))
         if self._last_render_tick == source_tick and self._cached_frame is not None:
             return self.rendered_frame(self._cached_frame, changed=False)
-        if self._last_source_time is None:
-            real_delta = self.PHYSICS_DT
+        if warmed_this_frame:
+            self._last_source_time = phase_time
+            alpha = 0.0
         else:
-            real_delta = max(0.0, min(0.1, phase_time - self._last_source_time))
-        self._last_source_time = phase_time
-        self._accumulator += real_delta
-        steps = 0
-        while self._accumulator + 1e-12 >= self.PHYSICS_DT and steps < 8:
-            self._step(self.PHYSICS_DT)
-            self._accumulator -= self.PHYSICS_DT
-            steps += 1
-        if self._accumulator >= self.PHYSICS_DT:
-            self._dropped_steps += int(self._accumulator / self.PHYSICS_DT)
-            self._accumulator = math.fmod(self._accumulator, self.PHYSICS_DT)
-        alpha = max(0.0, min(1.0, self._accumulator / self.PHYSICS_DT))
+            if self._last_source_time is None:
+                real_delta = self.PHYSICS_DT
+            else:
+                real_delta = max(0.0, min(0.1, phase_time - self._last_source_time))
+            self._last_source_time = phase_time
+            self._accumulator += real_delta
+            steps = 0
+            while self._accumulator + 1e-12 >= self.PHYSICS_DT and steps < 8:
+                self._step(self.PHYSICS_DT)
+                self._accumulator -= self.PHYSICS_DT
+                steps += 1
+            if self._accumulator >= self.PHYSICS_DT:
+                self._dropped_steps += int(self._accumulator / self.PHYSICS_DT)
+                self._accumulator = math.fmod(self._accumulator, self.PHYSICS_DT)
+            alpha = max(0.0, min(1.0, self._accumulator / self.PHYSICS_DT))
         self._cached_frame = self._render(phase_time, alpha, palette_id)
         self._last_render_tick = source_tick
         return self.rendered_frame(self._cached_frame, changed=True)

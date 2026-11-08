@@ -129,7 +129,7 @@ def evaluate_receiver_topology(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://ledgridwall.local:5000")
+    parser.add_argument("--base-url", default="http://ledgridwall5.local:5000")
     parser.add_argument("--seconds", type=float, default=2.0)
     parser.add_argument("--animation", action="append", dest="animations")
     parser.add_argument(

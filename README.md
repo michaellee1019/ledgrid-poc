@@ -64,6 +64,9 @@ The Pi renders full RGB frames. Receiver-native modules and sparse overlays are
 retired. Composer retains browser rendering while connected; offline editing is
 not supported. Calibration is one editable configuration for this wall.
 
+Use `just deploy-python` when firmware and boot configuration are unchanged.
+The deployment target defaults to `ledgridwall5@ledgridwall5.local`.
+
 ## Required checks
 
 Use focused behavior tests, syntax checks, and `git diff --check`. Firmware changes

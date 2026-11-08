@@ -16,7 +16,10 @@ from ipc.playlist_runtime import PlaylistRunner, normalize_playlist_command
 from ipc.runtime_control import (ControllerCommandConflictError, controller_activation_coordinator,
     start_scene as _start_scene, normalize_managed_scene, update_scene_component as _update_scene_component,
     restore_display_state as _restore_display_state, normalize_automation_device_state)
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, wall_device_map
+from drivers.led_layout import (
+    DEFAULT_LEDS_PER_STRIP, default_strip_count, hardware_receiver_count,
+    hardware_device_map,
+)
 from tools.deployment.preserve_deploy_settings import load_saved_state,save_status
 
 PRODUCTION_STAGGER_PHASES=3
@@ -103,14 +106,12 @@ def process_control_command(channel, manager, command, *, last_applied_command_i
 
 def run_controller_mode(args):
     from drivers.multi_device import MultiDeviceLEDController
-    if args.strips != DEFAULT_STRIP_COUNT or args.leds_per_strip != DEFAULT_LEDS_PER_STRIP:
-        raise ValueError('hardware mode requires the installed 33x138 wall')
+    num_devices = hardware_receiver_count(args.strips, args.leds_per_strip)
     saved=load_saved_state(state_path=Path(args.saved_state_file),presets_dir=Path(args.presets_dir))
-    controller=MultiDeviceLEDController(num_devices=5,strip_count=33,leds_per_strip=138,
-        device_map=wall_device_map(5),debug=args.controller_debug,
-        fec_receiver_ids=receiver_fec_ids_for_runtime(),speed=args.spi_speed)
-    # Brightness zero is the startup default; an explicitly saved value is applied first.
-    controller.set_brightness(saved.get('brightness',args.brightness) if saved else args.brightness)
+    fec_ids = receiver_fec_ids_for_runtime()
+    controller=MultiDeviceLEDController(num_devices=num_devices,strip_count=args.strips,
+        leds_per_strip=args.leds_per_strip,device_map=hardware_device_map(num_devices),
+        debug=args.controller_debug,fec_receiver_ids=fec_ids,speed=args.spi_speed)
     controller.configure()
     apply_production_stagger(controller)
     manager=AnimationManager(controller,plugins_dir=args.animations_dir,
@@ -118,6 +119,13 @@ def run_controller_mode(args):
         plant_modifiers=saved.get('plant_modifiers') if saved else None,
         vibe=saved.get('vibe') if saved else None,
         auto_start=False)
+    # Brightness must run after stagger so the queue is not full of CONFIG/mask
+    # traffic; firmware keeps brightness=0 until SET_BRIGHTNESS is accepted.
+    startup_brightness = saved.get('brightness', args.brightness) if saved else args.brightness
+    manager.set_output_brightness(startup_brightness)
+    refresh = getattr(controller, 'refresh_receiver_status', None)
+    if callable(refresh):
+        refresh()
     manager.set_target_fps(saved.get('target_fps',args.target_fps) if saved else args.target_fps)
     if saved and saved.get('power',True):
         try:
@@ -192,8 +200,8 @@ def main():
     parser.add_argument('--status-file',default=str(data_root/'run_state/status.json'))
     parser.add_argument('--presets-dir',default=str(data_root/'presets/animations'))
     parser.add_argument('--saved-state-file',default=str(data_root/'run_state/before_deploy.json'))
-    parser.add_argument('--strips',type=int,default=33)
-    parser.add_argument('--leds-per-strip',type=int,default=138)
+    parser.add_argument('--strips',type=int,default=default_strip_count())
+    parser.add_argument('--leds-per-strip',type=int,default=DEFAULT_LEDS_PER_STRIP)
     parser.add_argument('--host',default='0.0.0.0')
     parser.add_argument('--port',type=int,default=5000)
     parser.add_argument('--debug',action='store_true')
@@ -220,7 +228,7 @@ def apply_production_stagger(controller, phases: int = PRODUCTION_STAGGER_PHASES
 def receiver_fec_ids_for_runtime(value: str | None = None) -> tuple[int, ...]:
     """Parse an explicit, fail-closed logical-receiver FEC allowlist."""
     if value is None:
-        value = os.environ.get(FEC_RECEIVER_IDS_ENV, "3")
+        value = os.environ.get(FEC_RECEIVER_IDS_ENV, "")
     if not isinstance(value, str):
         raise TypeError(f"{FEC_RECEIVER_IDS_ENV} must be text")
     if value == "":

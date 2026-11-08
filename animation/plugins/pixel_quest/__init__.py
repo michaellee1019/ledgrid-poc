@@ -70,7 +70,7 @@ class PixelQuestAnimation(AnimationBase):
         plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS,
     )
     _PALETTE_TINTS = MappingProxyType({"neutral": (.72, 1.0, .72), "mist": (.55, .82, 1.0),
-                                       "spectrum": (1.0, .58, 1.0), "ember": (1.0, .58, .25)})
+                                       "spectrum": (1.0, .58, 1.0), "ember": (1.0, .58, .25), "rainbow": (1.0, .72, .42)})
 
     BIOMES = ("meadow", "forest", "desert", "ruins", "crystal")
     MONSTERS = {

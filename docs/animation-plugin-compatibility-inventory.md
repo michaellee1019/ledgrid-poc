@@ -35,16 +35,17 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 
 | Classification | Count |
 | --- | ---: |
-| `ordinary_background` | 48 |
+| `ordinary_background` | 54 |
 | `compatibility_full_scene` | 1 |
-| `python_overlay` | 1 |
+| `python_overlay` | 0 |
 | `unsupported_direct_hardware_stateful` | 0 |
-| **Total shipped packages** | **50** |
+| **Total shipped packages** | **55** |
 
 ## Shipped packages
 
 | Plugin ID | Concrete class | Gallery | Compatibility | Evidence |
 | --- | --- | --- | --- | --- |
+| `ambient_scene` | `AmbientSceneAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `ascii_drop` | `AsciiDropAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `aurora_curtains` | `AuroraCurtainsAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `canopy_cup` | `CanopyCupAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
@@ -52,14 +53,17 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | `christmas_tree` | `ChristmasTreeAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `circadian_window` | `CircadianWindowAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `clock` | `ClockAnimation` | `show` | `compatibility_full_scene` | Owns both the clock face and its opaque authored background. |
-| `clock_overlay` | `ClockOverlayAnimation` | `test` | `python_overlay` | Explicit Python overlay manifest; returns premultiplied RGBA8 through the manager-owned composition path. |
+| `clock_overlay` | `ClockOverlayAnimation` | `test` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `cloud_canyon` | `CloudCanyonAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
+| `column_sequence` | `ColumnSequenceAnimation` | `test` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `conway_life` | `ConwayLifeAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `cyclic_reef` | `CyclicReefAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `desert_wind` | `DesertWindAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `emoji` | `EmojiAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
+| `emoji_arranger` | `EmojiArrangerAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `firefly_synchrony` | `FireflySynchronyAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `fireworks` | `FireworksAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
+| `fish_tank` | `FishTankAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `flame_burst` | `FlameBurstAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `flow_field_silk` | `FlowFieldSilkAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `fluid_tank` | `FluidTankAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
@@ -70,8 +74,10 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | `living_ecosystem` | `LivingEcosystemAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `living_stained_glass` | `LivingStainedGlassAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `maze_chase` | `MazeChaseAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
+| `mini_metro` | `MiniMetroAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `moonlit_fog_banks` | `MoonlitFogBanksAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `night_train_windows` | `NightTrainWindowsAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
+| `ocean_waves` | `OceanWavesAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `physarum_network` | `PhysarumNetworkAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `pinball` | `PinballAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `pixel_chase` | `PixelChaseAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |

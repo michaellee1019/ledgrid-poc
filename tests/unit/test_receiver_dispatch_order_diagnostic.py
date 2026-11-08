@@ -10,10 +10,10 @@ from tools.diagnostics.receiver_dispatch_order import (
 
 
 class _Controller:
-    device_map = [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)]
+    device_map = [(1, 0), (1, 1), (0, 0), (0, 1), (0, 3)]
 
     def __init__(self):
-        self._devices_by_bus = {0: [0, 1], 1: [2, 3, 4]}
+        self._devices_by_bus = {1: [0, 1], 0: [2, 3, 4]}
 
 
 class ReceiverDispatchOrderDiagnosticTests(unittest.TestCase):
@@ -21,10 +21,10 @@ class ReceiverDispatchOrderDiagnosticTests(unittest.TestCase):
         controller = _Controller()
         original_map = list(controller.device_map)
 
-        applied = apply_dispatch_order(controller, (0, 1, 3, 2, 4))
+        applied = apply_dispatch_order(controller, (0, 1, 4, 2, 3))
 
-        self.assertEqual(applied, (0, 1, 3, 2, 4))
-        self.assertEqual(controller._devices_by_bus, {0: [0, 1], 1: [3, 2, 4]})
+        self.assertEqual(applied, (0, 1, 4, 2, 3))
+        self.assertEqual(controller._devices_by_bus, {1: [0, 1], 0: [4, 2, 3]})
         self.assertEqual(controller.device_map, original_map)
 
     def test_order_validation_rejects_missing_duplicate_and_crossed_bus_groups(self):
@@ -72,7 +72,7 @@ class ReceiverDispatchOrderDiagnosticTests(unittest.TestCase):
         self.assertEqual(args.target_fps, [120, 160])
         self.assertEqual(
             args.orders,
-            [(0, 1, 2, 3, 4), (0, 1, 3, 2, 4), (0, 1, 2, 3, 4)],
+            [(0, 1, 2, 3, 4), (0, 1, 4, 2, 3), (0, 1, 2, 3, 4)],
         )
 
 

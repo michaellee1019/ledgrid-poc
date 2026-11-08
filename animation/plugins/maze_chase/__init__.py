@@ -136,7 +136,7 @@ class MazeChaseAnimation(AnimationBase):
         plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS,
     )
     _PALETTE_TINTS = MappingProxyType({"neutral": (1.0, .92, .72), "mist": (.64, .88, 1.0),
-                                       "spectrum": (1.0, .62, 1.0), "ember": (1.0, .60, .32)})
+                                       "spectrum": (1.0, .62, 1.0), "ember": (1.0, .60, .32), "rainbow": (1.0, .72, .42)})
 
     NAVY = (0, 1, 10)
     WALL = (15, 55, 245)

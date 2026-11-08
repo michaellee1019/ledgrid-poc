@@ -76,7 +76,7 @@ class AsciiDropAnimation(AnimationBase):
         tick = int(phase * 20.0); key = (tick, palette, tuple(params.items()))
         if key == self._key: return RenderedFrame(self._pixels, changed=False, dirty_ranges=())
         background, ink = self._COLORS[params["story"]]
-        tint = {"neutral": (1., 1., 1.), "mist": (.65, .85, 1.), "spectrum": (1., .55, 1.), "ember": (1., .55, .35)}.get(palette, (1., 1., 1.))
+        tint = {"neutral": (1., 1., 1.), "mist": (.65, .85, 1.), "spectrum": (1., .55, 1.), "ember": (1., .55, .35), "rainbow": (1., .72, .42)}.get(palette, (1., 1., 1.))
         # Falling glyph rows are top-down; canonical LED indices are bottom-up.
         canvas = self._pixels.reshape(self.width, self.height, 3)[:, ::-1]; canvas[:] = background
         rng = np.random.default_rng(int(params["seed"]) + tick // 2)

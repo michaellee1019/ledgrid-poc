@@ -46,6 +46,7 @@ class FireflySynchronyAnimation(AnimationBase):
         "mist": MappingProxyType({"night": (3.0, 9.0, 20.0), "meadow": (40.0, 102.0, 142.0), "firefly": (170.0, 228.0, 245.0)}),
         "spectrum": MappingProxyType({"night": (15.0, 3.0, 34.0), "meadow": (84.0, 38.0, 194.0), "firefly": (54.0, 238.0, 230.0)}),
         "ember": MappingProxyType({"night": (18.0, 3.0, 2.0), "meadow": (156.0, 42.0, 14.0), "firefly": (255.0, 202.0, 92.0)}),
+        "rainbow": MappingProxyType({"night": (8.0, 0.0, 18.0), "meadow": (255.0, 40.0, 90.0), "firefly": (40.0, 255.0, 140.0)}),
     })
 
     def __init__(self, controller: Any, config: Optional[Mapping[str, Any]] = None):

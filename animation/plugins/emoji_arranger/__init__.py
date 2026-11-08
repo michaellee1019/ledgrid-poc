@@ -61,6 +61,7 @@ class EmojiArrangerAnimation(AnimationBase):
         "mist": MappingProxyType({"message": (170, 228, 245), "highlight": (235, 252, 255), "ink": (9, 25, 38)}),
         "spectrum": MappingProxyType({"message": (54, 238, 230), "highlight": (231, 181, 255), "ink": (17, 5, 36)}),
         "ember": MappingProxyType({"message": (255, 202, 92), "highlight": (255, 239, 179), "ink": (48, 10, 4)}),
+        "rainbow": MappingProxyType({"message": (40, 255, 140), "highlight": (255, 230, 70), "ink": (18, 0, 36)}),
     })
 
     def __init__(self, controller: Any, config: Optional[Mapping[str, Any]] = None):

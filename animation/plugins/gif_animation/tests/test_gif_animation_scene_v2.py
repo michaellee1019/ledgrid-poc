@@ -9,19 +9,18 @@ import unittest
 import numpy as np
 from PIL import Image
 
-from animation.core.component_catalog import ComponentCatalog, ComponentDescriptor
 from animation.core.manager import PreviewLEDController
 from animation.core.presentation_contracts import resolve_scene
 from animation.plugins.gif_animation import GifAnimation
+from web.composer_final_preview import current_component_catalog
 
 
 def _scene(*, palette="neutral", pace=1.0, parameters=None):
     return {
         "schema": "ledgrid.scene.v2",
         "background": {
-            "component_id": "native", "version": 1, "provider": "receiver_native",
-            "role": "background", "parameters": {"bundle_digest": "a" * 64},
-            "bundle_digest": "a" * 64,
+            "component_id": "solid_background", "version": 1, "provider": "python",
+            "role": "background", "parameters": {"gain": 0.0, "seed": 4201},
         },
         "animation": {
             "component_id": "gif_animation", "version": 1, "provider": "python",
@@ -36,12 +35,7 @@ def _scene(*, palette="neutral", pace=1.0, parameters=None):
 class GifAnimationSceneV2Tests(unittest.TestCase):
     def setUp(self):
         self.controller = PreviewLEDController(strips=33, leds_per_strip=138)
-        native = ComponentDescriptor(
-            "native", 1, "receiver_native", "background", "scaled_context", "none",
-            "preserve", ("final_optics",), ("native_preview",),
-            defaults={"bundle_digest": "a" * 64},
-        )
-        self.catalog = ComponentCatalog([native, GifAnimation.component_descriptor()])
+        self.catalog = current_component_catalog()
         self.parameters = {
             "gif_name": "axolotl-bubble-column.gif", "playback_speed": 1.0,
             "flip_y": True, "fit_mode": "stretch",
@@ -74,6 +68,8 @@ class GifAnimationSceneV2Tests(unittest.TestCase):
         self.assertEqual(neutral.pixels.shape, (33 * 138, 4))
         self.assertTrue(neutral.pixels.flags.c_contiguous)
         self.assertTrue(np.all(neutral.pixels[:, :3] <= neutral.pixels[:, 3:4]))
+        last_strip = neutral.pixels.reshape(33, 138, 4)[-1]
+        self.assertFalse(np.all(last_strip[:, :3] == 0))
 
         spectrum = animation.render_resolved_scene(self.resolved(elapsed=0.0, palette="spectrum"))
         self.assertFalse(spectrum.changed)
@@ -95,6 +91,26 @@ class GifAnimationSceneV2Tests(unittest.TestCase):
             )
         )
         self.assertEqual(doubled._current_frame_index, fast._current_frame_index)
+
+    def test_opaque_black_tail_is_stretched_across_the_installed_strip(self) -> None:
+        padded = Image.new("RGBA", (33, 138), (0, 0, 0, 255))
+        for x in range(32):
+            for y in range(138):
+                padded.putpixel((x, y), (255, 40, 12, 255))
+        fitted = GifAnimation._fit_frame(padded, 33, 138, "stretch", 0)
+        pixels = np.asarray(fitted)
+        self.assertEqual(pixels.shape, (138, 33, 4))
+        self.assertTrue(np.all(pixels[:, -1, 0] > 200))
+        self.assertTrue(np.all(pixels[:, -1, 3] == 255))
+
+    def test_native_last_strip_content_is_not_treated_as_padding(self) -> None:
+        native = Image.new("RGBA", (33, 138), (8, 12, 20, 255))
+        for y in range(138):
+            native.putpixel((32, y), (0, 255, 90, 255))
+        fitted = GifAnimation._fit_frame(native, 33, 138, "stretch", 0)
+        pixels = np.asarray(fitted)
+        self.assertTrue(np.all(pixels[:, -1, 1] == 255))
+        self.assertTrue(np.all(pixels[:, -1, 0] == 0))
 
     def test_contain_padding_is_transparent_and_authored_alpha_is_premultiplied(self):
         image = Image.new("RGBA", (2, 2), (200, 100, 50, 128))

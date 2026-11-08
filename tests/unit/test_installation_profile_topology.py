@@ -148,15 +148,15 @@ class InstallationProfileTopologyTests(unittest.TestCase):
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.logical_to_transport_routes,
-            ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2)),
+            ((1, 0), (1, 1), (0, 0), (0, 1), (0, 3)),
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.physical_lane_order,
-            (0, 1, 2, 3, 4),
+            (1, 0, 3, 2, 4),
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.reverse_host_strips_by_logical_receiver,
-            (False, False, False, False, False),
+            (False, False, True, True, False),
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.reverse_native_strips_by_logical_receiver,
@@ -266,17 +266,18 @@ class InstallationProfileTopologyTests(unittest.TestCase):
         source = self.canonical_profile()
         topology = INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
         receiver_profiles = slice_installation_profile(source, topology)
-        expected_origins = (0, 8, 16, 24, 32)
+        expected_origins = (8, 0, 24, 16, 32)
+        expected_reversed = (False, False, True, True, False)
 
-        self.assertEqual(topology.physical_lane_order, (0, 1, 2, 3, 4))
+        self.assertEqual(topology.physical_lane_order, (1, 0, 3, 2, 4))
         self.assertEqual(
             topology.logical_to_transport_routes,
-            ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2)),
+            ((1, 0), (1, 1), (0, 0), (0, 1), (0, 3)),
         )
 
         for logical_id, receiver_profile in receiver_profiles.items():
             start = expected_origins[logical_id]
-            reversed_order = logical_id in (2, 3)
+            reversed_order = expected_reversed[logical_id]
             self.assertEqual(receiver_profile.strip_origin, start)
             self.assertIs(receiver_profile.reversed_strip_order, reversed_order)
             for name in SECTION_NAMES:
@@ -445,7 +446,8 @@ class InstallationProfileTopologyTests(unittest.TestCase):
         radius[2] = self.clone_profile(radius[2], clearance_radius=2)
         direction = dict(original)
         direction[3] = self.clone_profile(
-            direction[3], reversed_strip_order=False
+            direction[3],
+            reversed_strip_order=not original[3].reversed_strip_order,
         )
 
         cases = (
