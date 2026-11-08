@@ -76,10 +76,10 @@ STRESS_SCENARIOS = {
         "plugin": "baja_rally", "fps": 200.0,
         "config": {
             "render_fps": 60.0, "speed": 2.5, "difficulty": 1.5, "traffic": 1.0,
-            "plant_modifiers": {
-                "active": ["illuminate", "obstacle"],
-                "strengths": {"illuminate": 1.0, "obstacle": 1.0},
-            },
+        },
+        "plant_modifiers": {
+            "active": ["illuminate", "obstacle"],
+            "strengths": {"illuminate": 1.0, "obstacle": 1.0},
         },
     },
     "canopy-cup-max-action": {
