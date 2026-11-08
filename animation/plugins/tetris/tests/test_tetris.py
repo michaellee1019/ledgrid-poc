@@ -158,6 +158,21 @@ class TetrisAnimationTests(unittest.TestCase):
         self.assertEqual(second.manual_override, 0.0)
         self.assertEqual((second.x, second.y, second.rotation), second_position)
 
+    def test_autoplay_renders_settled_and_falling_pieces_on_wall_edges(self):
+        animation = TetrisAnimation(
+            PreviewLEDController(strips=33, leds_per_strip=138),
+            {"tetromino_count": 1},
+        )
+        animation.board[-1][0] = TETROMINOS["I"]["color"]
+        animation.board[-1][-1] = TETROMINOS["J"]["color"]
+        animation.active_pieces.append(ActivePiece("O", x=0, y=5, fall_progress=0.5))
+
+        pixels = animation.generate_frame(0.0, 0).pixels.reshape(33, 138, 3)
+
+        self.assertTrue(pixels[0, 0].any())
+        self.assertTrue(pixels[-1, 0].any())
+        self.assertTrue(pixels[0, 130:133].any())
+
     def test_every_meta_rotation_contains_three_real_pieces_and_four_gaps(self):
         for kind, rotations in META_ROTATIONS.items():
             outer = TETROMINOS[kind]["rotations"]
@@ -227,7 +242,7 @@ class TetrisAnimationTests(unittest.TestCase):
 
         animation.set_player_control(False)
         animation.generate_frame(0.78, 18)
-        self.assertEqual((animation.board_width, animation.board_height), (32, 138))
+        self.assertEqual((animation.board_width, animation.board_height), (33, 138))
         self.assertEqual(len(animation.active_pieces), 5)
 
     def test_contact_releases_meta_without_input(self):

@@ -255,7 +255,7 @@ class TetrisAnimation(AnimationBase):
 
         self.num_strips = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
         self.leds_per_strip = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
-        self.board_width = max(1, self.num_strips - 1)  # Keep column 0 dark
+        self.board_width = self.num_strips
         self.board_height = self.leds_per_strip
         self.board: List[List[BoardCell]] = [
             [None for _ in range(self.board_width)]
@@ -503,7 +503,7 @@ class TetrisAnimation(AnimationBase):
             if flash_strength > 0:
                 flash = self.palette_roles(self._palette_id)["flash"]
                 tint = tuple(int(channel * flash_strength / 80) for channel in flash)
-                for strip in range(1, self.num_strips):
+                for strip in range(self.num_strips):
                     base_index = strip * self.leds_per_strip
                     for led in range(self.board_height):
                         phys_led = (self.leds_per_strip - 1) - led
@@ -516,7 +516,7 @@ class TetrisAnimation(AnimationBase):
             for x in range(self.board_width):
                 color = row[x]
                 if color:
-                    self._set_pixel(frame, x + 1, y, color)
+                    self._set_pixel(frame, x, y, color)
 
         smooth_piece_limit = max(0, int(self.params.get('smooth_drop_max_pieces', 32)))
         smooth_drop = (
@@ -542,15 +542,15 @@ class TetrisAnimation(AnimationBase):
                             trail_row = base_row - step
                             alpha = 1.0 - (step / piece.last_fall_rows)
                             if 0 <= trail_row < self.board_height:
-                                self._set_pixel_blend(frame, px + 1, trail_row, active_color, alpha)
+                                self._set_pixel_blend(frame, px, trail_row, active_color, alpha)
                     if not smooth_drop or fall_offset <= 0.0:
                         if 0 <= base_row < self.board_height:
-                            self._set_pixel(frame, px + 1, base_row, active_color)
+                            self._set_pixel(frame, px, base_row, active_color)
                     else:
                         if 0 <= base_row < self.board_height:
-                            self._set_pixel_blend(frame, px + 1, base_row, active_color, 1.0 - fall_offset)
+                            self._set_pixel_blend(frame, px, base_row, active_color, 1.0 - fall_offset)
                         if 0 <= next_row < self.board_height:
-                            self._set_pixel_blend(frame, px + 1, next_row, active_color, fall_offset)
+                            self._set_pixel_blend(frame, px, next_row, active_color, fall_offset)
 
         self.last_rendered_frame = frame
         return self.rendered_frame(frame, changed=True)
@@ -573,7 +573,7 @@ class TetrisAnimation(AnimationBase):
         if enabled == self.player_control:
             return
         self.player_control = enabled
-        self.board_width = max(1, self.num_strips - 1)
+        self.board_width = self.num_strips
         self.board_height = self.leds_per_strip
         if enabled:
             self.board_width = min(PLAYER_COLUMNS * META_SCALE, self.num_strips)
