@@ -29,46 +29,48 @@ class ComposerPlantControlsTests(unittest.TestCase):
 
     @staticmethod
     def _with_optics(*, illuminate: float = 0.0, shadow: float = 0.0,
-                     hue_shift: float = 0.0, enabled: bool = True) -> dict:
+                     hue_shift: float = 0.0, fire: float = 0.0, enabled: bool = True) -> dict:
         scene = _current_scene()
         scene["plants"] = {"effects": {
             "version": 1,
-            "active": ["illuminate", "shadow", "hue_shift"] if enabled else [],
-            "strengths": ({"illuminate": illuminate, "shadow": shadow, "hue_shift": hue_shift}
-                          if enabled else {}),
+            "active": ["illuminate", "shadow", "hue_shift", "fire"] if enabled else [],
+            "strengths": ({"illuminate": illuminate, "shadow": shadow, "hue_shift": hue_shift,
+                           "fire": fire} if enabled else {}),
         }}
         return scene
 
-    def _pixels(self, scene: dict) -> np.ndarray:
+    def _pixels(self, scene: dict, *, elapsed: float = 1.25) -> np.ndarray:
         response = self.client.post("/api/composer/preview", json={
             "origin": "composer", "scene": scene,
-            "preview": {"monotonic_elapsed": 1.25, "wall_time": "2026-09-01T12:00:00+00:00"},
+            "preview": {"monotonic_elapsed": elapsed, "wall_time": "2026-09-01T12:00:00+00:00"},
         })
         self.assertEqual(response.status_code, 200, response.get_json())
         return np.frombuffer(
             base64.b64decode(response.get_json()["frame"]["pixels"]), dtype=np.uint8,
         ).reshape((33 * 138, 3))
 
-    def test_three_live_controls_are_explicit_and_do_not_expose_calibration_editing(self) -> None:
+    def test_four_live_controls_are_explicit_and_do_not_expose_calibration_editing(self) -> None:
         html = Path("web/templates/composer.html").read_text(encoding="utf-8")
         script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        for effect in ("Illuminate", "Shadow", "Hue shift"):
+        for effect in ("Illuminate", "Shadow", "Hue shift", "On fire"):
             self.assertIn(effect, html)
         for control in (
             "plantIlluminateEnabled", "plantIlluminateStrength",
             "plantShadowEnabled", "plantShadowStrength",
             "plantHueShiftEnabled", "plantHueShiftStrength",
+            "plantFireEnabled", "plantFireStrength",
         ):
             self.assertIn(f'id="{control}"', html)
         for forbidden in ("plantCalibration", "plantGeometry", "plantHomography", "plantMaskEditor"):
             self.assertNotIn(forbidden, html)
         self.assertIn("const plantOptics = Object.freeze([", script)
+        self.assertIn("id: 'fire'", script)
         self.assertIn("const preservedActive = active.filter((id) => !plantOpticIds.has(id));", script)
-        self.assertEqual(html.count('class="final-optic-row"'), 3)
+        self.assertEqual(html.count('class="final-optic-row"'), 4)
         self.assertNotIn('id="plantsStatus"', html)
         self.assertIn("function wirePlantOptic(optic)", script)
         self.assertIn("strength.addEventListener('pointerdown'", script)
-        self.assertIn("strength.addEventListener('change', commit)", script)
+        self.assertIn("strength.addEventListener('change'", script)
 
     def test_optics_converge_through_preview_live_recovery_and_saved_look(self) -> None:
         neutral = self._with_optics(enabled=False)
@@ -127,6 +129,27 @@ class ComposerPlantControlsTests(unittest.TestCase):
         self.assertEqual(disabled_pixels.shape, (33 * 138, 3))
         np.testing.assert_array_equal(disabled_pixels, self._pixels(zero))
         self.assertFalse(np.array_equal(disabled_pixels, self._pixels(shadowed)))
+
+    def test_fire_ignites_plants_near_sparks_and_changes_across_time(self) -> None:
+        disabled = _current_scene()
+        disabled["animation"] = {
+            "component_id": "campfire", "version": 1, "provider": "python", "role": "animation",
+            "parameters": {"heat": 0.8, "sparks": 1.0, "smoke": 0.2, "flicker": 0.2, "seed": 1903},
+        }
+        disabled["plants"] = {"effects": {"version": 1, "active": [], "strengths": {}}}
+        zero = copy.deepcopy(disabled)
+        zero["plants"] = {"effects": {
+            "version": 1, "active": ["fire"], "strengths": {"fire": 0.0},
+        }}
+        burning = copy.deepcopy(zero)
+        burning["plants"]["effects"]["strengths"]["fire"] = 0.85
+
+        disabled_pixels = self._pixels(disabled)
+        np.testing.assert_array_equal(disabled_pixels, self._pixels(zero))
+        lit = self._pixels(burning)
+        self.assertFalse(np.array_equal(disabled_pixels, lit))
+        later = self._pixels(burning, elapsed=2.4)
+        self.assertFalse(np.array_equal(lit, later))
 
     def test_invalid_optics_do_not_replace_the_last_valid_identity(self) -> None:
         valid = self._with_optics(illuminate=.4, shadow=.25, hue_shift=.2)

@@ -28,11 +28,12 @@ LEGACY_PLANT_MASK_PATH_PARAMETERS = frozenset((
 ))
 
 PLANT_MODIFIER_IDS = (
-    "illuminate", "shadow", "refract", "hue_shift", "liquid_glass",
+    "illuminate", "shadow", "refract", "hue_shift", "fire", "liquid_glass",
     "attractor", "repulsor", "slow_zone", "obstacle", "portal", "bumper",
     "hazard", "habitat", "emitter",
 )
 FRAMEWORK_VISUAL_MODIFIERS = frozenset(("hue_shift", "liquid_glass"))
+TIME_VARYING_PLANT_OPTICS = frozenset(("fire",))
 FIELD_MODIFIERS = frozenset(("attractor", "repulsor", "slow_zone"))
 SURFACE_MODIFIERS = frozenset(("obstacle", "portal", "bumper", "hazard", "habitat"))
 GLOBE_REGION_ORDER = (
@@ -115,6 +116,132 @@ class PlantModifierState:
     def to_dict(self) -> Dict[str, Any]:
         return {"version": 1, "active": list(self.active),
                 "strengths": {key: self.strengths[key] for key in self.active}}
+
+
+def plant_optics_are_time_varying(plants: Mapping[str, Any]) -> bool:
+    """True when a host plant optic must re-run even if the animation is cached."""
+
+    if not isinstance(plants, Mapping):
+        return False
+    effects = plants.get("effects")
+    if not isinstance(effects, Mapping):
+        return False
+    strengths = effects.get("strengths")
+    if not isinstance(strengths, Mapping):
+        return False
+    active = effects.get("active") or ()
+    return any(
+        modifier in TIME_VARYING_PLANT_OPTICS
+        and float(strengths.get(modifier, 0.0) or 0.0) > 0.0
+        for modifier in active
+    )
+
+
+_FIRE_EMBER = np.array((72.0, 10.0, 1.0), dtype=np.float32)
+_FIRE_FLAME = np.array((255.0, 86.0, 10.0), dtype=np.float32)
+_FIRE_CORE = np.array((255.0, 232.0, 110.0), dtype=np.float32)
+_FIRE_DECAY_TAU = 0.26
+_FIRE_LUMA_MIN = 168.0
+_FIRE_MAX_NEIGHBORS = 2
+
+
+def spark_ignition_points_from_animation(instance: Any) -> Optional[np.ndarray]:
+    """Return authored spark (strip, led) points, or None if the animation has none."""
+
+    getter = getattr(instance, "spark_ignition_points", None)
+    if not callable(getter):
+        return None
+    points = np.asarray(getter(), dtype=np.float32)
+    if points.size == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != 2 or not np.isfinite(points).all():
+        return np.zeros((0, 2), dtype=np.float32)
+    return points
+
+
+def spark_points_from_pixels(
+    pixels: np.ndarray,
+    *,
+    strip_count: int,
+    leds_per_strip: int,
+) -> np.ndarray:
+    """Treat isolated bright specks as sparks so plant fire can amplify them."""
+
+    rgb = np.asarray(pixels, dtype=np.float32).reshape(strip_count, leds_per_strip, 3)
+    luma = rgb[:, :, 0] * 0.30 + rgb[:, :, 1] * 0.59 + rgb[:, :, 2] * 0.11
+    bright = luma >= _FIRE_LUMA_MIN
+    padded = np.pad(bright.astype(np.uint8), 2)
+    neighbors = np.zeros(bright.shape, dtype=np.uint8)
+    for dx in range(5):
+        for dy in range(5):
+            neighbors += padded[dx:dx + strip_count, dy:dy + leds_per_strip]
+    isolated = np.argwhere(bright & (neighbors <= _FIRE_MAX_NEIGHBORS))
+    if isolated.size == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    return isolated.astype(np.float32)
+
+
+def paint_plant_fire(
+    output: np.ndarray,
+    geometry: Any,
+    strength: float,
+    *,
+    heat: np.ndarray,
+    sparks: np.ndarray,
+    dt: float,
+    strip_count: int,
+    leds_per_strip: int,
+) -> None:
+    """Ignite calibrated plants as sparks approach, then fade after they leave."""
+
+    plant = np.asarray(geometry.foliage_flat, dtype=np.bool_) | np.asarray(
+        geometry.globes_flat, dtype=np.bool_
+    )
+    if strength <= 0.0 or not np.any(plant):
+        heat.fill(0.0)
+        return
+    step = max(0.0, float(dt))
+    if step:
+        heat *= math.exp(-step / _FIRE_DECAY_TAU)
+    heat_2d = heat.reshape(strip_count, leds_per_strip)
+    plant_2d = plant.reshape(strip_count, leds_per_strip)
+    points = np.asarray(sparks, dtype=np.float32)
+    if points.ndim == 2 and points.shape[1] == 2 and points.size:
+        sigma_x = 0.9 + 2.2 * strength
+        sigma_y = 2.0 + 4.8 * strength
+        radius = max(sigma_x, sigma_y) * 2.4
+        reach = int(math.ceil(radius + 1.0))
+        flash = 0.92 + 0.28 * strength
+        inv_x = 1.0 / max(0.55, sigma_x) ** 2
+        inv_y = 1.0 / max(0.85, sigma_y) ** 2
+        for sx, sy in points:
+            x0 = max(0, int(math.floor(sx)) - reach)
+            x1 = min(strip_count, int(math.floor(sx)) + reach + 1)
+            y0 = max(0, int(math.floor(sy)) - reach)
+            y1 = min(leds_per_strip, int(math.floor(sy)) + reach + 1)
+            if x0 >= x1 or y0 >= y1:
+                continue
+            dx = np.arange(x0, x1, dtype=np.float32) - np.float32(sx)
+            dy = np.arange(y0, y1, dtype=np.float32) - np.float32(sy)
+            stamp = flash * np.exp(-(dx[:, None] ** 2) * inv_x - (dy[None, :] ** 2) * inv_y)
+            patch = heat_2d[x0:x1, y0:y1]
+            np.maximum(patch, stamp * plant_2d[x0:x1, y0:y1], out=patch)
+    heat[~plant] = 0.0
+    np.clip(heat, 0.0, 1.0, out=heat)
+    hot = plant & (heat > 0.03)
+    if not np.any(hot):
+        return
+    amount = heat[hot]
+    core_mix = np.clip((amount - 0.55) / 0.45, 0.0, 1.0)
+    flame_mix = np.clip(amount / 0.55, 0.0, 1.0)
+    color = _FIRE_EMBER + (_FIRE_FLAME - _FIRE_EMBER) * flame_mix[:, None]
+    color = color + (_FIRE_CORE - color) * core_mix[:, None]
+    current = output[hot].astype(np.float32)
+    blend = np.clip(strength * (0.28 + 0.82 * amount), 0.0, 1.0)
+    mixed = current * (1.0 - blend)[:, None] + color * blend[:, None]
+    np.clip(mixed, 0.0, 255.0, out=mixed)
+    np.rint(mixed, out=mixed)
+    output[hot] = mixed
 
 
 @dataclass(frozen=True)

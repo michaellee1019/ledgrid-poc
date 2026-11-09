@@ -12,11 +12,15 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from animation import AnimationBase
+from animation import AnimationBase, RenderedFrame
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.scene_palettes import HOLIDAY_TRIPLES
 
 
 Color = Tuple[int, int, int]
@@ -100,7 +104,37 @@ class BajaRallyAnimation(AnimationBase):
     )
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
+    COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "baja_rally", 1, "python", "animation"
+    FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
+    CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent", "simulation_inputs"))
     PLANT_MODIFIER_SUPPORT = frozenset(("obstacle", "hazard", "illuminate"))
+    DEFAULTS = MappingProxyType({
+        "race_speed": 1.0, "render_fps": 40.0, "seed": 1993, "cup": "series",
+        "biome": "rotation", "time_of_day": "day", "difficulty": 1.0,
+        "traffic": 0.65, "show_hud": True,
+    })
+    COMPONENT_DESCRIPTOR = ComponentDescriptor(
+        component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE,
+        timing_policy=TIMING_POLICY, alpha_behavior="opaque", palette_policy=PALETTE_POLICY,
+        plant_capabilities=("effect_intent", "simulation_inputs"), fidelity_exceptions=(),
+        defaults=DEFAULTS,
+    )
+    _PLUGIN_ONLY = frozenset({
+        "speed", "brightness", "plant_aware", "plant_modifiers", "plant_clearance",
+        "plant_mask_path", "plant_globe_mask_path", "installation_geometry_contact",
+        "vibe", "output",
+    })
+    SKY_LOOKS = MappingProxyType({
+        "neutral": None,
+        "mist": ((48, 72, 108), (168, 186, 206)),
+        "ember": ((42, 10, 4), (232, 92, 18)),
+        "spectrum": ((24, 4, 58), (168, 48, 220)),
+        "rainbow": ((8, 6, 36), (255, 86, 196)),
+        "xmas": (HOLIDAY_TRIPLES["xmas"][0], HOLIDAY_TRIPLES["xmas"][1]),
+        "fall": (HOLIDAY_TRIPLES["fall"][0], HOLIDAY_TRIPLES["fall"][1]),
+        "easter": (HOLIDAY_TRIPLES["easter"][0], HOLIDAY_TRIPLES["easter"][1]),
+        "july4": (HOLIDAY_TRIPLES["july4"][0], HOLIDAY_TRIPLES["july4"][2]),
+    })
 
     SIM_DT = 1.0 / 30.0
     MAX_CATCHUP = 0.20
@@ -184,22 +218,14 @@ class BajaRallyAnimation(AnimationBase):
     }
 
     def __init__(self, controller, config: Dict[str, Any] = None):
-        super().__init__(controller, config)
+        raw = dict(config or {})
+        super().__init__(controller, raw)
         self.width, self.height = self.get_strip_info()
-        self.default_params.update({
-            "speed": 1.0,
-            "brightness": 0.8,
-            "render_fps": 40.0,
-            "seed": 1993,
-            "cup": "series",
-            "biome": "rotation",
-            "time_of_day": "day",
-            "difficulty": 1.0,
-            "traffic": 0.65,
-            "show_hud": True,
-        })
-        self.params = {**self.default_params, **self.config}
+        self.default_params = dict(self.DEFAULTS)
+        scene, leftover = self._split_config(raw)
+        self.params = {**self._normalized_parameters(scene), **leftover}
         self._validate_local_params()
+        self._presentation_context: ResolvedScene | None = None
         self.horizon = 7 if self.height >= 24 else max(3, self.height // 5)
         self._near_half = max(2.4, self.width * 0.44)
         self._far_half = 0.55
@@ -239,9 +265,100 @@ class BajaRallyAnimation(AnimationBase):
         self._refresh_plant_geometry(force=True)
         self._start_leg(0)
 
+    @classmethod
+    def component_descriptor(cls) -> ComponentDescriptor:
+        return cls.COMPONENT_DESCRIPTOR
+
+    @classmethod
+    def _split_config(cls, values: Mapping[str, Any]) -> Tuple[dict[str, Any], dict[str, Any]]:
+        raw = dict(values)
+        if "speed" in raw:
+            raw["race_speed"] = raw.pop("speed")
+        leftover = {}
+        scene = {}
+        for key, value in raw.items():
+            if key in cls.DEFAULTS:
+                scene[key] = value
+            elif key == "speed":
+                continue
+            elif key in cls._PLUGIN_ONLY:
+                leftover[key] = value
+            else:
+                raise ValueError(f"Baja Rally does not accept non-local parameters: {[key]!r}")
+        return scene, leftover
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        unknown = set(values) - set(cls.DEFAULTS)
+        if unknown:
+            raise ValueError(f"Baja Rally does not accept non-local parameters: {sorted(unknown)!r}")
+        result = dict(cls.DEFAULTS)
+        result.update(values)
+        seed = result["seed"]
+        if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 999999:
+            raise ValueError("seed must be an integer from 0 to 999999")
+        if result["cup"] not in ("series", "frontier", "coast", "spine"):
+            raise ValueError("cup must be series, frontier, coast, or spine")
+        if result["biome"] not in ("rotation", *cls.BIOMES):
+            raise ValueError("biome must be rotation or a named surface")
+        if result["time_of_day"] not in cls.TIMES_OF_DAY:
+            raise ValueError("time_of_day must be day, dusk, or night")
+        if not isinstance(result["show_hud"], bool):
+            raise ValueError("show_hud must be a boolean")
+        for name, low, high in (("race_speed", 0.35, 2.5), ("render_fps", 24.0, 60.0),
+                                ("difficulty", 0.5, 1.5), ("traffic", 0.0, 1.0)):
+            value = result[name]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not low <= float(value) <= high
+            ):
+                raise ValueError(f"{name} must be a finite number from {low} to {high}")
+            result[name] = float(value)
+        result["seed"] = int(result["seed"])
+        result["cup"] = str(result["cup"])
+        result["biome"] = str(result["biome"])
+        result["time_of_day"] = str(result["time_of_day"])
+        return result
+
+    def _race_speed(self) -> float:
+        try:
+            if "race_speed" in self.params:
+                return max(0.05, float(self.params["race_speed"]))
+            return max(0.05, float(self.params.get("speed", 1.0)))
+        except (TypeError, ValueError):
+            return 1.0
+
+    def _bind_presentation(self, context: ResolvedScene) -> None:
+        descriptor = context.descriptor
+        if (descriptor.component_id, descriptor.version, descriptor.provider.value, descriptor.role.value) != (
+            self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE
+        ):
+            raise ValueError("Baja Rally received a context for another component")
+        if context.palette is None or not isinstance(context.palette.get("palette_id"), str):
+            raise ValueError("Baja Rally requires a semantic Scene v2 palette")
+        self._presentation_context = context
+        effects = context.canonical_scene.get("plants", {}).get("effects")
+        if isinstance(effects, Mapping):
+            self.set_runtime_plant_modifiers(effects)
+
+    def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
+        del old
+        self._bind_presentation(new)
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        self.on_presentation_context_changed(self._presentation_context, context)
+
+    def render_resolved_scene(self, context: ResolvedScene) -> RenderedFrame:
+        self.set_presentation_context(context)
+        return self.generate_frame(context.phase_time, self.frame_count)
+
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema.update({
+            "race_speed": {"type": "float", "min": 0.35, "max": 2.5, "default": 1.0,
+                           "description": "Race clock multiplier"},
             "speed": {"type": "float", "min": 0.35, "max": 2.5, "default": 1.0,
                       "description": "Race clock multiplier"},
             "render_fps": {"type": "float", "min": 24.0, "max": 60.0, "default": 40.0,
@@ -277,8 +394,13 @@ class BajaRallyAnimation(AnimationBase):
         self.params["seed"] = max(0, min(999999, int(self.params.get("seed", 1993))))
 
     def update_parameters(self, new_params: Dict[str, Any]):
-        seed_changed = "seed" in new_params and int(new_params["seed"]) != int(self.params.get("seed", 1993))
-        super().update_parameters(new_params)
+        incoming = dict(new_params)
+        scene, leftover = self._split_config({**{key: self.params[key] for key in self.DEFAULTS if key in self.params}, **incoming})
+        seed_changed = int(scene.get("seed", self.params.get("seed", 1993))) != int(self.params.get("seed", 1993))
+        plugin_keep = {key: value for key, value in self.params.items() if key not in self.DEFAULTS}
+        plugin_keep.update(leftover)
+        super().update_parameters({key: value for key, value in incoming.items() if key in self._PLUGIN_ONLY})
+        self.params = {**self._normalized_parameters(scene), **plugin_keep}
         self._validate_local_params()
         self._refresh_plant_geometry(force=True)
         if seed_changed:
@@ -421,6 +543,17 @@ class BajaRallyAnimation(AnimationBase):
         return self._sample(self.course.line, progress + 2.0) - self._sample(self.course.line, progress)
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
+        if self._presentation_context is not None:
+            time_elapsed = max(0.0, float(self._presentation_context.phase_time))
+            scene, leftover = self._split_config(self._presentation_context.parameters)
+            candidate = self._normalized_parameters(scene)
+            leftover = {key: value for key, value in self.params.items() if key not in self.DEFAULTS} | leftover
+            if int(candidate["seed"]) != int(self.params.get("seed", 1993)):
+                self.params = {**candidate, **leftover}
+                self.seed = int(self.params["seed"])
+                self._reset_series()
+            else:
+                self.params = {**candidate, **leftover}
         self._integrate_elapsed(time_elapsed)
         fps = max(24.0, min(60.0, float(self.params.get("render_fps", 40.0))))
         render_tick = int(math.floor(max(0.0, time_elapsed) * fps + 1e-9))
@@ -430,7 +563,8 @@ class BajaRallyAnimation(AnimationBase):
         self._render()
         frame = self.next_frame_buffer(clear=False)
         frame.reshape(self.width, self.height, 3)[:] = self._canvas[::-1].transpose(1, 0, 2)
-        self.apply_brightness_array(frame, out=frame)
+        if self._presentation_context is None:
+            self.apply_brightness_array(frame, out=frame)
         self.last_rendered_frame = frame
         return self.rendered_frame(frame, changed=True)
 
@@ -440,7 +574,7 @@ class BajaRallyAnimation(AnimationBase):
         else:
             raw_delta = max(0.0, time_elapsed - self.last_elapsed)
         self.last_elapsed = time_elapsed
-        scaled = raw_delta * max(0.05, float(self.params.get("speed", 1.0)))
+        scaled = raw_delta * self._race_speed()
         accepted = min(self.MAX_CATCHUP, scaled)
         self.dropped_catchup_seconds += max(0.0, scaled - accepted)
         self.accumulator += accepted
@@ -987,6 +1121,9 @@ class BajaRallyAnimation(AnimationBase):
 
     def _toned_palette(self) -> Dict[str, Color]:
         mode = str(self.params.get("time_of_day", "day"))
+        look = None
+        if self._presentation_context is not None and self._presentation_context.palette is not None:
+            look = self.SKY_LOOKS.get(str(self._presentation_context.palette.get("palette_id")))
         toned = {}
         for name, color in self.PALETTES[self.course.biome].items():
             if mode == "night":
@@ -1005,6 +1142,9 @@ class BajaRallyAnimation(AnimationBase):
                 )
             else:
                 toned[name] = color
+        if look:
+            toned["sky_top"] = tuple(int(channel) for channel in look[0])
+            toned["sky_horizon"] = tuple(int(channel) for channel in look[1])
         return toned
 
     def _paint_sky(self, colors: Dict[str, Color]) -> None:

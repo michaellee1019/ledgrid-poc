@@ -7,7 +7,7 @@ from homeassistant.helpers.entity import EntityCategory
 from .entity import WallEntity
 
 PALETTES = ('neutral', 'mist', 'ember', 'spectrum', 'rainbow', 'xmas', 'fall', 'easter', 'july4')
-COMMON_EFFECTS = ('illuminate', 'shadow', 'hue_shift')
+COMMON_EFFECTS = ('illuminate', 'shadow', 'hue_shift', 'fire')
 
 
 class SceneEntity(WallEntity):

@@ -372,11 +372,35 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         portal.set_presentation_context(self._resolved("portal")); portal._step(.01)
         self._place_in_named_bowl(portal, first, "top_left")
         portal.cooldown[first] = 0.0
-        portal._apply_plant_dynamics(first, .01)
-        self.assertEqual(portal.get_runtime_stats()["portal_transfers"], 1)
+        rest_radius = float(portal.radius[first])
+        portal.vx[first], portal.vy[first] = 3.0, -1.0
+        incoming = float(np.hypot(3.0, -1.0))
+        start = (float(portal.x[first]), float(portal.y[first]))
         expected = portal._region_centers["top_right"]
-        self.assertAlmostEqual(float(portal.x[first]), expected[0])
-        self.assertAlmostEqual(float(portal.y[first]), expected[1])
+        portal._apply_plant_dynamics(first, .01)
+        self.assertTrue(bool(portal.warping[first]))
+        self.assertEqual(portal.get_runtime_stats()["portal_transfers"], 0)
+        self.assertLess(float(portal.radius[first]), rest_radius * 0.5)
+        self.assertGreater(float(np.hypot(portal.vx[first], portal.vy[first])), max(40.0, incoming * 2.0))
+        samples = [start, (float(portal.x[first]), float(portal.y[first]))]
+        for _ in range(120):
+            portal._step(.01)
+            samples.append((float(portal.x[first]), float(portal.y[first])))
+            if not portal.warping[first] and portal.get_runtime_stats()["portal_transfers"] >= 1:
+                break
+        self.assertEqual(portal.get_runtime_stats()["portal_transfers"], 1)
+        self.assertFalse(bool(portal.warping[first]))
+        self.assertAlmostEqual(float(portal.x[first]), expected[0], places=1)
+        self.assertAlmostEqual(float(portal.y[first]), expected[1], places=1)
+        self.assertAlmostEqual(float(portal.radius[first]), rest_radius, places=1)
+        ax, ay = start
+        bx, by = expected
+        for px, py in samples[1:]:
+            self.assertAlmostEqual(
+                (px - ax) * (by - ay) - (py - ay) * (bx - ax),
+                0.0,
+                delta=0.85,
+            )
 
     def test_off_zero_and_live_geometry_refresh_preserve_thermal_state_and_rng(self) -> None:
         lamp = LavaLampAnimation(self.controller, {"seed": 722})

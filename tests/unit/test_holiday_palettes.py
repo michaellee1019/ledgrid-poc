@@ -11,10 +11,12 @@ from animation.core.manager import PreviewLEDController
 from animation.core.presentation_contracts import ResolvedScene
 from animation.libraries.scene_palettes import HOLIDAY_IDS, SCENE_PALETTE_IDS
 from animation.plugins.aurora_curtains import AuroraCurtainsAnimation, SEMANTIC_PALETTES as AURORA_PALETTES
+from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.ocean_waves import OceanWavesAnimation
 from animation.plugins.mini_metro import MiniMetroAnimation
+from animation.plugins.campfire import CampfireAnimation
 from animation.plugins.rainbow import RainbowAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.sparkle import SparkleAnimation
@@ -67,8 +69,8 @@ class HolidayPaletteTests(unittest.TestCase):
 
     def test_lava_sparkle_wave_rainbow_and_aurora_keep_motion_and_change_color(self) -> None:
         for factory in (
-            AuroraCurtainsAnimation, LavaLampAnimation, MiniMetroAnimation, OceanWavesAnimation,
-            RainbowAnimation, SparkleAnimation, WaveAnimation,
+            AuroraCurtainsAnimation, CampfireAnimation, FireflySynchronyAnimation, LavaLampAnimation, MiniMetroAnimation,
+            OceanWavesAnimation, RainbowAnimation, SparkleAnimation, WaveAnimation,
         ):
             with self.subTest(component=factory.COMPONENT_ID):
                 frames = {}

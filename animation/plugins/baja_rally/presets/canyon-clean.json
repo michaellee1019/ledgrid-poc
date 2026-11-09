@@ -9,14 +9,7 @@
   "created_at": "2026-11-07T00:00:00Z",
   "updated_at": "2026-11-07T00:00:00Z",
   "params": {
-    "plant_aware": true,
-    "plant_modifiers": {
-      "version": 1,
-      "active": ["illuminate", "obstacle"],
-      "strengths": {"illuminate": 0.45, "obstacle": 1.0}
-    },
-    "brightness": 0.8,
-    "speed": 0.9,
+    "race_speed": 0.9,
     "render_fps": 40,
     "seed": 421,
     "cup": "frontier",

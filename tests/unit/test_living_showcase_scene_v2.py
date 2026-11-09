@@ -45,7 +45,7 @@ class LivingShowcaseSceneV2Tests(unittest.TestCase):
             for choice in choices: self.assertSetEqual(set(choice["parameters"]), set(RENDERERS[component_id].COMPONENT_DEFAULTS)); self.assertFalse({"brightness","speed","palette"} & set(choice["parameters"]))
         animation_ids = [descriptor.component_id for descriptor in current_component_catalog().descriptors if descriptor.role.value == "animation"]
         authored_rows = sum(len(list((ROOT / "animation/plugins" / component_id / "presets").glob("*.json"))) for component_id in animation_ids)
-        self.assertEqual((len(animation_ids), authored_rows), (43, 254))
+        self.assertEqual((len(animation_ids), authored_rows), (48, 272))
 
     def test_every_authored_preset_is_local_distinct_and_round_trips_without_scene_mutation(self):
         interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
