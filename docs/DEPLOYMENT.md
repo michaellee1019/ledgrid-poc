@@ -60,6 +60,37 @@ zero is a valid value and is never replaced with a default because it is zero.
 Unsupported saved components stay in personal data; startup reports the problem
 and leaves playback stopped instead of substituting another animation.
 
+## Nimbus gamepad
+
+Pair and trust the original Nimbus on the Pi. When pairing with BlueZ 5.82,
+use an interactive `bluetoothctl` agent and check that the controller reports
+`Bonded: yes` before connecting its HID profile. Use `bluetoothctl info` for the
+gamepad address.
+
+Give the wall service account its own device path using
+`/etc/udev/rules.d/99-ledgrid-nimbus.rules`. Replace the example address with
+the paired Nimbus address in lowercase and use the installed service account.
+
+```udev
+SUBSYSTEM=="hidraw", KERNELS=="0005:0111:1420.*", IMPORT{parent}="HID_UNIQ"
+SUBSYSTEM=="hidraw", KERNELS=="0005:0111:1420.*", ENV{HID_UNIQ}=="00:11:22:33:44:55", OWNER:="ledgridwall5", MODE:="0600", SYMLINK+="ledgrid-nimbus"
+```
+
+Reload the rules with `sudo udevadm control --reload` and reconnect the gamepad.
+The wall process picks up `/dev/ledgrid-nimbus` when it appears. Start Tetris in
+Composer and press Menu to enter or exit player mode. D-pad left/right move,
+down soft drops, Up and A rotate in opposite directions, and B hard drops.
+Each large piece carries three smaller tetrominoes. They fall separately
+when the large piece lands or when you press Y.
+The wall also serves `/play/tetris`. Opening it shows the current wall status.
+The Play button starts player mode when the Nimbus is connected and the wall
+still matches the status shown on the page.
+The rail across the top shows the time left. The clock starts at 15 seconds,
+each cleared row adds five seconds, and a round can last up to 40 seconds.
+Pieces fall faster as the round progresses. The next round starts automatically
+after a short pause.
+Disconnecting returns the running Tetris scene to autoplay.
+
 ## Firmware
 
 Full deployment builds `esp32-s3-devkitc-1` and uploads sequentially to the

@@ -176,6 +176,13 @@ class CanonicalSceneRuntime:
 
     activate_scene = activate
 
+    def dispatch_tetris_gamepad(self, actions: tuple[str, ...]) -> None:
+        """Apply local gamepad actions to the currently instantiated Tetris game."""
+        if self._animation is None or self._animation.component_key[1] != "tetris":
+            return
+        for action in actions:
+            self._animation.instance.handle_gamepad_action(action)
+
     def dispatch_animation_interaction(
         self, kind: str, x: float, y: float, strength: float = 1.0,
     ) -> bool:

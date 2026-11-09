@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Play Wall Tetris</title>
+  <style>
+    body { margin: 0; background: #141a1d; color: #f5f8f8; font: 1rem/1.5 system-ui, sans-serif; }
+    main { max-width: 32rem; padding: 2rem 1.25rem; margin: auto; }
+    h1 { line-height: 1.15; }
+    button { background: #9be6d1; color: #152521; border: 0; border-radius: .5rem;
+             padding: .8rem 1.2rem; font: inherit; font-weight: 700; }
+    button:disabled { opacity: .55; }
+    a { color: #aee9dc; }
+  </style>
+  <script defer src="{{ url_for('static', filename='js/tetris_play.js') }}"></script>
+</head>
+<body>
+  <main>
+    <h1>Play Wall Tetris</h1>
+    <p>Turn on the Nimbus, then select Play to switch the wall to Tetris.</p>
+    <p id="wall-status" role="status">Checking what’s playing…</p>
+    <button id="play-tetris" type="button" disabled>Play Tetris on wall</button>
+    <p>D-pad moves the large piece, A rotates, and B hard drops. The smaller pieces fall separately on landing, or when you press Y. Menu switches between player mode and autoplay.</p>
+    <a href="{{ url_for('tetris_play_page') }}">Reload wall status</a>
+  </main>
+</body>
+</html>

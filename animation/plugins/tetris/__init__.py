@@ -5,8 +5,9 @@ import random
 import threading
 from dataclasses import dataclass
 from math import sqrt
+from time import monotonic
 from types import MappingProxyType
-from typing import List, Tuple, Dict, Any, Mapping, Optional
+from typing import List, Tuple, Dict, Any, Mapping, Optional, Sequence
 
 from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
@@ -20,6 +21,17 @@ MAX_TETROMINO_COUNT = 128
 MAX_SPAWNS_PER_UPDATE = 8
 MAX_COORDINATED_PLANS = 3
 MAX_SIMULATION_DELTA = 0.05
+PLAYER_COLUMNS = 10
+PLAYER_ROWS = 23
+PLAYER_ROUND_SECONDS = 15.0
+PLAYER_MAX_SECONDS = 40.0
+PLAYER_LINE_BONUS_SECONDS = 5.0
+PLAYER_RESTART_SECONDS = 0.75
+PLAYER_INITIAL_FALL_SECONDS = 1.70
+PLAYER_FASTEST_FALL_SECONDS = 1.10
+PLAYER_RAMP_SECONDS = 30.0
+META_SCALE = 2
+INNER_FALL_SECONDS = 0.55
 
 
 BASE_SHAPES = {
@@ -114,6 +126,62 @@ TETROMINOS: Dict[str, Dict[str, Any]] = {
 }
 
 
+# Each template fills the 2x-scaled silhouette with three whole tetrominoes.
+# The four unused cells inside the silhouette stay empty.
+META_TEMPLATES = {
+    "I": ("J.IIII.L", "JJJ..LLL"),
+    "J": ("OO....", "OO....", "...JJJ", "IIII.J"),
+    "L": ("....OO", "....OO", "LLL...", "L.IIII"),
+    "O": ("S.LL", "SS.L", "JS.L", "JJJ."),
+    "S": ("...JJJ", "..T..J", ".TTT..", "IIII.."),
+    "T": ("..LL..", "...L..", "J..LOO", "JJJ.OO"),
+    "Z": ("IIII..", ".TTT..", "..T..L", "...LLL"),
+}
+
+
+@dataclass(frozen=True)
+class InnerPlacement:
+    kind: str
+    rotation: int
+    x: int
+    y: int
+
+
+@dataclass(frozen=True)
+class MetaRotation:
+    cells: tuple[tuple[int, int], ...]
+    contents: tuple[InnerPlacement, ...]
+
+
+def _build_meta_rotations(rows: tuple[str, ...]) -> tuple[MetaRotation, ...]:
+    rotations = []
+    for _ in range(4):
+        pieces = {}
+        for y, row in enumerate(rows):
+            for x, kind in enumerate(row):
+                if kind != ".":
+                    pieces.setdefault(kind, []).append((x, y))
+
+        contents = []
+        for kind, cells in pieces.items():
+            normalized = set(_normalize(cells))
+            rotation = next(
+                index for index, shape in enumerate(TETROMINOS[kind]["rotations"])
+                if set(shape) == normalized
+            )
+            contents.append(InnerPlacement(
+                kind, rotation, min(x for x, _ in cells), min(y for _, y in cells),
+            ))
+        rotations.append(MetaRotation(
+            tuple(cell for cells in pieces.values() for cell in cells), tuple(contents),
+        ))
+        rows = tuple("".join(column) for column in zip(*rows))[::-1]
+    return tuple(rotations)
+
+
+META_ROTATIONS = {kind: _build_meta_rotations(rows) for kind, rows in META_TEMPLATES.items()}
+
+
 @dataclass(eq=False)
 class ActivePiece:
     """All mutable state for one independently moving tetromino."""
@@ -128,6 +196,7 @@ class ActivePiece:
     plan: Optional[Dict[str, Any]] = None
     planning_deferred: bool = False
     manual_override: float = 0.0
+    meta: bool = False
 
 
 class TetrisAnimation(AnimationBase):
@@ -203,6 +272,11 @@ class TetrisAnimation(AnimationBase):
         self.input_queue: List[str] = []
         self.input_lock = threading.Lock()
         self.input_piece_index = 0
+        self.player_control = False
+        self.player_round_elapsed = 0.0
+        self.player_round_deadline = PLAYER_ROUND_SECONDS
+        self.player_restart_in = 0.0
+        self.player_fall_progress = 0.0
         self.plans_dirty = False
         self.default_params = dict(self.DEFAULTS)
         self.params = self._normalized_parameters(self._authored_config)
@@ -301,7 +375,7 @@ class TetrisAnimation(AnimationBase):
             return
         self.params = normalized
         self._refresh_runtime_params()
-        if len(self.active_pieces) > self.tetromino_count:
+        if not self.player_control and len(self.active_pieces) > self.tetromino_count:
             del self.active_pieces[self.tetromino_count:]
         self.last_render_elapsed = None
         self.next_render_elapsed = None
@@ -325,7 +399,13 @@ class TetrisAnimation(AnimationBase):
     def render_resolved_scene(self, context: ResolvedScene) -> Any:
         self.set_presentation_context(context)
         self.update_parameters(context.parameters)
-        return self.generate_frame(context.phase_time, self.frame_count)
+        elapsed = self._player_time() if self.player_control else context.phase_time
+        return self.generate_frame(elapsed, self.frame_count)
+
+    @staticmethod
+    def _player_time() -> float:
+        """The sprint's countdown runs on the host clock across Looks."""
+        return monotonic()
 
     @classmethod
     def _normalized_parameters(cls, values: Mapping[str, Any]) -> Dict[str, Any]:
@@ -412,6 +492,11 @@ class TetrisAnimation(AnimationBase):
 
         self._update_game(delta)
 
+        if self.player_control:
+            self._render_player_board(frame)
+            self.last_rendered_frame = frame
+            return self.rendered_frame(frame, changed=True)
+
         if self.game_over_flash > 0.0:
             flash_strength = int(80 * min(1.0, self.game_over_flash))
             if flash_strength > 0:
@@ -475,15 +560,112 @@ class TetrisAnimation(AnimationBase):
         if action == 'up':
             action = 'rotate-right'
         valid = {'left', 'right', 'down', 'rotate-left', 'rotate-right', 'drop'}
-        if action not in valid:
+        if action not in valid and not (self.player_control and action == 'release'):
             return
         with self.input_lock:
             self.input_queue.append(action)
         self.last_render_elapsed = None
         self.next_render_elapsed = None
 
+    def set_player_control(self, enabled: bool) -> None:
+        """Start a fresh player or autoplay board without changing the Look."""
+        if enabled == self.player_control:
+            return
+        self.player_control = enabled
+        self.board_width = max(1, self.num_strips - 1)
+        self.board_height = self.leds_per_strip
+        if enabled:
+            self.board_width = min(PLAYER_COLUMNS * META_SCALE, self.num_strips)
+            self.board_height = min(PLAYER_ROWS * META_SCALE, self.board_height)
+        self._reset_player_clock()
+        self._reset_board()
+        self.random.seed(self.params['seed'])
+        self.lines_cleared = 0
+        self.game_over_flash = 0.0
+        self.input_piece_index = 0
+        with self.input_lock:
+            self.input_queue.clear()
+        self.last_elapsed = None
+        self.last_render_elapsed = None
+        self.next_render_elapsed = None
+
+    def handle_gamepad_action(self, action: str) -> None:
+        if action == "toggle-player":
+            self.set_player_control(not self.player_control)
+        elif action == "disconnect":
+            self.set_player_control(False)
+        elif self.player_control and not self.player_restart_in:
+            self.handle_input(action)
+
+    def _reset_player_clock(self) -> None:
+        self.player_round_elapsed = 0.0
+        self.player_round_deadline = PLAYER_ROUND_SECONDS
+        self.player_restart_in = 0.0
+        self.player_fall_progress = 0.0
+
+    def _advance_player_clock(self, delta: float) -> bool:
+        if self.player_restart_in:
+            self.player_restart_in = max(0.0, self.player_restart_in - delta)
+            if self.player_restart_in:
+                return False
+            self._reset_player_clock()
+            self._reset_board()
+            self.lines_cleared = 0
+            return True
+
+        self.player_round_elapsed = min(self.player_round_deadline, self.player_round_elapsed + delta)
+        if self.player_round_elapsed >= self.player_round_deadline:
+            self._handle_game_over()
+            return False
+        return True
+
+    def _render_player_board(self, frame: Any) -> None:
+        pixels = frame.reshape(self.num_strips, self.leds_per_strip, 3)
+        has_countdown = self.leds_per_strip > self.board_height
+        arena_height = self.leds_per_strip - int(has_countdown)
+
+        def draw(x: int, y: int, color: Color) -> None:
+            # Fractional cell edges spread rounding across the wall, including
+            # its outer strips. Logical rows run from top to bottom.
+            left = x * self.num_strips // self.board_width
+            right = (x + 1) * self.num_strips // self.board_width
+            top = arena_height - y * arena_height // self.board_height
+            bottom = arena_height - (y + 1) * arena_height // self.board_height
+            pixels[left:right, bottom:top] = color
+
+        for y, row in enumerate(self.board):
+            for x, color in enumerate(row):
+                if color is not None:
+                    draw(x, y, self._board_color(color))
+        for piece in self.active_pieces:
+            if piece.meta:
+                tint = self.palette_roles(self._palette_id)[piece.kind]
+                for inner in META_ROTATIONS[piece.kind][piece.rotation].contents:
+                    color = tuple(
+                        (3 * channel + shared) // 4
+                        for channel, shared in zip(self._active_piece_color(inner.kind), tint)
+                    )
+                    for cx, cy in TETROMINOS[inner.kind]["rotations"][inner.rotation]:
+                        draw(piece.x + inner.x + cx, piece.y + inner.y + cy, color)
+            else:
+                color = self._active_piece_color(piece.kind)
+                for cx, cy in self._piece_shape(piece):
+                    draw(piece.x + cx, piece.y + cy, color)
+
+        if has_countdown:
+            palette = self.palette_roles(self._palette_id)
+            seconds_left = self.player_round_deadline - self.player_round_elapsed
+            if self.player_restart_in:
+                pixels[:, -1] = palette["Z"]
+            else:
+                length = max(1, round(self.num_strips * min(1.0, seconds_left / PLAYER_ROUND_SECONDS)))
+                pixels[:length, -1] = palette["L" if seconds_left <= 4.0 else "I"]
+
     def _update_game(self, delta: float):
         if self.board_width <= 0 or self.board_height <= 0:
+            return
+        if self.player_control:
+            self._update_player_game(delta)
             return
 
         if self.game_over_flash > 0.0:
@@ -521,6 +703,52 @@ class TetrisAnimation(AnimationBase):
 
         self._replenish_active_pieces(spawn_budget)
 
+    def _update_player_game(self, delta: float) -> None:
+        if not self._advance_player_clock(delta):
+            return
+        if not self.active_pieces and not self._spawn_piece():
+            return
+        self._apply_pending_inputs()
+
+        speed = self._effective_drop_speed() if self.active_pieces[0].meta else self.board_height / INNER_FALL_SECONDS
+        self.player_fall_progress += delta * speed
+        while self.active_pieces and self.player_fall_progress >= 1.0 and not self.player_restart_in:
+            self.player_fall_progress -= 1.0
+            piece = self.active_pieces[0]
+            if piece.meta:
+                if not self._move_piece(piece, 0, 1):
+                    self._release_meta(piece)
+            else:
+                self._step_inner_pieces()
+        if not self.active_pieces and not self.player_restart_in:
+            self._spawn_piece()
+
+    def _release_meta(self, piece: ActivePiece) -> None:
+        self.active_pieces[:] = [
+            ActivePiece(inner.kind, rotation=inner.rotation, x=piece.x + inner.x, y=piece.y + inner.y)
+            for inner in META_ROTATIONS[piece.kind][piece.rotation].contents
+        ]
+        self.player_fall_progress = 0.0
+
+    def _step_inner_pieces(self) -> None:
+        # Lock anything grounded, then test again against the new stack. All
+        # bodies still in flight can descend together without intersecting.
+        for _ in range(len(self.active_pieces)):
+            grounded = [
+                piece for piece in self.active_pieces
+                if self._collides(self.board, self._piece_shape(piece), piece.x, piece.y + 1)
+            ]
+            if not grounded:
+                break
+            lowest = max(
+                grounded, key=lambda piece: piece.y + self._shape_extent(self._piece_shape(piece), 1),
+            )
+            self._lock_piece(lowest)
+            if self.player_restart_in:
+                return
+        for piece in self.active_pieces:
+            piece.y += 1
+
     def _replenish_active_pieces(self, spawn_budget: int = MAX_SPAWNS_PER_UPDATE) -> int:
         spawned = 0
         while len(self.active_pieces) < self.tetromino_count and spawned < spawn_budget:
@@ -532,7 +760,7 @@ class TetrisAnimation(AnimationBase):
     def _effective_render_fps(self) -> float:
         render_fps = max(15.0, min(200.0, float(self.params.get('render_fps', 150.0))))
         smooth_piece_limit = max(0, int(self.params.get('smooth_drop_max_pieces', 32)))
-        if self.tetromino_count > smooth_piece_limit:
+        if not self.player_control and self.tetromino_count > smooth_piece_limit:
             high_density_fps = max(
                 15.0,
                 min(200.0, float(self.params.get('high_density_render_fps', 150.0))),
@@ -541,6 +769,12 @@ class TetrisAnimation(AnimationBase):
         return render_fps
 
     def _effective_drop_speed(self) -> float:
+        if self.player_control:
+            progress = min(1.0, self.player_round_elapsed / PLAYER_RAMP_SECONDS)
+            fall_seconds = PLAYER_INITIAL_FALL_SECONDS - progress * (
+                PLAYER_INITIAL_FALL_SECONDS - PLAYER_FASTEST_FALL_SECONDS
+            )
+            return self.board_height / fall_seconds
         # Preserve the original pace at normal density, then reduce per-piece
         # work so total movement does not grow linearly into the hundreds.
         density_scale = max(1.0, sqrt(self.tetromino_count / 8.0))
@@ -548,6 +782,18 @@ class TetrisAnimation(AnimationBase):
 
     def _spawn_piece(self) -> bool:
         piece = ActivePiece(kind=self.random.choice(list(TETROMINOS.keys())))
+        if self.player_control:
+            piece.meta = True
+            coords = self._piece_shape(piece)
+            piece.x = (self.board_width - self._shape_extent(coords, axis=0)) // 2
+            piece.y = 0
+            if self._collides(self.board, coords, piece.x, piece.y):
+                self._handle_game_over()
+                return False
+            self.active_pieces.append(piece)
+            self.player_fall_progress = 0.0
+            return True
+
         piece.rotation = self.random.randrange(len(TETROMINOS[piece.kind]['rotations']))
         coords = self._piece_shape(piece)
         width = self._shape_extent(coords, axis=0)
@@ -571,10 +817,18 @@ class TetrisAnimation(AnimationBase):
         self.plans_dirty = True
         return True
 
-    def _handle_game_over(self):
+    def _reset_board(self):
         self.board = [[None for _ in range(self.board_width)] for _ in range(self.board_height)]
         self.active_pieces.clear()
         self.plans_dirty = False
+
+    def _handle_game_over(self):
+        if self.player_control:
+            self.player_restart_in = PLAYER_RESTART_SECONDS
+            with self.input_lock:
+                self.input_queue.clear()
+            return
+        self._reset_board()
         self.game_over_flash = 1.0
 
     def _run_player_step(self, piece: ActivePiece):
@@ -830,6 +1084,8 @@ class TetrisAnimation(AnimationBase):
             if not self.active_pieces:
                 return
             piece = self.active_pieces[self.input_piece_index % len(self.active_pieces)]
+            if self.player_control and not piece.meta:
+                return
             piece.manual_override = max(piece.manual_override, 2.0)
             piece.plan = None
             piece.planning_deferred = False
@@ -843,6 +1099,8 @@ class TetrisAnimation(AnimationBase):
                 self._rotate_piece(piece, -1)
             elif action == 'rotate-right':
                 self._rotate_piece(piece, 1)
+            elif action == 'release':
+                self._release_meta(piece)
             elif action == 'drop':
                 while self._move_piece(piece, 0, 1):
                     pass
@@ -878,10 +1136,9 @@ class TetrisAnimation(AnimationBase):
         return True
 
     def _rotate_piece(self, piece: ActivePiece, direction: int) -> bool:
-        info = TETROMINOS[piece.kind]
-        rotations = info['rotations']
+        rotations = META_ROTATIONS[piece.kind] if piece.meta else TETROMINOS[piece.kind]['rotations']
         new_rotation = (piece.rotation + direction) % len(rotations)
-        coords = rotations[new_rotation]
+        coords = rotations[new_rotation].cells if piece.meta else rotations[new_rotation]
         if self._collides(self.board, coords, piece.x, piece.y):
             return False
         piece.rotation = new_rotation
@@ -889,6 +1146,9 @@ class TetrisAnimation(AnimationBase):
 
     def _lock_piece(self, piece: ActivePiece):
         if piece not in self.active_pieces:
+            return
+        if piece.meta:
+            self._release_meta(piece)
             return
         coords = self._piece_shape(piece)
         color = TETROMINOS[piece.kind]['color']
@@ -904,17 +1164,26 @@ class TetrisAnimation(AnimationBase):
         if overflow:
             self._handle_game_over()
             return
+        self.active_pieces.remove(piece)
         cleared = self._clear_lines()
         if cleared:
             self.lines_cleared += cleared
-        self.active_pieces.remove(piece)
-        self.plans_dirty = True
+            if self.player_control:
+                self.player_round_deadline = min(
+                    PLAYER_MAX_SECONDS, self.player_round_deadline + cleared * PLAYER_LINE_BONUS_SECONDS,
+                )
+        self.plans_dirty = not self.player_control
 
     def _clear_lines(self) -> int:
+        full_rows = [y for y, row in enumerate(self.board) if all(row)] if self.player_control else ()
         self.board, cleared = self._clear_lines_from(self.board)
+        if full_rows:
+            for piece in self.active_pieces:
+                bottom = piece.y + self._shape_extent(self._piece_shape(piece), 1) - 1
+                piece.y += sum(y > bottom for y in full_rows)
         return cleared
 
-    def _collides(self, board: List[List[BoardCell]], coords: List[Tuple[int, int]], x_offset: int, y_offset: int) -> bool:
+    def _collides(self, board: List[List[BoardCell]], coords: Sequence[Tuple[int, int]], x_offset: int, y_offset: int) -> bool:
         for cx, cy in coords:
             px = x_offset + cx
             py = y_offset + cy
@@ -926,11 +1195,13 @@ class TetrisAnimation(AnimationBase):
                 return True
         return False
 
-    def _piece_shape(self, piece: ActivePiece) -> List[Tuple[int, int]]:
+    def _piece_shape(self, piece: ActivePiece) -> Sequence[Tuple[int, int]]:
+        if piece.meta:
+            return META_ROTATIONS[piece.kind][piece.rotation].cells
         rotations = TETROMINOS[piece.kind]['rotations']
         return rotations[piece.rotation % len(rotations)]
 
-    def _shape_extent(self, coords: List[Tuple[int, int]], axis: int) -> int:
+    def _shape_extent(self, coords: Sequence[Tuple[int, int]], axis: int) -> int:
         if axis == 0:
             return max((x for x, _ in coords), default=0) + 1
         return max((y for _, y in coords), default=0) + 1

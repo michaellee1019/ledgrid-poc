@@ -53,6 +53,24 @@ class SimplePlaybackTests(unittest.TestCase):
         self.assertFalse(self.channel.status['is_running'])
         for endpoint in ['/api/v1/scene/checks','/api/v1/scene/activations/old','/api/v1/receiver-native/recover','/api/v1/composer/maintenance','/api/v1/installation-profiles/old/draft']:
             self.assertEqual(self.client.post(endpoint, json={}).status_code, 404)
+
+    def test_tetris_link_is_read_only_until_an_explicit_guarded_post(self):
+        page = self.client.get('/play/tetris')
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.headers['Cache-Control'], 'no-store')
+        self.assertIn(b'Play Tetris on wall', page.data)
+        self.assertEqual(self.client.get('/api/v1/tetris/play').status_code, 405)
+        self.assertEqual(self.client.post('/api/v1/tetris/play', data={}).status_code, 400)
+        self.assertEqual(self.channel.commands, [])
+
+        response = self.client.post('/api/v1/tetris/play', json={
+            'expected_controller_session_id': 'controller-1',
+            'expected_controller_state_revision': 2,
+        })
+        self.assertEqual(response.status_code, 202, response.get_json())
+        command, = self.channel.commands
+        self.assertEqual(command['action'], 'start_tetris_player')
+        self.assertEqual(command['_controller_guard']['expected_controller_state_revision'], 2)
     def test_unsupported_saved_component_is_rejected_without_substitution(self):
         scene = _current_scene()
         scene['background'] = {'component_id':'native_aurora','version':1,'provider':'receiver_native','role':'background','bundle_digest':'a'*64,'parameters':{}}

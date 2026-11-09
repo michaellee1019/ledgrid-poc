@@ -921,6 +921,28 @@ class AnimationWebInterface:
             animations = self._sorted_animations()
             return jsonify(animations)
 
+        @self.app.route('/play/tetris')
+        def tetris_play_page():
+            return render_template('tetris_play.html'), 200, {'Cache-Control': 'no-store'}
+
+        @self.app.route('/api/v1/tetris/play', methods=['POST'])
+        def api_start_tetris_player():
+            if not self.activation_enabled:
+                return self._activation_unavailable()
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict) or set(payload) != {
+                'expected_controller_session_id', 'expected_controller_state_revision',
+            }:
+                return jsonify({'error': 'Reload the page to get the current wall status.'}), 400
+            try:
+                guard = self._settings_command_guard({**payload, 'expires_at': time.time() + 5}, set())
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            if guard is None:
+                return jsonify({'error': 'A current wall observation is required.'}), 400
+            command = self.control_channel.send_command('start_tetris_player', _controller_guard=guard)
+            return jsonify({'state': 'requested', 'request_id': command['request_id']}), 202
+
         @self.app.route('/composer')
         def browser_composer():
             """Installable browser-native preset composer shell.
