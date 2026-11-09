@@ -1,10 +1,7 @@
-"""Departure-board behavior for the NJ Transit 126 toward Port Authority."""
+"""Centered bus-time overlay for the NJ Transit 126 toward Port Authority."""
 
 from datetime import datetime, timedelta
-import json
 import os
-from pathlib import Path
-import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -12,9 +9,12 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
-from animation.core.base import RenderedFrame
+from animation.core.compositing import BaseFrame, HostSceneCompositor, PlacedOverlay
+from animation.core.manager import PreviewLEDController
+from animation.core.presentation_contracts import OverlayFrame
+from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.nj_transit_bus import (
-    BUS_ROWS,
+    BUS_EMOJI,
     DEFAULT_STOP,
     ArrivalBoard,
     BusArrival,
@@ -24,8 +24,8 @@ from animation.plugins.nj_transit_bus import (
     displayed_minutes,
     encode_multipart,
     minutes_from_phrase,
+    overlay_layout,
     parse_board,
-    text_width,
 )
 
 
@@ -62,8 +62,7 @@ def _board(*minutes, message="", now=NOW):
 
 
 def _visual(rendered):
-    physical = rendered.pixels.reshape(_Controller.strip_count, _Controller.leds_per_strip, 3)
-    return physical[:, ::-1, :]
+    return rendered.pixels.reshape(_Controller.strip_count, _Controller.leds_per_strip, 4)[:, ::-1]
 
 
 class DepartureParsingTests(unittest.TestCase):
@@ -240,95 +239,78 @@ class ClientRequestTests(unittest.TestCase):
             )
 
 
-class BusBoardRenderingTests(unittest.TestCase):
-    def test_bus_sprite_is_a_rectangular_bus(self):
-        width = len(BUS_ROWS[0])
-        self.assertTrue(all(len(row) == width for row in BUS_ROWS))
-        picture = "\n".join(BUS_ROWS)
-        self.assertIn("H", picture)
-        self.assertIn("K", picture)
-        self.assertIn("W", picture)
-
+class BusOverlayRenderingTests(unittest.TestCase):
     def test_schema_defaults_to_the_pabt_bound_first_street_stop(self):
         schema = _FixedBus(_Controller()).get_parameter_schema()
         self.assertEqual(schema["route"]["default"], "126")
         self.assertEqual(schema["stop"]["default"], "20491")
         self.assertEqual(schema["direction"]["default"], "New York")
-        self.assertEqual(schema["destination"]["default"], "PABT")
-        self.assertFalse(schema["plant_aware"]["default"])
+        self.assertNotIn("speed", schema)
+        self.assertNotIn("glow", schema)
+        self.assertNotIn("plant_aware", schema)
 
-    def test_waiting_board_is_a_canonical_cached_frame(self):
-        animation = _FixedBus(_Controller(), {"glow": 0.0, "speed": 1.0})
+    def test_waiting_overlay_is_a_cached_transparent_rgba_plane(self):
+        animation = _FixedBus(_Controller())
         first = animation.generate_frame(0.0, 0)
         second = animation.generate_frame(0.05, 1)
 
-        self.assertIsInstance(first, RenderedFrame)
-        self.assertEqual(first.pixels.shape, (_Controller.total_leds, 3))
+        self.assertIsInstance(first, OverlayFrame)
+        self.assertEqual(first.pixels.shape, (_Controller.total_leds, 4))
         self.assertEqual(first.pixels.dtype, np.uint8)
         self.assertTrue(first.pixels.flags.c_contiguous)
-        self.assertGreater(int(first.pixels.max()), 0)
+        self.assertTrue(np.all(first.pixels[:, :3] <= first.pixels[:, 3:4]))
+        self.assertGreater(int(first.pixels[:, 3].max()), 0)
+        self.assertGreater(int(np.count_nonzero(first.pixels[:, 3] == 0)), _Controller.total_leds // 2)
         self.assertTrue(first.changed)
         self.assertFalse(second.changed)
         self.assertIs(first.pixels, second.pixels)
         self.assertEqual(animation.get_runtime_stats()["credentials"], "missing")
         self.assertEqual(animation.get_runtime_stats()["minutes"], ["", "", ""])
 
-    def test_bus_sits_above_three_upright_minute_counts(self):
-        animation = _FixedBus(_Controller(), {"glow": 0.0, "speed": 0.0, "brightness": 1.0})
+    def test_bus_emoji_sits_above_three_centered_minute_counts(self):
+        animation = _FixedBus(_Controller())
         animation._snapshot = _board(4, 12, 27)
         rendered = animation.generate_frame(0.0, 0)
         visual = _visual(rendered)
-        layout = animation.stack_layout((4, 12, 27))
+        layout = animation.overlay_layout((4, 12, 27))
+        expected = overlay_layout((4, 12, 27), width=33, height=138)
 
-        bus_x, bus_y = layout.bus
-        bus = visual[bus_x:bus_x + len(BUS_ROWS[0]), bus_y:bus_y + len(BUS_ROWS)]
-        self.assertGreater(int(bus[..., 1].max()), 150)
-        self.assertTrue(np.any(np.all(bus > 200, axis=2)))
-        self.assertLess(bus_y + len(BUS_ROWS), layout.times[0][1])
-        self.assertLess(layout.route[1], layout.destination[1])
+        self.assertEqual(layout, expected)
+        emoji_x, emoji_y = layout.emoji
+        self.assertEqual(emoji_x, (33 - len(BUS_EMOJI[0])) // 2)
+        emoji = visual[emoji_x:emoji_x + len(BUS_EMOJI[0]), emoji_y:emoji_y + len(BUS_EMOJI)]
+        self.assertGreater(int(emoji[..., 3].max()), 0)
+        self.assertLess(emoji_y + len(BUS_EMOJI), layout.times[0][1])
         self.assertLess(layout.times[0][1], layout.times[1][1])
         self.assertLess(layout.times[1][1], layout.times[2][1])
-        self.assertEqual(layout.route[2], "126")
-        self.assertEqual(layout.destination[2], "PABT")
-        self.assertEqual(layout.unit[2], "MIN")
+        self.assertEqual([text for _x, _y, text in layout.times], ["4", "12", "27"])
 
-        scale = layout.scale
         x, y, text = layout.times[1]
         self.assertEqual(text, "12")
-        self.assertEqual(text_width(text, scale), text_width("00", scale))
-        top = visual[x:x + 3 * scale, y:y + scale, 0]
-        self.assertTrue(np.all(top[scale:2 * scale] > 80))
-        self.assertTrue(np.all(top[:scale] < 30))
-        self.assertTrue(np.all(top[2 * scale:] < 30))
-        base = visual[x:x + 3 * scale, y + 4 * scale:y + 5 * scale, 0]
+        self.assertEqual(x, (33 - 7) // 2)
+        top = visual[x:x + 3, y, 3]
+        self.assertTrue(np.all(top[1:2] > 80))
+        self.assertTrue(np.all(top[:1] < 30))
+        self.assertTrue(np.all(top[2:] < 30))
+        base = visual[x:x + 3, y + 4, 3]
         self.assertTrue(np.all(base > 80))
 
         single_x, single_y, single_text = layout.times[0]
         self.assertEqual(single_text, "4")
         self.assertGreater(single_x, layout.times[1][0])
-        self.assertGreater(int(visual[single_x:single_x + 3 * scale, single_y:single_y + 5 * scale].max()), 80)
+        self.assertGreater(int(visual[single_x:single_x + 3, single_y:single_y + 5, 3].max()), 80)
 
-    def test_motion_is_source_rated_and_a_service_message_stays_in_the_bottom_band(self):
-        quiet = {"glow": 0.0, "speed": 1.0, "brightness": 1.0}
-        still = _FixedBus(_Controller(), quiet)
-        still._snapshot = _board(12, 18, 27, message="LINCOLN TUNNEL DELAY")
-        first = still.generate_frame(0.0, 0)
-        moved = still.generate_frame(0.2, 1)
-        self.assertTrue(moved.changed)
-        self.assertFalse(np.array_equal(first.pixels, moved.pixels))
+        opaque = np.any(visual[..., 3] > 0, axis=0)
+        occupied_rows = np.flatnonzero(opaque)
+        self.assertGreater(occupied_rows[0], 40)
+        self.assertLess(occupied_rows[-1], 100)
 
-        without = _FixedBus(_Controller(), quiet)
-        without._snapshot = _board(12, 18, 27)
-        baseline = without.generate_frame(0.2, 1)
-        diff = np.any(_visual(moved) != _visual(baseline), axis=2)
-        self.assertTrue(diff[:, -7:].any())
-        self.assertFalse(diff[:, :-7].any())
-        center = np.any(_visual(first) != _visual(moved), axis=2)
-        self.assertFalse(center[1:-1, :-7].any())
-        self.assertTrue(center[1:-1, -7:].any())
+    def test_legacy_board_parameters_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "non-local"):
+            _FixedBus(_Controller(), {"glow": 0.2, "speed": 1.0})
 
     def test_minutes_count_down_without_another_fetch(self):
-        animation = _FixedBus(_Controller(), {"glow": 0.0, "speed": 0.0})
+        animation = _FixedBus(_Controller())
         animation._snapshot = _board(2, 9, 16)
         animation.fixed_now = NOW + timedelta(seconds=61)
         self.assertEqual(
@@ -336,17 +318,8 @@ class BusBoardRenderingTests(unittest.TestCase):
             (1, 8, 15),
         )
         rendered = animation.generate_frame(0.0, 0)
-        self.assertEqual(animation.stack_layout((1, 8, 15)).times[0][2], "1")
-        self.assertGreater(int(rendered.pixels.max()), 0)
-
-    def test_live_scale_change_redraws_the_board(self):
-        animation = _FixedBus(_Controller(), {"scale": 4, "glow": 0.0, "speed": 0.0})
-        animation._snapshot = _board(6, 11, 19)
-        before = animation.generate_frame(0.0, 0).pixels.copy()
-        animation.update_parameters({"scale": 2})
-        after = animation.generate_frame(0.0, 1).pixels
-        self.assertFalse(np.array_equal(before, after))
-        self.assertEqual(animation.stack_layout((6, 11, 19)).scale, 2)
+        self.assertEqual(animation.overlay_layout((1, 8, 15)).times[0][2], "1")
+        self.assertGreater(int(rendered.pixels[:, 3].max()), 0)
 
     def test_fetch_uses_the_configured_stop_and_not_render_time_network(self):
         seen = {}
@@ -406,63 +379,23 @@ class BusBoardRenderingTests(unittest.TestCase):
         self.assertEqual(stats["minutes"], [5, 10, 22])
         self.assertFalse(thread.is_alive())
 
-
-class PlantAwareBusTests(unittest.TestCase):
-    def test_disabled_and_zero_strength_match_the_plain_board(self):
-        config = {"glow": 0.2, "speed": 1.0, "scale": 4}
-        plain = _FixedBus(_Controller(), config)
-        disabled = _FixedBus(_Controller(), {**config, "plant_aware": False})
-        zero = _FixedBus(_Controller(), {
-            **config,
-            "plant_modifiers": {"active": ["obstacle"], "strengths": {"obstacle": 0.0}},
-        })
-        plain._snapshot = disabled._snapshot = zero._snapshot = _board(4, 12, 27)
-        left = plain.generate_frame(0.4, 0).pixels
-        middle = disabled.generate_frame(0.4, 0).pixels
-        right = zero.generate_frame(0.4, 0).pixels
-        np.testing.assert_array_equal(left, middle)
-        np.testing.assert_array_equal(left, right)
-        self.assertEqual(zero._plant_layout_offset, (0, 0))
-
-    def test_synthetic_mask_moves_the_whole_board_off_the_glyphs(self):
-        probe = _FixedBus(_Controller(), {"glow": 0.0, "speed": 0.0, "plant_clearance": 0})
-        probe._snapshot = _board(4, 12, 27)
-        marks = probe._compose_marks((4, 12, 27), 0)
-        occupied = np.any(marks > 0, axis=2)
-        layout = probe.stack_layout((4, 12, 27))
-        bus_x, bus_y = layout.bus
-        bus_hit = np.zeros_like(occupied)
-        bus_hit[bus_x:bus_x + len(BUS_ROWS[0]), bus_y:bus_y + len(BUS_ROWS)] = True
-        blocked = occupied & bus_hit
-        indices = np.flatnonzero(blocked[:, ::-1].ravel()).tolist()
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            foliage = root / "foliage.json"
-            globes = root / "globes.json"
-            foliage.write_text(json.dumps({"covered_indices": indices}), encoding="utf-8")
-            globes.write_text(json.dumps({"globe_indices": indices[:12]}), encoding="utf-8")
-            animation = _FixedBus(_Controller(), {
-                "glow": 0.0,
-                "speed": 0.0,
-                "plant_aware": True,
-                "plant_clearance": 0,
-                "plant_mask_path": str(foliage),
-                "plant_globe_mask_path": str(globes),
-            })
-            animation._snapshot = _board(4, 12, 27)
-            animation.generate_frame(0.0, 0)
-            masks = animation.get_plant_masks()
-            placed = animation._place_marks(animation._compose_marks((4, 12, 27), 0))
-            visual_obstacle = masks.obstacle[:, ::-1]
-            overlap = int(np.count_nonzero(np.any(placed > 0, axis=2) & visual_obstacle))
-
-        self.assertNotEqual(animation._plant_layout_offset, (0, 0))
-        self.assertEqual(overlap, 0)
-        self.assertEqual(animation._plant_obstacle_overlap, 0)
-        self.assertEqual(
-            int(np.count_nonzero(np.any(placed > 0, axis=2))),
-            int(np.count_nonzero(occupied)),
-        )
+    def test_composed_overlay_does_not_cover_the_whole_scene(self):
+        controller = PreviewLEDController(strips=33, leds_per_strip=138)
+        aurora = AuroraCurtainsAnimation(controller, {"seed": 812, "source_fps": 20.0})
+        background = aurora.generate_frame(1.0, 0)
+        semantic_before = aurora.semantic_snapshot()
+        overlay = _FixedBus(controller)
+        overlay._snapshot = _board(4, 12, 27)
+        plane = overlay.generate_frame(0.0, 0)
+        compositor = HostSceneCompositor(33, 138)
+        composed = compositor.compose(BaseFrame(background.pixels), (PlacedOverlay(plane),))
+        self.assertFalse(np.array_equal(composed.pixels, background.pixels))
+        coverage = plane.pixels[:, 3] > 0
+        self.assertLess(int(np.count_nonzero(coverage)), 33 * 138 // 4)
+        np.testing.assert_array_equal(composed.pixels[~coverage], background.pixels[~coverage])
+        self.assertEqual(semantic_before, aurora.semantic_snapshot())
+        disabled = compositor.compose(BaseFrame(background.pixels, changed=False), (PlacedOverlay(plane, enabled=False),))
+        np.testing.assert_array_equal(disabled.pixels, background.pixels)
 
 
 if __name__ == "__main__":

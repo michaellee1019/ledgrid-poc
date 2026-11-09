@@ -40,6 +40,7 @@ def apply(interface, manager, channel, patch):
     {'plants': {'illuminate': {'enabled': True, 'strength': 1}}},
     {'plants': {'shadow': {'enabled': True, 'strength': .2}}},
     {'plants': {'hue_shift': {'enabled': True, 'strength': .7}}},
+    {'plants': {'fire': {'enabled': True, 'strength': 1}}},
 ])
 def test_common_scene_controls_bounds_and_unrelated_fields(content_wall, patch):
     interface, manager, channel = content_wall

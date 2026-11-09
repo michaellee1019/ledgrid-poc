@@ -70,7 +70,7 @@ class AllComposerAnimationsLiveTests(unittest.TestCase):
         }, self.catalog)
 
     def test_every_composer_animation_renders_in_installed_local_preview(self) -> None:
-        self.assertEqual(len(self.animations), 43)
+        self.assertEqual(len(self.animations), 49)
         preview = ComposerFinalPreview(self.catalog, ROOT)
         wall_time = datetime(2026, 9, 2, 12, tzinfo=timezone.utc)
         for descriptor in self.animations:

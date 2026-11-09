@@ -172,12 +172,12 @@ def run_plugin_startup_precheck(
         from web.composer_final_preview import (
             ComposerFinalPreview,
             current_component_catalog,
-            native_aurora_descriptor,
+            solid_background_descriptor,
         )
         from animation.plugins.plant_glow import PlantGlowAnimation
 
         catalog = current_component_catalog()
-        background = native_aurora_descriptor()
+        background = solid_background_descriptor()
         plant_glow = PlantGlowAnimation.component_descriptor()
         scene = {
             "schema": "ledgrid.scene.v2",
@@ -186,8 +186,7 @@ def run_plugin_startup_precheck(
                 "version": background.version,
                 "provider": background.provider.value,
                 "role": background.role.value,
-                "bundle_digest": background.defaults["bundle_digest"],
-                "parameters": {},
+                "parameters": dict(background.defaults),
             },
             "animation": {
                 "component_id": plant_glow.component_id,
@@ -207,7 +206,7 @@ def run_plugin_startup_precheck(
         canonical = normalize_composer_scene(
             {"origin": "composer", "scene": scene}, catalog
         )
-        preview = ComposerFinalPreview(catalog, REPOSITORY_ROOT, foreground_only=True)
+        preview = ComposerFinalPreview(catalog, REPOSITORY_ROOT)
         rendered = preview.render(canonical, 0.0, datetime.now().astimezone())
         frame_shape, foreground_shape = _validate_current_plant_glow_frame(rendered)
         return PluginStartupPrecheckResult(plugin_ids, frame_shape, foreground_shape)

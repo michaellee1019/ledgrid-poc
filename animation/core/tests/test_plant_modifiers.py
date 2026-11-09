@@ -11,6 +11,7 @@ import numpy as np
 from animation import AnimationBase
 from animation.core.plant_awareness import (
     GLOBE_REGION_ORDER, PLANT_MODIFIER_IDS, PlantModifierState,
+    paint_plant_fire, plant_optics_are_time_varying, spark_points_from_pixels,
 )
 
 
@@ -29,8 +30,9 @@ class _Animation(AnimationBase):
 
 class PlantModifierStateTests(unittest.TestCase):
     def test_catalog_and_canonical_defaults(self):
-        self.assertEqual(len(PLANT_MODIFIER_IDS), 14)
+        self.assertEqual(len(PLANT_MODIFIER_IDS), 15)
         self.assertIn("hue_shift", PLANT_MODIFIER_IDS)
+        self.assertIn("fire", PLANT_MODIFIER_IDS)
         self.assertIn("liquid_glass", PLANT_MODIFIER_IDS)
         state = PlantModifierState.from_payload({
             "active": ["obstacle", "illuminate"], "strengths": {}
@@ -39,6 +41,18 @@ class PlantModifierStateTests(unittest.TestCase):
         self.assertEqual(state.strength("illuminate"), 0.5)
         self.assertEqual(state.strength("obstacle"), 1.0)
         self.assertEqual(PlantModifierState.from_payload(state.to_dict()), state)
+        fire = PlantModifierState.from_payload({
+            "active": ["fire"], "strengths": {"fire": 0.8},
+        })
+        self.assertEqual(fire.active, ("fire",))
+        self.assertEqual(fire.strength("fire"), 0.8)
+        self.assertTrue(plant_optics_are_time_varying({"effects": fire.to_dict()}))
+        self.assertFalse(plant_optics_are_time_varying({"effects": {
+            "version": 1, "active": ["fire"], "strengths": {"fire": 0.0},
+        }}))
+        self.assertFalse(plant_optics_are_time_varying({"effects": {
+            "version": 1, "active": ["illuminate"], "strengths": {"illuminate": 1.0},
+        }}))
 
     def test_rejects_invalid_ids_strengths_and_exclusive_groups(self):
         invalid = (
@@ -208,6 +222,50 @@ class PlantModifierStateTests(unittest.TestCase):
         self.assertIn("measured strip counts disagree", geometry.error)
         self.assertFalse(np.any(geometry.obstacle))
         self.assertFalse(np.any(geometry.clearance))
+
+
+class _FireGeometry:
+    def __init__(self, strips: int, leds: int, foliage: tuple[int, ...]):
+        total = strips * leds
+        self.foliage_flat = np.zeros(total, dtype=np.bool_)
+        self.foliage_flat[list(foliage)] = True
+        self.globes_flat = np.zeros(total, dtype=np.bool_)
+
+
+class PlantFireIgnitionTests(unittest.TestCase):
+    def test_isolated_bright_specks_are_sparks_large_glows_are_not(self) -> None:
+        pixels = np.zeros((4 * 6, 3), dtype=np.uint8)
+        pixels[1 * 6 + 5] = (255, 220, 80)
+        for strip in (1, 2, 3):
+            for led in range(3):
+                pixels[strip * 6 + led] = (255, 180, 40)
+        points = spark_points_from_pixels(pixels, strip_count=4, leds_per_strip=6)
+        self.assertEqual(points.shape, (1, 2))
+        np.testing.assert_allclose(points[0], (1.0, 5.0))
+
+    def test_nearby_spark_flashes_plants_then_fades_when_it_leaves(self) -> None:
+        strips, leds = 10, 12
+        near = 3 * leds + 5
+        far = 9 * leds + 1
+        geometry = _FireGeometry(strips, leds, (near, far))
+        source = np.full((strips * leds, 3), 40, dtype=np.uint8)
+        heat = np.zeros(strips * leds, dtype=np.float32)
+        flashed = source.copy()
+        paint_plant_fire(
+            flashed, geometry, 0.9,
+            heat=heat, sparks=np.array([[3.0, 5.0]], dtype=np.float32),
+            dt=0.0, strip_count=strips, leds_per_strip=leds,
+        )
+        self.assertGreater(int(flashed[near, 0]), int(source[near, 0]))
+        np.testing.assert_array_equal(flashed[far], source[far])
+        after = flashed.copy()
+        paint_plant_fire(
+            after, geometry, 0.9,
+            heat=heat, sparks=np.zeros((0, 2), dtype=np.float32),
+            dt=0.45, strip_count=strips, leds_per_strip=leds,
+        )
+        self.assertLess(int(after[near, 0]), int(flashed[near, 0]))
+        self.assertGreater(int(after[near, 0]), int(source[near, 0]))
 
 
 if __name__ == "__main__":

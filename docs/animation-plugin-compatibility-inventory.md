@@ -35,11 +35,11 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 
 | Classification | Count |
 | --- | ---: |
-| `ordinary_background` | 54 |
+| `ordinary_background` | 58 |
 | `compatibility_full_scene` | 1 |
 | `python_overlay` | 0 |
 | `unsupported_direct_hardware_stateful` | 0 |
-| **Total shipped packages** | **55** |
+| **Total shipped packages** | **59** |
 
 ## Shipped packages
 
@@ -48,6 +48,8 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | `ambient_scene` | `AmbientSceneAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `ascii_drop` | `AsciiDropAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `aurora_curtains` | `AuroraCurtainsAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
+| `baja_rally` | `BajaRallyAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
+| `campfire` | `CampfireAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `canopy_cup` | `CanopyCupAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `cellular_tapestry` | `CellularTapestryAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `christmas_tree` | `ChristmasTreeAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
@@ -57,6 +59,7 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | `cloud_canyon` | `CloudCanyonAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `column_sequence` | `ColumnSequenceAnimation` | `test` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `conway_life` | `ConwayLifeAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
+| `cribbage_leaderboard` | `CribbageLeaderboardAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `cyclic_reef` | `CyclicReefAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `desert_wind` | `DesertWindAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `emoji` | `EmojiAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
@@ -77,6 +80,7 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | `mini_metro` | `MiniMetroAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `moonlit_fog_banks` | `MoonlitFogBanksAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `night_train_windows` | `NightTrainWindowsAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
+| `nj_transit_bus` | `NjTransitBusAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `ocean_waves` | `OceanWavesAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `physarum_network` | `PhysarumNetworkAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `pinball` | `PinballAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |

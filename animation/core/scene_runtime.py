@@ -23,6 +23,7 @@ from animation.core.presentation_contracts import NEUTRAL_PLANT_INPUTS, Resolved
 from animation.core.plant_awareness import (
     INSTALLATION_GEOMETRY_CONTACT_INPUT,
     InstallationGeometryContact,
+    plant_optics_are_time_varying,
 )
 from animation.core.widget_placement import (
     WidgetPlacementResolution, resolve_widget_placement, translated_widget_coverage,
@@ -263,7 +264,12 @@ class CanonicalSceneRuntime:
         foreground = self._compositor.aggregate_foreground()
         pipeline_signature = (scene["plants"], scene["look"]["presentation_brightness"], self._master_brightness)
         pipeline_changed = pipeline_signature != self._last_pipeline_signature
-        changed = composed.changed or pipeline_changed or self._last_output is None
+        changed = (
+            composed.changed
+            or pipeline_changed
+            or self._last_output is None
+            or plant_optics_are_time_varying(scene["plants"])
+        )
         if changed:
             final = self._validated_rgb(self._plant_optics(composed.pixels, scene["plants"]), "plant optics")
             np.multiply(final, float(scene["look"]["presentation_brightness"]), out=self._scale_work)
@@ -445,6 +451,9 @@ class CanonicalSceneRuntime:
         if descriptor.component_id == "clock_overlay":
             from animation.plugins.clock_overlay import ClockOverlayAnimation
             return ClockOverlayAnimation(controller, parameters)
+        if descriptor.component_id == "nj_transit_bus":
+            from animation.plugins.nj_transit_bus import NjTransitBusAnimation
+            return NjTransitBusAnimation(controller, parameters)
         raise CanonicalSceneRuntimeError(f"no runtime factory is registered for {descriptor.component_id}")
 
     def _black_background(self, context: ResolvedScene, frame_count: int) -> BaseFrame:

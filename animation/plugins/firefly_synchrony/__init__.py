@@ -11,6 +11,10 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.scene_palettes import HOLIDAY_STOPS, HOLIDAY_TRIPLES, hsv_to_rgb_field
+
+
+_HUE_GOLDEN = np.float32(0.6180339887)
 
 
 class FireflySynchronyAnimation(AnimationBase):
@@ -30,7 +34,7 @@ class FireflySynchronyAnimation(AnimationBase):
     PALETTE_ROLES = ("night", "meadow", "firefly")
     CAPABILITIES = frozenset({"semantic_palette_roles", "scaled_context", "effect_intent"})
     PLANT_MODIFIER_SUPPORT = frozenset()
-    SIM_HZ = 15.0
+    SIM_HZ = 24.0
     MAX_CATCH_UP_STEPS = 8
     MIN_FIREFLIES = 20
     MAX_FIREFLIES = 220
@@ -46,7 +50,11 @@ class FireflySynchronyAnimation(AnimationBase):
         "mist": MappingProxyType({"night": (3.0, 9.0, 20.0), "meadow": (40.0, 102.0, 142.0), "firefly": (170.0, 228.0, 245.0)}),
         "spectrum": MappingProxyType({"night": (15.0, 3.0, 34.0), "meadow": (84.0, 38.0, 194.0), "firefly": (54.0, 238.0, 230.0)}),
         "ember": MappingProxyType({"night": (18.0, 3.0, 2.0), "meadow": (156.0, 42.0, 14.0), "firefly": (255.0, 202.0, 92.0)}),
-        "rainbow": MappingProxyType({"night": (8.0, 0.0, 18.0), "meadow": (255.0, 40.0, 90.0), "firefly": (40.0, 255.0, 140.0)}),
+        "rainbow": MappingProxyType({"night": (8.0, 0.0, 18.0), "meadow": (48.0, 12.0, 40.0), "firefly": (40.0, 255.0, 140.0)}),
+        "xmas": MappingProxyType({"night": HOLIDAY_TRIPLES["xmas"][0], "meadow": (18.0, 96.0, 36.0), "firefly": HOLIDAY_TRIPLES["xmas"][2]}),
+        "fall": MappingProxyType({"night": HOLIDAY_TRIPLES["fall"][0], "meadow": HOLIDAY_TRIPLES["fall"][1], "firefly": HOLIDAY_TRIPLES["fall"][2]}),
+        "easter": MappingProxyType({"night": HOLIDAY_TRIPLES["easter"][0], "meadow": HOLIDAY_TRIPLES["easter"][1], "firefly": HOLIDAY_TRIPLES["easter"][2]}),
+        "july4": MappingProxyType({"night": HOLIDAY_TRIPLES["july4"][0], "meadow": (28.0, 48.0, 140.0), "firefly": HOLIDAY_TRIPLES["july4"][2]}),
     })
 
     def __init__(self, controller: Any, config: Optional[Mapping[str, Any]] = None):
@@ -56,10 +64,15 @@ class FireflySynchronyAnimation(AnimationBase):
         self.params = self._normalized_parameters(self._authored_config)
         self.width, self.height = self.get_strip_info()
         self._pixels = np.zeros((self.get_pixel_count(), 3), dtype=np.uint8)
+        self._field = np.zeros((self.width, self.height), dtype=np.float32)
+        self._color_field = np.zeros((self.width, self.height, 3), dtype=np.float32)
+        self._canvas_float = np.zeros((self.width, self.height, 3), dtype=np.float32)
+        self._canvas_u8 = np.zeros((self.width, self.height, 3), dtype=np.uint8)
         self._presentation_context: ResolvedScene | None = None
         self._last_tick: int | None = None
         self._last_render_key: tuple[Any, ...] | None = None
         self._revision = 0
+        self._last_peak_count = 0
         self._initialize_simulation()
 
     @classmethod
@@ -136,7 +149,12 @@ class FireflySynchronyAnimation(AnimationBase):
         return RenderedFrame(self._pixels, changed=True)
 
     def semantic_snapshot(self) -> Mapping[str, Any]:
-        return MappingProxyType({"seed": self.params["seed"], "tick": self._last_tick, "x": self.x.tobytes(), "y": self.y.tobytes(), "phase": self.phase.tobytes(), "energy": self.energy.tobytes()})
+        return MappingProxyType({
+            "seed": self.params["seed"], "tick": self._last_tick,
+            "x": self.x.tobytes(), "y": self.y.tobytes(), "z": self.z.tobytes(),
+            "phase": self.phase.tobytes(), "energy": self.energy.tobytes(),
+            "heading": self.heading.tobytes(),
+        })
 
     def cadence_snapshot(self) -> Mapping[str, Any]:
         return MappingProxyType({"simulation_hz": self.SIM_HZ, "tick": self._last_tick})
@@ -151,13 +169,19 @@ class FireflySynchronyAnimation(AnimationBase):
         self.phase = rng.uniform(0.0, math.tau, count).astype(np.float32)
         self.frequency = rng.normal(math.tau * 0.72, 0.14, count).astype(np.float32)
         self.energy = np.ones(count, dtype=np.float32)
+        self.z = rng.uniform(0.12, 0.96, count).astype(np.float32)
+        self.vz = rng.normal(0.0, 0.05, count).astype(np.float32)
+        self.heading = rng.uniform(0.0, math.tau, count).astype(np.float32)
+        self.turn = rng.normal(0.0, 0.35, count).astype(np.float32)
+        self.dart = np.zeros(count, dtype=np.float32)
+        self._hue = np.mod(np.arange(count, dtype=np.float32) * _HUE_GOLDEN, np.float32(1.0))
         self._rng = rng
         self._last_tick = None
         self._last_render_key = None
+        self._last_peak_count = 0
 
     def _simulate_step(self, dt: float) -> None:
         dx = self.x[:, None] - self.x[None, :]
-        dx -= np.rint(dx / self.width) * self.width
         dy = self.y[:, None] - self.y[None, :]
         radius = float(self.params["coupling_radius"])
         near = dx * dx + dy * dy < radius * radius
@@ -167,26 +191,76 @@ class FireflySynchronyAnimation(AnimationBase):
         self.phase = np.mod(self.phase + (self.frequency + float(self.params["synchrony"]) * coupling) * dt, math.tau)
         distance = np.minimum(self.phase, math.tau - self.phase)
         self.energy += dt * 0.035 - (distance < 0.28).astype(np.float32) * dt * 0.18
-        wandering = float(self.params["wandering"])
-        noise = self._rng.normal(0.0, 0.08, self.x.size).astype(np.float32)
-        self.vx += np.cos(self.phase * 0.37) * wandering * dt * 0.12 + noise * dt
-        self.vy += np.sin(self.phase * 0.31) * wandering * dt * 0.12 - noise * dt
-        np.clip(self.vx, -0.8, 0.8, out=self.vx)
-        np.clip(self.vy, -0.8, 0.8, out=self.vy)
-        self.x = np.mod(self.x + self.vx, self.width)
-        self.y += self.vy
-        bounce = (self.y < 0.0) | (self.y >= self.height)
-        self.vy[bounce] *= -1.0
-        np.clip(self.y, 0.0, self.height - 1.0, out=self.y)
         np.clip(self.energy, 0.0, 1.0, out=self.energy)
+
+        wandering = float(self.params["wandering"])
+        flash = np.exp(-np.square(distance / 0.42)) * self.energy
+        n = self.x.size
+        self.turn += self._rng.normal(0.0, 2.6, n).astype(np.float32) * dt
+        self.turn *= math.exp(-1.8 * dt)
+        self.turn += (self.x < 3.2).astype(np.float32) * 2.4 * dt
+        self.turn -= (self.x > self.width - 4.2).astype(np.float32) * 2.4 * dt
+        self.heading = np.mod(
+            self.heading + (self.turn * (0.55 + 0.9 * wandering) + 0.22 * wandering * np.sin(self.phase * 0.27)) * dt,
+            math.tau,
+        )
+        self.dart *= math.exp(-2.8 * dt)
+        release = self._rng.random(n) < (0.12 + 0.38 * wandering) * dt
+        self.dart[release] = 1.0
+        cruise = (2.4 + 6.2 * wandering) * (0.38 + 0.62 * self.z)
+        speed = cruise * (0.42 + 0.58 * self.dart)
+        self.vx = np.cos(self.heading) * speed
+        self.vy = np.sin(self.heading) * speed - flash * (3.4 + 5.0 * wandering) * self.z
+        self.x += self.vx * dt
+        self.y += self.vy * dt
+        self.vz += self._rng.normal(0.0, 0.22, n).astype(np.float32) * dt
+        self.vz += (0.52 - self.z) * 0.28 * dt
+        self.vz *= math.exp(-0.85 * dt)
+        self.z += self.vz * dt
+        hit_left = self.x < 0.45
+        hit_right = self.x > self.width - 1.45
+        hit_top = self.y < 0.45
+        hit_bottom = self.y > self.height - 1.45
+        self.heading[hit_left | hit_right] = (math.pi - self.heading[hit_left | hit_right]) % math.tau
+        self.heading[hit_top | hit_bottom] = (-self.heading[hit_top | hit_bottom]) % math.tau
+        np.clip(self.x, 0.45, self.width - 1.45, out=self.x)
+        np.clip(self.y, 0.45, self.height - 1.45, out=self.y)
+        np.clip(self.z, 0.08, 1.0, out=self.z)
+
+    def _fly_colors(self, palette_id: str, firefly: np.ndarray) -> np.ndarray:
+        if palette_id == "rainbow":
+            return hsv_to_rgb_field(self._hue, 0.92, 1.0)
+        stops = HOLIDAY_STOPS.get(str(palette_id))
+        if stops is not None:
+            samples = np.asarray(stops, dtype=np.float32)
+            return samples[np.arange(self.x.size) % len(samples)]
+        return np.broadcast_to(np.asarray(firefly, dtype=np.float32), (self.x.size, 3)).copy()
+
+    def _stamp_glow(self, index: int, pulse: float, rgb: np.ndarray) -> None:
+        depth = float(self.z[index])
+        sigma = 0.72 + 3.35 * (depth ** 1.35) * (0.40 + 0.60 * pulse)
+        radius = max(2, min(12, int(math.ceil(sigma * 3.1))))
+        fx, fy = float(self.x[index]), float(self.y[index])
+        x0 = max(0, int(math.floor(fx)) - radius)
+        x1 = min(self.width, int(math.floor(fx)) + radius + 1)
+        y0 = max(0, int(math.floor(fy)) - radius)
+        y1 = min(self.height, int(math.floor(fy)) + radius + 1)
+        if x0 >= x1 or y0 >= y1:
+            return
+        dx = np.arange(x0, x1, dtype=np.float32) - fx
+        dy = (np.arange(y0, y1, dtype=np.float32) - fy) * np.float32(0.82)
+        r2 = dx[:, None] * dx[:, None] + dy[None, :] * dy[None, :]
+        sigma2 = np.float32(sigma * sigma)
+        core = np.exp(-r2 / (np.float32(2.0) * sigma2))
+        halo = sigma2 / (r2 + sigma2)
+        gain = pulse * (0.32 + 0.68 * depth)
+        light = gain * (np.float32(0.82) * core + np.float32(0.58) * halo)
+        self._field[x0:x1, y0:y1] += light
+        self._color_field[x0:x1, y0:y1] += light[..., None] * rgb
 
     def _paint(self, palette_id: str) -> None:
         palette = self.palette_roles(palette_id)
         night, meadow, firefly = (np.asarray(palette[role], dtype=np.float32) for role in self.PALETTE_ROLES)
-        # Firefly simulation coordinates are top-down; wall LED indices are not.
-        canvas = self._pixels.reshape(self.width, self.height, 3)[:, ::-1]
-        gradient = np.linspace(0.0, 1.0, self.height, dtype=np.float32)[None, :, None] ** 3
-        canvas[:] = np.clip(night + meadow * float(self.params["meadow_glow"]) * gradient, 0.0, 255.0).astype(np.uint8)
         softness = float(self.params["pulse_softness"])
         phase_distance = np.minimum(self.phase, math.tau - self.phase)
         pulse = np.exp(-np.square(phase_distance / (0.16 + 0.65 * softness))) * self.energy
@@ -197,15 +271,30 @@ class FireflySynchronyAnimation(AnimationBase):
             muted = np.ones(self.x.size, dtype=bool)
             muted[keep] = False
             pulse[muted & (pulse > 0.72)] = 0.72
-        for index in np.flatnonzero(pulse > 0.025):
-            strip, led = int(self.x[index]) % self.width, int(np.clip(self.y[index], 0, self.height - 1))
-            color = meadow + (firefly - meadow) * pulse[index]
-            canvas[strip, led] = np.maximum(canvas[strip, led], np.clip(color, 0.0, 255.0).astype(np.uint8))
-            if pulse[index] > 0.55:
-                for strip_delta, led_delta in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    target_strip, target_led = (strip + strip_delta) % self.width, led + led_delta
-                    if 0 <= target_led < self.height:
-                        canvas[target_strip, target_led] = np.maximum(canvas[target_strip, target_led], np.clip(color * 0.25, 0.0, 255.0).astype(np.uint8))
+        self._last_peak_count = int(np.count_nonzero(pulse > 0.72))
+        colors = self._fly_colors(palette_id, firefly)
+        self._field.fill(0.0)
+        self._color_field.fill(0.0)
+        for index in np.flatnonzero(pulse > 0.02):
+            self._stamp_glow(int(index), float(pulse[index]), colors[int(index)])
+        gradient = np.linspace(0.0, 1.0, self.height, dtype=np.float32)[None, :] ** 3
+        self._canvas_float[:] = night
+        self._canvas_float += meadow * float(self.params["meadow_glow"]) * gradient[..., None]
+        mixed = np.divide(
+            self._color_field, self._field[..., None],
+            out=np.zeros_like(self._color_field), where=self._field[..., None] > 1e-6,
+        )
+        core = np.clip((self._field - 0.18) / 0.82, 0.0, 1.0)
+        core *= core * (3.0 - 2.0 * core)
+        halo = np.clip((self._field - 0.04) / 0.48, 0.0, 1.0)
+        clear = 1.0 - core
+        self._canvas_float += mixed * (halo * clear * 0.46)[..., None]
+        self._canvas_float *= clear[..., None]
+        self._canvas_float += mixed * core[..., None]
+        np.clip(self._canvas_float, 0.0, 255.0, out=self._canvas_float)
+        np.copyto(self._canvas_u8, self._canvas_float, casting="unsafe")
+        logical = self._pixels.reshape(self.width, self.height, 3)
+        logical[:, ::-1] = self._canvas_u8
 
     @classmethod
     def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:

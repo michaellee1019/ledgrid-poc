@@ -24,6 +24,9 @@ from animation.core.plant_awareness import (
     INSTALLATION_GEOMETRY_CONTACT_INPUT,
     InstallationGeometryContact,
     PlantMaskCache,
+    paint_plant_fire,
+    spark_ignition_points_from_animation,
+    spark_points_from_pixels,
 )
 from animation.core.scene_runtime import (
     CanonicalSceneRuntime, CanonicalSceneRuntimeError, RuntimeFrame, ScenePresentationContext,
@@ -39,10 +42,13 @@ from animation.plugins.emoji import EmojiAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.flame_burst import FlameBurstAnimation
+from animation.plugins.campfire import CampfireAnimation
 from animation.plugins.fluid_tank import FluidTankAnimation
 from animation.plugins.fish_tank import FishTankAnimation
 from animation.plugins.ocean_waves import OceanWavesAnimation
 from animation.plugins.mini_metro import MiniMetroAnimation
+from animation.plugins.baja_rally import BajaRallyAnimation
+from animation.plugins.nj_transit_bus import NjTransitBusAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.maze_chase import MazeChaseAnimation
@@ -60,6 +66,7 @@ from animation.plugins.solid import SolidColorAnimation
 from animation.plugins.sparkle import SparkleAnimation
 from animation.plugins.wave import WaveAnimation
 from animation.plugins.column_sequence import ColumnSequenceAnimation
+from animation.plugins.cribbage_leaderboard import CribbageLeaderboardAnimation
 from animation.plugins.circadian_window import CircadianWindowAnimation
 from animation.plugins.cloud_canyon import CloudCanyonAnimation
 from animation.plugins.desert_wind import DesertWindAnimation
@@ -108,10 +115,12 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         FireflySynchronyAnimation.component_descriptor(),
         FireworksAnimation.component_descriptor(),
         FlameBurstAnimation.component_descriptor(),
+        CampfireAnimation.component_descriptor(),
         FluidTankAnimation.component_descriptor(),
         FishTankAnimation.component_descriptor(),
         OceanWavesAnimation.component_descriptor(),
         MiniMetroAnimation.component_descriptor(),
+        BajaRallyAnimation.component_descriptor(),
         CyclicReefAnimation.component_descriptor(),
         LavaLampAnimation.component_descriptor(),
         SnakeAnimation.component_descriptor(),
@@ -127,6 +136,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         SparkleAnimation.component_descriptor(),
         WaveAnimation.component_descriptor(),
         ColumnSequenceAnimation.component_descriptor(),
+        CribbageLeaderboardAnimation.component_descriptor(),
         CircadianWindowAnimation.component_descriptor(),
         CloudCanyonAnimation.component_descriptor(),
         DesertWindAnimation.component_descriptor(),
@@ -145,6 +155,7 @@ def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
         WindInTheReedsAnimation.component_descriptor(),
         ClockOverlayAnimation.component_descriptor(),
         EmojiArrangerAnimation.component_descriptor(),
+        NjTransitBusAnimation.component_descriptor(),
     )
 
 
@@ -218,6 +229,9 @@ class InstalledFinalSceneRuntime:
             wall_time_consumer=self._set_wall_time,
         )
         self._active_digest: str | None = None
+        self._optics_elapsed = 0.0
+        self._fire_heat = np.zeros(int(self.controller.total_leds), dtype=np.float32)
+        self._fire_last_elapsed = 0.0
         self._lock = RLock()
 
     def _render_host_background(self, context: Any, frame_count: int) -> BaseFrame:
@@ -243,10 +257,13 @@ class InstalledFinalSceneRuntime:
         if not isinstance(presentation, ScenePresentationContext):
             raise TypeError("presentation must be a ScenePresentationContext")
         with self._lock:
+            self._optics_elapsed = presentation.monotonic_elapsed
             canonical = presentation.canonical
             if canonical.identity.digest != self._active_digest:
                 self._runtime.activate(canonical)
                 self._active_digest = canonical.identity.digest
+                self._fire_heat.fill(0.0)
+                self._fire_last_elapsed = presentation.monotonic_elapsed
             return self._runtime.render_presentation(presentation)
 
 
@@ -313,6 +330,8 @@ class InstalledFinalSceneRuntime:
             return FireworksAnimation(controller, parameters)
         if descriptor.component_id == FlameBurstAnimation.COMPONENT_ID:
             return FlameBurstAnimation(controller, parameters)
+        if descriptor.component_id == CampfireAnimation.COMPONENT_ID:
+            return CampfireAnimation(controller, parameters)
         if descriptor.component_id == FluidTankAnimation.COMPONENT_ID:
             return FluidTankAnimation(controller, parameters)
         if descriptor.component_id == FishTankAnimation.COMPONENT_ID:
@@ -321,6 +340,8 @@ class InstalledFinalSceneRuntime:
             return OceanWavesAnimation(controller, parameters)
         if descriptor.component_id == MiniMetroAnimation.COMPONENT_ID:
             return MiniMetroAnimation(controller, parameters)
+        if descriptor.component_id == BajaRallyAnimation.COMPONENT_ID:
+            return BajaRallyAnimation(controller, parameters)
         if descriptor.component_id == CyclicReefAnimation.COMPONENT_ID:
             return CyclicReefAnimation(controller, parameters)
         if descriptor.component_id == LavaLampAnimation.COMPONENT_ID:
@@ -351,6 +372,8 @@ class InstalledFinalSceneRuntime:
             return WaveAnimation(controller, parameters)
         if descriptor.component_id == ColumnSequenceAnimation.COMPONENT_ID:
             return ColumnSequenceAnimation(controller, parameters)
+        if descriptor.component_id == CribbageLeaderboardAnimation.COMPONENT_ID:
+            return CribbageLeaderboardAnimation(controller, parameters)
         if descriptor.component_id == CircadianWindowAnimation.COMPONENT_ID:
             animation = CircadianWindowAnimation(controller, parameters)
             animation._clock_now = lambda: self._wall_time
@@ -397,6 +420,10 @@ class InstalledFinalSceneRuntime:
             return clock
         if descriptor.component_id == EmojiArrangerAnimation.COMPONENT_ID:
             return EmojiArrangerAnimation(controller, parameters)
+        if descriptor.component_id == NjTransitBusAnimation.COMPONENT_ID:
+            overlay = NjTransitBusAnimation(controller, parameters)
+            overlay._clock_now = lambda: self._wall_time.astimezone()  # type: ignore[method-assign]
+            return overlay
         raise ValueError(f"Composer preview cannot render Widget {descriptor.component_id!r}")
 
     def _plant_inputs(self, _plants: Mapping[str, Any], descriptor: ComponentDescriptor) -> Mapping[str, Any]:
@@ -453,7 +480,38 @@ class InstalledFinalSceneRuntime:
             foliage = output[geometry.foliage_flat].copy()
             output[geometry.foliage_flat, 0] = np.rint(foliage[:, 0] * (1.0 - amount) + foliage[:, 2] * amount)
             output[geometry.foliage_flat, 2] = np.rint(foliage[:, 2] * (1.0 - amount) + foliage[:, 1] * amount)
+        fire = float(strengths.get("fire", 0.0))
+        if fire:
+            elapsed = float(self._optics_elapsed)
+            dt = elapsed - self._fire_last_elapsed
+            if dt < 0.0:
+                self._fire_heat.fill(0.0)
+                dt = 0.0
+            self._fire_last_elapsed = elapsed
+            paint_plant_fire(
+                output, geometry, fire,
+                heat=self._fire_heat,
+                sparks=self._spark_ignition_points(output),
+                dt=min(dt, 1.0),
+                strip_count=int(self.controller.strip_count),
+                leds_per_strip=int(self.controller.leds_per_strip),
+            )
+        else:
+            self._fire_heat.fill(0.0)
+            self._fire_last_elapsed = float(self._optics_elapsed)
         return output
+
+    def _spark_ignition_points(self, pixels: np.ndarray) -> np.ndarray:
+        slot = getattr(self._runtime, "_animation", None)
+        instance = None if slot is None else getattr(slot, "instance", None)
+        points = spark_ignition_points_from_animation(instance)
+        if points is not None:
+            return points
+        return spark_points_from_pixels(
+            pixels,
+            strip_count=int(self.controller.strip_count),
+            leds_per_strip=int(self.controller.leds_per_strip),
+        )
 
 
 class ComposerFinalPreview(InstalledFinalSceneRuntime):

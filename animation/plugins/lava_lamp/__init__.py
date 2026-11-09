@@ -63,6 +63,13 @@ class LavaLampAnimation(AnimationBase):
     PHYSICS_DT = 0.01
     WARMUP_STEPS = 200
     MAX_BLOBS = 16
+    # Portal "warp" is a squeezed tube, not a teleport: shrink, speed up, fly
+    # straight at the next globe like wax forced through a narrower pipe.
+    WARP_TUBE_MIN = 1.05
+    WARP_ARRIVE = 1.25
+    WARP_SHRINK_RATE = 42.0
+    WARP_RESTORE_RATE = 18.0
+    WARP_SPEED_CAP = 112.0
     INTERACTION_TYPES = frozenset(("primary",))
     # Scene v2 owns installation geometry and effect intent.  Lava only
     # consumes the immutable provider view: foliage refracts its presentation;
@@ -140,6 +147,11 @@ class LavaLampAnimation(AnimationBase):
         self.cooldown = np.zeros(self.MAX_BLOBS, dtype=np.float32)
         self.phase = np.zeros(self.MAX_BLOBS, dtype=np.float32)
         self.active = np.zeros(self.MAX_BLOBS, dtype=bool)
+        self.warping = np.zeros(self.MAX_BLOBS, dtype=bool)
+        self.warp_target_x = np.zeros(self.MAX_BLOBS, dtype=np.float32)
+        self.warp_target_y = np.zeros(self.MAX_BLOBS, dtype=np.float32)
+        self.warp_rest_radius = np.zeros(self.MAX_BLOBS, dtype=np.float32)
+        self.warp_arrived = np.zeros(self.MAX_BLOBS, dtype=bool)
         self._hue_offset = np.mod(
             np.arange(self.MAX_BLOBS, dtype=np.float32) * _HUE_GOLDEN, np.float32(1.0)
         )
@@ -266,14 +278,14 @@ class LavaLampAnimation(AnimationBase):
             slot = self._free_slot()
             if slot is None:
                 break
-            source = int(np.argmax(np.where(self.active, self.radius, -1.0)))
+            source = int(np.argmax(np.where(self.active & ~self.warping, self.radius, -1.0)))
             if not self._split_blob(source, slot=slot):
                 break
         while int(np.count_nonzero(self.active)) > target:
-            indices = np.flatnonzero(self.active)
-            left, right = int(indices[0]), int(indices[-1])
-            if left == right:
+            indices = np.flatnonzero(self.active & ~self.warping)
+            if indices.size < 2:
                 break
+            left, right = int(indices[0]), int(indices[-1])
             self._merge_pair(left, right)
 
     def handle_interaction(
@@ -408,7 +420,7 @@ class LavaLampAnimation(AnimationBase):
         return int(free[0]) if free.size else None
 
     def _split_blob(self, index: int, slot: Optional[int] = None) -> bool:
-        if not self.active[index] or self.radius[index] < 2.2:
+        if not self.active[index] or self.warping[index] or self.radius[index] < 2.2:
             return False
         slot = self._free_slot() if slot is None else slot
         if slot is None:
@@ -428,6 +440,9 @@ class LavaLampAnimation(AnimationBase):
         self.cooldown[slot] = self.cooldown[index] = 0.8
         self.phase[slot] = self.phase[index] + math.pi
         self._hue_offset[slot] = (float(self._hue_offset[index]) + 0.14) % 1.0
+        self.warping[slot] = False
+        self.warp_arrived[slot] = False
+        self.warp_rest_radius[slot] = 0.0
         self.previous_x[slot] = self.x[slot]
         self.previous_y[slot] = self.y[slot]
         self.previous_radius[slot] = self.radius[slot]
@@ -435,6 +450,8 @@ class LavaLampAnimation(AnimationBase):
         return True
 
     def _merge_pair(self, left: int, right: int) -> None:
+        if self.warping[left] or self.warping[right]:
+            return
         left_area = float(self.radius[left] ** 2)
         right_area = float(self.radius[right] ** 2)
         total = max(1e-6, left_area + right_area)
@@ -448,6 +465,8 @@ class LavaLampAnimation(AnimationBase):
         self.radius[left] = math.sqrt(total)
         self.active[right] = False
         self.radius[right] = 0.0
+        self.warping[right] = False
+        self.warp_arrived[right] = False
         self._merges += 1
 
     def _drain_interactions(self) -> None:
@@ -492,7 +511,75 @@ class LavaLampAnimation(AnimationBase):
                 return name
         return None
 
+    def _portal_target(self, index: int) -> Optional[tuple[float, float]]:
+        source = self._region_at(index)
+        if not source or len(self._region_centers) < 2:
+            return None
+        start = GLOBE_REGION_ORDER.index(source)
+        for offset in range(1, len(GLOBE_REGION_ORDER) + 1):
+            name = GLOBE_REGION_ORDER[(start + offset) % len(GLOBE_REGION_ORDER)]
+            if name in self._region_centers:
+                return self._region_centers[name]
+        return None
+
+    def _warp_tube_radius(self, rest: float, portal: float) -> float:
+        scale = 0.40 - 0.22 * max(0.0, min(1.0, portal))
+        return max(self.WARP_TUBE_MIN, rest * scale)
+
+    def _warp_speed(self, index: int, portal: float) -> float:
+        rest = float(self.warp_rest_radius[index])
+        radius = max(float(self.radius[index]), self.WARP_TUBE_MIN)
+        # Continuity: smaller cross-section, higher speed.
+        squeeze = min((rest / radius) ** 2, 2.8)
+        return min(self.WARP_SPEED_CAP, (48.0 + 28.0 * portal) * squeeze)
+
+    def _begin_warp(self, index: int, target: tuple[float, float]) -> None:
+        self.warping[index] = True
+        self.warp_arrived[index] = False
+        self.warp_target_x[index] = target[0]
+        self.warp_target_y[index] = target[1]
+        rest = float(self.radius[index])
+        self.warp_rest_radius[index] = rest
+        portal = max(float(self._active_modifier("portal")), 0.35)
+        self.radius[index] = self._warp_tube_radius(rest, portal)
+
+    def _advance_warp(self, index: int, dt: float) -> None:
+        portal = max(float(self._active_modifier("portal")), 0.35)
+        rest = float(self.warp_rest_radius[index])
+        tube = self._warp_tube_radius(rest, portal)
+        tx = float(self.warp_target_x[index])
+        ty = float(self.warp_target_y[index])
+        dx = tx - float(self.x[index])
+        dy = ty - float(self.y[index])
+        dist = math.hypot(dx, dy)
+        if dist <= self.WARP_ARRIVE or self.warp_arrived[index]:
+            self.x[index] = tx
+            self.y[index] = ty
+            if not self.warp_arrived[index]:
+                self.warp_arrived[index] = True
+                self._portal_transfers += 1
+                self.cooldown[index] = 1.0 + (1.0 - min(portal, 1.0))
+                heading_x, heading_y = (dx / dist, dy / dist) if dist > 1e-6 else (0.0, -1.0)
+                self.vx[index] = heading_x * 14.0
+                self.vy[index] = heading_y * 14.0
+            self.radius[index] += (rest - float(self.radius[index])) * min(1.0, self.WARP_RESTORE_RATE * dt)
+            if abs(float(self.radius[index]) - rest) < 0.08:
+                self.radius[index] = rest
+                self.warping[index] = False
+                self.warp_arrived[index] = False
+            return
+        self.radius[index] += (tube - float(self.radius[index])) * min(1.0, self.WARP_SHRINK_RATE * dt)
+        speed = self._warp_speed(index, portal)
+        step = min(dist, speed * dt)
+        inv = 1.0 / dist
+        self.x[index] += dx * inv * step
+        self.y[index] += dy * inv * step
+        self.vx[index] = dx * inv * speed
+        self.vy[index] = dy * inv * speed
+
     def _apply_plant_dynamics(self, index: int, dt: float) -> None:
+        if self.warping[index]:
+            return
         row = max(0, min(self.height - 1, int(round(float(self.y[index])))))
         col = max(0, min(self.width - 1, int(round(float(self.x[index])))))
         nx = float(self._normal_x[row, col])
@@ -503,16 +590,11 @@ class LavaLampAnimation(AnimationBase):
         self._plant_contacts += 1
         portal = self._active_modifier("portal")
         if portal and self.cooldown[index] <= 0.0:
-            source = self._region_at(index)
-            if source and len(self._region_centers) > 1:
-                start = GLOBE_REGION_ORDER.index(source)
-                for offset in range(1, len(GLOBE_REGION_ORDER) + 1):
-                    target = GLOBE_REGION_ORDER[(start + offset) % len(GLOBE_REGION_ORDER)]
-                    if target in self._region_centers:
-                        self.x[index], self.y[index] = self._region_centers[target]
-                        self.cooldown[index] = 1.0 + (1.0 - portal)
-                        self._portal_transfers += 1
-                        return
+            target = self._portal_target(index)
+            if target is not None:
+                self._begin_warp(index, target)
+                self._advance_warp(index, dt)
+                return
         habitat = self._active_modifier("habitat")
         if habitat:
             self.vx[index] *= max(0.1, 1.0 - 0.9 * habitat)
@@ -538,7 +620,7 @@ class LavaLampAnimation(AnimationBase):
         interval = 2.2 - 1.7 * strength
         if self.simulation_time - self._emitter_clock < interval:
             return
-        indices = np.flatnonzero(self.active)
+        indices = np.flatnonzero(self.active & ~self.warping)
         if not indices.size:
             return
         source = int(indices[int(np.argmax(self.radius[indices]))])
@@ -561,17 +643,17 @@ class LavaLampAnimation(AnimationBase):
         indices = list(map(int, np.flatnonzero(self.active)))
         target = max(3, min(12, int(self.params.get("blob_count", 7))))
         for position, left in enumerate(indices):
-            if not self.active[left] or self.y[left] < self.height * 0.78 or self.temperature[left] > 0.42:
+            if not self.active[left] or self.warping[left] or self.y[left] < self.height * 0.78 or self.temperature[left] > 0.42:
                 continue
             for right in indices[position + 1:]:
-                if not self.active[right] or self.temperature[right] > 0.42:
+                if not self.active[right] or self.warping[right] or self.temperature[right] > 0.42:
                     continue
                 if math.hypot(float(self.x[left] - self.x[right]), float(self.y[left] - self.y[right])) < 0.45 * (self.radius[left] + self.radius[right]):
                     self._merge_pair(left, right)
                     return
         count = int(np.count_nonzero(self.active))
         if count < target:
-            candidates = np.flatnonzero(self.active & (self.temperature > 0.72) & (self.cooldown <= 0.0))
+            candidates = np.flatnonzero(self.active & ~self.warping & (self.temperature > 0.72) & (self.cooldown <= 0.0))
             if candidates.size:
                 source = int(candidates[int(np.argmax(self.radius[candidates]))])
                 self._split_blob(source)
@@ -589,6 +671,14 @@ class LavaLampAnimation(AnimationBase):
         plant_active = self._plant_effects_active()
         for index in map(int, np.flatnonzero(self.active)):
             old_y = float(self.y[index])
+            if self.warping[index]:
+                self._advance_warp(index, dt)
+                self.cooldown[index] = max(0.0, self.cooldown[index] - dt)
+                if old_y >= self.height * 0.5 > self.y[index]:
+                    self._midline_up += 1
+                elif old_y <= self.height * 0.5 < self.y[index]:
+                    self._midline_down += 1
+                continue
             bottom = self.y[index] > self.height * 0.78
             top = self.y[index] < self.height * 0.28
             if bottom:
@@ -796,6 +886,7 @@ class LavaLampAnimation(AnimationBase):
             "interactions_applied": self._interactions_applied,
             "plant_contacts": self._plant_contacts,
             "portal_transfers": self._portal_transfers,
+            "warping": int(np.count_nonzero(self.warping)),
             "emissions": self._emissions,
             "plant_foliage_pixels": int(np.count_nonzero(self._foliage)),
             "plant_globe_pixels": int(np.count_nonzero(self._globes)),

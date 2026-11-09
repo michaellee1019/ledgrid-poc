@@ -28,13 +28,14 @@ def _component(component_id: str, role: str, **parameters: object) -> dict:
     return {"component_id": component_id, "version": 1, "provider": "python", "role": role, "parameters": parameters}
 
 
-def _scene(*, animation: str = "alpha", widgets: list[dict] | None = None, brightness: float = 1.0) -> dict:
+def _scene(*, animation: str = "alpha", widgets: list[dict] | None = None, brightness: float = 1.0,
+           plants: dict | None = None) -> dict:
     return {
         "schema": SCENE_V2_SCHEMA,
         "background": _component("background", "background"),
         "animation": _component(animation, "animation"),
         "widgets": widgets or [],
-        "plants": {"effects": {"version": 1, "active": [], "strengths": {}}},
+        "plants": plants or {"effects": {"version": 1, "active": [], "strengths": {}}},
         "look": {"palette_id": "mist", "pace": 2.0, "presentation_brightness": brightness},
     }
 
@@ -246,6 +247,45 @@ class SceneV2RuntimeTests(unittest.TestCase):
         self.assertEqual(calls, [(7, 8, 9)])
         np.testing.assert_array_equal(frame.pixels[0], (25, 25, 25))
         self.assertEqual(frame.stage_trace[-3:], ("plant_optics", "look_presentation", "output_master_brightness"))
+
+    def test_time_varying_plant_optics_rerun_when_animation_is_cached(self) -> None:
+        calls: list[int] = []
+
+        def optics(pixels, plants):
+            del plants
+            calls.append(1)
+            return pixels.copy()
+
+        runtime = CanonicalSceneRuntime(
+            self.controller, _catalog(),
+            animation_factory=lambda *args: _CachedOpaquePlane(self.opaque),
+            background_renderer=lambda context, count: BaseFrame(self.background, changed=False),
+            plant_optics=optics,
+        )
+        runtime.activate(_canonical(animation="opaque", plants={
+            "effects": {"version": 1, "active": ["fire"], "strengths": {"fire": 0.8}},
+        }))
+        runtime.render(1.0)
+        runtime.render(1.04)
+        self.assertEqual(len(calls), 2)
+
+        idle_calls: list[int] = []
+
+        def idle_optics(pixels, plants):
+            del plants
+            idle_calls.append(1)
+            return pixels.copy()
+
+        idle = CanonicalSceneRuntime(
+            self.controller, _catalog(),
+            animation_factory=lambda *args: _CachedOpaquePlane(self.opaque),
+            background_renderer=lambda context, count: BaseFrame(self.background, changed=False),
+            plant_optics=idle_optics,
+        )
+        idle.activate(_canonical(animation="opaque"))
+        idle.render(1.0)
+        idle.render(1.04)
+        self.assertEqual(len(idle_calls), 1)
 
     def test_invalid_basis_does_not_replace_last_valid_scene(self) -> None:
         canonical = _canonical()

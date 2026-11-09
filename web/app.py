@@ -45,10 +45,13 @@ from animation.plugins.emoji import EmojiAnimation
 from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
 from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.flame_burst import FlameBurstAnimation
+from animation.plugins.campfire import CampfireAnimation
 from animation.plugins.fluid_tank import FluidTankAnimation
 from animation.plugins.fish_tank import FishTankAnimation
 from animation.plugins.ocean_waves import OceanWavesAnimation
 from animation.plugins.mini_metro import MiniMetroAnimation
+from animation.plugins.baja_rally import BajaRallyAnimation
+from animation.plugins.nj_transit_bus import NjTransitBusAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.living_ecosystem import LivingEcosystemAnimation
 from animation.plugins.physarum_network import PhysarumNetworkAnimation
@@ -70,6 +73,7 @@ from animation.plugins.solid import SolidColorAnimation
 from animation.plugins.sparkle import SparkleAnimation
 from animation.plugins.wave import WaveAnimation
 from animation.plugins.column_sequence import ColumnSequenceAnimation
+from animation.plugins.cribbage_leaderboard import CribbageLeaderboardAnimation
 from animation.plugins.circadian_window import CircadianWindowAnimation
 from animation.plugins.cloud_canyon import CloudCanyonAnimation
 from animation.plugins.desert_wind import DesertWindAnimation
@@ -125,7 +129,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v37"
+COMPOSER_SHELL_VERSION = "composer-shell-v42"
 CANONICAL_BROWSER_SCENE_SCHEMA = "ledgrid.browser-scene-v2"
 
 # The Gallery stays projected from the Scene v2 packet, while this small map
@@ -134,10 +138,11 @@ _COMPOSER_GALLERY_CLASSES = (
     AuroraCurtainsAnimation, CanopyCupAnimation, AsciiDropAnimation,
     EmojiAnimation, ChristmasTreeAnimation, NightTrainWindowsAnimation,
     ConwayLifeAnimation, TetrisAnimation, FireflySynchronyAnimation,
-    FireworksAnimation, FlameBurstAnimation, FluidTankAnimation, FishTankAnimation,
-    OceanWavesAnimation, MiniMetroAnimation, CyclicReefAnimation, LavaLampAnimation, SnakeAnimation, MazeChaseAnimation,
+    FireworksAnimation, FlameBurstAnimation, CampfireAnimation, FluidTankAnimation, FishTankAnimation,
+    OceanWavesAnimation, MiniMetroAnimation, BajaRallyAnimation, CyclicReefAnimation, LavaLampAnimation, SnakeAnimation, MazeChaseAnimation,
     PinballAnimation, PixelQuestAnimation, GradientAnimation, RainbowAnimation,
-    SolidColorAnimation, SparkleAnimation, WaveAnimation, ColumnSequenceAnimation, CircadianWindowAnimation,
+    SolidColorAnimation, SparkleAnimation, WaveAnimation, ColumnSequenceAnimation,
+    CribbageLeaderboardAnimation, CircadianWindowAnimation,
     CloudCanyonAnimation, DesertWindAnimation, MoonlitFogBanksAnimation,
     RainOnGlassAnimation, TidalBioluminescenceAnimation, WaterfallVeilAnimation,
     CellularTapestryAnimation, FlowFieldSilkAnimation, FrostworkAnimation,
@@ -258,10 +263,13 @@ class AnimationWebInterface:
                 FireflySynchronyAnimation.COMPONENT_ID: FireflySynchronyAnimation._normalized_parameters,
                 FireworksAnimation.COMPONENT_ID: FireworksAnimation._normalized_parameters,
                 FlameBurstAnimation.COMPONENT_ID: FlameBurstAnimation._normalized_parameters,
+                CampfireAnimation.COMPONENT_ID: CampfireAnimation._normalized_parameters,
                 FluidTankAnimation.COMPONENT_ID: FluidTankAnimation._normalized_parameters,
                 FishTankAnimation.COMPONENT_ID: FishTankAnimation._normalized_parameters,
                 OceanWavesAnimation.COMPONENT_ID: OceanWavesAnimation._normalized_parameters,
                 MiniMetroAnimation.COMPONENT_ID: MiniMetroAnimation._normalized_parameters,
+                BajaRallyAnimation.COMPONENT_ID: BajaRallyAnimation._normalized_parameters,
+                NjTransitBusAnimation.COMPONENT_ID: NjTransitBusAnimation._normalized_parameters,
                 CyclicReefAnimation.COMPONENT_ID: CyclicReefAnimation._normalized_parameters,
                 LavaLampAnimation.COMPONENT_ID: LavaLampAnimation._normalized_parameters,
                 SnakeAnimation.COMPONENT_ID: SnakeAnimation._normalized_parameters,
@@ -276,6 +284,7 @@ class AnimationWebInterface:
                 SolidColorAnimation.COMPONENT_ID: SolidColorAnimation._normalized_parameters,
                 SparkleAnimation.COMPONENT_ID: SparkleAnimation._normalized_parameters,
                 WaveAnimation.COMPONENT_ID: WaveAnimation._normalized_parameters,
+                CribbageLeaderboardAnimation.COMPONENT_ID: CribbageLeaderboardAnimation._normalized_parameters,
                 CircadianWindowAnimation.COMPONENT_ID: CircadianWindowAnimation._normalized_parameters,
                 CloudCanyonAnimation.COMPONENT_ID: CloudCanyonAnimation._normalized_parameters,
                 DesertWindAnimation.COMPONENT_ID: DesertWindAnimation._normalized_parameters,
@@ -3208,6 +3217,8 @@ class AnimationWebInterface:
             component = widget["component"]
             if component["component_id"] == EmojiArrangerAnimation.COMPONENT_ID:
                 EmojiArrangerAnimation._normalized_parameters(component["parameters"])
+            if component["component_id"] == NjTransitBusAnimation.COMPONENT_ID:
+                NjTransitBusAnimation._normalized_parameters(component["parameters"])
         if canonical.scene["animation"]["component_id"] == AuroraCurtainsAnimation.COMPONENT_ID:
             AuroraCurtainsAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == CanopyCupAnimation.COMPONENT_ID:
@@ -3248,6 +3259,8 @@ class AnimationWebInterface:
             FireworksAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == FlameBurstAnimation.COMPONENT_ID:
             FlameBurstAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == CampfireAnimation.COMPONENT_ID:
+            CampfireAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == FluidTankAnimation.COMPONENT_ID:
             FluidTankAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == FishTankAnimation.COMPONENT_ID:
@@ -3256,6 +3269,8 @@ class AnimationWebInterface:
             OceanWavesAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == MiniMetroAnimation.COMPONENT_ID:
             MiniMetroAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
+        if canonical.scene["animation"]["component_id"] == BajaRallyAnimation.COMPONENT_ID:
+            BajaRallyAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == CyclicReefAnimation.COMPONENT_ID:
             CyclicReefAnimation._normalized_parameters(canonical.scene["animation"]["parameters"])
         if canonical.scene["animation"]["component_id"] == LavaLampAnimation.COMPONENT_ID:

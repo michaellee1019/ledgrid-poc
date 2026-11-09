@@ -17,6 +17,9 @@ from animation.plugins.fireworks import FireworksAnimation
 from animation.plugins.fish_tank import FishTankAnimation
 from animation.plugins.ocean_waves import OceanWavesAnimation
 from animation.plugins.mini_metro import MiniMetroAnimation
+from animation.plugins.baja_rally import BajaRallyAnimation
+from animation.plugins.nj_transit_bus import NjTransitBusAnimation
+from animation.plugins.campfire import CampfireAnimation
 from animation.plugins.cyclic_reef import CyclicReefAnimation
 from animation.plugins.maze_chase import MazeChaseAnimation
 from animation.plugins.pinball import PinballAnimation
@@ -38,7 +41,7 @@ class ComponentCatalogTests(unittest.TestCase):
             for descriptor in catalog.descriptors
         }
         self.assertEqual(set(entries), {
-            "solid_background", "aurora_curtains", "canopy_cup", "ascii_drop", "emoji", "christmas_tree", "night_train_windows", "conway_life", "tetris", "firefly_synchrony", "fireworks", "flame_burst", "fluid_tank", "fish_tank", "ocean_waves", "mini_metro", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "pixel_chase", "plant_glow", "gif_animation", "gradient", "rainbow", "solid", "sparkle", "wave", "column_sequence", "circadian_window", "cloud_canyon", "desert_wind", "moonlit_fog_banks", "rain_on_glass", "tidal_bioluminescence", "waterfall_veil", "cellular_tapestry", "flow_field_silk", "frostwork", "living_stained_glass", "quasicrystal_bloom", "living_ecosystem", "physarum_network", "reaction_diffusion_garden", "wind_in_the_reeds", "clock_overlay", "emoji_arranger",
+            "solid_background", "aurora_curtains", "canopy_cup", "ascii_drop", "emoji", "christmas_tree", "night_train_windows", "conway_life", "tetris", "firefly_synchrony", "fireworks", "flame_burst", "campfire", "fluid_tank", "fish_tank", "ocean_waves", "mini_metro", "baja_rally", "nj_transit_bus", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "pixel_chase", "plant_glow", "gif_animation", "gradient", "rainbow", "solid", "sparkle", "wave", "column_sequence", "cribbage_leaderboard", "circadian_window", "cloud_canyon", "desert_wind", "moonlit_fog_banks", "rain_on_glass", "tidal_bioluminescence", "waterfall_veil", "cellular_tapestry", "flow_field_silk", "frostwork", "living_stained_glass", "quasicrystal_bloom", "living_ecosystem", "physarum_network", "reaction_diffusion_garden", "wind_in_the_reeds", "clock_overlay", "emoji_arranger",
         })
         self.assertEqual(
             [
@@ -68,6 +71,8 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
+                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
@@ -79,6 +84,7 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
+                ("python", "animation", "scaled_context", "opaque", "preserve", ("none",), ("authored_media_colors",)),
                 ("python", "animation", "scaled_context", "opaque", "preserve", ("none",), ("authored_media_colors",)),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
@@ -98,6 +104,7 @@ class ComponentCatalogTests(unittest.TestCase):
                 ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
                 ("python", "widget", "wall_clock", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
                 ("python", "widget", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
+                ("python", "widget", "wall_clock", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
             ],
         )
 
@@ -114,6 +121,9 @@ class ComponentCatalogTests(unittest.TestCase):
             "fish_tank": _ROOT / "animation/plugins/fish_tank/manifest.json",
             "ocean_waves": _ROOT / "animation/plugins/ocean_waves/manifest.json",
             "mini_metro": _ROOT / "animation/plugins/mini_metro/manifest.json",
+            "baja_rally": _ROOT / "animation/plugins/baja_rally/manifest.json",
+            "nj_transit_bus": _ROOT / "animation/plugins/nj_transit_bus/manifest.json",
+            "campfire": _ROOT / "animation/plugins/campfire/manifest.json",
             "cyclic_reef": _ROOT / "animation/plugins/cyclic_reef/manifest.json",
             "snake": _ROOT / "animation/plugins/snake/manifest.json",
             "maze_chase": _ROOT / "animation/plugins/maze_chase/manifest.json",
@@ -123,6 +133,7 @@ class ComponentCatalogTests(unittest.TestCase):
             "plant_glow": _ROOT / "animation/plugins/plant_glow/manifest.json",
             "gif_animation": _ROOT / "animation/plugins/gif_animation/manifest.json",
             "column_sequence": _ROOT / "animation/plugins/column_sequence/manifest.json",
+            "cribbage_leaderboard": _ROOT / "animation/plugins/cribbage_leaderboard/manifest.json",
             "circadian_window": _ROOT / "animation/plugins/circadian_window/manifest.json",
             "cloud_canyon": _ROOT / "animation/plugins/cloud_canyon/manifest.json",
             "desert_wind": _ROOT / "animation/plugins/desert_wind/manifest.json",
@@ -228,6 +239,21 @@ class ComponentCatalogTests(unittest.TestCase):
     def test_mini_metro_is_a_qualified_semantic_opaque_animation(self) -> None:
         descriptor = MiniMetroAnimation.component_descriptor()
         self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("mini_metro", "animation", "scaled_context"))
+        self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("opaque", "semantic", ("effect_intent",)))
+
+    def test_baja_rally_is_a_qualified_semantic_opaque_animation(self) -> None:
+        descriptor = BajaRallyAnimation.component_descriptor()
+        self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("baja_rally", "animation", "scaled_context"))
+        self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("opaque", "semantic", ("effect_intent", "simulation_inputs")))
+
+    def test_nj_transit_bus_is_a_wall_clock_semantic_widget(self) -> None:
+        descriptor = NjTransitBusAnimation.component_descriptor()
+        self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("nj_transit_bus", "widget", "wall_clock"))
+        self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("premultiplied_rgba", "semantic", ("effect_intent",)))
+
+    def test_campfire_is_a_qualified_semantic_opaque_animation(self) -> None:
+        descriptor = CampfireAnimation.component_descriptor()
+        self.assertEqual((descriptor.component_id, descriptor.role.value, descriptor.timing_policy.value), ("campfire", "animation", "scaled_context"))
         self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value, tuple(capability.value for capability in descriptor.plant_capabilities)), ("opaque", "semantic", ("effect_intent",)))
 
     def test_emoji_message_is_a_scaled_semantic_widget(self) -> None:
