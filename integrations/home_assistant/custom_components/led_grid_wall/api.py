@@ -113,7 +113,8 @@ class WallApi:
             "expected_server_session_id": before["server_session_id"],
             "expected_controller_session_id": before["controller_session_id"],
             "expected_controller_state_revision": before["controller_state_revision"],
-            "expires_at": time.time() + 10,
+            # Leave one second for clock skew below the wall's ten-second limit.
+            "expires_at": time.time() + 9,
             **fields,
         }
         if action not in {'set_device_state', 'set_target_fps'}:

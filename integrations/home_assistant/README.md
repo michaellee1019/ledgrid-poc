@@ -65,7 +65,8 @@ receipt, along with request/controller identity. A rejected, failed or timed-out
 command returns `success: false` and `error`; invalid action input is an HA
 validation error. Light/number failures raise an HA action error. Polling refreshes
 after explicit commands. Each command first reads a fresh observation and includes
-server session, controller session/revision and a ten-second expiry. It submits
+server session, controller session/revision and a nine-second expiry to allow
+for clock skew within the wall's ten-second limit. It submits
 once and waits at most twelve seconds for acknowledgement; individual HTTP
 requests time out after five seconds. There are no automatic command retries,
 replay, rollback or queued competing HA writes. A request with multiple fields

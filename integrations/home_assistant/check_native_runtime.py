@@ -62,7 +62,13 @@ class LoopbackWall:
         assert payload["expected_server_session_id"] == self.state["server_session_id"]
         assert payload["expected_controller_session_id"] == self.state["controller_session_id"]
         assert payload["expected_controller_state_revision"] == self.state["controller_state_revision"]
-        assert time.time() < payload["expires_at"] <= time.time() + 10
+        # The controller clock can lag Home Assistant even with NTP active.
+        wall_now = time.time() - 0.5
+        if not wall_now < payload["expires_at"] <= wall_now + 10:
+            raise web.HTTPBadRequest(
+                text='{"error":"Command expiry is outside the wall clock window"}',
+                content_type="application/json",
+            )
         if self.mode == "reject":
             raise web.HTTPConflict()
         if self.mode != "never_ack":
