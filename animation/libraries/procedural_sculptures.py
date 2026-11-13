@@ -12,6 +12,7 @@ import numpy as np
 from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.scene_palettes import HOLIDAY_TRIPLES
 
 
 SEMANTIC_PALETTES = {
@@ -20,6 +21,7 @@ SEMANTIC_PALETTES = {
     "spectrum": np.array(((15, 3, 34), (84, 38, 194), (54, 238, 230)), np.float32),
     "ember": np.array(((18, 3, 2), (156, 42, 14), (255, 202, 92)), np.float32),
     "rainbow": np.array(((8, 0, 18), (255, 40, 90), (40, 255, 140)), np.float32),
+    **{name: np.array(triple, np.float32) for name, triple in HOLIDAY_TRIPLES.items()},
 }
 _DIRECT_PALETTES = {"quiet": "mist", "showcase": "spectrum", "night": "neutral", "bright": "mist", "pastel": "spectrum", "synthwave": "spectrum", "candlelight": "ember", "aurora": "neutral"}
 

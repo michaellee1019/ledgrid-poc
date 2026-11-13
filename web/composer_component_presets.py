@@ -181,6 +181,31 @@ class ComponentPresetCatalog:
             raise ValueError("Component has no authored preset catalog")
         return [self._choice(component_id, preset_id) for preset_id in self._membership[component_id]["preset_ids"]]
 
+    def operator_choices(self, component_id: str, presets_dir: Path) -> list[dict[str, Any]]:
+        """Return authored choices plus retained, provider-qualified personal presets."""
+        if component_id not in self._membership or component_id not in self._normalizers:
+            return []
+        authored = {choice["preset_id"]: choice for choice in self.choices(component_id)}
+        personal_dir = presets_dir / self.provider(component_id) / component_id
+        for path in sorted(personal_dir.glob("*.json")):
+            if path.stem == "before-deploy":
+                continue
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                if (not isinstance(record, dict) or record.get("preset_id") != path.stem
+                        or record.get("animation") != component_id or record.get("provider") != "python"
+                        or not isinstance(record.get("name"), str) or not isinstance(record.get("params"), dict)):
+                    continue
+                params = record["params"]
+                normalized = self.normalize_parameters(component_id, params)
+                if set(params) - set(normalized):
+                    continue
+            except (OSError, ValueError, TypeError):
+                continue
+            authored[path.stem] = {"preset_id": path.stem, "name": record["name"],
+                                   "parameters": normalized}
+        return list(authored.values())
+
     def choice(self, component_id: str, preset_id: str) -> dict[str, Any]:
         """Read one checked authored preset by its component-local identity."""
         return self._choice(component_id, preset_id)

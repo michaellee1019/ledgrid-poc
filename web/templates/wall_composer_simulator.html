@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nimbus Composer simulator</title>
+<style>
+  :root { color-scheme: dark; font: 16px system-ui; background: #0e141d; color: #e9f3ff; }
+  body { margin: 0; padding: 22px; }
+  main { display: flex; gap: 32px; flex-wrap: wrap; align-items: start; max-width: 650px; margin: auto; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  p { color: #a9c1d6; max-width: 360px; }
+  canvas { width: min(132px, 25vw); height: auto; image-rendering: pixelated; background: #000; box-shadow: 0 0 0 1px #304152; }
+  section { flex: 1 1 235px; }
+  output { display: block; min-height: 4em; color: #9ee2ff; overflow-wrap: anywhere; }
+  .keys { display: grid; grid-template-columns: repeat(3, 68px); gap: 6px; }
+  button { min-height: 44px; background: #1b2a3c; color: inherit; border: 1px solid #455a73; border-radius: 6px; cursor: pointer; }
+  button:active, button:focus-visible { background: #28587a; }
+  label { display: inline-block; margin-top: 16px; }
+  #up { grid-column: 2; }
+  #left, #menu { grid-column: 1; }
+</style>
+<main>
+  <canvas width="33" height="138" aria-label="Simulated wall with 33 by 138 LEDs"></canvas>
+  <section>
+    <h1>Nimbus Composer</h1>
+    <p>Press M for Menu and use the arrow keys to navigate. A selects, B goes back, and Y tunes a playing choice or undoes a Tune edit. Hold Left or Right for larger numeric changes.</p>
+    <output aria-live="polite">Connecting to the simulator</output>
+    <div class="keys" aria-label="Nimbus controls">
+      <button id="up" data-button="up" aria-label="Up">↑</button>
+      <button id="left" data-button="left" aria-label="Left">←</button>
+      <button data-button="down" aria-label="Down">↓</button>
+      <button data-button="right" aria-label="Right">→</button>
+      <button id="menu" data-button="menu">Menu</button>
+      <button data-button="a">A</button>
+      <button data-button="b">B</button>
+      <button data-button="y">Y</button>
+    </div>
+    <label><input type="checkbox" id="mask" checked> Show plant coverage</label>
+  </section>
+</main>
+<script>
+  const canvas = document.querySelector('canvas');
+  const context = canvas.getContext('2d');
+  const output = document.querySelector('output');
+  const maskControl = document.querySelector('#mask');
+  const image = context.createImageData(canvas.width, canvas.height);
+  const pending = [];
+  let plantCoverage;
+  const keys = {m: 'menu', Escape: 'menu', ArrowUp: 'up', ArrowDown: 'down',
+                ArrowLeft: 'left', ArrowRight: 'right', a: 'a', Enter: 'a', b: 'b', y: 'y'};
+  const directionButtons = ['up', 'down', 'left', 'right'];
+  const keyPressedAt = new Map();
+  let menuOpen = false;
+  function repeatedButton(button, elapsed) {
+    if (!menuOpen || button === 'up' || button === 'down') return button;
+    return (elapsed >= 750 ? 'fast-' : 'repeat-') + button;
+  }
+  document.addEventListener('keydown', event => {
+    const button = keys[event.key];
+    if (!button || event.target.matches('button,input') && event.key === 'Enter') return;
+    event.preventDefault();
+    if (!event.repeat) {
+      keyPressedAt.set(event.key, performance.now());
+      pending.push(button);
+    } else if (directionButtons.includes(button) && keyPressedAt.has(event.key)) {
+      pending.push(repeatedButton(button, performance.now() - keyPressedAt.get(event.key)));
+    }
+  });
+  document.addEventListener('keyup', event => keyPressedAt.delete(event.key));
+  window.addEventListener('blur', () => keyPressedAt.clear());
+  document.querySelectorAll('button[data-button]').forEach(button => {
+    button.addEventListener('click', () => pending.push(button.dataset.button));
+  });
+  const padButtons = {0: 'a', 1: 'b', 3: 'y', 9: 'menu', 12: 'up', 13: 'down', 14: 'left', 15: 'right'};
+  let held = {};
+  function readGamepad(now) {
+    const gamepad = Array.from(navigator.getGamepads?.() || []).find(pad => pad?.mapping === 'standard');
+    if (!gamepad) {
+      held = {};
+      return;
+    }
+    for (const [index, button] of Object.entries(padButtons)) {
+      if (!gamepad.buttons[index]?.pressed) {
+        delete held[button];
+      } else if (!held[button]) {
+        const repeat = directionButtons.includes(button) && (menuOpen || button !== 'up');
+        pending.push(button);
+        held[button] = {since: now, next: repeat ? now + 250 : Infinity};
+      } else if (now >= held[button].next) {
+        pending.push(repeatedButton(button, now - held[button].since));
+        held[button].next = now + 100;
+      }
+    }
+  }
+  async function refresh() {
+    readGamepad(performance.now());
+    const button = pending.shift();
+    try {
+      const options = button ? {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({button})} : {};
+      const response = await fetch('/state', options);
+      const state = await response.json();
+      if (menuOpen !== state.menu_open) {
+        menuOpen = state.menu_open;
+        for (const press of Object.values(held)) press.next = Infinity;
+        keyPressedAt.clear();
+      }
+      const pixels = atob(state.pixels);
+      plantCoverage ??= atob(state.mask);
+      for (let y = 0; y < canvas.height; y++) {
+        for (let x = 0; x < canvas.width; x++) {
+          const source = x * canvas.height + canvas.height - 1 - y;
+          const destination = (y * canvas.width + x) * 4;
+          const covered = maskControl.checked && y >= state.hud_height && plantCoverage.charCodeAt(source);
+          for (let channel = 0; channel < 3; channel++) {
+            image.data[destination + channel] = covered ? [8, 19, 14][channel] :
+                pixels.charCodeAt(source * 3 + channel);
+          }
+          image.data[destination + 3] = 255;
+        }
+      }
+      context.putImageData(image, 0, 0);
+      const card = state.card;
+      const caption = card ? [card.section, card.label, card.value || card.glyph, card.detail, card.hint].filter(Boolean).join(' · ') :
+                             (state.scene?.replaceAll('_', ' ') || 'Wall off');
+      const message = state.error ? caption + ' · ' + state.error : caption;
+      if (output.value !== message) output.value = message;
+    } catch {
+      output.value = 'Simulator disconnected';
+    }
+    setTimeout(refresh, 42);
+  }
+  refresh();
+</script>
+</html>

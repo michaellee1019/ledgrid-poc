@@ -1984,9 +1984,41 @@
   [['gradient','Gradient Field'],['rainbow','Rainbow River'],['solid','Solid Glow'],['sparkle','Sparkle Night'],['wave','Wave Ribbons']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   [['circadian_window','Circadian Window'],['cloud_canyon','Cloud Canyon'],['desert_wind','Desert Wind'],['moonlit_fog_banks','Moonlit Fog Banks'],['rain_on_glass','Rain on Glass'],['tidal_bioluminescence','Tidal Bioluminescence'],['waterfall_veil','Waterfall Veil']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
   [['cellular_tapestry','Cellular Tapestry'],['flow_field_silk','Flow-Field Silk'],['frostwork','Frostwork'],['living_stained_glass','Living Stained Glass'],['quasicrystal_bloom','Quasicrystal Bloom'],['living_ecosystem','Living Ecosystem'],['physarum_network','Physarum Network'],['reaction_diffusion_garden','Reaction-Diffusion Garden'],['wind_in_the_reeds','Wind in the Reeds']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
+  let nimbusLooksRevision = null;
+  let nimbusSceneRevision = null;
+  async function reconcileNimbus(observation, intent) {
+    const nimbus = observation.nimbus;
+    if (!nimbus || observation.freshness !== 'fresh') return;
+    const saved = nimbus.saved_revision && `${observation.controller_session_id}/${nimbus.saved_revision}`;
+    if (saved && saved !== nimbusLooksRevision) {
+      try {
+        await loadLibrary();
+        nimbusLooksRevision = saved;
+      } catch (_) { /* The next status poll retries the library read. */ }
+    }
+    const revision = nimbus.scene_revision && `${observation.controller_session_id}/${nimbus.scene_revision}`;
+    if (!revision || revision === nimbusSceneRevision || !observation.scene
+        || nimbus.scene_revision !== observation.controller_state_revision
+        || !intentIsCurrent(intent) || state.submitting || state.wall.activating || state.publication.queued
+        || state.publication.afterStop || state.publication.inFlight) return;
+    nimbusSceneRevision = revision;
+    state.scene = structuredClone(observation.scene);
+    state.selection = null;
+    state.dirty = false;
+    state.wall.dirty = false;
+    state.wall.activationError = null;
+    state.wall.retryBlocked = false;
+    state.wall.requestId = null;
+    clearHistory();
+    applyScene(state.scene);
+    schedulePreview();
+    renderLibrary();
+    $('#sceneName').value = `Currently playing · ${state.scene.animation.component_id.replaceAll('_', ' ')}`;
+  }
   async function refreshStatus() {
     if (state.refreshInFlight || state.wall.activating) return;
     state.refreshInFlight = true;
+    const nimbusIntent = state.intent;
     try {
       const [status, observation] = await Promise.all([
         requestJson(`${api}/status?client_id=${encodeURIComponent(clientId)}`),
@@ -1997,6 +2029,7 @@
       if (observation.command_result?.state === 'failed' && observation.command_result.request_id === state.wall.requestId) { state.wall.activationError = observation.command_result.error || 'Controller playback failed; output may have been interrupted.'; state.wall.retryBlocked = true; }
       state.wall.statusUnavailable = false;
       syncFrameRateObservation(observation);
+      if (!status.undo_invalidated) await reconcileNimbus(observation, nimbusIntent);
       renderStatus(status);
       if (status.undo_invalidated && !state.submitting && !state.publication.inFlight && !state.publication.queued) {
         const remoteIntent = state.intent;
@@ -2036,6 +2069,7 @@
     // Recovery describes the state before any edit made while loading.
     if (!intentIsCurrent(hydrationIntent)) return;
     if (!response.ok) { const error = new Error(body.error || 'Current scene recovery is unavailable.'); if (response.status >= 500) { error.serverUnavailable = true; throw error; } recoverFromInvalidRecovery(body); return; }
+    if (nimbusSceneRevision) return;
     if (body.recovery) {
       state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null;
       state.dirty = false; applyScene(state.scene); await restoreSavedSelection();

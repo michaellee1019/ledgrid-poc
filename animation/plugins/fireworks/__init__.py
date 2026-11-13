@@ -16,6 +16,17 @@ from animation.core.presentation_contracts import OverlayFrame, ResolvedScene
 from animation.libraries.scene_palettes import HOLIDAY_TRIPLES, nearest_stop_color
 
 
+@dataclass(frozen=True)
+class _ShellSettings:
+    burst_size: float
+    shell_population: int
+    burst_style: str
+    gravity: float
+    trails: float
+    crackle: float
+    twinkle: float
+
+
 @dataclass
 class _Rocket:
     x: float
@@ -24,6 +35,7 @@ class _Rocket:
     vy: float
     target: float
     hue: float
+    settings: _ShellSettings
 
 
 @dataclass
@@ -35,12 +47,13 @@ class _Spark:
     age: float
     lifetime: float
     hue: float
+    settings: _ShellSettings
     size: float = 1.0
     split: bool = False
 
 
 class FireworksAnimation(AnimationBase):
-    """A bounded fireworks show whose controls act on the next simulation tick."""
+    """A bounded show that takes the current settings at each launch."""
 
     ANIMATION_NAME = "Fireworks"
     ANIMATION_DESCRIPTION = "An immediate, playful aerial-shell instrument"
@@ -53,6 +66,7 @@ class FireworksAnimation(AnimationBase):
     SIM_HZ, MAX_CATCH_UP_STEPS, MAX_SPARKS = 24.0, 16, 720
     STYLES = ("mixed", "ring", "willow", "palm", "burst")
     DEFAULTS = MappingProxyType({"launch_cadence": 1.15, "shell_population": 54, "burst_size": .29, "burst_style": "mixed", "gravity": .38, "trails": .72, "crackle": .24, "twinkle": .35, "seed": 1776})
+    LIVE_TUNABLE_PARAMETERS = frozenset(DEFAULTS) - {"seed"}
     COMPONENT_DESCRIPTOR = ComponentDescriptor(component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER, role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="premultiplied_rgba", palette_policy=PALETTE_POLICY, plant_capabilities=("effect_intent",), fidelity_exceptions=(), defaults=DEFAULTS)
     SEMANTIC_PALETTES = MappingProxyType({
         "neutral": ((4., 9., 18.), (255., 126., 42.), (255., 228., 146.)),
@@ -68,6 +82,7 @@ class FireworksAnimation(AnimationBase):
         super().__init__(controller, self._authored_config)
         self.default_params = dict(self.DEFAULTS)
         self.params = self._normalized_parameters(self._authored_config)
+        self._shell_settings = self._settings(self.params)
         self.width, self.height = self.get_strip_info()
         # Trails are semantic light energy, never a pre-rendered local sky.  This
         # makes a palette swap a presentation-only operation and keeps the
@@ -75,6 +90,7 @@ class FireworksAnimation(AnimationBase):
         self._pixels = np.zeros((self.get_pixel_count(), 4), dtype=np.uint8)
         # Chromatic trail energy, colorized at paint so palette swaps stay presentation-only.
         self._trail = np.zeros((self.width, self.height, 3), dtype=np.float32)
+        self._long_trail = np.zeros_like(self._trail)
         self._presentation_context: ResolvedScene | None = None
         self._presentation_only_refresh = False
         self._last_tick: int | None = None; self._last_render_key: tuple[Any, ...] | None = None
@@ -100,11 +116,20 @@ class FireworksAnimation(AnimationBase):
         }
 
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
-        candidate = self._normalized_parameters({**self.params, **dict(new_params)})
-        if candidate["seed"] != self.params["seed"]:
-            self.params = candidate; self._reset_show()
-        else:
-            self.params = candidate
+        self._apply_parameters(self._normalized_parameters({**self.params, **dict(new_params)}))
+
+    @staticmethod
+    def _settings(params: Mapping[str, Any]) -> _ShellSettings:
+        return _ShellSettings(*(params[name] for name in _ShellSettings.__dataclass_fields__))
+
+    def _apply_parameters(self, candidate: dict[str, Any]) -> None:
+        if candidate == self.params:
+            return
+        reseed = candidate["seed"] != self.params["seed"]
+        self._shell_settings = self._settings(candidate)
+        self.params = candidate
+        if reseed:
+            self._reset_show()
         self._last_render_key = None
 
     def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
@@ -134,11 +159,7 @@ class FireworksAnimation(AnimationBase):
             phase_time, palette_id, parameters = max(0., float(time_elapsed)), "neutral", self.params
         else:
             phase_time, palette_id, parameters = max(0., float(self._presentation_context.phase_time)), str(self._presentation_context.palette["palette_id"]), self._presentation_context.parameters
-        candidate = self._normalized_parameters(parameters)
-        if candidate["seed"] != self.params["seed"]:
-            self.params = candidate; self._reset_show()
-        else:
-            self.params = candidate
+        self._apply_parameters(self._normalized_parameters(parameters))
         tick = int(math.floor(phase_time * self.SIM_HZ + 1.e-9))
         if self._last_tick is None: self._last_tick = tick
         elif self._presentation_only_refresh:
@@ -164,70 +185,74 @@ class FireworksAnimation(AnimationBase):
 
     def _reset_show(self) -> None:
         self._rng = np.random.default_rng(self.params["seed"]); self._rockets.clear(); self._sparks.clear(); self._trail.fill(0.)
+        self._long_trail.fill(0.)
         self._launch_phase, self._burst_count, self._last_tick = 1., 0, None
 
     def _step(self, dt: float) -> None:
-        persist = (0.80 + 0.16 * float(self.params["trails"])) ** (60.0 * dt)
-        self._trail *= persist
+        self._trail *= 0.816 ** (60.0 * dt)
+        self._long_trail *= 0.96 ** (60.0 * dt)
         self._launch_phase += dt * float(self.params["launch_cadence"])
+        settings = self._shell_settings
         while self._launch_phase >= 1. and len(self._rockets) < 5:
             self._launch_phase -= 1.
-            launch_speed = 0.72 + float(self.params["burst_size"]) * 0.38
+            launch_speed = 0.72 + settings.burst_size * 0.38
             self._rockets.append(_Rocket(
                 float(self._rng.uniform(.08, .92)), 1.04,
                 float(self._rng.uniform(-.025, .025)), -launch_speed,
-                float(self._rng.uniform(.18, .54)), float(self._rng.random()),
+                float(self._rng.uniform(.18, .54)), float(self._rng.random()), settings,
             ))
-        gravity = float(self.params["gravity"])
         rising: list[_Rocket] = []
         for rocket in self._rockets:
+            settings = rocket.settings
             rocket.x += rocket.vx * dt
             rocket.y += rocket.vy * dt
-            rocket.vy += gravity * 0.32 * dt
+            rocket.vy += settings.gravity * 0.32 * dt
             color = self._hue_rgb(rocket.hue)
-            self._deposit(rocket.x, rocket.y, color, 1.35 + 0.55 * float(self.params["trails"]))
-            self._deposit(rocket.x, rocket.y + 0.012, tuple(channel * 0.35 for channel in color), 0.7)
+            self._deposit(rocket.x, rocket.y, color, 1.35 + 0.55 * settings.trails, settings.trails)
+            self._deposit(rocket.x, rocket.y + 0.012, color, 0.245, settings.trails)
             if rocket.y <= rocket.target or rocket.vy >= -0.04:
                 self._burst(rocket)
             elif -0.1 <= rocket.x <= 1.1 and rocket.y > -0.1:
                 rising.append(rocket)
         self._rockets = rising
         drag = 0.965 ** (dt * 60.0)
-        twinkle = float(self.params["twinkle"])
-        trail_gain = 0.55 + 0.85 * float(self.params["trails"])
         elapsed = (self._last_tick or 0) / self.SIM_HZ
         survivors, spawned = [], []
         for spark in self._sparks:
+            settings = spark.settings
             spark.age += dt
             spark.x += spark.vx * dt
             spark.y += spark.vy * dt
             spark.vx *= drag
-            spark.vy = spark.vy * drag + gravity * dt
+            spark.vy = spark.vy * drag + settings.gravity * dt
             life = spark.age / spark.lifetime
             if life >= 1. or not (-.12 <= spark.x <= 1.12 and spark.y < 1.08):
                 continue
-            if not spark.split and life > .55 and self._rng.random() < float(self.params["crackle"]) * .18:
+            if not spark.split and life > .55 and self._rng.random() < settings.crackle * .18:
                 spark.split = True
                 for direction in (-1., 1.):
                     spawned.append(_Spark(
                         spark.x, spark.y,
                         spark.vx + direction * float(self._rng.uniform(.025, .07)),
                         spark.vy + float(self._rng.uniform(-.04, .04)),
-                        0., spark.lifetime * .32, (spark.hue + direction * .07) % 1., 0.65,
+                        0., spark.lifetime * .32, (spark.hue + direction * .07) % 1., settings, 0.65,
                     ))
             fade = (1. - life) ** 1.35
-            shimmer = 1. - twinkle + twinkle * (.35 + .65 * abs(math.sin(elapsed * 25. + spark.x * 31.)))
-            self._deposit(spark.x, spark.y, self._hue_rgb(spark.hue), fade * shimmer * spark.size * trail_gain)
+            shimmer = 1. - settings.twinkle + settings.twinkle * (.35 + .65 * abs(math.sin(elapsed * 25. + spark.x * 31.)))
+            trail_gain = 0.55 + 0.85 * settings.trails
+            self._deposit(spark.x, spark.y, self._hue_rgb(spark.hue), fade * shimmer * spark.size * trail_gain,
+                          settings.trails)
             survivors.append(spark)
         self._sparks = (survivors + spawned)[-self.MAX_SPARKS:]
 
     def _burst(self, rocket: _Rocket) -> None:
-        style = self.params["burst_style"]
+        settings = rocket.settings
+        style = settings.burst_style
         if style == "mixed": style = self.STYLES[1 + int(self._rng.integers(len(self.STYLES) - 1))]
-        population = int(self.params["shell_population"])
+        population = settings.shell_population
         if style == "palm":
             population = max(12, population // 2)
-        size = float(self.params["burst_size"])
+        size = settings.burst_size
         for index in range(population):
             if style == "ring":
                 angle = math.tau * index / population + float(self._rng.uniform(-.025, .025))
@@ -245,9 +270,9 @@ class FireworksAnimation(AnimationBase):
             hue = 0.105 if style == "willow" else rocket.hue
             self._sparks.append(_Spark(
                 rocket.x, rocket.y, math.cos(angle) * velocity, math.sin(angle) * velocity,
-                0., lifetime, hue, float(self._rng.uniform(.75, 1.25)),
+                0., lifetime, hue, settings, float(self._rng.uniform(.75, 1.25)),
             ))
-        self._deposit(rocket.x, rocket.y, (255., 255., 240.), 2.2)
+        self._deposit(rocket.x, rocket.y, (255., 255., 240.), 2.2, settings.trails)
         self._burst_count += 1
 
     def _paint(self, palette_id: str, phase_time: float) -> None:
@@ -255,7 +280,7 @@ class FireworksAnimation(AnimationBase):
         _background, primary, accent = self.SEMANTIC_PALETTES.get(palette_id, self.SEMANTIC_PALETTES["neutral"])
         canvas = self._pixels.reshape(self.width, self.height, 4)[:, ::-1]
         canvas.fill(0)
-        energy = np.clip(self._trail, 0., 255.)
+        energy = np.clip(self._trail + self._long_trail, 0., 255.)
         luma = np.max(energy, axis=2, keepdims=True)
         festive = nearest_stop_color(energy, palette_id)
         if palette_id == "rainbow":
@@ -277,7 +302,8 @@ class FireworksAnimation(AnimationBase):
         red, green, blue = colorsys.hsv_to_rgb(float(hue) % 1., .92, 1.)
         return red * 255., green * 255., blue * 255.
 
-    def _deposit(self, x: float, y: float, color: tuple[float, float, float], intensity: float) -> None:
+    def _deposit(self, x: float, y: float, color: tuple[float, float, float], intensity: float,
+                 trails: float = .1) -> None:
         """Add a sub-pixel light sample with bilinear filtering."""
         if intensity <= 0. or not (0. <= x <= 1. and 0. <= y <= 1.):
             return
@@ -285,6 +311,10 @@ class FireworksAnimation(AnimationBase):
         py = y * max(0, self.height - 1)
         x0, y0 = int(px), int(py)
         fx, fy = px - x0, py - y0
+        # Mix two decay rates so light already emitted keeps its own tail when
+        # newly launched shells have different trail settings.
+        long = (trails - .1) / .9
+        short = 1.0 - long
         red, green, blue = (channel * intensity for channel in color)
         for yy, wy in ((y0, 1.0 - fy), (y0 + 1, fy)):
             if not 0 <= yy < self.height:
@@ -293,9 +323,13 @@ class FireworksAnimation(AnimationBase):
                 weight = wx * wy
                 if 0 <= xx < self.width and weight > 0.0:
                     pixel = self._trail[xx, yy]
-                    pixel[0] += red * weight
-                    pixel[1] += green * weight
-                    pixel[2] += blue * weight
+                    persistent = self._long_trail[xx, yy]
+                    pixel[0] += red * weight * short
+                    pixel[1] += green * weight * short
+                    pixel[2] += blue * weight * short
+                    persistent[0] += red * weight * long
+                    persistent[1] += green * weight * long
+                    persistent[2] += blue * weight * long
 
     @classmethod
     def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:

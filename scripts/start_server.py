@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the host RGB controller or browser/preview process."""
 import argparse
+import logging
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ from drivers.led_layout import (
 from tools.deployment.preserve_deploy_settings import load_saved_state,save_status
 
 PRODUCTION_STAGGER_PHASES=3
+logger = logging.getLogger(__name__)
 
 def apply_global_settings(manager, settings):
     if not settings:
@@ -54,6 +56,8 @@ def handle_command(manager, action, data, *, gamepad=None):
             from web.starter_looks import tetris_player_scene
 
             return manager.start_canonical_scene(tetris_player_scene(), tetris_player=True)
+        if action == 'tune_scene':
+            return manager.tune_canonical_scene(data['scene'])
         if action == 'automation_interaction':
             return manager.dispatch_canonical_interaction(**data)
         if action == 'automation_device_state':
@@ -112,9 +116,106 @@ def process_control_command(channel, manager, command, *, last_applied_command_i
     return result
 
 
+GAME_BUTTONS = {"up": "rotate-left", "a": "rotate-right", "b": "drop", "y": "release",
+                "left": "left", "right": "right", "down": "down"}
+
+
+def nimbus_command(manager, coordinator, gamepad, action, data):
+    """Run a local intent at the same revision boundary as browser commands."""
+    guard = {
+        'expected_controller_session_id': coordinator.session_id,
+        'expected_controller_state_revision': coordinator.state_revision,
+        'expires_at': time.time() + 5,
+    }
+    return handle_command(manager, action, {**data, '_controller_guard': guard}, gamepad=gamepad)
+
+
+def poll_wall_composer(manager, gamepad, menu):
+    from drivers.nimbus_gamepad import StickBank, StickMotion
+
+    tetris = manager.tetris_input_target()
+    player = tetris is not None and manager.tetris_input_target(player_only=True) is not None
+    target = tetris if player and not menu.is_open else menu
+    active = manager.is_running and manager.output_brightness > 0
+    tuning = (menu.is_open or tetris is None) and active
+    browsing = not menu.is_open and not player
+    track_bank = active and (menu.is_open or not player)
+    buttons = gamepad.poll(target, menu_buttons=True, navigating=menu.is_open,
+                           tuning_sticks=tuning, browsing=browsing, track_bank=track_bank)
+    motions = []
+    for button in buttons:
+        if isinstance(button, StickBank):
+            if track_bank:
+                was_momentary = menu.momentary
+                menu.select_stick_bank(button.bank)
+                if was_momentary and not menu.is_open:
+                    gamepad.handoff(target)
+                    return
+            continue
+        if isinstance(button, StickMotion):
+            motions.append(button)
+            continue
+        if button == 'disconnect':
+            manager.dispatch_tetris_input(('disconnect',))
+            menu.close()
+            return
+        if button == 'menu':
+            if menu.is_open and not menu.momentary:
+                menu.close()
+            else:
+                manager.dispatch_tetris_input(('disconnect',))
+                menu.open()
+                try:
+                    if not manager.is_running and menu.owner.selected_scene is not None:
+                        menu._run('automation_device_state', {'power': True})
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    menu._feedback('Unavailable', str(exc), error=exc)
+                try:
+                    if manager.output_brightness == 0:
+                        menu._run('set_output_brightness', {'brightness': 16})
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    menu._feedback('Wall light', str(exc), error=exc)
+            target = menu if menu.is_open else manager.tetris_input_target(player_only=True) or menu
+            gamepad.handoff(target)
+            return
+        if menu.is_open:
+            playback_revision = menu.playback_revision
+            menu.press(button)
+            if not menu.is_open:
+                gamepad.handoff(manager.tetris_input_target(player_only=True) or menu)
+                return
+            if menu.playback_revision != playback_revision:
+                gamepad.discard_pending()
+                return
+        elif player and button in GAME_BUTTONS:
+            manager.dispatch_tetris_input((GAME_BUTTONS[button],))
+        elif not player and active and button in ('up', 'down', 'left', 'right'):
+            if menu.quick_browse(button):
+                gamepad.discard_pending()
+                return
+    if tuning and motions:
+        menu.tune_sticks(motions)
+
+
+def reconcile_wall_menu(manager, gamepad, menu, prior_revision, *, scheduled=False):
+    """Discard controls queued against the outgoing scene or menu page."""
+    if menu.owner.state_revision == prior_revision:
+        return False
+    if scheduled:
+        menu.refresh_scene()
+    else:
+        menu.close()
+        manager.set_wall_menu_pixels(None)
+    gamepad.discard_pending()
+    return True
+
+
 def run_controller_mode(args):
     from drivers.multi_device import MultiDeviceLEDController
     from drivers.nimbus_gamepad import NimbusGamepad
+    from animation.core.wall_menu_frame import WallMenuFrame
+    from web.wall_composer import WallComposer
+    from functools import partial
     num_devices = hardware_receiver_count(args.strips, args.leds_per_strip)
     saved=load_saved_state(state_path=Path(args.saved_state_file),presets_dir=Path(args.presets_dir))
     controller=MultiDeviceLEDController(num_devices=num_devices,strip_count=args.strips,
@@ -151,8 +252,16 @@ def run_controller_mode(args):
     coordinator=controller_activation_coordinator(manager,restored_selected_scene=saved.get('scene') if saved else None)
     runner=PlaylistRunner(manager,coordinator,status_sink=channel.write_playlist_current_status)
     gamepad = NimbusGamepad()
+    project_root = Path(__file__).resolve().parents[1]
+    menu = WallComposer(manager, coordinator, runner,
+                        partial(nimbus_command, manager, coordinator, gamepad), project_root,
+                        Path(args.control_file).parent, Path(args.presets_dir))
+    menu_frame = None
+    saved_state_path = Path(args.saved_state_file)
+    presets_dir = Path(args.presets_dir)
     channel.write_playlist_current_status(runner.status())
     last_status=0.0
+    nimbus_scene_revision = None
     last_idle_probe=0.0
     last_result=None
     last_command_id=0
@@ -163,16 +272,50 @@ def run_controller_mode(args):
     try:
         while True:
             for command in channel.poll_commands():
+                revision = coordinator.state_revision
                 last_result = process_control_command(channel, manager, command,
                                                       last_applied_command_id=last_applied_command_id,
                                                       gamepad=gamepad)
                 last_command_id = command['command_id']
                 if last_result['state'] == 'completed':
                     last_applied_command_id = last_command_id
-                save_status(controller_status_payload(manager),presets_dir=Path(args.presets_dir),state_path=Path(args.saved_state_file))
+                if command['action'] != 'refresh_receiver_status':
+                    if reconcile_wall_menu(manager, gamepad, menu, revision):
+                        nimbus_scene_revision = None
+                elif nimbus_scene_revision is not None:
+                    nimbus_scene_revision = coordinator.state_revision
+                save_status(controller_status_payload(manager), presets_dir=presets_dir, state_path=saved_state_path)
+            revision = coordinator.state_revision
             process_playlist_commands(channel,runner)
+            if reconcile_wall_menu(manager, gamepad, menu, revision):
+                nimbus_scene_revision = None
+            revision = coordinator.state_revision
             runner.advance()
-            manager.poll_tetris_gamepad(gamepad)
+            if reconcile_wall_menu(manager, gamepad, menu, revision, scheduled=True):
+                if nimbus_scene_revision is not None:
+                    nimbus_scene_revision = coordinator.state_revision
+            revision = coordinator.state_revision
+            scene_before = manager.current_animation_hash
+            poll_wall_composer(manager, gamepad, menu)
+            if coordinator.state_revision != revision and manager.get_scene_state() is not None:
+                if nimbus_scene_revision is not None or scene_before != manager.current_animation_hash:
+                    nimbus_scene_revision = coordinator.state_revision
+            try:
+                sections = menu.hud_sections()
+                if sections and menu_frame is None:
+                    menu_frame = WallMenuFrame()
+                pixels = menu_frame.render_sections(sections) if sections else None
+                manager.set_wall_menu_pixels(pixels)
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
+                logger.warning('Wall menu presentation failed: %s', exc)
+                menu.error = str(exc)
+                menu.close()
+            if coordinator.state_revision != revision:
+                try:
+                    save_status(controller_status_payload(manager), presets_dir=presets_dir, state_path=saved_state_path)
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    logger.warning('Could not save Nimbus playback settings: %s', exc)
+                    menu.error = str(exc)
             frame_snapshot.poll()
             if time.monotonic()-last_status>=args.status_interval:
                 # Playback frames already sample status. Probe while stopped so
@@ -183,6 +326,11 @@ def run_controller_mode(args):
                         refresh()
                     last_idle_probe=time.monotonic()
                 payload=controller_status_payload(manager)
+                payload['nimbus'] = {
+                    'connected': gamepad.connected, 'menu_open': menu.is_open,
+                    'error': menu.error, 'scene_revision': nimbus_scene_revision,
+                    'saved_revision': menu.saved_revision,
+                }
                 payload['command_result']=last_result
                 payload['last_command_id']=last_command_id
                 payload['last_applied_command_id']=last_applied_command_id

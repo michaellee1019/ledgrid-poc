@@ -74,7 +74,7 @@ class SceneV2PersistenceTests(unittest.TestCase):
         self.assertEqual(recovered["basis"], status["desired"])
         self.assertEqual(recovered["scene"]["animation"]["parameters"]["seed"], 36)
 
-    def test_recovery_can_reseed_a_restarted_live_state_before_go_live(self) -> None:
+    def test_recovery_can_resume_through_scene_submission_after_restart(self) -> None:
         accepted = self._submit(self._changed_scene(37), client_id="first-page", client_sequence=1)
         self.assertEqual(accepted.status_code, 200)
         # Simulate a local-process restart: the durable Scene v2 remains, while
@@ -87,9 +87,9 @@ class SceneV2PersistenceTests(unittest.TestCase):
         self.assertEqual(recovery["recovery"]["scene"]["animation"]["parameters"]["seed"], 37)
         reseeded = self._submit(recovery["recovery"]["scene"], client_id="reloaded-page", client_sequence=1)
         self.assertEqual(reseeded.status_code, 200)
-        live = self.client.post("/api/composer/go-live", json={"client_id": "reloaded-page"})
-        self.assertEqual(live.status_code, 200)
-        self.assertIsNotNone(live.get_json()["status"]["current"])
+        self.assertEqual(reseeded.get_json()["state"], "live")
+        self.assertEqual(self.client.get("/api/composer/status").get_json()["current"],
+                         reseeded.get_json()["desired"])
 
     def test_save_as_open_and_save_update_whole_scene_without_storing_power(self) -> None:
         first = self._changed_scene(41)
@@ -101,8 +101,7 @@ class SceneV2PersistenceTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/composer/stop", json={}).status_code, 200)
         opened = self.client.post(f"/api/composer/looks/{look['id']}/open", json={"client_id": "operator"})
         self.assertEqual(opened.status_code, 200)
-        self.assertEqual(opened.get_json()["status"]["state"], "stopped")
-        self.assertFalse(opened.get_json()["status"]["armed"])
+        self.assertEqual(opened.get_json()["status"]["state"], "live")
 
         changed = self._changed_scene(42)
         updated = self.client.post("/api/composer/looks/save", json={"scene": changed})

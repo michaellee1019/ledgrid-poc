@@ -132,6 +132,8 @@ class CanonicalSceneRuntime:
         self._widgets: dict[str, _ComponentSlot] = {}
         self._canonical: CanonicalScene | None = None
         self._frame_count = 0
+        self._phase_offset = 0.0
+        self._last_elapsed = None
         total = self.strip_count * self.leds_per_strip
         self._output_buffers = tuple(np.empty((total, 3), dtype=np.uint8) for _ in range(2))
         self._output_index = -1
@@ -173,7 +175,21 @@ class CanonicalSceneRuntime:
         self._canonical = canonical
         return canonical.identity
 
+    def tune(self, canonical: CanonicalScene, elapsed: float) -> None:
+        previous = self._canonical
+        self._require_canonical_basis(canonical)
+        self._sync_slots(canonical.scene, live_tune=True)
+        self._canonical = canonical
+        if previous is not None:
+            old_pace = float(previous.scene["look"]["pace"])
+            new_pace = float(canonical.scene["look"]["pace"])
+            self._phase_offset += elapsed * (old_pace - new_pace)
+
     activate_scene = activate
+
+    def tetris_player_active(self) -> bool:
+        return (self._animation is not None and self._animation.component_key[1] == "tetris"
+                and self._animation.instance.player_control)
 
     def dispatch_tetris_gamepad(self, actions: tuple[str, ...]) -> None:
         """Apply local gamepad actions to the currently instantiated Tetris game."""
@@ -232,6 +248,9 @@ class CanonicalSceneRuntime:
         if self._wall_time_consumer is not None:
             self._wall_time_consumer(presentation.wall_time)
         elapsed = presentation.monotonic_elapsed
+        if self._last_elapsed is not None and elapsed < self._last_elapsed:
+            self._phase_offset = 0.0
+        self._last_elapsed = elapsed
         scene = canonical.scene
         bg_context = self._context(canonical, self._descriptor(scene["background"]), scene["background"]["parameters"], elapsed)
         background = self._background_renderer(bg_context, self._frame_count)
@@ -280,29 +299,35 @@ class CanonicalSceneRuntime:
                             composed.dirty_ranges if changed and not pipeline_changed else None, foreground,
                             widget_placements=MappingProxyType(placements))
 
-    def _sync_slots(self, scene: Mapping[str, Any]) -> None:
+    def _sync_slots(self, scene: Mapping[str, Any], *, live_tune: bool = False) -> None:
         component = scene["animation"]
-        animation = self._candidate_slot(self._animation, self._descriptor(component), component["parameters"], self._animation_factory)
+        descriptor = self._descriptor(component)
         widgets: dict[str, _ComponentSlot] = {}
-        active: set[str] = set()
         for widget in scene["widgets"]:
             widget_id, component = widget["id"], widget["component"]
-            active.add(widget_id)
             widgets[widget_id] = self._candidate_slot(self._widgets.get(widget_id), self._descriptor(component), component["parameters"], self._widget_factory)
-        # Nothing above mutates a published slot. Only exchange the complete
-        # candidate set after every constructor/validation path has succeeded.
+        # Widget factories can fail. Prepare them before touching an opted-in
+        # Animation, whose update must validate before mutating its state.
+        animation = self._candidate_slot(self._animation, descriptor, scene["animation"]["parameters"],
+                                         self._animation_factory, live_tune=live_tune)
         self._animation = animation
         self._widgets = widgets
 
     def _candidate_slot(self, current: _ComponentSlot | None, descriptor: ComponentDescriptor,
-                        parameters: Mapping[str, Any], factory: ComponentFactory) -> _ComponentSlot:
+                        parameters: Mapping[str, Any], factory: ComponentFactory,
+                        *, live_tune: bool = False) -> _ComponentSlot:
         frozen = _freeze_mapping(parameters)
         key = (descriptor.provider.value, descriptor.component_id, descriptor.version, descriptor.role.value)
-        if current is not None and current.component_key == key and current.parameters == frozen:
-            return current
-        # Reconstruct changed components rather than live-mutating the active
-        # instance. That makes a later failing Widget factory unable to leak a
-        # partial Animation update into the last valid scene.
+        if current is not None and current.component_key == key:
+            if current.parameters == frozen:
+                return current
+            if live_tune and current.parameters.keys() == frozen.keys():
+                supported = getattr(current.instance, "LIVE_TUNABLE_PARAMETERS", frozenset())
+                changes = {name: value for name, value in frozen.items() if current.parameters[name] != value}
+                if changes.keys() <= supported:
+                    current.instance.update_parameters(changes)
+                    current.parameters = frozen
+                    return current
         return _ComponentSlot(key, factory(descriptor, self.controller, frozen), frozen)
 
     def _context(self, canonical: CanonicalScene, descriptor: ComponentDescriptor, parameters: Mapping[str, Any], elapsed: float) -> ResolvedScene:
@@ -361,7 +386,7 @@ class CanonicalSceneRuntime:
         return ResolvedScene(
             _freeze_mapping(canonical.scene), canonical.canonical_bytes,
             canonical.identity.digest, descriptor, parameters, palette,
-            elapsed * float(canonical.scene["look"]["pace"]),
+            max(0.0, elapsed * float(canonical.scene["look"]["pace"]) + self._phase_offset),
             _freeze_mapping(plant_inputs), geometry_contact,
         )
 

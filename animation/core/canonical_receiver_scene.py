@@ -61,7 +61,7 @@ class CanonicalReceiverSceneMixin:
                 self.current_animation_hash = canonical.identity.digest
                 self.current_preset = None
             first = runtime.render(ScenePresentationContext(canonical, 0.0, datetime.now().astimezone()))
-            self._present_frame(first.pixels, None, False, getattr(self.controller, 'inline_show', False))
+            self._present_frame(first.pixels.copy(), None, False, getattr(self.controller, 'inline_show', False))
             with self.frame_data_lock:
                 self.current_frame_data = first.pixels
             self.frames_presented = 1
@@ -72,6 +72,37 @@ class CanonicalReceiverSceneMixin:
             self.is_running = False
             self.stop_event.set()
             return False
+
+    def tune_canonical_scene(self, payload):
+        canonical = normalize_composer_scene(
+            {'origin': 'composer', 'scene': payload}, self.scene_v2_component_catalog())
+        with self._scene_state_guard():
+            previous = self._canonical_receiver_scene
+            if (not self.is_running or previous is None
+                    or previous.scene['animation']['component_id'] != canonical.scene['animation']['component_id']):
+                raise ValueError('Choose an active Scene before tuning')
+            self._canonical_receiver_runtime.update_canonical_scene(canonical, self._scene_v2_monotonic_elapsed())
+            self._canonical_receiver_scene = canonical
+            self.current_animation_hash = canonical.identity.digest
+            self._requested_scene = deepcopy(canonical.scene)
+            self._playback_error = None
+        return True
+
+    def tetris_input_target(self, *, player_only=False):
+        with self._scene_state_guard():
+            canonical = self._canonical_receiver_scene
+            if (self.is_running and self._canonical_host_full_mode and canonical is not None
+                    and canonical.scene['animation']['component_id'] == 'tetris'):
+                runtime = self._canonical_receiver_runtime
+                if not player_only or runtime.tetris_player_active():
+                    return runtime
+            return None
+
+    def dispatch_tetris_input(self, actions):
+        with self._scene_state_guard():
+            target = self.tetris_input_target()
+            if target is not None and actions:
+                target.dispatch_tetris_gamepad(self._canonical_receiver_scene.identity.digest, actions)
 
     def dispatch_canonical_interaction(self, component_id, scene_digest, kind, x, y, strength=1.0):
         """Gesture only the exact active host renderer, without activating it."""
@@ -86,13 +117,4 @@ class CanonicalReceiverSceneMixin:
 
     def poll_tetris_gamepad(self, gamepad) -> None:
         """Drain local input on the controller thread, after scene transitions."""
-        with self._scene_state_guard():
-            canonical = self._canonical_receiver_scene
-            runtime = self._canonical_receiver_runtime
-            target = runtime if (
-                self.is_running and self._canonical_host_full_mode and canonical is not None
-                and canonical.scene['animation']['component_id'] == 'tetris'
-            ) else None
-            actions = gamepad.poll(target)
-            if target is not None and actions:
-                target.dispatch_tetris_gamepad(canonical.identity.digest, actions)
+        self.dispatch_tetris_input(gamepad.poll(self.tetris_input_target()))

@@ -23,6 +23,8 @@ class OceanWavesAnimation(AnimationBase):
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
     CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
     PLANT_MODIFIER_SUPPORT = frozenset()
+    # These controls reshape the current swells without changing their phase.
+    LIVE_TUNABLE_PARAMETERS = frozenset({"swell", "chop", "foam"})
     SIM_HZ = 24.0
     DEFAULTS = MappingProxyType({
         "swell": 0.68, "chop": 0.38, "foam": 0.55, "travel": 0.9, "seed": 3301,

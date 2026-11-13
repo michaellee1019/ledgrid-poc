@@ -72,6 +72,8 @@ class AuroraCurtainsAnimation(AnimationBase):
     # Effect intent is owned by the canonical Scene v2 plant payload.  It is
     # not a legacy direct modifier, so the old bridge remains unavailable.
     PLANT_MODIFIER_SUPPORT = frozenset()
+    # Artistic edits retain the seeded curtain layout and current source tick.
+    LIVE_TUNABLE_PARAMETERS = frozenset({"curtain_density", "fold_depth", "glow_intensity"})
 
     DEFAULTS = MappingProxyType({
         "curtain_density": 0.56,

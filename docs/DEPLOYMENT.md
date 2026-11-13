@@ -77,19 +77,82 @@ SUBSYSTEM=="hidraw", KERNELS=="0005:0111:1420.*", ENV{HID_UNIQ}=="00:11:22:33:44
 ```
 
 Reload the rules with `sudo udevadm control --reload` and reconnect the gamepad.
-The wall process picks up `/dev/ledgrid-nimbus` when it appears. Start Tetris in
-Composer and press Menu to enter or exit player mode. D-pad left/right move,
-down soft drops, Up and A rotate in opposite directions, and B hard drops.
-Each large piece carries three smaller tetrominoes. They fall separately
-when the large piece lands or when you press Y.
-The wall also serves `/play/tetris`. Opening it shows the current wall status.
-The Play button starts player mode when the Nimbus is connected and the wall
-still matches the status shown on the page.
-The rail across the top shows the time left. The clock starts at 15 seconds,
-each cleared row adds five seconds, and a round can last up to 40 seconds.
-Pieces fall faster as the round progresses. The next round starts automatically
-after a short pause.
-Disconnecting returns the running Tetris scene to autoplay.
+The wall process picks up `/dev/ledgrid-nimbus` when it appears. Press Menu to
+open or close the wall Composer. Use Up and Down to browse cards, A to select,
+and B to go back. Left and Right edit values, move one card in short menus, and
+jump eight cards in longer lists. Hold Left or Right for larger numeric steps.
+Browse keeps your place when you play a Look, starter, or preset. On the playing
+card, Y opens Tune. Menu closes the menu for a full view.
+
+Tune applies changes immediately. Y undoes the last edit or held adjustment.
+Press Y again to redo it. In the character picker, A inserts the focused
+character, Y finishes, and B cancels. Save Look adds a named Scene to the
+Composer library.
+
+With the HUD closed, D-pad Up and Down cycle through the animation gallery.
+The new animation name appears at the top for one second. Left and Right
+change the palette. The D-pad controls the game during a Tetris round.
+
+Hold a combination of L1, R1, L2, and R2 to open the temporary tuning HUD.
+Four cards show left-stick vertical, left-stick horizontal, right-stick
+vertical, then right-stick horizontal. The bank color fills each top stripe
+and the edge on the stick's side. Idle arrows alternate between the two
+directions of each axis. A detected move brightens and holds its arrow,
+and the scrolling setting name brightens briefly when its value changes. The cards draw
+over the plant mask. Release all shoulder buttons to close the temporary HUD.
+If you opened Composer with Menu, release returns its tuning cards to the
+base bank.
+
+Move a stick to adjust its setting. Use D-pad Up and Down to select a card,
+Left and Right to adjust its value, Y to undo, and B to go back. Right and up
+increase a value. Left and down decrease it. You can move diagonally to
+adjust both axes at once, and hold a direction to keep adjusting. Return a
+held axis to center after changing banks. Palette changes once per flick.
+
+| Hold | Left horizontal | Left vertical | Right horizontal | Right vertical |
+| --- | --- | --- | --- | --- |
+| None | Palette | | Animation 1 | Scene light |
+| L1 | Background light | | | |
+| R1 | Animation 5 | Animation 2 | Animation 3 | Animation 4 |
+| L1 + R1 | Animation 6 | Animation 7 | Animation 8 | Animation 9 |
+| L2 | Widget across | Widget height | Widget 1 | Widget 2 |
+| L1 + L2 | Widget 3 | Widget 4 | Widget 5 | Widget 6 |
+| R1 + L2 | Animation 10 | Animation 11 | Animation 12 | Animation 13 |
+| L1 + R1 + L2 | Animation 14 | Animation 15 | Animation 16 | Animation 17 |
+| R2 | Illuminate | Shadow | Hue shift | |
+| L1 + R2 | Refraction | | | |
+| R1 + R2 | | | | Speed |
+| L1 + R1 + R2 | Animation 18 | Animation 19 | Animation 20 | Animation 21 |
+| L2 + R2 | Widget 7 | Widget 8 | Widget 9 | Widget 10 |
+| L1 + L2 + R2 | Widget 11 | Widget 12 | Widget 13 | Widget 14 |
+| R1 + L2 + R2 | Animation 22 | Animation 23 | Animation 24 | Animation 25 |
+| All four | Animation 26 | Animation 27 | Animation 28 | Animation 29 |
+
+The base bank owns the main animation setting. R1 has secondary animation
+controls, L1 has backlight, and L2 has the first Widget. R1 + R2 puts overall
+speed on right-stick Up and Down. Each setting belongs to one bank. Empty
+slots and settings absent from the current scene show dim dashes.
+Fireworks uses burst size in the base bank and trails, launch rate, sparks per
+burst, and gravity with R1. Changes to a shell's settings apply at launch.
+Campfire uses heat in the base bank and sparks, smoke, and flicker with R1.
+Scene light is independent of master brightness.
+
+Playback starts saved playlists and controls output brightness, target FPS, and
+power. A manual edit takes over from a running playlist. With the Pi powered,
+Menu resumes the selected Scene if output is off. If brightness is zero, Menu
+raises it to 16/255.
+
+Choose Tetris under Playback or use `/play/tetris`. The web Play button requires
+a connected Nimbus and a matching controller revision. In a round, D-pad
+left/right move, Down soft drops, Up and A rotate, B hard drops, and Y releases
+the inner pieces. The countdown starts at 15 seconds. Each cleared row adds
+five seconds, up to 40 seconds total. Menu or disconnect ends player mode and
+returns the current Tetris Scene to autoplay.
+
+To review the menu without the wall, run
+`.venv/bin/python scripts/simulate_wall_composer.py` and open
+`http://127.0.0.1:8765`. The simulator uses the checked-in plant coverage,
+production Scene renderer, and temporary Looks and playlists.
 
 ## Firmware
 

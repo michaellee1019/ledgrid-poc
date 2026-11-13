@@ -261,13 +261,19 @@ class SceneV2RuntimeTests(unittest.TestCase):
             self.runtime.render(1.0)
 
     def test_failed_widget_preparation_does_not_mutate_active_animation(self) -> None:
+        class LivePlane(_Plane):
+            LIVE_TUNABLE_PARAMETERS = frozenset({"tone"})
+
+            def update_parameters(self, changes):
+                self.pixels[0, 0] = changes["tone"]
+
         def factory(descriptor, controller, parameters):
             del controller
             if descriptor.component_id == "widget" and parameters.get("reject"):
                 raise RuntimeError("widget factory rejected candidate")
             pixels = np.zeros((self.total, 4), dtype=np.uint8)
             pixels[0] = (int(parameters.get("tone", 20)), 0, 0, 255)
-            return _Plane(pixels)
+            return LivePlane(pixels)
 
         runtime = CanonicalSceneRuntime(
             self.controller, _catalog(), animation_factory=factory, widget_factory=factory,
@@ -284,7 +290,7 @@ class SceneV2RuntimeTests(unittest.TestCase):
         rejected_scene["widgets"][0]["component"] = _component("widget", "widget", reject=True)
         rejected = normalize_composer_scene({"origin": "composer", "scene": rejected_scene}, _catalog())
         with self.assertRaisesRegex(RuntimeError, "widget factory rejected"):
-            runtime.activate(rejected)
+            runtime.tune(rejected, 1.0)
         self.assertEqual(runtime.desired_identity, initial.identity)
         np.testing.assert_array_equal(runtime.render(1.0).pixels, before)
 

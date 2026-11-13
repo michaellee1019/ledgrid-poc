@@ -179,6 +179,7 @@ class LavaLampAnimation(AnimationBase):
         self._accumulator = 0.0
         self._last_source_time: Optional[float] = None
         self._last_render_tick: Optional[int] = None
+        self._last_render_palette: Optional[str] = None
         self._cached_frame: Optional[np.ndarray] = None
         self._steps = 0
         self._dropped_steps = 0
@@ -756,7 +757,13 @@ class LavaLampAnimation(AnimationBase):
         warmed_this_frame = self._finish_startup_warmup()
         source_tick = int(math.floor(phase_time * self.SOURCE_FPS + 1e-9))
         if self._last_render_tick == source_tick and self._cached_frame is not None:
-            return self.rendered_frame(self._cached_frame, changed=False)
+            if palette_id == self._last_render_palette:
+                return self.rendered_frame(self._cached_frame, changed=False)
+            # Repaint the published interpolation without consuming a physics step.
+            alpha = max(0.0, min(1.0, self._accumulator / self.PHYSICS_DT))
+            self._cached_frame = self._render(self._last_source_time, alpha, palette_id)
+            self._last_render_palette = palette_id
+            return self.rendered_frame(self._cached_frame, changed=True)
         if warmed_this_frame:
             self._last_source_time = phase_time
             alpha = 0.0
@@ -778,6 +785,7 @@ class LavaLampAnimation(AnimationBase):
             alpha = max(0.0, min(1.0, self._accumulator / self.PHYSICS_DT))
         self._cached_frame = self._render(phase_time, alpha, palette_id)
         self._last_render_tick = source_tick
+        self._last_render_palette = palette_id
         return self.rendered_frame(self._cached_frame, changed=True)
 
     def get_runtime_stats(self) -> Dict[str, Any]:

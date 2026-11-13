@@ -38,7 +38,6 @@ from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
 from animation.plugins.canopy_cup import CanopyCupAnimation
 from animation.plugins.ascii_drop import AsciiDropAnimation
 from animation.plugins.christmas_tree import ChristmasTreeAnimation
-from animation.plugins.clock_overlay import ClockOverlayAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.emoji import EmojiAnimation
@@ -59,9 +58,6 @@ from animation.plugins.maze_chase import MazeChaseAnimation
 from animation.plugins.night_train_windows import NightTrainWindowsAnimation
 from animation.plugins.pinball import PinballAnimation
 from animation.plugins.pixel_quest import PixelQuestAnimation
-from animation.plugins.pixel_chase import PixelChaseAnimation
-from animation.plugins.plant_glow import PlantGlowAnimation
-from animation.plugins.gif_animation import GifAnimation
 from animation.plugins.snake import SnakeAnimation
 from animation.plugins.tetris import TetrisAnimation
 from animation.plugins.gradient import GradientAnimation
@@ -69,14 +65,6 @@ from animation.plugins.rainbow import RainbowAnimation
 from animation.plugins.solid import SolidColorAnimation
 from animation.plugins.sparkle import SparkleAnimation
 from animation.plugins.wave import WaveAnimation
-from animation.plugins.column_sequence import ColumnSequenceAnimation
-from animation.plugins.circadian_window import CircadianWindowAnimation
-from animation.plugins.cloud_canyon import CloudCanyonAnimation
-from animation.plugins.desert_wind import DesertWindAnimation
-from animation.plugins.moonlit_fog_banks import MoonlitFogBanksAnimation
-from animation.plugins.rain_on_glass import RainOnGlassAnimation
-from animation.plugins.tidal_bioluminescence import TidalBioluminescenceAnimation
-from animation.plugins.waterfall_veil import WaterfallVeilAnimation
 from animation.plugins.cellular_tapestry import CellularTapestryAnimation
 from animation.plugins.flow_field_silk import FlowFieldSilkAnimation
 from animation.plugins.frostwork import FrostworkAnimation
@@ -118,39 +106,15 @@ from web.composer_component_editor import editor_catalog
 from web.live_scene_state import LiveSceneStale, LiveSceneState
 from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
 from web.composer_playlist_store import ComposerPlaylistStore, ComposerPlaylistStoreError
-from web.composer_component_presets import ComponentPresetCatalog
+from web.composer_content import composer_presets, gallery_entries
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
 from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v37"
+COMPOSER_SHELL_VERSION = "composer-shell-v38"
 CANONICAL_BROWSER_SCENE_SCHEMA = "ledgrid.browser-scene-v2"
-
-# The Gallery stays projected from the Scene v2 packet, while this small map
-# supplies human-facing catalog metadata without reopening legacy discovery.
-_COMPOSER_GALLERY_CLASSES = (
-    AuroraCurtainsAnimation, CanopyCupAnimation, AsciiDropAnimation,
-    EmojiAnimation, ChristmasTreeAnimation, NightTrainWindowsAnimation,
-    ConwayLifeAnimation, TetrisAnimation, FireflySynchronyAnimation,
-    FireworksAnimation, FlameBurstAnimation, FluidTankAnimation, FishTankAnimation,
-    OceanWavesAnimation, MiniMetroAnimation, CyclicReefAnimation, LavaLampAnimation, SnakeAnimation, MazeChaseAnimation,
-    PinballAnimation, PixelQuestAnimation, GradientAnimation, RainbowAnimation,
-    SolidColorAnimation, SparkleAnimation, WaveAnimation, ColumnSequenceAnimation, CircadianWindowAnimation,
-    CloudCanyonAnimation, DesertWindAnimation, MoonlitFogBanksAnimation,
-    RainOnGlassAnimation, TidalBioluminescenceAnimation, WaterfallVeilAnimation,
-    CellularTapestryAnimation, FlowFieldSilkAnimation, FrostworkAnimation,
-    LivingStainedGlassAnimation, QuasicrystalBloomAnimation, LivingEcosystemAnimation,
-    PhysarumNetworkAnimation, ReactionDiffusionGardenAnimation, WindInTheReedsAnimation,
-)
-_COMPOSER_GALLERY_METADATA = {
-    item.COMPONENT_ID: {
-        'name': str(getattr(item, 'ANIMATION_NAME', item.COMPONENT_ID.replace('_', ' ').title())),
-        'description': str(getattr(item, 'ANIMATION_DESCRIPTION', 'A live Scene animation.')),
-    }
-    for item in _COMPOSER_GALLERY_CLASSES
-}
 
 PAINTER_MASK_TYPES = (
     {
@@ -243,57 +207,7 @@ class AnimationWebInterface:
         # Composer preview and publication use the same current Scene v2
         # catalog.  Preview owns no wall channel and therefore remains inert.
         self.composer_catalog = current_component_catalog()
-        self.composer_presets = ComponentPresetCatalog(
-            self.project_root,
-            {
-                AuroraCurtainsAnimation.COMPONENT_ID: AuroraCurtainsAnimation._normalized_parameters,
-                CanopyCupAnimation.COMPONENT_ID: CanopyCupAnimation._normalized_parameters,
-                AsciiDropAnimation.COMPONENT_ID: AsciiDropAnimation._normalized_parameters,
-                EmojiAnimation.COMPONENT_ID: EmojiAnimation._normalized_parameters,
-                ChristmasTreeAnimation.COMPONENT_ID: ChristmasTreeAnimation._normalized_parameters,
-                ClockOverlayAnimation.COMPONENT_ID: ClockOverlayAnimation._normalized_parameters,
-                NightTrainWindowsAnimation.COMPONENT_ID: NightTrainWindowsAnimation._normalized_parameters,
-                ConwayLifeAnimation.COMPONENT_ID: ConwayLifeAnimation._normalized_parameters,
-                TetrisAnimation.COMPONENT_ID: TetrisAnimation._normalized_parameters,
-                FireflySynchronyAnimation.COMPONENT_ID: FireflySynchronyAnimation._normalized_parameters,
-                FireworksAnimation.COMPONENT_ID: FireworksAnimation._normalized_parameters,
-                FlameBurstAnimation.COMPONENT_ID: FlameBurstAnimation._normalized_parameters,
-                FluidTankAnimation.COMPONENT_ID: FluidTankAnimation._normalized_parameters,
-                FishTankAnimation.COMPONENT_ID: FishTankAnimation._normalized_parameters,
-                OceanWavesAnimation.COMPONENT_ID: OceanWavesAnimation._normalized_parameters,
-                MiniMetroAnimation.COMPONENT_ID: MiniMetroAnimation._normalized_parameters,
-                CyclicReefAnimation.COMPONENT_ID: CyclicReefAnimation._normalized_parameters,
-                LavaLampAnimation.COMPONENT_ID: LavaLampAnimation._normalized_parameters,
-                SnakeAnimation.COMPONENT_ID: SnakeAnimation._normalized_parameters,
-                MazeChaseAnimation.COMPONENT_ID: MazeChaseAnimation._normalized_parameters,
-                PinballAnimation.COMPONENT_ID: PinballAnimation._normalized_parameters,
-                PixelQuestAnimation.COMPONENT_ID: PixelQuestAnimation._normalized_parameters,
-                PixelChaseAnimation.COMPONENT_ID: PixelChaseAnimation._normalized_parameters,
-                PlantGlowAnimation.COMPONENT_ID: PlantGlowAnimation._normalized_parameters,
-                GifAnimation.COMPONENT_ID: GifAnimation._normalized_parameters,
-                GradientAnimation.COMPONENT_ID: GradientAnimation._normalized_parameters,
-                RainbowAnimation.COMPONENT_ID: RainbowAnimation._normalized_parameters,
-                SolidColorAnimation.COMPONENT_ID: SolidColorAnimation._normalized_parameters,
-                SparkleAnimation.COMPONENT_ID: SparkleAnimation._normalized_parameters,
-                WaveAnimation.COMPONENT_ID: WaveAnimation._normalized_parameters,
-                CircadianWindowAnimation.COMPONENT_ID: CircadianWindowAnimation._normalized_parameters,
-                CloudCanyonAnimation.COMPONENT_ID: CloudCanyonAnimation._normalized_parameters,
-                DesertWindAnimation.COMPONENT_ID: DesertWindAnimation._normalized_parameters,
-                MoonlitFogBanksAnimation.COMPONENT_ID: MoonlitFogBanksAnimation._normalized_parameters,
-                RainOnGlassAnimation.COMPONENT_ID: RainOnGlassAnimation._normalized_parameters,
-                TidalBioluminescenceAnimation.COMPONENT_ID: TidalBioluminescenceAnimation._normalized_parameters,
-                WaterfallVeilAnimation.COMPONENT_ID: WaterfallVeilAnimation._normalized_parameters,
-                CellularTapestryAnimation.COMPONENT_ID: CellularTapestryAnimation._normalized_parameters,
-                FlowFieldSilkAnimation.COMPONENT_ID: FlowFieldSilkAnimation._normalized_parameters,
-                FrostworkAnimation.COMPONENT_ID: FrostworkAnimation._normalized_parameters,
-                LivingStainedGlassAnimation.COMPONENT_ID: LivingStainedGlassAnimation._normalized_parameters,
-                QuasicrystalBloomAnimation.COMPONENT_ID: QuasicrystalBloomAnimation._normalized_parameters,
-                LivingEcosystemAnimation.COMPONENT_ID: LivingEcosystemAnimation._normalized_parameters,
-                PhysarumNetworkAnimation.COMPONENT_ID: PhysarumNetworkAnimation._normalized_parameters,
-                ReactionDiffusionGardenAnimation.COMPONENT_ID: ReactionDiffusionGardenAnimation._normalized_parameters,
-                WindInTheReedsAnimation.COMPONENT_ID: WindInTheReedsAnimation._normalized_parameters,
-            },
-        )
+        self.composer_presets = composer_presets(self.project_root)
         self.composer_adapter = LocalSceneAdapter(self.composer_catalog)
         self.composer_control = _ComposerLocalControlChannel()
         self.composer_live = LiveSceneState(
@@ -1850,38 +1764,7 @@ class AnimationWebInterface:
         return self._scene_v1_component_roles(decorate_catalog(records))
 
     def _composer_gallery_payload(self) -> Dict[str, Any]:
-        """Project every eligible Composer Animation exactly once.
-
-        Gallery membership intentionally comes from the current Scene v2
-        packet, not plugin discovery.  Test and calibration renderers are not
-        in that packet, so they cannot leak into an operator-facing chooser.
-        This reader never touches the working draft, library, live adapter, or
-        wall channel; thumbnails are shipped catalog illustrations generated
-        through the inert production renderer.
-        """
-        entries: List[Dict[str, Any]] = []
-        for descriptor in self.composer_catalog.descriptors:
-            if descriptor.role.value != 'animation':
-                continue
-            component_id = descriptor.component_id
-            metadata = _COMPOSER_GALLERY_METADATA.get(component_id, {})
-            try:
-                preset_count = len(self.composer_presets.choices(component_id))
-            except ValueError:
-                preset_count = 0
-            entries.append({
-                'key': f'{descriptor.provider.value}:{component_id}:v{descriptor.version}',
-                'component_id': component_id,
-                'provider': descriptor.provider.value,
-                'version': descriptor.version,
-                'role': descriptor.role.value,
-                'name': metadata.get('name', component_id.replace('_', ' ').title()),
-                'description': metadata.get('description', 'A live Scene animation.'),
-                'parameters': descriptor.default_parameters(),
-                'available': True,
-                'preset_count': preset_count,
-            })
-        entries.sort(key=lambda item: (str(item['name']).casefold(), str(item['key'])))
+        entries = gallery_entries(self.composer_catalog, self.composer_presets)
         digest = hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
         return {
             'schema': 'ledgrid.composer-gallery',
@@ -3827,6 +3710,7 @@ class AnimationWebInterface:
             'last_applied_command_id': status.get('last_applied_command_id'),
             'scene_digest': status.get('scene_digest'),
             'scene': status.get('scene_state'),
+            'nimbus': status.get('nimbus'),
             'last_error': (status.get('controller_playback') or {}).get('error') or status.get('last_error'),
             'receiver_connectivity': status.get('receiver_status') or status.get('receiver_connectivity') or {},
             'installation_profile_digest': status.get(

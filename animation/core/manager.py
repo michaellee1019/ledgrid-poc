@@ -1093,6 +1093,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         if clear_leds:
             with self._presentation_io_guard():
                 self.controller.clear()
+                self._wall_menu_pixels = None
         return True
 
     def update_animation_parameters(self, params: Dict[str, Any]) -> bool:
@@ -1799,6 +1800,7 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         deadline = None
         scheduled_fps = None
         pending = None
+        previous_menu = None
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix='led-present') as presenter:
             while self._run_is_active(run_generation):
                 started = time.perf_counter()
@@ -1807,9 +1809,10 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         elapsed = max(0.0, started-self.start_time)
                         self._scaled_elapsed += max(0.0, elapsed-self._last_unscaled_elapsed) * self.animation_speed_scale
                         self._last_unscaled_elapsed = elapsed
-                        presented = self.render_scene_v2_presentation(self._canonical_receiver_runtime,
-                            self._canonical_receiver_scene, monotonic_elapsed=self._scene_v2_monotonic_elapsed(),
-                            wall_time=datetime.now().astimezone())
+                        with self._scene_state_guard():
+                            presented = self.render_scene_v2_presentation(self._canonical_receiver_runtime,
+                                self._canonical_receiver_scene, monotonic_elapsed=self._scene_v2_monotonic_elapsed(),
+                                wall_time=datetime.now().astimezone())
                         frame,changed = presented.pixels,presented.changed
                     elif getattr(self, '_scene_mode', False):
                         frame,changed,_ = self._render_composed_scene_frame(now=started)
@@ -1828,7 +1831,9 @@ class AnimationManager(CanonicalReceiverSceneMixin):
                         pending = None
                         if not self._run_owns_generation(run_generation):
                             break
-                    if changed or self.frames_presented == 0:
+                    menu = getattr(self, '_wall_menu_pixels', None)
+                    if changed or menu is not previous_menu or self.frames_presented == 0:
+                        previous_menu = menu
                         pending = presenter.submit(self._present_frame,frame.copy(),None,False,getattr(self.controller,'inline_show',False))
                         self.frames_presented += 1
                     else:
@@ -1869,9 +1874,25 @@ class AnimationManager(CanonicalReceiverSceneMixin):
             self._presentation_io_lock = lock
         return lock
 
+    def set_wall_menu_pixels(self, menu):
+        previous = getattr(self, '_wall_menu_pixels', None)
+        if menu is previous:
+            return
+        self._wall_menu_pixels = menu
+        if not self.is_running:
+            blank = np.zeros((self.controller.total_leds, 3), dtype=np.uint8)
+            try:
+                self._present_frame(blank, None, False, getattr(self.controller, 'inline_show', False))
+            except (OSError, RuntimeError, ValueError):
+                self._wall_menu_pixels = None
+                raise
+
     def _present_frame(self, frame, dirty_ranges, use_partial, inline_show):
         with self._presentation_io_guard():
             started = time.perf_counter()
+            menu = getattr(self, '_wall_menu_pixels', None)
+            if menu is not None:
+                frame = menu.apply(self._normalize_frame(frame))
             sender = getattr(self.controller, 'stream_host_full_pixels', self.controller.set_all_pixels)
             if sender(frame) is False:
                 raise RuntimeError('one or more receiver RGB transfers failed')

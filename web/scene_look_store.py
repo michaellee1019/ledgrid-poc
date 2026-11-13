@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -29,6 +31,15 @@ class SceneLookStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
 
+    @contextmanager
+    def _transaction(self):
+        # Use a stable sibling lock because publication replaces the data inode.
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.path.with_name(f".{self.path.name}.lock")
+        with lock_path.open("a+b") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            yield
+
     def list(self) -> list[dict[str, Any]]:
         return [self._summary(record) for record in self._records()[0]]
 
@@ -37,46 +48,51 @@ class SceneLookStore:
 
     def save_as(self, name: Any, canonical: CanonicalScene) -> dict[str, Any]:
         clean_name = self._name(name)
-        records, imported = self._records()
-        self._require_unique_name(clean_name, records)
-        record = self._new_record(clean_name, canonical)
-        self._write([record, *records], imported=imported)
-        return dict(record)
+        with self._transaction():
+            records, imported = self._records()
+            self._require_unique_name(clean_name, records)
+            record = self._new_record(clean_name, canonical)
+            self._write([record, *records], imported=imported)
+            return dict(record)
 
     # Existing callers that mean Save As can retain this spelling. It does not
     # provide a compatibility reader for historical on-disk data.
     save = save_as
 
     def update(self, look_id: str, canonical: CanonicalScene) -> dict[str, Any]:
-        records, imported = self._records()
-        source = self._find(look_id, records)
-        updated = {"id": source["id"], "name": source["name"],
-                   "basis": canonical.identity.to_dict(), "scene": canonical.scene}
-        self._write([updated if record["id"] == look_id else record for record in records], imported=imported)
-        return dict(updated)
+        with self._transaction():
+            records, imported = self._records()
+            source = self._find(look_id, records)
+            updated = {"id": source["id"], "name": source["name"],
+                       "basis": canonical.identity.to_dict(), "scene": canonical.scene}
+            self._write([updated if record["id"] == look_id else record for record in records], imported=imported)
+            return dict(updated)
 
     def duplicate(self, look_id: str, name: Any) -> dict[str, Any]:
-        records, imported = self._records()
-        source = self._find(look_id, records)
-        clean_name = self._name(name)
-        self._require_unique_name(clean_name, records)
-        record = {**source, "id": str(uuid4()), "name": clean_name}
-        self._write([record, *records], imported=imported)
-        return dict(record)
+        with self._transaction():
+            records, imported = self._records()
+            source = self._find(look_id, records)
+            clean_name = self._name(name)
+            self._require_unique_name(clean_name, records)
+            record = {**source, "id": str(uuid4()), "name": clean_name}
+            self._write([record, *records], imported=imported)
+            return dict(record)
 
     def rename(self, look_id: str, name: Any) -> dict[str, Any]:
-        records, imported = self._records()
-        source = self._find(look_id, records)
-        clean_name = self._name(name)
-        self._require_unique_name(clean_name, records, excluding=look_id)
-        renamed = {**source, "name": clean_name}
-        self._write([renamed if record["id"] == look_id else record for record in records], imported=imported)
-        return dict(renamed)
+        with self._transaction():
+            records, imported = self._records()
+            source = self._find(look_id, records)
+            clean_name = self._name(name)
+            self._require_unique_name(clean_name, records, excluding=look_id)
+            renamed = {**source, "name": clean_name}
+            self._write([renamed if record["id"] == look_id else record for record in records], imported=imported)
+            return dict(renamed)
 
     def delete(self, look_id: str) -> None:
-        records, imported = self._records()
-        self._find(look_id, records)
-        self._write([record for record in records if record["id"] != look_id], imported=imported)
+        with self._transaction():
+            records, imported = self._records()
+            self._find(look_id, records)
+            self._write([record for record in records if record["id"] != look_id], imported=imported)
 
     def import_legacy_once(
         self, values: Any, translate: Callable[[Mapping[str, Any]], tuple[str, CanonicalScene] | None],
@@ -87,27 +103,28 @@ class SceneLookStore:
         useful current scene or ``None`` to skip an obsolete candidate. All
         translations and duplicate checks finish before the store is changed.
         """
-        records, imported = self._records()
-        if imported:
-            raise SceneLookStoreError("Legacy looks have already been reviewed.")
-        if not isinstance(values, list):
-            raise SceneLookStoreError("Legacy import must contain a list of looks.")
-        imported_records: list[dict[str, Any]] = []
-        names = {record["name"].casefold() for record in records}
-        for value in values:
-            if not isinstance(value, Mapping):
-                raise SceneLookStoreError("A legacy look is malformed.")
-            result = translate(value)
-            if result is None:
-                continue
-            name, canonical = result
-            clean_name = self._name(name)
-            if clean_name.casefold() in names:
-                raise SceneLookStoreError("A legacy look duplicates an existing name.")
-            names.add(clean_name.casefold())
-            imported_records.append(self._new_record(clean_name, canonical))
-        self._write([*imported_records, *records], imported=True)
-        return [dict(record) for record in imported_records]
+        with self._transaction():
+            records, imported = self._records()
+            if imported:
+                raise SceneLookStoreError("Legacy looks have already been reviewed.")
+            if not isinstance(values, list):
+                raise SceneLookStoreError("Legacy import must contain a list of looks.")
+            imported_records: list[dict[str, Any]] = []
+            names = {record["name"].casefold() for record in records}
+            for value in values:
+                if not isinstance(value, Mapping):
+                    raise SceneLookStoreError("A legacy look is malformed.")
+                result = translate(value)
+                if result is None:
+                    continue
+                name, canonical = result
+                clean_name = self._name(name)
+                if clean_name.casefold() in names:
+                    raise SceneLookStoreError("A legacy look duplicates an existing name.")
+                names.add(clean_name.casefold())
+                imported_records.append(self._new_record(clean_name, canonical))
+            self._write([*imported_records, *records], imported=True)
+            return [dict(record) for record in imported_records]
 
     def _records(self) -> tuple[list[dict[str, Any]], bool]:
         if not self.path.exists():
@@ -170,10 +187,15 @@ class SceneLookStore:
 
     def _write(self, records: list[dict[str, Any]], *, imported: bool) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with NamedTemporaryFile("w", encoding="utf-8", dir=self.path.parent, delete=False) as handle:
-            json.dump({"schema": self._SCHEMA, "looks": records, "legacy_imported": imported}, handle,
-                      sort_keys=True, separators=(",", ":"), allow_nan=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-            temporary = Path(handle.name)
-        temporary.replace(self.path)
+        temporary = None
+        try:
+            with NamedTemporaryFile("w", encoding="utf-8", dir=self.path.parent, delete=False) as handle:
+                temporary = Path(handle.name)
+                json.dump({"schema": self._SCHEMA, "looks": records, "legacy_imported": imported}, handle,
+                          sort_keys=True, separators=(",", ":"), allow_nan=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.replace(self.path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)

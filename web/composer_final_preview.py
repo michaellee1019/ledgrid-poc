@@ -177,6 +177,11 @@ class _PlantGeometryOwner:
         return self.strip_count * self.leds_per_strip
 
 
+def installed_plant_geometry(project_root: Path):
+    """Read the same installed clearance used by Scene Widget placement."""
+    return PlantMaskCache(_PlantGeometryOwner(33, 138, project_root)).get()
+
+
 class InstalledFinalSceneRuntime:
     """The shared installed-final Scene v2 host runtime.
 
@@ -250,6 +255,12 @@ class InstalledFinalSceneRuntime:
             return self._runtime.render_presentation(presentation)
 
 
+    def update_canonical_scene(self, canonical: CanonicalScene, elapsed: float) -> None:
+        """Switch to a validated scene, retaining the runtime clock and unchanged slots."""
+        with self._lock:
+            self._runtime.tune(canonical, elapsed)
+            self._active_digest = canonical.identity.digest
+
     def set_installation_profile(
         self, view: InstallationProfileRuntimeView | None
     ) -> None:
@@ -289,6 +300,10 @@ class InstalledFinalSceneRuntime:
         with self._lock:
             if scene_digest == self._active_digest:
                 self._runtime.dispatch_tetris_gamepad(actions)
+
+    def tetris_player_active(self) -> bool:
+        with self._lock:
+            return self._runtime.tetris_player_active()
 
     def _animation_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
         if descriptor.component_id == AuroraCurtainsAnimation.COMPONENT_ID:
