@@ -104,6 +104,10 @@ class NimbusGamepad:
     def connected(self) -> bool:
         return self._fd is not None and os.path.exists(self.path)
 
+    @property
+    def shoulder_bank(self) -> int:
+        return self._stick_bank
+
     def _open(self, now: float) -> bool:
         if now < self._next_open:
             return False

@@ -142,9 +142,11 @@ def poll_wall_composer(manager, gamepad, menu):
     track_bank = active and (menu.is_open or not player)
     buttons = gamepad.poll(target, menu_buttons=True, navigating=menu.is_open,
                            tuning_sticks=tuning, browsing=browsing, track_bank=track_bank)
+    menu.shoulder_bank = gamepad.shoulder_bank
     motions = []
     for button in buttons:
         if isinstance(button, StickBank):
+            menu.shoulder_bank = button.bank
             if track_bank:
                 was_momentary = menu.momentary
                 menu.select_stick_bank(button.bank)
@@ -157,6 +159,7 @@ def poll_wall_composer(manager, gamepad, menu):
             continue
         if button == 'disconnect':
             manager.dispatch_tetris_input(('disconnect',))
+            menu.shoulder_bank = 0
             menu.close()
             return
         if button == 'menu':

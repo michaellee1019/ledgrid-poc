@@ -349,7 +349,8 @@ def test_physical_up_tunes_r1_animation_and_r1_r2_speed_with_momentary_hud(contr
 
     reports.append(report(9))
     poll_wall_composer(manager, reader, menu)
-    assert menu.momentary and len(menu.hud_sections()) == 4
+    assert menu.momentary and len(menu.hud_sections()) == 5
+    assert menu.hud_sections()[0][0].shoulder_bank == 2
     assert manager.get_scene_state() == before
 
     # The paired Nimbus reports Up as positive on both vertical axes.

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from animation.core.wall_menu_frame import (
-    ACCENT, CARD_HEIGHT, DISABLED_EDGE, DISABLED_TEXT, HEIGHT, MUTED, STICK_CARD_HEIGHT, TITLE_HEIGHT,
+    ACCENT, CARD_HEIGHT, DISABLED_EDGE, DISABLED_TEXT, HEIGHT, MUTED, SHOULDER_HEIGHT, STICK_CARD_HEIGHT, TITLE_HEIGHT,
     WHITE, MenuCard, WallMenuFrame,
 )
 from drivers.nimbus_gamepad import StickBank, StickMotion
@@ -25,6 +25,7 @@ from animation.core.manager import AnimationManager
 from animation.core.scene_runtime import ScenePresentationContext
 from web.composer_content import gallery_entries
 from web.composer_final_preview import current_component_catalog, installed_plant_geometry
+from web.numbered_preset_store import PRESET_COUNT, NumberedPresetStore
 from web.scene_look_store import SceneLookStore
 from web.starter_looks import get_starter
 from web.wall_composer import STICK_BANK_COLORS, STICK_BANKS, STICK_FEEDBACK_SECONDS, WallComposer
@@ -44,7 +45,7 @@ def instrument(tmp_path):
     manager._launch_animation_loop = lambda: setattr(manager, "is_running", True)
     owner = controller_activation_coordinator(manager)
     runner = PlaylistRunner(manager, owner)
-    gamepad = SimpleNamespace(connected=True, poll=lambda *_args, **_kw: (),
+    gamepad = SimpleNamespace(connected=True, shoulder_bank=0, poll=lambda *_args, **_kw: (),
                               discard_pending=lambda: None, handoff=lambda _target: None)
     menu = WallComposer(manager, owner, runner, partial(nimbus_command, manager, owner, gamepad),
                         ROOT, tmp_path, tmp_path)
@@ -57,9 +58,95 @@ def inputs(manager, gamepad, menu, *buttons):
     poll_wall_composer(manager, gamepad, menu)
 
 
+def stick_sections(menu):
+    return tuple(section for section in menu.hud_sections() if section[0].stick_axis is not None)
+
+
+def stick_panels(renderer, menu):
+    return renderer.render_sections(menu.hud_sections()).panels[1:]
+
+
 def focus(menu, name):
     page, rows = menu._row()
     page.index = next(index for index, row in enumerate(rows) if row.name == name)
+
+
+def test_shoulder_tiles_follow_each_button_while_a_picker_owns_input(instrument):
+    manager, owner, _runner, gamepad, menu = instrument
+    assert handle_command(manager, "start_scene", {"scene": starter()})
+    menu.open()
+    focus(menu, "Presets")
+    inputs(manager, gamepad, menu, "a", "a")
+    renderer = WallMenuFrame()
+    revision = owner.state_revision
+    for bank, lit in ((0, ()), (2, (2,)), (5, (0, 1)), (8, (3,)), (15, (0, 1, 2, 3)), (0, ())):
+        inputs(manager, gamepad, menu, StickBank(bank))
+        sections = menu.hud_sections()
+        assert sections[0][0].shoulder_bank == bank and sections[-1][0].preset_selection == 0
+        top = renderer.render_sections(sections).panels[0]
+        for tile in range(4):
+            color = STICK_BANK_COLORS[bank] if tile in lit else (27, 40, 55)
+            assert tuple(top.panel[1 + tile * 8, -2]) == color
+    assert owner.state_revision == revision
+
+
+def test_numbered_preset_board_saves_overwrites_and_loads_complete_scenes(instrument):
+    manager, owner, _runner, gamepad, menu = instrument
+    assert handle_command(manager, "start_scene", {"scene": starter("aurora_clock")})
+    initial = manager.get_scene_state()
+    menu.open()
+    focus(menu, "Presets")
+    inputs(manager, gamepad, menu, "a", "down", "a", "a")
+    assert menu.error == "Preset 01 is empty"
+    inputs(manager, gamepad, menu, "b", "b", "up", "a", "repeat-right")
+    assert menu.card().preset_selection == 0
+    inputs(manager, gamepad, menu, "right", "repeat-right", "left", "left", "up", "left")
+    card = menu.card()
+    assert card.preset_selection == 19 and len(card.preset_slots) == PRESET_COUNT and not any(card.preset_slots)
+    board = WallMenuFrame().render_sections(menu.hud_sections()).panels[-1]
+    tile = board.panel[25:32, ::-1][:, 48:57]
+    assert tuple(tile[0, 0]) == ACCENT and np.any(np.all(tile == (5, 10, 19), axis=2))
+    revision = owner.state_revision
+    inputs(manager, gamepad, menu, "a")
+    assert menu.card().value == "Slot 20" and owner.state_revision == revision
+    assert menu.numbered_presets.load(20).scene == initial
+
+    changed = manager.get_scene_state()
+    changed["look"].update(palette_id="xmas", pace=.4)
+    assert handle_command(manager, "tune_scene", {"scene": changed})
+    inputs(manager, gamepad, menu, "a", "a")
+    assert menu.card().preset_selection == 19 and menu.card().hint == "A WRITE"
+    inputs(manager, gamepad, menu, "a")
+    assert menu.numbered_presets.load(20).scene == changed
+
+    assert handle_command(manager, "start_scene", {"scene": starter("aurora_conway")})
+    inputs(manager, gamepad, menu, "a", "down", "a")
+    assert menu.card().preset_selection == 19 and menu.card().preset_slots[-1]
+    inputs(manager, gamepad, menu, "a")
+    assert menu.card().value == "Slot 20" and manager.get_scene_state() == changed
+    inputs(manager, gamepad, menu, "a", "a")
+    assert menu.card().preset_selection == 19 and menu.card().hint == "A LOAD"
+
+
+def test_failed_numbered_preset_replace_preserves_saved_slot(tmp_path, monkeypatch):
+    catalog = current_component_catalog()
+    store = NumberedPresetStore(tmp_path, catalog)
+    opening = normalize_composer_scene({"origin": "composer", "scene": starter()}, catalog)
+    changed = normalize_composer_scene({"origin": "composer", "scene": starter("aurora_clock")}, catalog)
+    store.save(1, opening)
+    store.save(20, changed)
+
+    def fail_replace(self, target):
+        raise OSError("write failed")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(OSError, match="write failed"):
+        store.save(1, changed)
+    reopened = NumberedPresetStore(tmp_path, catalog)
+    assert reopened.load(1) == opening and reopened.load(20) == changed
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["01.json", "20.json"]
+    with pytest.raises(ValueError, match="Choose preset"):
+        reopened.load(21)
 
 
 def test_menu_live_palette_keeps_runtime_and_parameter_changes_use_canonical_scene(instrument):
@@ -298,7 +385,7 @@ def test_hud_stacks_four_axes_in_order_and_keeps_headings_scrolling(instrument):
     renderer = WallMenuFrame()
     original = manager.get_scene_state()
     inputs(manager, gamepad, menu, StickMotion(2, 1, 2))
-    sections = menu.hud_sections()
+    sections = stick_sections(menu)
     assert [card.stick_axis for card, _ in sections] == [1, 0, 3, 2]
     assert [card.label for card, _ in sections] == ["launch cadence", "trails", "gravity", "shell population"]
     _, left, _, right = sections
@@ -309,8 +396,10 @@ def test_hud_stacks_four_axes_in_order_and_keeps_headings_scrolling(instrument):
         **original["animation"]["parameters"], "shell_population": 57,
     }
     stack = renderer.render_sections(menu.hud_sections())
-    assert [panel.start for panel in stack.panels] == [HEIGHT - depth * STICK_CARD_HEIGHT for depth in (1, 2, 3, 4)]
-    for index, panel in enumerate(stack.panels):
+    assert [panel.start for panel in stack.panels[1:]] == [
+        HEIGHT - SHOULDER_HEIGHT - depth * STICK_CARD_HEIGHT for depth in (1, 2, 3, 4)
+    ]
+    for index, panel in enumerate(stack.panels[1:]):
         np.testing.assert_array_equal(panel.panel[16, -1], STICK_BANK_COLORS[2])
         edge = 0 if index < 2 else -1
         assert np.all(panel.panel[edge] == STICK_BANK_COLORS[2])
@@ -322,24 +411,24 @@ def test_hud_stacks_four_axes_in_order_and_keeps_headings_scrolling(instrument):
     frame = np.full((33, 138, 3), 11, dtype=np.uint8)
     stack.apply(frame)
     for panel in stack.panels:
-        np.testing.assert_array_equal(frame[:, panel.start:panel.start + STICK_CARD_HEIGHT], panel.panel)
+        np.testing.assert_array_equal(frame[:, panel.start:panel.start + panel.panel.shape[1]], panel.panel)
 
     clock[0] += 2.0
     inputs(manager, gamepad, menu, StickMotion(1, 1, 2))
-    left, _, _, right = menu.hud_sections()
+    left, _, _, right = stick_sections(menu)
     assert left[0].label == "launch cadence" and left[1] == 8
     assert right[0].label == "shell population" and right[0].top_color == STICK_BANK_COLORS[2]
     clock[0] += 2.0
-    left_before, _, _, right_before = menu.hud_sections()
+    left_before, _, _, right_before = stick_sections(menu)
     inputs(manager, gamepad, menu, StickMotion(1, 1, 2))
-    left_after, _, _, right_after = menu.hud_sections()
+    left_after, _, _, right_after = stick_sections(menu)
     assert left_after[0].value != left_before[0].value and left_after[1] == left_before[1] == 16
     assert right_after[1] == right_before[1] == 16
     menu.press("right")
-    assert menu.hud_sections()[0][1] == 16
+    assert stick_sections(menu)[0][1] == 16
     assert len(STICK_BANK_COLORS) == len(set(STICK_BANK_COLORS)) == 16
     menu.press("b")
-    assert len(menu.hud_sections()) == 1
+    assert not stick_sections(menu)
 
 
 def test_stick_feedback_pins_arrow_and_highlights_only_changed_parameter(instrument):
@@ -351,7 +440,7 @@ def test_stick_feedback_pins_arrow_and_highlights_only_changed_parameter(instrum
     renderer = WallMenuFrame()
 
     def top_panel():
-        return renderer.render_sections(menu.hud_sections()).panels[0].panel[:, ::-1]
+        return stick_panels(renderer, menu)[0].panel[:, ::-1]
 
     idle_down = top_panel().copy()
     clock[0] += .5
@@ -363,21 +452,21 @@ def test_stick_feedback_pins_arrow_and_highlights_only_changed_parameter(instrum
     edited = top_panel()
     assert tuple(edited[1, 3]) == WHITE
     assert np.any(np.all(edited[5:-1, 2:7] == WHITE, axis=2))
-    assert [c.stick_changed for c, _ in menu.hud_sections()] == [True, False, False, False]
+    assert [c.stick_changed for c, _ in stick_sections(menu)] == [True, False, False, False]
 
     clock[0] += STICK_FEEDBACK_SECONDS
-    assert not menu.hud_sections()[0][0].stick_direction
+    assert not stick_sections(menu)[0][0].stick_direction
     assert np.any(np.all(top_panel()[5:-1, 2:7] == ACCENT, axis=2))
     scene = manager.get_scene_state()
     scene["animation"]["parameters"]["launch_cadence"] = 4.0
     assert handle_command(manager, "tune_scene", {"scene": scene})
     revision = owner.state_revision
     inputs(manager, gamepad, menu, StickMotion(1, 2, 2))
-    card, _ = menu.hud_sections()[0]
+    card, _ = stick_sections(menu)[0]
     assert card.stick_direction == 1 and not card.stick_changed
     assert owner.state_revision == revision
     inputs(manager, gamepad, menu, StickMotion(1, -1, 2), StickMotion(0, -1, 2))
-    cards = [card for card, _ in menu.hud_sections()]
+    cards = [card for card, _ in stick_sections(menu)]
     assert [card.stick_direction for card in cards] == [-1, -1, 0, 0]
     assert [card.stick_changed for card in cards] == [True, True, False, False]
     assert tuple(top_panel()[1, 5]) == WHITE
@@ -390,18 +479,18 @@ def test_short_parameter_titles_scroll_and_unused_rows_only_show_dim_dashes(inst
     menu.clock = lambda: clock[0]
     inputs(manager, gamepad, menu, StickBank(10))
     renderer = WallMenuFrame()
-    first = renderer.render_sections(menu.hud_sections()).panels
+    first = stick_panels(renderer, menu)
     clock[0] += 1.25
-    later = renderer.render_sections(menu.hud_sections()).panels
+    later = stick_panels(renderer, menu)
     # Speed fits. Compare its text pixels separately from the cycling arrow.
     assert not np.array_equal(first[2].panel[5:-1, -7:-2], later[2].panel[5:-1, -7:-2])
     assert np.any(np.all(first[2].panel[5:-1, -7:-2] == ACCENT, axis=2))
     assert np.any(np.all(later[2].panel[5:-1, -7:-2] == ACCENT, axis=2))
 
     inputs(manager, gamepad, menu, StickMotion(1, 1, 10))
-    after = renderer.render_sections(menu.hud_sections()).panels
+    after = stick_panels(renderer, menu)
     for index in (0, 1, 3):
-        card, _ = menu.hud_sections()[index]
+        card, _ = stick_sections(menu)[index]
         assert (card.label, card.value, card.stick_direction) == ("", "--", 0)
         assert first[index] is later[index] is after[index]
         pixels = after[index].panel[:, ::-1]
@@ -419,7 +508,7 @@ def test_shoulder_hold_opens_four_axes_and_release_hides_momentary_hud(instrumen
     original = manager.get_scene_state()
     revision = owner.state_revision
     inputs(manager, gamepad, menu, StickBank(2))
-    assert menu.momentary and len(menu.hud_sections()) == 4
+    assert menu.momentary and len(stick_sections(menu)) == 4
     assert owner.state_revision == revision
     inputs(manager, gamepad, menu, StickBank(10), StickMotion(3, 1, 10))
     assert menu.momentary and menu.card().label == "Speed"
@@ -440,16 +529,16 @@ def test_manual_hud_stays_open_and_bank_switch_does_not_edit_scene(instrument):
                         (10, ("", "", "Speed", "")),
                         (0, ("", "Palette", "Scene light", "burst size"))):
         inputs(manager, gamepad, menu, StickBank(bank))
-        sections = menu.hud_sections()
+        sections = stick_sections(menu)
         assert tuple(card.label for card, _ in sections) == names
         assert all(card.top_color == STICK_BANK_COLORS[bank] for card, _ in sections)
         assert manager.get_scene_state() == original and owner.state_revision == revision
     inputs(manager, gamepad, menu, StickBank(2), StickMotion(3, 1, 2))
-    assert menu.hud_sections()[2][0].label == "gravity"
+    assert stick_sections(menu)[2][0].label == "gravity"
     assert manager.get_scene_state()["animation"]["parameters"]["gravity"] > .48
     inputs(manager, gamepad, menu, "b")
     inputs(manager, gamepad, menu, StickBank(0))
-    assert len(menu.hud_sections()) == 1
+    assert not stick_sections(menu)
 
 
 def test_animation_title_shows_for_one_second_and_stacks_above_a_held_bank(instrument):
@@ -463,13 +552,14 @@ def test_animation_title_shows_for_one_second_and_stacks_above_a_held_bank(instr
     assert title[0].label == label and title[0].section == "Animation title"
     inputs(manager, gamepad, menu, StickBank(2))
     stack = WallMenuFrame().render_sections(menu.hud_sections())
-    assert len(stack.panels) == 5
-    assert stack.panels[0].start == HEIGHT - TITLE_HEIGHT
-    assert stack.panels[-1].start == HEIGHT - TITLE_HEIGHT - 4 * STICK_CARD_HEIGHT
+    assert len(stack.panels) == 6
+    assert stack.panels[0].start == HEIGHT - SHOULDER_HEIGHT
+    assert stack.panels[1].start == HEIGHT - SHOULDER_HEIGHT - TITLE_HEIGHT
+    assert stack.panels[-1].start == HEIGHT - SHOULDER_HEIGHT - TITLE_HEIGHT - 4 * STICK_CARD_HEIGHT
     clock[0] = 100.999
-    assert menu.hud_sections()[0][0] == title[0]
+    assert menu.hud_sections()[1][0] == title[0]
     clock[0] = 101.0
-    assert len(menu.hud_sections()) == 4
+    assert len(menu.hud_sections()) == 5
     inputs(manager, gamepad, menu, StickBank(0), "right")
     assert not menu.hud_sections()
 
@@ -519,10 +609,10 @@ def test_flow_field_silk_l2_r2_does_not_alias_other_banks(instrument):
     assert len(resolved) == len(set(resolved))
     menu.open()
     inputs(manager, gamepad, menu, StickBank(12), StickMotion(0, 2, 12), StickMotion(2, 2, 12))
-    assert [(card.label, card.value) for card, _ in menu.hud_sections()] == [("", "--")] * 4
+    assert [(card.label, card.value) for card, _ in stick_sections(menu)] == [("", "--")] * 4
     assert manager.get_scene_state() == original and owner.state_revision == revision
     inputs(manager, gamepad, menu, StickBank(0))
-    assert [card.label for card, _ in menu.hud_sections()] == ["", "Palette", "Scene light", "density"]
+    assert [card.label for card, _ in stick_sections(menu)] == ["", "Palette", "Scene light", "density"]
 
 
 def test_base_palette_changes_once_per_flick(instrument):
@@ -578,7 +668,7 @@ def test_first_stick_edit_keeps_both_cards_visible_during_playlist_takeover(inst
     menu.open()
     inputs(manager, gamepad, menu, StickMotion(1, 1, 2))
     assert runner.status()["phase"] == "overridden"
-    (left, _), _, _, (right, _) = menu.hud_sections()
+    (left, _), _, _, (right, _) = stick_sections(menu)
     assert (left.label, right.label) == ("launch cadence", "shell population")
     assert right.value == "46"
 

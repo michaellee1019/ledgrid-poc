@@ -11,13 +11,14 @@ import time
 import uuid
 
 from animation.core.plant_awareness import FIELD_MODIFIERS, PLANT_MODIFIER_IDS, SURFACE_MODIFIERS
-from animation.core.wall_menu_frame import HEIGHT, STICK_AXES, WIDTH, MenuCard, PALETTE_SWATCHES, rgb
+from animation.core.wall_menu_frame import HEIGHT, PRESET_COLUMNS, STICK_AXES, WIDTH, MenuCard, PALETTE_SWATCHES, rgb
 from animation.libraries.pixel_art import EMOJI_PATTERNS
 from animation.libraries.scene_palettes import SCENE_PALETTE_IDS
 from ipc.playlist_runtime import PLAYLIST_COMMAND_SCHEMA, PLAYLIST_VERSION
 from ipc.scene_contract import normalize_composer_scene
 from web.composer_content import composer_presets, gallery_entries
 from web.composer_playlist_store import ComposerPlaylistStore
+from web.numbered_preset_store import PRESET_COUNT, NumberedPresetStore
 from web.scene_look_store import SceneLookStore
 from web.starter_looks import get_starter, list_starters
 
@@ -177,6 +178,32 @@ class PositionPicker:
                         marker=(self.x, self.y), cells=self.cells or ())
 
 
+@dataclass
+class PresetPicker:
+    save: bool
+    occupied: tuple[bool, ...]
+    index: int
+
+    def move(self, button):
+        row, column = divmod(self.index, PRESET_COLUMNS)
+        if button in ("left", "right"):
+            column = (column + DIRECTION[button]) % PRESET_COLUMNS
+        else:
+            row = (row + DIRECTION[button]) % (PRESET_COUNT // PRESET_COLUMNS)
+        self.index = row * PRESET_COLUMNS + column
+
+    def card(self):
+        occupied = self.occupied[self.index]
+        title = "SAVE" if self.save else "LOAD"
+        if self.save:
+            hint = "A WRITE" if occupied else "A SAVE"
+        else:
+            hint = "A LOAD" if occupied else "B BACK"
+        value = "Filled" if occupied else "Empty"
+        return MenuCard(title, f"Preset {self.index + 1:02d}", value, hint=hint,
+                        preset_selection=self.index, preset_slots=self.occupied)
+
+
 class WallComposer:
     """Translate buttons into ordered local controller actions."""
 
@@ -192,6 +219,8 @@ class WallComposer:
         self.presets_dir = Path(presets_dir)
         self.looks = SceneLookStore(Path(state_dir) / "composer_looks.json")
         self.playlists = ComposerPlaylistStore(Path(state_dir) / "composer_playlists.json")
+        self.numbered_presets = NumberedPresetStore(Path(state_dir) / "numbered_presets", self.catalog)
+        self._preset_index = 0
         self.playlist_scene = playlist_scene or self._playlist_scene
         self._legacy_playlist_adapter = None
         self.clock = clock
@@ -213,6 +242,7 @@ class WallComposer:
         self._redo = False
         self._horizontal_hold = None
         self._stick_focus: dict[int, StickFocus] = {}
+        self.shoulder_bank = 0
         self.momentary = False
         self._animation_id = manager.current_animation_name
         self._animation_title = None
@@ -271,7 +301,31 @@ class WallComposer:
 
     def _root(self):
         return [Row("Browse", select=self._browse), Row("Tune", select=self._tune),
-                Row("Playback", select=self._playback)]
+                Row("Playback", select=self._playback), Row("Presets", select=self._numbered_presets)]
+
+    def _numbered_presets(self):
+        self._push("Presets", [Row("Save", select=partial(self._preset_picker, True)),
+                               Row("Load", select=partial(self._preset_picker, False))])
+
+    def _preset_picker(self, save):
+        if save and self.scene() is None:
+            raise ValueError("Choose a scene first")
+        self.picker = PresetPicker(save, self.numbered_presets.occupied(), self._preset_index)
+
+    def _confirm_preset(self):
+        picker = self.picker
+        slot = picker.index + 1
+        self._preset_index = picker.index
+        if picker.save:
+            scene = normalize_composer_scene({"origin": "composer", "scene": self.scene()}, self.catalog)
+            self.numbered_presets.save(slot, scene)
+            self.picker = None
+            self._feedback("Saved", f"Slot {slot:02d}")
+        else:
+            scene = self.numbered_presets.load(slot)
+            self._play_scene(scene.scene, mark_playing=False)
+            self.picker = None
+            self._feedback("Loaded", f"Slot {slot:02d}")
 
     def _feedback(self, label, value="", *, error=None):
         self.feedback = MenuCard("Composer", label, value, hint="A OK")
@@ -304,15 +358,18 @@ class WallComposer:
     def hud_sections(self):
         now = self.clock()
         self.observe_animation()
-        title = ()
+        headers = ()
+        if self.is_open:
+            bank = self.shoulder_bank
+            headers = ((MenuCard("Shoulders", "", top_color=STICK_BANK_COLORS[bank], shoulder_bank=bank), 0),)
         if self._animation_title is not None and now < self._animation_title_until:
-            title = ((self._animation_title, 0),)
+            headers = (*headers, (self._animation_title, 0))
         card = self.card()
         if card is None:
-            return title
+            return headers
         page = self.pages[-1] if self.pages else None
         if self.feedback or self.picker or page is None or not page.stick_shortcut:
-            return (*title, (card, int((now - self.card_since) * 4)))
+            return (*headers, (card, int((now - self.card_since) * 4)))
         sections = []
         for slot, focus in self._stick_focus.items():
             section = card
@@ -324,7 +381,7 @@ class WallComposer:
                               stick_direction=focus.direction if now < focus.direction_until else 0,
                               stick_changed=now < focus.changed_until)
             sections.append((section, int((now - focus.since) * 4)))
-        return (*title, *sections)
+        return (*headers, *sections)
 
     def observe_animation(self):
         animation = self.manager.current_animation_name if self.manager.is_running else None
@@ -379,6 +436,16 @@ class WallComposer:
                 return
         try:
             if self.picker:
+                if isinstance(self.picker, PresetPicker):
+                    if button == "b":
+                        self._preset_index = self.picker.index
+                        self.picker = None
+                    elif button == "a":
+                        self._confirm_preset()
+                    elif button in DIRECTION and (button not in ("left", "right") or self._accept_horizontal(
+                            button, repeated, id(self.picker))):
+                        self.picker.move(button)
+                    return
                 self.card_since = self.clock()
                 if button == "b" or button == "y" and isinstance(self.picker, PositionPicker):
                     self.picker = None
@@ -544,6 +611,7 @@ class WallComposer:
 
     def select_stick_bank(self, bank):
         """Expose the held chord's bindings without applying an edit."""
+        self.shoulder_bank = bank
         if not bank and self.momentary:
             self.close()
             return
@@ -744,14 +812,14 @@ class WallComposer:
         if self._set_scene(self._undo_scene, edit=True):
             self._redo = not redo
 
-    def _play_scene(self, scene):
+    def _play_scene(self, scene, *, mark_playing=True):
         self._set_scene(scene)
         self.playback_revision += 1
         self._clear_undo()
         for page in self.pages:
             page.playing = None
             page.playing_scene = None
-        if self.pages:
+        if mark_playing and self.pages:
             page = self.pages[-1]
             page.playing = page.index
             page.playing_scene = self.scene()

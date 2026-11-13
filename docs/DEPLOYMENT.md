@@ -84,6 +84,13 @@ jump eight cards in longer lists. Hold Left or Right for larger numeric steps.
 Browse keeps your place when you play a Look, starter, or preset. On the playing
 card, Y opens Tune. Menu closes the menu for a full view.
 
+The top tiles show which shoulder buttons are held. Open **Menu → Presets →
+Save** or **Load** for the numbered board. The D-pad moves across four columns
+and five rows. Filled tiles have a brighter background. Press A to save or
+load the selected slot, or B to go back. Saving immediately replaces that
+slot. Each slot stores the complete Scene, including widgets and plant effects.
+The board lives in `data/run_state/numbered_presets/` on the Pi.
+
 Tune applies changes immediately. Y undoes the last edit or held adjustment.
 Press Y again to redo it. In the character picker, A inserts the focused
 character, Y finishes, and B cancels. Save Look adds a named Scene to the

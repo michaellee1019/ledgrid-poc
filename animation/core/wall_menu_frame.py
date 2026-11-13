@@ -13,6 +13,9 @@ WIDTH, HEIGHT = 33, 138
 CARD_HEIGHT = 28
 STICK_CARD_HEIGHT = 17
 TITLE_HEIGHT = 31
+SHOULDER_HEIGHT = 9
+PRESET_COLUMNS = 4
+PRESET_TILE_HEIGHT = 10
 STICK_AXES = (1, 0, 3, 2)
 WHITE = (245, 247, 255)
 ACCENT = (89, 212, 255)
@@ -66,6 +69,9 @@ class MenuCard:
     stick_axis: int | None = None
     stick_direction: int = 0
     stick_changed: bool = False
+    shoulder_bank: int | None = None
+    preset_selection: int | None = None
+    preset_slots: tuple[bool, ...] = ()
 
 
 def _display_text(value):
@@ -123,8 +129,8 @@ def _glyph(canvas, glyph):
 
 class WallMenuFrame:
     def __init__(self):
-        self._keys = [None] * 5
-        self._pixels = [None] * 5
+        self._keys = [None] * 6
+        self._pixels = [None] * 6
         self._stack = None
 
     def render_sections(self, sections):
@@ -142,10 +148,14 @@ class WallMenuFrame:
         return self._stack
 
     def render(self, card, phase=0, *, slot=0, top=HEIGHT):
+        if card.shoulder_bank is not None:
+            return self._render_shoulders(card, slot, top)
+        if card.preset_selection is not None:
+            return self._render_presets(card, slot, top)
         if card.stick_axis is not None:
             return self._render_stick(card, phase, slot, top)
         if card.section == "Animation title":
-            return self._render_title(card)
+            return self._render_title(card, slot, top)
         heading = _line(card.label if card.value or card.glyph else card.section, 8, phase)
         label = _line(card.label, 8, phase)
         value = _display_text(card.value)
@@ -212,9 +222,42 @@ class WallMenuFrame:
                 pixels[x:x + 6, 15] = color
         return self._remember_panel(slot, key, pixels, top)
 
-    def _render_title(self, card):
-        if card == self._keys[0]:
-            return self._pixels[0]
+    def _render_shoulders(self, card, slot, top):
+        key = (card, top)
+        if key == self._keys[slot]:
+            return self._pixels[slot]
+        pixels = np.full((WIDTH, SHOULDER_HEIGHT, 3), (5, 10, 19), dtype=np.uint8)
+        for tile, (label, bit) in enumerate((("L1", 0), ("L2", 2), ("R1", 1), ("R2", 3))):
+            pressed = card.shoulder_bank & (1 << bit)
+            x = 1 + tile * 8
+            area = pixels[x:x + 7]
+            area[:, 1:8] = card.top_color if pressed else (27, 40, 55)
+            _text(area, label, 2, (5, 10, 19) if pressed else MUTED)
+        return self._remember_panel(slot, key, pixels, top)
+
+    def _render_presets(self, card, slot, top):
+        key = (card, top)
+        if key == self._keys[slot]:
+            return self._pixels[slot]
+        row_count = len(card.preset_slots) // PRESET_COLUMNS
+        pixels = np.full((WIDTH, 24 + row_count * PRESET_TILE_HEIGHT, 3), (5, 10, 19), dtype=np.uint8)
+        _text(pixels, card.section, 1, ACCENT)
+        for index, occupied in enumerate(card.preset_slots):
+            row, column = divmod(index, PRESET_COLUMNS)
+            x = 1 + column * 8
+            y = 8 + row * PRESET_TILE_HEIGHT
+            area = pixels[x:x + 7, y:y + 9]
+            selected = index == card.preset_selection
+            area[:] = ACCENT if selected else (44, 71, 78) if occupied else (19, 27, 36)
+            _text(area, str(index + 1), 2, (5, 10, 19) if selected else WHITE if occupied else MUTED)
+        _text(pixels, card.value, pixels.shape[1] - 14, WHITE)
+        _text(pixels, card.hint, pixels.shape[1] - 7, ACCENT)
+        return self._remember_panel(slot, key, pixels, top)
+
+    def _render_title(self, card, slot, top):
+        key = (card, top)
+        if key == self._keys[slot]:
+            return self._pixels[slot]
         pixels = np.full((WIDTH, TITLE_HEIGHT, 3), (5, 10, 19), dtype=np.uint8)
         pixels[1:-1, 0] = card.top_color
         title = _display_text(card.label)
@@ -229,7 +272,7 @@ class WallMenuFrame:
             lines[-1] = lines[-1][:7] + "."
         for index, line in enumerate(lines):
             _text(pixels, line, (TITLE_HEIGHT - 7 * len(lines) + 2) // 2 + index * 7, WHITE)
-        return self._remember_panel(0, card, pixels, HEIGHT)
+        return self._remember_panel(slot, key, pixels, top)
 
     def _remember_panel(self, slot, key, pixels, top):
         panel = np.ascontiguousarray(pixels[:, ::-1])

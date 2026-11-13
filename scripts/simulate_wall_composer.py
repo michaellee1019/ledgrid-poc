@@ -50,7 +50,7 @@ def create_simulator(data_dir):
     manager.set_target_fps(30)
     owner = controller_activation_coordinator(manager)
     runner = PlaylistRunner(manager, owner)
-    gamepad = SimpleNamespace(connected=True, poll=lambda *_args, **_kwargs: (),
+    gamepad = SimpleNamespace(connected=True, shoulder_bank=0, poll=lambda *_args, **_kwargs: (),
                               discard_pending=lambda: None, handoff=lambda _target: None)
     command = partial(nimbus_command, manager, owner, gamepad)
     menu = WallComposer(manager, owner, runner, command, ROOT, data_dir, Path(data_dir))
