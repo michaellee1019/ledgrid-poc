@@ -221,96 +221,19 @@ downloads.
   jumps, excessive repetition, low contrast, and whether every motif reads at
   target resolution.
 
-## Design receiver-side firmware animations deliberately
+## Validate host-to-wall mapping
 
-Treat a receiver-rendered animation as a separate execution backend, not as an
-ordinary host plugin that happens to avoid sending frames. Establish who owns
-simulation time, parameters, persistence, preview generation, brightness, and
-mode transitions before defining its file format or protocol.
+Render a full RGB frame on the host. Keep SPI route and logical receiver
+identity, physical lane order, and host strip direction distinct. Check lane
+order with receiver or lane colors and check strip direction with one distinct
+color per physical strip. See the [hardware guide](../../../docs/HARDWARE.md)
+for the installed mapping and [rendering acceptance](../../../docs/RENDERING_PIPELINE_ACCEPTANCE.md)
+for the current checks.
 
-- Choose the payload model explicitly. Native modules suit compact procedural
-  renderers; device-specific frame tracks suit authored GIF/WebP-style loops.
-  Do not force both through one runtime callback when only their packaging and
-  lifecycle need to be shared.
-- Separate the one-time loader firmware from uploadable animation payloads.
-  Retain a compiled fallback that can render after boot, missing assets, invalid
-  packages, or a module crash.
-- Prefer a stable versioned C ABI for native code. Export C entrypoints even when
-  authors use C++, pass geometry and global coordinate offsets explicitly, give
-  the module a caller-owned output buffer, and keep driver/peripheral access out
-  of the supported API. Pin the target, loader, SDK, and toolchain in packages.
-- Treat native machine code as trusted but not sandboxed. Require signed
-  production packages, keep private signing keys off dashboards and receivers,
-  reject unknown keys/ABIs/imports/targets before activation, and make any
-  unsigned development mode conspicuous in runtime status.
-- Keep the host library authoritative and receiver storage disposable. Probe by
-  content digest, avoid rewriting an existing asset, reserve filesystem space,
-  and evict only inactive cache entries. A replaced or erased receiver must be
-  recoverable from the host without reconstructing the asset.
-- Make multi-receiver changes transactional: stage every target, verify size,
-  digest, signature, geometry, and device track, then activate. A partial upload
-  must not produce a mixed wall. Write temporary files and rename only after
-  verification; make chunks ordered, retryable, and idempotent.
-- Model playback mode explicitly across host animation, receiver animation,
-  painter/manual output, and idle. Define which commands stop local playback,
-  how a host frame takes control again, what continues across a Pi disconnect,
-  and what state is restored after either side restarts.
-- Preserve one control authority. Package manifests own parameter schemas and
-  defaults; the dashboard validates and persists them; receivers consume a
-  compact typed representation. Unsupported global controls must be hidden or
-  reported as unsupported rather than silently ignored.
-- Generate previews during trusted packaging. Do not execute an uploaded target
-  binary in the dashboard process merely to obtain a thumbnail. Build native
-  sources against a host preview harness and decode frame assets with the same
-  fit, timing, orientation, and quantization rules used by the packer.
-- Bound decoder and module work. Validate every count, offset, run length, frame
-  duration, and output size before touching the frame buffer. Track render/decode
-  p95, p99, maximum, missed cadence, resets, and watchdog events on the actual
-  receiver geometry.
-- Make crash recovery deterministic. Record the active content digest before
-  execution, use reset reason plus that marker to quarantine a crashing module,
-  fall back visibly, and require an explicit operator action before retrying it.
-- State synchronization scope honestly. When shared clocks, scheduled starts,
-  or common v-sync are deferred, start receivers in a deterministic order and
-  measure skew and drift for diagnosis without claiming strict synchronization.
-
-For a multi-receiver physical canvas, keep coordinate domains independent and
-name each one in code, configuration, tests, and evidence:
-
-1. Transport route and logical receiver identity.
-2. Physical left-to-right receiver-lane permutation.
-3. Host-authored full-frame and sparse-foreground strip direction.
-4. Receiver-native procedural/global-coordinate strip direction.
-
-A cable swap can change the second domain without changing the first, and host
-content can require a different local transform from a firmware renderer. Never
-copy one mapping into another merely because one diagnostic looks correct.
-Exercise each mapping with an orthogonal visual: receiver/lane colors for lane
-permutation, one distinct color per physical strip for within-receiver host
-direction, boundary-crossing text or glyphs for sparse host slicing, and a
-native phase field with an obvious signed slope for firmware coordinates.
-Accept the composition only when every visual passes in the same final runtime
-configuration.
-
-Treat camera evidence as a versioned test result. Capture it after the final
-restart or deployment, retain a wall-only crop and digest, and label rejected
-frames as rejected rather than silently reusing them. If the camera moved,
-reacquire its wall geometry before using rectified or per-pixel measurements;
-do not extrapolate a stale homography. A direct photograph can still establish
-a coarse property such as a center seam when all relevant boundaries are
-clearly visible, but say exactly what it proves. Operator observation overrides
-an assistant's visual inference and reopens the gate.
-
-For receivers without a return path, host transfer counters prove only outbound
-traffic. Camera evidence may establish that a requested image was physically
-visible, but it does not prove receiver identity, acknowledgement, integrity,
-timing, or release acceptance. Preserve that distinction in status and handoff
-language.
-
-For compressed frame tracks, prefer a bounded forward decoder with periodic or
-initial keyframes and explicit frame durations. Measure package size per receiver,
-decoded working memory, flash-write frequency, and decode spikes; compression
-ratio alone is not an acceptance result.
+Use protected receiver status for connectivity, counter, and error evidence.
+Use the wall or its camera for physical presentation. If the camera moved,
+reacquire the wall geometry before using rectified or per-pixel measurements.
+Record which Scene and mapping the capture exercised.
 
 ## Protect the frame budget
 

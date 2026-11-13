@@ -84,12 +84,13 @@ jump eight cards in longer lists. Hold Left or Right for larger numeric steps.
 Browse keeps your place when you play a Look, starter, or preset. On the playing
 card, Y opens Tune. Menu closes the menu for a full view.
 
-The top tiles show which shoulder buttons are held. Open **Menu → Presets →
-Save** or **Load** for the numbered board. The D-pad moves across four columns
-and five rows. Filled tiles have a brighter background. Press A to save or
-load the selected slot, or B to go back. Saving immediately replaces that
-slot. Each slot stores the complete Scene, including widgets and plant effects.
-The board lives in `data/run_state/numbered_presets/` on the Pi.
+The top tiles show L1, L2, R1, and R2. Each held button lights up in the bank
+color. Open **Menu → Presets → Save** or **Load** for the 20-slot board.
+The D-pad moves across four columns and five rows. Filled tiles have a brighter
+background. Press A to save or load the selected slot, or B to go back. Saving
+immediately replaces the selected slot. Each slot stores the complete Scene,
+including widgets and plant effects. The Pi keeps them in
+`data/run_state/numbered_presets/`.
 
 Tune applies changes immediately. Y undoes the last edit or held adjustment.
 Press Y again to redo it. In the character picker, A inserts the focused
@@ -159,7 +160,7 @@ returns the current Tetris Scene to autoplay.
 To review the menu without the wall, run
 `.venv/bin/python scripts/simulate_wall_composer.py` and open
 `http://127.0.0.1:8765`. The simulator uses the checked-in plant coverage,
-production Scene renderer, and temporary Looks and playlists.
+production Scene renderer, and temporary Looks, playlists, and numbered slots.
 
 ## Firmware
 

@@ -46,8 +46,10 @@ carrier jumpers, and strip mapping.
 The root `presets/animations/` tree is a runtime/user-writable overlay. Curated
 presets belong to the plugin that owns them.
 
-Run `just test-composer-current` for the focused local Composer journey. See
-[current validation](docs/CURRENT_COMPOSER_VALIDATION.md).
+Run `just test-composer-current` for the browser and Nimbus Composer journey,
+or `just test-unit` for the maintained Python regression suite. See the
+[validation guide](docs/CURRENT_COMPOSER_VALIDATION.md) and
+[Nimbus controls](docs/DEPLOYMENT.md#nimbus-gamepad).
 
 ## Hardware deployment
 

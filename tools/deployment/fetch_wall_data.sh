@@ -20,7 +20,7 @@ mask_files=(plant_pixel_map_32x138.json plant_globe_map_32x138.json)
 
 mkdir -p "$local_config_dir" "$local_presets_dir"
 
-echo "[INFO] Checking painter data on $PI_HOST..."
+echo "[INFO] Checking calibration and animation presets on $PI_HOST..."
 ssh "${SSH_OPTS[@]}" "$PI_HOST" \
     "test -d $remote_presets_dir && test -f $remote_config_dir/${mask_files[0]} && test -f $remote_config_dir/${mask_files[1]}"
 

@@ -140,7 +140,7 @@ def poll_wall_composer(manager, gamepad, menu):
     tuning = (menu.is_open or tetris is None) and active
     browsing = not menu.is_open and not player
     track_bank = active and (menu.is_open or not player)
-    buttons = gamepad.poll(target, menu_buttons=True, navigating=menu.is_open,
+    buttons = gamepad.poll(target, navigating=menu.is_open,
                            tuning_sticks=tuning, browsing=browsing, track_bank=track_bank)
     menu.shoulder_bank = gamepad.shoulder_bank
     motions = []

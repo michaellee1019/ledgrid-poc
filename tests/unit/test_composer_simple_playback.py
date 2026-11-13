@@ -50,8 +50,19 @@ class SimplePlaybackTests(unittest.TestCase):
         self.assertEqual(response.get_json()['request_id'], 'request-1')
         self.assertEqual(self.channel.commands[0]['action'], 'start_scene')
         self.assertFalse(self.channel.status['is_running'])
-        for endpoint in ['/api/v1/scene/checks','/api/v1/scene/activations/old','/api/v1/receiver-native/recover','/api/v1/composer/maintenance','/api/v1/installation-profiles/old/draft']:
+        for endpoint in ('/api/v1/scene/checks', '/api/v1/scene/activations/old',
+                         '/api/v1/receiver-native/recover', '/api/v1/composer/maintenance',
+                         '/api/v1/installation-profiles/old/draft', '/api/v1/studio-next/take-scene'):
             self.assertEqual(self.client.post(endpoint, json={}).status_code, 404)
+
+    def test_retired_frame_painter_routes_cannot_enqueue_commands(self):
+        for path in ('/painter', '/api/painter/updates', '/api/painter/frame',
+                     '/api/painter/clear', '/api/painter/masks',
+                     '/api/painter/presets', '/api/painter/presets/example'):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 404)
+                self.assertEqual(self.client.post(path).status_code, 404)
+        self.assertEqual(self.channel.commands, [])
 
     def test_tetris_link_is_read_only_until_an_explicit_guarded_post(self):
         page = self.client.get('/play/tetris')

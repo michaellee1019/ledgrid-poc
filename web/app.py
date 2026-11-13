@@ -197,7 +197,6 @@ class AnimationWebInterface:
         self._bundled_composer_catalog_cache: Optional[List[Dict[str, Any]]] = None
         self._bundled_composer_catalog_checked = False
         self._controller_runtime_digests_cache: Optional[Dict[str, str]] = None
-        self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.foliage_mask_path = self.project_root / "config" / "plant_pixel_map_32x138.json"
         self.planter_mask_path = self.project_root / "config" / "plant_globe_map_32x138.json"
         self.generated_preview_dir = (
@@ -237,7 +236,6 @@ class AnimationWebInterface:
 
         self.animation_presets_dir.mkdir(parents=True, exist_ok=True)
         self.scene_presets_dir.mkdir(parents=True, exist_ok=True)
-        self.painter_presets_dir.mkdir(parents=True, exist_ok=True)
 
         # Register routes
         self._register_routes()
@@ -1565,115 +1563,6 @@ class AnimationWebInterface:
         def api_get_frame():
             """API: Get current animation frame data"""
             return jsonify(self._status_payload(decode_frame=True))
-
-        @self.app.route('/api/painter/updates', methods=['POST'])
-        def api_painter_apply_updates():
-            """API: Apply sparse frame painter pixel updates."""
-            payload = request.get_json(silent=True) or {}
-            updates = payload.get('updates')
-            if not isinstance(updates, list) or not updates:
-                return jsonify({'error': 'updates must be a non-empty list'}), 400
-
-            self.control_channel.send_command('painter_apply_updates', updates=updates)
-            return jsonify({'success': True, 'queued_updates': len(updates)})
-
-        @self.app.route('/api/painter/frame', methods=['POST'])
-        def api_painter_set_frame():
-            """API: Replace the entire frame painter frame."""
-            payload = request.get_json(silent=True) or {}
-            led_info = self._normalize_led_info(payload.get('led_info'))
-            normalized_frame = self._extract_normalized_frame(payload, led_info=led_info)
-            if normalized_frame is None:
-                return jsonify({'error': 'Provide frame_data or frame_data_encoded'}), 400
-
-            self.control_channel.send_command(
-                'painter_set_frame',
-                frame_data_encoded=encode_frame_data(normalized_frame),
-                frame_data_length=len(normalized_frame),
-            )
-            return jsonify({'success': True, 'frame_data_length': len(normalized_frame)})
-
-        @self.app.route('/api/painter/clear', methods=['POST'])
-        def api_painter_clear():
-            """API: Clear the frame painter output to black."""
-            self.control_channel.send_command('painter_clear')
-            return jsonify({'success': True})
-
-        @self.app.route('/api/painter/masks')
-        def api_painter_get_masks():
-            """API: Load the two editable semantic plant-mask layers."""
-            try:
-                return jsonify(self._load_painter_masks())
-            except ValueError as exc:
-                return jsonify({'error': str(exc)}), 500
-
-        @self.app.route('/api/painter/masks', methods=['POST'])
-        def api_painter_save_masks():
-            """API: Validate and atomically update the calibrated plant masks."""
-            payload = request.get_json(silent=True) or {}
-            try:
-                saved = self._save_painter_masks(payload)
-            except ValueError as exc:
-                return jsonify({'error': str(exc)}), 400
-            except OSError as exc:
-                return jsonify({'error': f'Failed to save masks: {exc}'}), 500
-            return jsonify({'success': True, **saved})
-
-        @self.app.route('/api/painter/presets')
-        def api_painter_list_presets():
-            """API: List available frame painter presets."""
-            return jsonify({'presets': self._list_painter_presets()})
-
-        @self.app.route('/api/painter/presets/<preset_id>')
-        def api_painter_get_preset(preset_id: str):
-            """API: Load a frame painter preset by id."""
-            preset = self._load_painter_preset(preset_id)
-            if not preset:
-                return jsonify({'error': 'Preset not found'}), 404
-            return jsonify(preset)
-
-        @self.app.route('/api/painter/presets', methods=['POST'])
-        def api_painter_save_preset():
-            """API: Save or overwrite a frame painter preset."""
-            payload = request.get_json(silent=True) or {}
-            raw_name = (payload.get('name') or '').strip()
-            if not raw_name:
-                return jsonify({'error': 'Preset name is required'}), 400
-
-            preset_id = self._sanitize_preset_id(raw_name)
-            if not preset_id:
-                return jsonify({'error': 'Preset name is invalid'}), 400
-
-            status = self._status_payload()
-            led_info = self._normalize_led_info(payload.get('led_info') or status.get('led_info'))
-            frame_data = self._extract_normalized_frame(payload, led_info=led_info)
-            if frame_data is None:
-                frame_data = self._extract_normalized_frame(status, led_info=led_info)
-            if frame_data is None:
-                frame_data = [[0, 0, 0] for _ in range(led_info['total_leds'])]
-
-            existing = self._load_painter_preset(preset_id)
-            now = time.time()
-            preset_payload = {
-                'preset_id': preset_id,
-                'name': raw_name,
-                'created_at': existing.get('created_at', now) if isinstance(existing, dict) else now,
-                'updated_at': now,
-                'led_info': led_info,
-                'frame_encoding': FRAME_ENCODING_NAME,
-                'frame_data_length': len(frame_data),
-                'frame_data_encoded': encode_frame_data(frame_data),
-            }
-            self._write_painter_preset(preset_id, preset_payload)
-
-            return jsonify({
-                'success': True,
-                'preset': self._preset_summary(preset_payload),
-            })
-
-
-
-
 
     @staticmethod
     def _canonical_vibe_state(requested: Any) -> Dict[str, Any]:

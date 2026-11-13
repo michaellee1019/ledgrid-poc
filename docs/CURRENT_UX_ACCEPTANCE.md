@@ -2,7 +2,8 @@
 
 The application serves one 33×138 plant wall. Keep the catalog, browser previews,
 Widgets, Looks, phone/desktop editing, playlists, manual takeover, brightness,
-power, pace, calibration and Home Assistant controls.
+power, pace, calibration, Home Assistant controls, and the
+[Nimbus wall Composer](DEPLOYMENT.md#nimbus-gamepad).
 
 All wall animations render on the host. Receiver-native-only entries and World
 Flags are removed. Existing saved references remain stored and report an

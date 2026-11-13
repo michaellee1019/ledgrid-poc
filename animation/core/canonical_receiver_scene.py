@@ -114,7 +114,3 @@ class CanonicalReceiverSceneMixin:
             if canonical.identity.digest != scene_digest or canonical.scene['animation']['component_id'] != component_id:
                 raise ValueError('Active Scene or animation component changed')
             return runtime.dispatch_animation_interaction(canonical, kind, x, y, strength)
-
-    def poll_tetris_gamepad(self, gamepad) -> None:
-        """Drain local input on the controller thread, after scene transitions."""
-        self.dispatch_tetris_input(gamepad.poll(self.tetris_input_target()))

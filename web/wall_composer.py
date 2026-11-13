@@ -208,7 +208,7 @@ class WallComposer:
     """Translate buttons into ordered local controller actions."""
 
     def __init__(self, manager, coordinator, runner, command, root, state_dir, presets_dir,
-                 *, playlist_scene=None, clock=time.monotonic):
+                 *, clock=time.monotonic):
         self.manager = manager
         self.owner = coordinator
         self.runner = runner
@@ -221,8 +221,7 @@ class WallComposer:
         self.playlists = ComposerPlaylistStore(Path(state_dir) / "composer_playlists.json")
         self.numbered_presets = NumberedPresetStore(Path(state_dir) / "numbered_presets", self.catalog)
         self._preset_index = 0
-        self.playlist_scene = playlist_scene or self._playlist_scene
-        self._legacy_playlist_adapter = None
+        self._browser_playlist_adapter = None
         self.clock = clock
         self.pages = []
         self.picker = None
@@ -1204,9 +1203,9 @@ class WallComposer:
             # validate provider, preset and runtime identities.
             from web.app import AnimationWebInterface
 
-            if self._legacy_playlist_adapter is None:
-                self._legacy_playlist_adapter = AnimationWebInterface(None, self.manager, project_root=self.root)
-            return self._legacy_playlist_adapter._validated_browser_activation_scene(scene)[1]
+            if self._browser_playlist_adapter is None:
+                self._browser_playlist_adapter = AnimationWebInterface(None, self.manager, project_root=self.root)
+            return self._browser_playlist_adapter._validated_browser_activation_scene(scene)[1]
         return scene
 
     def _playlist_command(self, action, **fields):
@@ -1221,7 +1220,7 @@ class WallComposer:
 
     def _start_playlist(self, playlist_id):
         definition = self.playlists.get(playlist_id)
-        entries = [{**entry, "scene": self.playlist_scene(entry["scene"])}
+        entries = [{**entry, "scene": self._playlist_scene(entry["scene"])}
                    for entry in definition["entries"]]
         self._playlist_command("start", run_id=str(uuid.uuid4()), playlist_id=playlist_id,
                                playlist_name=definition["name"], entries=entries,

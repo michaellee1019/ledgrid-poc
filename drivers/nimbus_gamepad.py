@@ -17,10 +17,9 @@ FAST_REPEAT_SECONDS = 0.75
 
 # The unnumbered GC-00004 input report has pressure bytes for the D-pad
 # and face buttons, followed by a Menu bit in byte 12.
-PRESSURE_ACTIONS = ("rotate-left", "right", "down", "left", "rotate-right", "drop", "release")
-MENU_BUTTONS = ("up", "right", "down", "left", "a", "b", "y")
+PRESSURE_BUTTONS = ("up", "right", "down", "left", "a", "b", "y")
 MENU_REPEAT = frozenset({"up", "right", "down", "left"})
-REPEAT_ACTIONS = frozenset({"left", "right", "down"})
+GAME_REPEAT = MENU_REPEAT - {"up"}
 logger = logging.getLogger(__name__)
 
 STICK_CENTER = 20
@@ -135,7 +134,7 @@ class NimbusGamepad:
         self._clear_repeats()
         self._reset_sticks()
 
-    def poll(self, target: object | None, *, menu_buttons=False, navigating=False,
+    def poll(self, target: object | None, *, navigating=False,
              tuning_sticks=False, browsing=False, track_bank=False) -> tuple[str | StickBank | StickMotion, ...]:
         """Read a bounded batch, keeping held inputs within their current mode."""
         now = self._clock()
@@ -182,17 +181,15 @@ class NimbusGamepad:
                 motions.clear()
             # The Nimbus reports LX, LY, RX, RY with right and up positive.
             self._stick_values = struct.unpack_from("4b", report, 13)
-            menu = "menu" if menu_buttons else "toggle-player"
-            buttons = MENU_BUTTONS if menu_buttons else PRESSURE_ACTIONS
-            held = (menu,) if report[12] & 1 else ()
-            held += tuple(action for pressure, action in zip(report, buttons) if pressure)
+            held = ("menu",) if report[12] & 1 else ()
+            held += tuple(button for pressure, button in zip(report, PRESSURE_BUTTONS) if pressure)
             if target is not None and not self._discard_pending:
-                if menu_buttons and menu in held and menu not in self._held:
+                if "menu" in held and "menu" not in self._held:
                     # Menu owns its report. Leave later reports in the device
                     # queue so the controller can read them in the new mode.
                     self._held = held
-                    return (*actions, menu)
-                repeat = MENU_REPEAT if navigating else () if browsing else REPEAT_ACTIONS
+                    return (*actions, "menu")
+                repeat = MENU_REPEAT if navigating else () if browsing else GAME_REPEAT
                 self._record_edges(held, actions, now, repeat)
                 if tuning_sticks:
                     for axis, value in zip(self._axes, self._stick_values):

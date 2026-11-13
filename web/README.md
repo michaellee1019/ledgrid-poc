@@ -1,93 +1,39 @@
-# Composer Web Layer
+# Composer web layer
 
-Purpose: Flask serves Composer, the sole browser product, and its bounded REST
-surface. There are no alternate browser control surfaces.
+Flask serves the Composer shell at `/` and `/composer`. The browser renders
+previews while connected and submits validated Scene edits as they happen.
+Opening the shell loads the current editing context. It does not start playback.
+The wall controller owns physical rendering and playback. A request, controller
+playback, and receiver connectivity are separate observations.
 
-Key files:
-- app.py: Flask app setup and route registration
-- templates/: HTML templates for the UI
+`web/app.py` registers the HTTP routes. `web/templates/composer.html` serves the
+shell and `web/static/js/composer_slice.js` handles editing. Run
+`just browser-composer-assets` to build the generated catalog, Python preview
+runtime, fixed wall calibration asset, and gallery thumbnails. The service worker
+endpoints retire caches from older installed clients.
 
-Notes:
-- Requests are forwarded to the controller via ipc/control_channel.py.
-- Keep UI-specific logic here; avoid embedding animation logic in routes.
-- Rebuild the checked-in browser runtime assets with
-  `just browser-composer-assets`. This generates a versioned static bootstrap,
-  an immutable content-addressed installation profile, the Python runtime
-  archive, native Wasm previews, and the offline manifest. Composer loads that
-  bundled catalog before probing for a wall server, so rendering, parameter and
-  timeline editing, local Check, autosave, import, and export need no controller
-  or running animation. The first Python preview on a device downloads the
-  pinned Pyodide runtime; “Prepare for offline use” recaches and verifies every
-  exact runtime resource observed by the worker. Rendering, Clock compositing,
-  and checking stay inside Web Workers. Receiver-native C++ previews cover both
-  the managed Aurora pilot and feature-gated firmware builtin
-  `compiled_rainbow`; each is built from its authoritative C++ source and can
-  be composed with the Python Clock overlay entirely in the browser.
-- Reaching a wall server refreshes only its advertised capabilities. Composer
-  does not read current wall settings or the managed mask draft until the
-  operator explicitly chooses the corresponding Wall action. Shared-library
-  save, wall settings, server qualification, activation, observation,
-  cancellation, and rollback remain server-gated and exact-digest-bound.
+## Current endpoints
 
-Browser entry points:
+| Path | Purpose |
+| --- | --- |
+| `GET /api/composer/status`, `GET /api/composer/recovery` | Read playback/editing status and recover the current Scene. |
+| `POST /api/composer/preview`, `POST /api/composer/check` | Preview the Scene and run advisory diagnostics. |
+| `POST /api/composer/scene`, `POST /api/composer/stop` | Submit a Scene and request output stop. |
+| `/api/composer/looks`, `/api/composer/library`, `/api/composer/playlists` | Manage saved Looks, library state, and playlists. |
+| `GET /api/v1/composer/bootstrap`, `GET /api/v1/components` | Read catalog and browser runtime capabilities. |
+| `PUT /api/v1/scene`, `DELETE /api/v1/scene` | Queue a host Scene start or stop and return a correlated request. |
+| `GET /api/v1/composer/operations/status`, `GET /api/v1/composer/operations/telemetry` | Observe controller playback, receiver connectivity, and diagnostics. |
+| `GET /api/v1/composer/settings/observed` | Read revision-qualified output settings. |
+| `POST /api/config/power`, `POST /api/config/brightness`, `POST /api/config/animation-speed` | Set output power, master brightness, or wall speed. Turning on resumes the selected Scene. |
+| `/play/tetris`, `POST /api/v1/tetris/play` | Show the Play page and request a player round with a connected Nimbus. |
 
-- `GET /` — redirects to the canonical Composer URL
-- `GET /composer` — installable browser-Wasm preset composer; opening it is
-  private and non-mutating
-- `GET /static/generated/composer/bootstrap.v1.json` — generated offline-first
-  provider-qualified renderer catalog, geometry, and bundled profile identity
-- `GET /api/v1/composer/bootstrap?catalog_only=1` — optional read-only server
-  capability and component-identity refresh without observing live wall state
-- `GET /api/v1/composer/bootstrap` — full server bootstrap that may include the
-  selected managed profile for an explicit server workflow
-- `GET /api/v1/composer/connectivity` — uncached server reachability probe
-- `POST /api/v1/composer/presets/validate` — read-only component or composed-scene
-  JSON validation
-- `POST /api/v1/composer/presets` — save a provider-qualified component preset
-  without changing live playback
-- `GET /composer-service-worker.js` — root-scoped offline shell worker
-- `GET /api/v1/components` — unified descriptor catalog, filterable by provider
-  and role
-
-- `GET /api/v1/scene` — read the fixed scene draft/state contract
-- `POST /api/v1/scene/checks` — issue one short-lived, exact development/canary
-  activation Check; disabled by default
-- `POST|PUT /api/v1/scene` — submit the exact checked activation and receive a
-  pending resource; raw tokens never enter IPC
-- `GET|DELETE /api/v1/scene/activations/<activation_id>` — read correlated
-  status or request cancellation
-- `POST /api/v1/scene/activations/<activation_id>/rollback` — request a
-  correlated exact-snapshot rollback when advertised
-- `POST /api/v1/scene/validate` — validate without changing live output
-- `PATCH /api/v1/scene/components/<target>` — rejected with 428 by default;
-  Composer live edit may submit `live_edit: true` with an exact expected active
-  component to stream validated parameter updates without replacing the scene
-- `GET|POST /api/v1/scene-presets` — list or save scene-only presets
-- `GET|DELETE /api/v1/scene-presets/<preset_id>` — inspect or delete a scene preset
-- `POST /api/v1/scene-presets/<preset_id>/apply` — rejected with 428; load the
-  draft and use Composer Check
-- `POST /api/stop` — request a stop; returned and observed status remains the
-  authority for output state
-- `GET /api/v1/composer/settings/observed` — bounded revision-qualified
-  settings observation for Composer reconciliation
-- `GET /api/v1/composer/operations/status` — bounded operational health
-- `GET /api/v1/composer/operations/telemetry` — deployment, receiver-diagnostic,
-  and qualification telemetry
-- `POST /api/config/brightness` — set the receiver-wide 0–255 output brightness
-- `POST /api/config/power` - accept exactly boolean `power` plus the optional
-  guard fields below. Power off stops output while retaining the selected Scene;
-  power on resumes that Scene without selecting a default animation.
-
-Home Assistant and other automation callers may add all three guard fields to
-power, brightness, and animation-speed requests:
+Home Assistant can guard power, brightness, and animation-speed mutations with
 `expected_controller_session_id`, `expected_controller_state_revision`, and
-`expires_at` (Unix seconds). The controller checks the guard immediately before
-mutation. Poll `GET /api/v1/composer/settings/observed` until the session still
-matches, `controller_state_revision` is newer, `last_applied_command_id` equals
-the POST response `command_id`, and the requested value matches. Treat a null
-`last_applied_command_id` as an older controller without guarded-control
-support. On startup or reconnect, poll and adopt observed state without sending
-a restore request.
+`expires_at` (Unix seconds). The controller checks the guard before mutation.
+To verify an applied change, poll observed settings for the same session, a
+newer revision, the matching `last_applied_command_id`, and the requested
+value. Read observed settings after reconnect before accepting new input.
 
-- `POST /api/config/target-fps`, `/api/config/animation-speed`, and
-  `/api/config/plant-modifiers` — bounded Composer wall-setting updates
+See the [Composer product contract](../docs/CURRENT_UX_ACCEPTANCE.md),
+[validation](../docs/CURRENT_COMPOSER_VALIDATION.md), and
+[Nimbus controls](../docs/DEPLOYMENT.md#nimbus-gamepad).
