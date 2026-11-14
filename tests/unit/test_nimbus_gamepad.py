@@ -182,6 +182,36 @@ def test_nimbus_play_pause_resume_keeps_round_and_routes_fresh_reports(controlle
     assert manager._canonical_receiver_runtime is not runtime
 
 
+def test_elemental_chord_triggers_on_press_only_and_leaves_browsing_intact(controller, wall_composer):
+    reader, reports, clock = controller
+    manager, menu = wall_composer
+    scene = get_starter("aurora")["scene"]
+    scene["animation"].update(component_id="fluid_tank", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    fluid = runtime._runtime._animation.instance
+
+    def poll(*batch):
+        reports.extend(batch)
+        poll_wall_composer(manager, reader, menu)
+
+    poll(report())
+    poll(report(8, 9, axes=(100, 100, 0, 0)))
+    assert menu.aiming and menu.card().marker[1] == 69
+    poll(report(8, 9, 4))
+    assert fluid.cadence_snapshot()["manual_pulses"] == 1
+    for frame in range(1, 25):
+        runtime.render(ScenePresentationContext(manager._canonical_receiver_scene, frame / 20,
+                                                datetime.now().astimezone()))
+        clock[0] += 1 / 20
+        poll(report(8, 9, 4))
+    assert fluid.cadence_snapshot()["manual_pulses"] == 1
+    poll(report())
+    assert not menu.aiming and not menu.is_open
+    poll(report(0))
+    assert manager.current_animation_name != "fluid_tank"
+
+
 def test_reports_queued_for_another_scene_are_discarded(controller):
     reader, reports, clock = controller
     first, second = object(), object()

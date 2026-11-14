@@ -111,6 +111,33 @@ class FlameFluidSceneV2Tests(unittest.TestCase):
             self.assertEqual(left.cadence_snapshot(), right.cadence_snapshot())
             self.assertEqual(left._last_render_key, right._last_render_key)
 
+    def test_flame_cadence_bounds_and_manual_only(self) -> None:
+        for rate in (0, .12, 4):
+            with self.subTest(rate=rate):
+                flame = FlameBurstAnimation(self.controller, {"ignition_cadence": rate})
+                flame.generate_frame(0, 0)
+                self.assertTrue(flame.handle_interaction("primary", 8, 60))
+                self.assertFalse(flame.handle_interaction("primary", 8, 60))
+                flame.generate_frame(1 / flame.SIM_HZ, 1)
+                self.assertEqual(flame.cadence_snapshot()["manual_ignitions"], 1)
+                self.assertEqual(flame.cadence_snapshot()["active_ignitions"], 1 if rate == 0 else 2)
+                for tick in range(2, 300):
+                    flame.generate_frame(tick / flame.SIM_HZ, tick)
+                    self.assertLessEqual(flame.cadence_snapshot()["active_ignitions"], flame.MAX_IGNITIONS)
+                if rate == 0:
+                    self.assertEqual(flame.cadence_snapshot()["active_ignitions"], 0)
+
+    def test_fluid_can_hold_natural_flow_and_keep_manual_splash(self) -> None:
+        fluid = FluidTankAnimation(self.controller, {"flow_rate": 0, "surface_energy": 0})
+        before = fluid.generate_frame(0, 0).pixels.copy()
+        for tick in range(1, 21):
+            fluid.generate_frame(tick / fluid.SIM_HZ, tick)
+        np.testing.assert_array_equal(fluid.generate_frame(1, 21).pixels, before)
+        self.assertTrue(fluid.handle_interaction("primary", 18, 12))
+        self.assertFalse(fluid.handle_interaction("primary", 18, 90))
+        self.assertFalse(np.array_equal(fluid.generate_frame(1, 22).pixels, before))
+        self.assertEqual(fluid.cadence_snapshot()["manual_pulses"], 1)
+
     def test_local_remix_keeps_hidden_seed_and_selected_only_contract(self) -> None:
         catalog = ComponentPresetCatalog(ROOT, current_component_catalog())
         scene = _current_scene(); scene["animation"] = {"component_id": "flame_burst", "version": 1, "provider": "python", "role": "animation", "parameters": {**FlameBurstAnimation.DEFAULTS, "seed": 999}}

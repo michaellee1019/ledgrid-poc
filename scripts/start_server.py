@@ -14,7 +14,7 @@ from animation.core.installation_profile_topology import INSTALLED_INSTALLATION_
 from ipc.control_channel import FileControlChannel
 from ipc.controller_frame_snapshot import ControllerFrameSnapshot
 from ipc.playlist_runtime import PlaylistRunner, normalize_playlist_command
-from ipc.scene_contract import is_scene_pace_edit
+from ipc.scene_contract import is_live_scene_edit
 from ipc.runtime_control import (ControllerCommandConflictError, controller_activation_coordinator,
     start_scene as _start_scene, normalize_managed_scene, update_scene_component as _update_scene_component,
     restore_display_state as _restore_display_state, normalize_automation_device_state)
@@ -44,7 +44,7 @@ def apply_global_settings(manager, settings):
         manager.set_vibe(settings['vibe'])
 
 def apply_scene_command(manager, data):
-    """Apply a complete Scene, preserving phase for edits to pace alone."""
+    """Apply a complete Scene or tune its declared live controls in place."""
     settings = data.get('global_settings') or {}
     requested = normalize_managed_scene(manager, data.get('scene'))
     apply_global_settings(manager, settings)
@@ -52,7 +52,7 @@ def apply_scene_command(manager, data):
         manager._requested_scene = requested
         return manager.stop_animation()
     if (manager.is_running and requested.get('schema') == 'ledgrid.scene.v2'
-            and is_scene_pace_edit(manager.get_scene_state(), requested)):
+            and is_live_scene_edit(manager.get_scene_state(), requested, manager.scene_v2_component_catalog())):
         return manager.tune_canonical_scene(requested)
     return _start_scene(manager, requested)
 

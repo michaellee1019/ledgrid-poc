@@ -442,6 +442,23 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         refracted._step(.01)
         self.assertGreaterEqual(refracted.get_runtime_stats()["interactions_applied"], 1)
 
+    def test_zero_stir_strength_discards_queued_events_without_mutating_wax(self):
+        config = {"seed": 55}
+        active = LavaLampAnimation(self.controller, config)
+        control = LavaLampAnimation(self.controller, config)
+        active.generate_frame(0, 0)
+        control.generate_frame(0, 0)
+        self.assertTrue(active.handle_interaction("primary", 16, 69))
+        active.update_parameters({"interaction_strength": 0})
+        control.update_parameters({"interaction_strength": 0})
+        self.assertFalse(active.handle_interaction("primary", 16, 69))
+        active.generate_frame(0, 1)
+        control.generate_frame(0, 1)
+        active.update_parameters({"interaction_strength": 1})
+        control.update_parameters({"interaction_strength": 1})
+        np.testing.assert_array_equal(active.generate_frame(.1, 1).pixels, control.generate_frame(.1, 1).pixels)
+        self.assertEqual(active.get_runtime_stats()["interactions_applied"], 0)
+
     def test_composer_canvas_uses_only_bounded_primary_interaction_for_live_instruments(self) -> None:
         descriptor = current_component_catalog().require(provider="python", component_id="lava_lamp", version=1)
         controls = descriptor.controls()

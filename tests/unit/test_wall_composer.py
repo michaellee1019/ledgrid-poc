@@ -716,6 +716,45 @@ def test_flame_aim_uses_logical_wall_coordinates_and_rejects_stale_basis(instrum
     assert manager._canonical_receiver_runtime._runtime._animation.instance._pending_ignition is None
 
 
+@pytest.mark.parametrize(("component_id", "field", "value", "target_y"), [
+    ("flame_burst", "flare_size", .8, 77),
+    ("fluid_tank", "flow_rate", 4, 69),
+    ("lava_lamp", "interaction_strength", 2, 77),
+])
+def test_elemental_aim_matches_direct_gesture_and_tunes_in_place(instrument, component_id, field, value, target_y):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["animation"].update(component_id=component_id, parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    canonical = manager._canonical_receiver_scene
+    fixed_time = datetime.fromisoformat("2026-11-13T19:00:00-05:00")
+    reference = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    initial = ScenePresentationContext(canonical, 0, fixed_time)
+    reference.render(initial)
+    runtime.render(initial)
+
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, StickMotion(0, 2, 3), StickMotion(1, 2, 3))
+    assert menu.card().marker == (18, target_y)
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert reference.dispatch_animation_interaction(canonical, "primary", 18, target_y)
+    frame = ScenePresentationContext(canonical, .1, fixed_time)
+    np.testing.assert_array_equal(runtime.render(frame).pixels, reference.render(frame).pixels)
+    assert manager.nimbus_game() == (None, None)
+
+    revision = owner.state_revision
+    instance = runtime._runtime._animation.instance
+    scene = manager.get_scene_state()
+    scene["animation"]["parameters"][field] = value
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    assert manager._canonical_receiver_runtime is runtime
+    assert runtime._runtime._animation.instance is instance
+    assert instance.params[field] == value and owner.state_revision == revision + 1
+
+
 def test_invalid_catalog_parameter_cannot_change_active_runtime(instrument):
     manager, owner, _runner, _gamepad, menu = instrument
     assert handle_command(manager, "start_scene", {"scene": starter()})

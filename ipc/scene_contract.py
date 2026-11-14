@@ -86,14 +86,32 @@ def normalize_composer_scene(request: Mapping[str, Any], catalog: ComponentCatal
     )
 
 
-def is_scene_pace_edit(previous: Mapping[str, Any] | None, candidate: Mapping[str, Any]) -> bool:
-    """Identify a pace-only edit that can keep the current renderer and phase."""
-    if previous is None or previous.get("schema") != SCENE_V2_SCHEMA or candidate.get("schema") != SCENE_V2_SCHEMA:
+def is_live_scene_edit(
+    previous: Mapping[str, Any] | None, candidate: Mapping[str, Any], catalog: ComponentCatalog,
+) -> bool:
+    """Recognize a pace or live component patch against the current renderer."""
+    if (previous is None or previous.get("schema") != SCENE_V2_SCHEMA
+            or candidate.get("schema") != SCENE_V2_SCHEMA or previous == candidate):
         return False
-    before, after = previous["look"], candidate["look"]
-    return before["pace"] != after["pace"] and candidate == {
-        **previous, "look": {**before, "pace": after["pace"]},
-    }
+    before = previous["animation"]
+    after = candidate["animation"]
+    parameters = before["parameters"]
+    updated = after["parameters"]
+    if candidate != {
+        **previous,
+        "look": {**previous["look"], "pace": candidate["look"]["pace"]},
+        "animation": {**before, "parameters": updated},
+    }:
+        return False
+    if parameters == updated:
+        return True
+    if parameters.keys() != updated.keys():
+        return False
+    descriptor = catalog.require(
+        provider=after["provider"], component_id=after["component_id"], version=after["version"],
+    )
+    changes = {name for name in parameters if parameters[name] != updated[name]}
+    return changes <= descriptor.live_parameters
 
 
 def _normalize_scene(scene: Mapping[str, Any], catalog: ComponentCatalog) -> dict[str, Any]:

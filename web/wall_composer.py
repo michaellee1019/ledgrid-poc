@@ -353,7 +353,8 @@ class WallComposer:
             self.feedback = None
         if self._aim is not None:
             _, binding, x, y = self._aim
-            return MenuCard("Aim", binding.label, f"{x}/{y}", hint=f"{binding.button.upper()} FIRE",
+            coordinates = f"{x}/{y}" if "y" in binding.position_axes else str(x)
+            return MenuCard("Aim", binding.label, coordinates, hint=f"{binding.button.upper()} APPLY",
                             marker=(x, y))
         if not self.is_open:
             if self.manager.output_brightness > 0:
@@ -612,9 +613,9 @@ class WallComposer:
     def aim_sticks(self, motions):
         basis, binding, x, y = self._aim
         for motion in motions:
-            if motion.axis == 0:
+            if motion.axis == 0 and "x" in binding.position_axes:
                 x = max(0, min(WIDTH - 1, x + motion.steps))
-            elif motion.axis == 1:
+            elif motion.axis == 1 and "y" in binding.position_axes:
                 y = max(0, min(HEIGHT - 1, y + 4 * motion.steps))
         self._aim = (basis, binding, x, y)
 

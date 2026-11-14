@@ -83,18 +83,22 @@ class ComponentAction:
     release: bool = False
     repeat: bool = False
     position: bool = False
+    position_axes: tuple[str, ...] = ("x", "y")
     chord: int | None = None
 
     def __post_init__(self) -> None:
-        if not self.label or (self.chord is not None and (
+        if not self.label or not self.position_axes or set(self.position_axes) - {"x", "y"}:
+            raise ValueError("Invalid component action declaration")
+        if self.chord is not None and (
             not self.position or self.button is None or not 1 <= self.chord < 16
-        )):
+        ):
             raise ValueError("Invalid component action declaration")
 
     def public(self) -> dict[str, Any]:
         return {
             "label": self.label, "button": self.button, "release": self.release,
             "repeat": self.repeat, "position": self.position, "chord": self.chord,
+            "position_axes": list(self.position_axes) if self.position else [],
         }
 
 
@@ -291,10 +295,14 @@ def component_definition(
         controls[name] = definition
     point_bindings = getattr(implementation, "NIMBUS_POINT_BINDINGS", {})
     point_labels = getattr(implementation, "POINT_ACTION_LABELS", {})
+    point_axes = getattr(implementation, "POINT_ACTION_AXES", {})
     actions = {}
     for name in sorted(implementation.INTERACTION_TYPES):
         button, chord = point_bindings.get(name, (None, None))
-        actions[name] = ComponentAction(point_labels.get(name, name.capitalize()), button, position=True, chord=chord)
+        actions[name] = ComponentAction(
+            point_labels.get(name, name.capitalize()), button, position=True,
+            position_axes=point_axes.get(name, ("x", "y")), chord=chord,
+        )
     player_buttons = getattr(implementation, "PLAYER_BUTTONS", {})
     for button, (label, repeat, *release) in player_buttons.items():
         actions[button] = ComponentAction(label, button, repeat=repeat, release=any(release))

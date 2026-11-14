@@ -56,7 +56,8 @@ class LavaLampAnimation(AnimationBase):
         'interaction_strength': {'preserve_on_preset': True},
         'blob_count': {'ui_max': 12},
     }
-    POINT_ACTION_LABELS = {'primary': 'Stir lava'}
+    POINT_ACTION_LABELS = {"primary": "Stir lava"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
 
     ANIMATION_NAME = "Lava Lamp"
     ANIMATION_DESCRIPTION = "Thermal wax blobs rise, merge, cool, and flow around the living wall"
@@ -84,6 +85,7 @@ class LavaLampAnimation(AnimationBase):
         "heat": .72, "turbulence": .24, "glow": .58, "seed": 1977,
         "interaction_radius": 8.0, "interaction_strength": 1.0,
     })
+    LIVE_TUNABLE_PARAMETERS = frozenset(DEFAULTS) - {"seed"}
     COMPONENT_DESCRIPTOR = ComponentDescriptor(
         component_id=COMPONENT_ID, version=COMPONENT_VERSION, provider=PROVIDER,
         role=ROLE, timing_policy=TIMING_POLICY, alpha_behavior="opaque",
@@ -235,15 +237,18 @@ class LavaLampAnimation(AnimationBase):
                      "description": "Repeatable initial blob arrangement."},
             "interaction_radius": {"type": "float", "min": 2.0, "max": 16.0, "default": 8.0,
                                    "description": "Click-to-stir influence radius."},
-            "interaction_strength": {"type": "float", "min": 0.1, "max": 2.0, "default": 1.0,
-                                     "description": "Vortex and heat impulse multiplier."},
+            "interaction_strength": {"type": "float", "min": 0.0, "max": 2.0, "default": 1.0,
+                                     "description": "Vortex and heat impulse multiplier. Zero disables stirring."},
         }
 
     def update_parameters(self, new_params: Mapping[str, Any]):
         candidate = self._normalized_parameters({**self.params, **dict(new_params)})
         old_seed = int(self.params["seed"])
         old_count = int(self.params["blob_count"])
-        self.params = candidate
+        with self._interaction_lock:
+            self.params = candidate
+            if candidate["interaction_strength"] == 0:
+                self._interactions.clear()
         if int(self.params.get("seed", 1977)) != old_seed:
             self.rng = np.random.default_rng(int(self.params["seed"]))
             self._reset_simulation()
@@ -292,6 +297,8 @@ class LavaLampAnimation(AnimationBase):
         if kind != "primary":
             return False
         with self._interaction_lock:
+            if self.params["interaction_strength"] == 0:
+                return False
             self._interactions.append((float(x), float(y), float(strength)))
         return True
 
@@ -464,6 +471,9 @@ class LavaLampAnimation(AnimationBase):
         with self._interaction_lock:
             events = list(self._interactions)
             self._interactions.clear()
+        effective_strength = float(self.params["interaction_strength"])
+        if effective_strength == 0:
+            return
         for click_x, click_y, input_strength in events:
             indices = np.flatnonzero(self.active)
             if not indices.size:
@@ -476,7 +486,7 @@ class LavaLampAnimation(AnimationBase):
             if not np.any(weights > 0.0):
                 nearest = int(np.argmin(distances))
                 weights[nearest] = 0.25
-            strength = float(self.params.get("interaction_strength", 1.0)) * input_strength
+            strength = effective_strength * input_strength
             inverse = 1.0 / np.maximum(distances, 0.75)
             self.vx[indices] += (-dy * inverse) * weights * 9.0 * strength
             self.vy[indices] += (dx * inverse) * weights * 9.0 * strength
@@ -838,7 +848,7 @@ class LavaLampAnimation(AnimationBase):
             raise ValueError("blob_count must be an integer from 3 to 12")
         if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 999999:
             raise ValueError("seed must be an integer from 0 to 999999")
-        for name, low, high in (("blob_scale", .6, 1.8), ("viscosity", 0., 1.), ("heat", 0., 1.), ("turbulence", 0., 1.), ("glow", 0., 1.), ("interaction_radius", 2., 16.), ("interaction_strength", .1, 2.)):
+        for name, low, high in (("blob_scale", .6, 1.8), ("viscosity", 0., 1.), ("heat", 0., 1.), ("turbulence", 0., 1.), ("glow", 0., 1.), ("interaction_radius", 2., 16.), ("interaction_strength", 0., 2.)):
             value = result[name]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not low <= float(value) <= high:
                 raise ValueError(f"{name} must be a finite number from {low} to {high}")

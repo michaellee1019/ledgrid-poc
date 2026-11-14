@@ -26,7 +26,7 @@ from animation.core.scene_runtime import (
     CanonicalSceneRuntime, CanonicalSceneRuntimeError, RuntimeFrame, ScenePresentationContext,
 )
 from animation.core.composer_catalog import current_component_catalog
-from ipc.scene_contract import CanonicalScene, is_scene_pace_edit
+from ipc.scene_contract import CanonicalScene, is_live_scene_edit
 
 
 @dataclass
@@ -221,7 +221,9 @@ class ComposerFinalPreview(InstalledFinalSceneRuntime):
     ) -> RuntimeFrame:
         with self._lock:
             previous = self._runtime.active_scene
-            if continuous and is_scene_pace_edit(previous.scene if previous else None, canonical.scene):
+            if continuous and is_live_scene_edit(
+                previous.scene if previous else None, canonical.scene, self._runtime.catalog,
+            ):
                 self.update_canonical_scene(canonical, elapsed)
             return super().render(ScenePresentationContext(canonical, elapsed, wall_time))
 

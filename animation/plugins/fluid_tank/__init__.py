@@ -14,7 +14,10 @@ from animation.core.presentation_contracts import ResolvedScene
 
 class FluidTankAnimation(AnimationBase):
     PREFERRED_PARAMETERS = ('flow_rate', 'current', 'bubble_lift', 'surface_energy')
-    POINT_ACTION_LABELS = {'primary': 'Splash tank'}
+    POINT_ACTION_LABELS = {"primary": "Splash tank"}
+    POINT_ACTION_AXES = {"primary": ("x",)}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    LIVE_TUNABLE_PARAMETERS = frozenset({"flow_rate", "current", "bubble_lift", "surface_energy"})
 
     ANIMATION_NAME = "Fluid Tank"; ANIMATION_DESCRIPTION = "A compact water-flow instrument with bubbles and energetic surface ripples"
     ANIMATION_AUTHOR = "LED Grid Team"; ANIMATION_VERSION = "2.0"
@@ -34,7 +37,7 @@ class FluidTankAnimation(AnimationBase):
     def component_descriptor(cls)->ComponentDescriptor:return cls.COMPONENT_DESCRIPTOR
     @classmethod
     def get_parameter_schema(cls)->dict[str,dict[str,Any]]:
-        return {"flow_rate":{"type":"float","min":.1,"max":2.,"default":.72,"description":"Fill and pour cadence"},"current":{"type":"float","min":0.,"max":1.,"default":.35,"description":"Sideways flow across the tank"},"bubble_lift":{"type":"float","min":0.,"max":1.,"default":.42,"description":"Column of rising bubbles"},"surface_energy":{"type":"float","min":0.,"max":1.,"default":.38,"description":"Ripple and foam response"},"seed":{"type":"int","min":0,"max":999999,"default":6211,"description":"Repeatable water rhythm"}}
+        return {"flow_rate":{"type":"float","min":0.,"max":4.,"default":.72,"description":"Natural fill and pour cadence. Zero holds the flow while splashes remain active."},"current":{"type":"float","min":0.,"max":1.,"default":.35,"description":"Sideways flow across the tank"},"bubble_lift":{"type":"float","min":0.,"max":1.,"default":.42,"description":"Column of rising bubbles"},"surface_energy":{"type":"float","min":0.,"max":1.,"default":.38,"description":"Ripple and foam response"},"seed":{"type":"int","min":0,"max":999999,"default":6211,"description":"Repeatable water rhythm"}}
     def update_parameters(self,new_params:Mapping[str,Any])->None:
         candidate=self._normalized_parameters({**self.params,**dict(new_params)}); reset=candidate["seed"]!=self.params["seed"]; self.params=candidate
         if reset:self._reset()
@@ -86,7 +89,7 @@ class FluidTankAnimation(AnimationBase):
         if unknown:raise ValueError(f"Fluid Tank does not accept non-local parameters: {sorted(unknown)!r}")
         result=dict(cls.DEFAULTS);result.update(values)
         if isinstance(result["seed"],bool) or not isinstance(result["seed"],int) or not 0<=result["seed"]<=999999:raise ValueError("seed must be an integer from 0 to 999999")
-        for name,low,high in (("flow_rate",.1,2.),("current",0.,1.),("bubble_lift",0.,1.),("surface_energy",0.,1.)):
+        for name,low,high in (("flow_rate",0.,4.),("current",0.,1.),("bubble_lift",0.,1.),("surface_energy",0.,1.)):
             value=result[name]
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(float(value)) or not low<=float(value)<=high:raise ValueError(f"{name} must be a finite number from {low} to {high}")
             result[name]=float(value)

@@ -21,6 +21,7 @@ class FlameBurstAnimation(AnimationBase):
     }
     POINT_ACTION_LABELS = {'primary': 'Ignite flare'}
     NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}  # Hold L1 + R1 to aim.
+    LIVE_TUNABLE_PARAMETERS = frozenset({"flare_size", "ignition_cadence", "ember_linger", "flicker"})
 
     ANIMATION_NAME = "Flame Burst"; ANIMATION_DESCRIPTION = "A tactile ignition instrument with warm expanding flame shells"
     ANIMATION_AUTHOR = "LED Grid Team"; ANIMATION_VERSION = "2.0"
@@ -44,7 +45,7 @@ class FlameBurstAnimation(AnimationBase):
     def component_descriptor(cls) -> ComponentDescriptor: return cls.COMPONENT_DESCRIPTOR
     @classmethod
     def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
-        return {"ignition_cadence":{"type":"float","min":.12,"max":4.,"default":.9,"description":"How often the instrument lights a new burst"}, "flare_size":{"type":"float","min":.12,"max":.9,"default":.42,"description":"Reach of each expanding flame shell"}, "ember_linger":{"type":"float","min":.08,"max":1.,"default":.45,"description":"How long the warm ember trail remains"}, "flicker":{"type":"float","min":0.,"max":1.,"default":.35,"description":"Texture and shimmer in the shell"}, "seed":{"type":"int","min":0,"max":999999,"default":6201,"description":"Repeatable ignition sequence"}}
+        return {"ignition_cadence":{"type":"float","min":0.,"max":4.,"default":.9,"description":"Automatic flares per second. Zero uses manual ignition only."}, "flare_size":{"type":"float","min":.12,"max":.9,"default":.42,"description":"Reach of each expanding flame shell"}, "ember_linger":{"type":"float","min":.08,"max":1.,"default":.45,"description":"How long the warm ember trail remains"}, "flicker":{"type":"float","min":0.,"max":1.,"default":.35,"description":"Texture and shimmer in the shell"}, "seed":{"type":"int","min":0,"max":999999,"default":6201,"description":"Repeatable ignition sequence"}}
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
         candidate = self._normalized_parameters({**self.params, **dict(new_params)}); changed_seed = candidate["seed"] != self.params["seed"]; self.params = candidate
         if changed_seed: self._reset()
@@ -92,8 +93,12 @@ class FlameBurstAnimation(AnimationBase):
             ignition, self._pending_ignition = self._pending_ignition, None
         if ignition is not None:
             self._ignite(*ignition); self._manual_events += 1
-        self._cadence_phase+=self.params["ignition_cadence"]/self.SIM_HZ
-        if self._cadence_phase>=1.: self._cadence_phase-=1.; self._ignite()
+        cadence = self.params["ignition_cadence"]
+        if cadence > 0:
+            self._cadence_phase += cadence / self.SIM_HZ
+            if self._cadence_phase >= 1.:
+                self._cadence_phase -= 1.
+                self._ignite()
         life=.32+self.params["ember_linger"]*1.5; self._ignitions=[(x,y,age+1./self.SIM_HZ,e) for x,y,age,e in self._ignitions if age+1./self.SIM_HZ<life]
     def _paint(self,palette_id:str)->None:
         low,hot,white=self.SEMANTIC_PALETTES.get(palette_id,self.SEMANTIC_PALETTES["neutral"]); canvas=self._pixels.reshape(self.width,self.height,4); canvas.fill(0); field=np.zeros((self.width,self.height),dtype=np.float32); life=.32+self.params["ember_linger"]*1.5
@@ -111,7 +116,7 @@ class FlameBurstAnimation(AnimationBase):
         if unknown: raise ValueError(f"Flame Burst does not accept non-local parameters: {sorted(unknown)!r}")
         result=dict(cls.DEFAULTS); result.update(values)
         if isinstance(result["seed"],bool) or not isinstance(result["seed"],int) or not 0<=result["seed"]<=999999: raise ValueError("seed must be an integer from 0 to 999999")
-        for name,low,high in (("ignition_cadence",.12,4.),("flare_size",.12,.9),("ember_linger",.08,1.),("flicker",0.,1.)):
+        for name,low,high in (("ignition_cadence",0.,4.),("flare_size",.12,.9),("ember_linger",.08,1.),("flicker",0.,1.)):
             value=result[name]
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(float(value)) or not low<=float(value)<=high: raise ValueError(f"{name} must be a finite number from {low} to {high}")
             result[name]=float(value)
