@@ -314,8 +314,19 @@ class WallComposer:
         self.pages.append(Page(title, rows if callable(rows) else lambda: rows))
 
     def _root(self):
-        return [Row("Browse", select=self._browse), Row("Tune", select=self._tune),
+        rows = [Row("Browse", select=self._browse), Row("Tune", select=self._tune),
                 Row("Playback", select=self._playback), Row("Presets", select=self._numbered_presets)]
+        if self.manager.nimbus_game()[0] is not None:
+            rows.append(Row("Controls", select=self._game_controls))
+        return rows
+
+    def _game_controls(self):
+        game, _state = self.manager.nimbus_game()
+        if game is None:
+            return
+        rows = [Row(action.label, button.upper(), hint="UP/DOWN")
+                for button, action in game.input_capability().actions.items() if not action.position]
+        self._push("Controls", rows)
 
     def _numbered_presets(self):
         self._push("Presets", [Row("Save", select=partial(self._preset_picker, True)),

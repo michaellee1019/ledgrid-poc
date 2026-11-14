@@ -38,6 +38,7 @@ class PinballAnimation(AnimationBase):
     PARAMETER_CONTROLS = {
         'table_tick_hz': {'label': 'table speed'},
         'chaos': {'autoplay_only': True},
+        'render_fps': {'label': 'source FPS cap'},
     }
     PLAYER_BUTTONS = {
         'left': ('Nudge left', True),
@@ -766,8 +767,11 @@ class PinballAnimation(AnimationBase):
             self._pixel(canvas, int(burst.x), int(burst.y) + spark, color, True)
             self._pixel(canvas, int(burst.x), int(burst.y) - spark, color, True)
 
-        # Flippers alternate rapidly with layered neon edges.
-        flip = 1 if self._primary_flipper_flash > 0.0 else int(phase * 9.0) % 2
+        # During manual play the flippers show the same input window used by physics.
+        if self._player_control:
+            flip = int(self._flip_window > 0.0 or self._primary_flipper_flash > 0.0)
+        else:
+            flip = 1 if self._primary_flipper_flash > 0.0 else int(phase * 9.0) % 2
         fy = self.height - 16
         center = self.width // 2
         self._line(canvas, 4, fy + flip + 1, center - 2, fy - 2 + flip, self.MAGENTA)

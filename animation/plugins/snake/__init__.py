@@ -289,10 +289,12 @@ class SnakeAnimation(AnimationBase):
             self._player_turns.clear()
 
     def handle_player_button(self, button: str) -> None:
-        if button in PLAYER_DIRECTIONS and len(self._player_turns) < self._player_turns.maxlen:
-            direction = PLAYER_DIRECTIONS[button]
-            if not self._player_turns or direction != self._player_turns[-1]:
-                self._player_turns.append(direction)
+        if button not in PLAYER_DIRECTIONS or not self.snakes or len(self._player_turns) == self._player_turns.maxlen:
+            return
+        direction = PLAYER_DIRECTIONS[button]
+        previous = self._player_turns[-1] if self._player_turns else self.snakes[0].direction
+        if direction not in (previous, OPPOSITE[previous]):
+            self._player_turns.append(direction)
 
     def _player_direction(self, snake: SnakeAgent) -> Direction:
         while self._player_turns:

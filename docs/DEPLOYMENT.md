@@ -203,6 +203,12 @@ In Fireworks, aim the launch column and press A to send one shell. Set Launch
 cadence to zero for a manual show. Tune's Burst style and shell settings apply
 to the next launch.
 
+With a game selected, open Menu and choose Controls to see its Nimbus buttons.
+Close the menu and press A to resume the same round. Tetris lists Y to release
+the inner pieces. Pixel Quest shows attack readiness and whether 5 MP is
+available for B Magic. Canopy Cup uses held left or right to steer, A to jump,
+and B for a charged glide in the air.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu

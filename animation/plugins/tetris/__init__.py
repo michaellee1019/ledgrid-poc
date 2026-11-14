@@ -218,7 +218,7 @@ class TetrisAnimation(AnimationBase):
         'down': ('Soft drop', True),
         'a': ('Rotate right', False),
         'b': ('Drop', False),
-        'y': ('Release', False),
+        'y': ('Release inner pieces', False),
     }
 
 

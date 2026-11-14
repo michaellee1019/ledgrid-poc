@@ -1517,6 +1517,10 @@ def test_player_clock_pauses_across_hud_and_resumes_without_catchup(instrument, 
     pixels = frame(50)
     np.testing.assert_array_equal(pixels, image)
     assert getattr(instance, stat) == before
+    focus(menu, "Controls")
+    menu.press("a")
+    assert menu.card().section == "Controls"
+    assert menu.card().value in {key.upper() for key in runtime.input_capability().actions}
     inputs(manager, gamepad, menu, "menu")
     assert not menu.is_open and menu.card().hint == "A RESUME"
     np.testing.assert_array_equal(frame(100), pixels)
@@ -1621,6 +1625,31 @@ def test_tetris_hud_tuning_keeps_the_paused_board(instrument):
     assert game._effective_drop_speed() > before
     inputs(manager, gamepad, menu, "menu")
     assert manager.nimbus_game() == (runtime, "paused")
+
+
+def test_tetris_controls_disclose_inner_release_and_no_input_bleed(instrument):
+    manager, _owner, _runner, gamepad, menu = instrument
+    assert handle_command(manager, "start_scene", {"scene": starter("human_avalanche_factory")})
+    inputs(manager, gamepad, menu, "a")
+    runtime, _ = manager.nimbus_game()
+    game = runtime._runtime._animation.instance
+    canonical = manager._canonical_receiver_scene
+    runtime.render(ScenePresentationContext(canonical, 0))
+    inputs(manager, gamepad, menu, "menu")
+    focus(menu, "Controls")
+    menu.press("a")
+    focus(menu, "Release inner pieces")
+    assert menu.card().value == "Y"
+    inputs(manager, gamepad, menu, "y")
+    before = len(game.active_pieces)
+    inputs(manager, gamepad, menu, "menu")
+    assert menu.card().hint == "A RESUME"
+    inputs(manager, gamepad, menu, "a")
+    runtime.render(ScenePresentationContext(canonical, .1))
+    assert len(game.active_pieces) == before
+    inputs(manager, gamepad, menu, "y")
+    runtime.render(ScenePresentationContext(canonical, .2))
+    assert len(game.active_pieces) > before
 
 
 def test_paused_canopy_cup_repaints_for_a_palette_edit(instrument):

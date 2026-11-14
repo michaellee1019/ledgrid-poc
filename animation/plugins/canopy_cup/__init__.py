@@ -123,7 +123,7 @@ class CanopyCupAnimation(AnimationBase):
         'left': ('Steer left', True, True),
         'right': ('Steer right', True, True),
         'a': ('Jump', False),
-        'b': ('Power-up', False),
+        'b': ('Charged glide', False),
     }
 
 

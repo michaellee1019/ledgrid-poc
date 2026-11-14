@@ -126,7 +126,7 @@ class MazeChaseAnimation(AnimationBase):
         'show_ai_targets': {'label': 'AI targets'},
     }
     PLAYER_BUTTONS = {
-        'up': ('Turn up', False),
+        'up': ('Turn up', True),
         'down': ('Turn down', True),
         'left': ('Turn left', True),
         'right': ('Turn right', True),
@@ -630,8 +630,10 @@ class MazeChaseAnimation(AnimationBase):
         if manual:
             if actor.progress == 0.0 and self._requested_turn in self._available(actor.cell):
                 actor.direction = self._requested_turn
+                self._requested_turn = None
             elif actor.progress > 0.0 and self._requested_turn == OPPOSITE[actor.direction]:
                 self._reverse_actor(actor)
+                self._requested_turn = None
             if self._neighbor(actor.cell, actor.direction) not in self.walkable:
                 return
         actor.progress += cells_per_second * dt
@@ -643,6 +645,7 @@ class MazeChaseAnimation(AnimationBase):
             if manual:
                 if self._requested_turn in self._available(actor.cell):
                     actor.direction = self._requested_turn
+                    self._requested_turn = None
                 if self._neighbor(actor.cell, actor.direction) not in self.walkable:
                     actor.progress = 0.0
                     return
@@ -853,6 +856,13 @@ class MazeChaseAnimation(AnimationBase):
 
         if self.game_state == "ready" and self.width >= 20:
             self._centered_text("READY!", self.height // 2 - 2, self.HERO)
+            if self._player_control and self._requested_turn is not None:
+                dy, dx = self._requested_turn
+                x, y = self.width // 2, self.height // 2 + 7
+                for step in range(4):
+                    self._pixel(x + dx * step, y + dy * step, self.WHITE)
+                self._pixel(x + 2 * dx + dy, y + 2 * dy + dx, self.WHITE)
+                self._pixel(x + 2 * dx - dy, y + 2 * dy - dx, self.WHITE)
         elif self.game_state == "game_over" and self.width >= 28:
             self._centered_text("GAME OVER", self.height // 2 - 2, self.RED)
         elif self.game_state == "level_clear" and int(self.sim_time * 10) % 2 == 0:

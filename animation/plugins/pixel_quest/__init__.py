@@ -56,7 +56,7 @@ class PixelQuestAnimation(AnimationBase):
     }
     PLAYER_BUTTONS = {
         'a': ('Attack', False),
-        'b': ('Magic', False),
+        'b': ('Magic 5 MP', False),
     }
 
 
@@ -186,7 +186,8 @@ class PixelQuestAnimation(AnimationBase):
 
     def handle_player_button(self, button: str) -> None:
         if self.mode in ("combat", "boss") and button in ("a", "b"):
-            self._player_attack = button
+            if self._player_attack is None and (button == "a" or self.hero_mp >= 5):
+                self._player_attack = button
 
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
         candidate = self._normalized_parameters({**self.params, **dict(new_params)})
@@ -782,6 +783,10 @@ class PixelQuestAnimation(AnimationBase):
         self._bar(3, top + 1, bar_width, self.hero_hp, self.hero_max_hp, self.HEALTH)
         self._pixel(1, top + 3, self.MANA)
         self._bar(3, top + 3, bar_width, self.hero_mp, self.hero_max_mp, self.MANA)
+        if self._player_control and self.mode in ("combat", "boss"):
+            ready = self.hero_attack_timer <= 0.0
+            self._pixel(self.width - 2, top + 5, self.BLADE if ready or self._player_attack == "a" else (18, 20, 32))
+            self._pixel(self.width - 4, top + 5, self.MAGIC if self.hero_mp >= 5 else (18, 20, 32))
         self._pixel(1, top + 5, self.GOLD)
         self._bar(3, top + 5, bar_width, self.hero_xp, self.hero_xp_next, self.GOLD)
         for index in range(min(8, self.hero_level)):
