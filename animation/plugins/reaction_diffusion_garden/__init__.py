@@ -148,6 +148,14 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 class ReactionDiffusionGardenAnimation(CadencedSculpture):
     PREFERRED_PARAMETERS = ('growth_rate', 'edge_glow', 'motion', 'density', 'color_by_age')
     POINT_ACTION_LABELS = {'primary': 'Seed chemistry'}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    PARAMETER_CONTROLS = {
+        "motion": {"ui_max": 1.0},
+        "growth_rate": {"ui_max": 1.4},
+        "perturbation_interval": {"label": "Auto reseed interval", "step": 1, "unit": "s"},
+    }
+    LIVE_TUNABLE_PARAMETERS = frozenset({"motion", "growth_rate", "background_level",
+                                         "edge_glow", "color_by_age", "perturbation_interval"})
 
     ANIMATION_NAME="Reaction-Diffusion Garden"; ANIMATION_DESCRIPTION="Luminous chemistry grows coral, spots, and fingerprints"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="reaction_diffusion_garden"; SOURCE_FPS=20.; REGIMES={"coral":(.0545,.062),"spots":(.035,.065),"fingerprints":(.037,.060)}
@@ -214,12 +222,12 @@ class ReactionDiffusionGardenAnimation(CadencedSculpture):
         self._primary_interactions_applied+=1
     @classmethod
     def get_parameter_schema(cls):
-        s=super().get_parameter_schema();s.update({"morphology":{"type":"str","options":list(cls.REGIMES),"default":"coral","description":"Reaction-front character"},"growth_rate":{"type":"float","min":.25,"max":2.,"default":1.,"description":"Chemistry growth rate"},"seeding_mode":{"type":"str","options":["scattered","column","center"],"default":"scattered","description":"Initial reaction seed"},"edge_glow":{"type":"float","min":0.,"max":1.5,"default":.65,"description":"Luminous front edge"},"color_by_age":{"type":"float","min":0.,"max":1.,"default":.6,"description":"Pattern-history coloring"},"perturbation_interval":{"type":"float","min":8.,"max":120.,"default":24.,"description":"Bounded reseed interval"}});return s
+        s=super().get_parameter_schema();s.update({"morphology":{"type":"str","options":list(cls.REGIMES),"default":"coral","description":"Reaction-front character"},"growth_rate":{"type":"float","min":.25,"max":2.,"default":1.,"description":"Chemistry growth rate"},"seeding_mode":{"type":"str","options":["scattered","column","center"],"default":"scattered","description":"Initial reaction seed"},"edge_glow":{"type":"float","min":0.,"max":1.5,"default":.65,"description":"Luminous front edge"},"color_by_age":{"type":"float","min":0.,"max":1.,"default":.6,"description":"Pattern-history coloring"},"perturbation_interval":{"type":"float","min":0.,"max":120.,"default":24.,"description": "Seconds between reseeds. Zero keeps manual seeding only."}});return s
     @classmethod
     def _validate_local_parameters(cls,v):
         super()._validate_local_parameters(v)
         if v["morphology"] not in cls.REGIMES or v["seeding_mode"] not in {"scattered","column","center"}:raise ValueError("morphology or seeding_mode is invalid")
-        for key,lo,hi in (("growth_rate",.25,2.),("edge_glow",0.,1.5),("color_by_age",0.,1.),("perturbation_interval",8.,120.)):
+        for key,lo,hi in (("growth_rate",.25,2.),("edge_glow",0.,1.5),("color_by_age",0.,1.),("perturbation_interval",0.,120.)):
             if not lo<=float(v[key])<=hi:raise ValueError(f"{key} is out of range")
     @staticmethod
     def _lap(a):return -a+.2*(np.roll(a,1,0)+np.roll(a,-1,0)+np.roll(a,1,1)+np.roll(a,-1,1))+.05*(np.roll(np.roll(a,1,0),1,1)+np.roll(np.roll(a,1,0),-1,1)+np.roll(np.roll(a,-1,0),1,1)+np.roll(np.roll(a,-1,0),-1,1))
@@ -230,7 +238,8 @@ class ReactionDiffusionGardenAnimation(CadencedSculpture):
         uvv=self.u*self.v*self.v;rate=.45*self.params["growth_rate"]*(.4+self.params["motion"]);next_u=np.clip(self.u+(self._lap(self.u)-uvv+feed*(1-self.u))*rate,0,1);next_v=np.clip(self.v+(.5*self._lap(self.v)+uvv-(feed+k)*self.v)*rate,0,1)
         if self._geometry_strength:next_u[self._geometry_cores]=self.u[self._geometry_cores];next_v[self._geometry_cores]=self.v[self._geometry_cores]
         self.u,self.v=next_u,next_v;self.age+=self.v>.18
-        if tick and tick%max(8,int(self.params["perturbation_interval"]*self.SOURCE_FPS))==0:
+        interval = self.params["perturbation_interval"]
+        if interval > 0 and tick and tick % max(8, int(interval * self.SOURCE_FPS)) == 0:
             x=self.rng.integers(1,self._shape[0]-1,4);y=self.rng.integers(2,self._shape[1]-2,4);self.v[x,y]=.9
         self._consume_primary_perturbation()
     def generate_frame(self,time_elapsed,frame_count):

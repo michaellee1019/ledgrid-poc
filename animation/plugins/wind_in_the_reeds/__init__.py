@@ -158,6 +158,7 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 class WindInTheReedsAnimation(CadencedSculpture):
     PREFERRED_PARAMETERS = ('wind', 'gustiness', 'stem_density', 'motes', 'silhouette_strength')
     POINT_ACTION_LABELS = {'primary': 'Bend reeds'}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
 
     ANIMATION_NAME="Wind in the Reeds"; ANIMATION_DESCRIPTION="A tactile field of reeds bends beneath travelling gust fronts"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="wind_in_the_reeds"; SOURCE_FPS=24.
@@ -166,6 +167,7 @@ class WindInTheReedsAnimation(CadencedSculpture):
     PLANT_MODIFIER_SUPPORT=frozenset(("habitat",))
     INSTALLATION_GEOMETRY_CONTACT=True
     COMPONENT_DEFAULTS={"motion":.5,"density":.58,"background_level":.18,"seed":6101,"wind":.65,"gustiness":.55,"stem_density":1.,"season":"late_summer","motes":.45,"silhouette_strength":.5}
+    LIVE_TUNABLE_PARAMETERS = frozenset(COMPONENT_DEFAULTS) - {"seed", "stem_density", "density"}
     def __init__(self,controller,config=None):
         super().__init__(controller,config)
         self._interaction_lock=Lock();self._pending_primary_bend=None
@@ -253,4 +255,4 @@ class WindInTheReedsAnimation(CadencedSculpture):
     def logical_state(self):return round(self.gust_phase,6),self.bend.tobytes()
     def get_runtime_stats(self):
         with self._interaction_lock:pending=self._pending_primary_bend is not None
-        return {"primary_interactions_received":self._primary_interactions_received,"primary_interactions_applied":self._primary_interactions_applied,"primary_interactions_rejected":self._primary_interactions_rejected,"primary_interaction_pending":pending}
+        return {"stem_count": len(self.base_x), "primary_interactions_received":self._primary_interactions_received,"primary_interactions_applied":self._primary_interactions_applied,"primary_interactions_rejected":self._primary_interactions_rejected,"primary_interaction_pending":pending}

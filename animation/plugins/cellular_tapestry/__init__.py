@@ -13,6 +13,8 @@ class CellularTapestryAnimation(CadencedSculpture):
         'row_interval': {'unit': 's'},
     }
     POINT_ACTION_LABELS = {'primary': 'Inject column'}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    POINT_ACTION_AXES = {"primary": ("x",)}
 
     ANIMATION_NAME="Cellular Tapestry"
     ANIMATION_DESCRIPTION="Each new automaton row pushes a woven historical record down the wall"
@@ -22,6 +24,7 @@ class CellularTapestryAnimation(CadencedSculpture):
     INTERACTION_TYPES = frozenset(("primary",))
     COMPONENT_DEFAULTS = {"motion": .48, "density": .54, "background_level": .16, "seed": 2801,
                           "rule": 90, "mutation": .01, "wrap": True, "row_interval": .55}
+    LIVE_TUNABLE_PARAMETERS = frozenset(COMPONENT_DEFAULTS) - {"seed"}
 
     def __init__(self,controller,config=None):
         super().__init__(controller,config)
@@ -41,7 +44,7 @@ class CellularTapestryAnimation(CadencedSculpture):
     def get_parameter_schema(cls):
         s=super().get_parameter_schema();s.update({
             "rule":{"type":"int","min":0,"max":255,"default":90,"description":"Elementary cellular automaton rule"},
-            "mutation":{"type":"float","min":0,"max":0.15,"default":0.01,"description":"Rare deterministic bit mutation rate"},
+            "mutation":{"type":"float","min":0,"max":0.15,"default":0.01,"description":"New-row bit flip chance multiplied by Density."},
             "wrap":{"type":"bool","default":True,"description":"Join automaton boundary columns"},
             "row_interval":{"type":"float","min":0.1,"max":1,"default":0.55,"description":"Seconds between born rows"},
         });return s

@@ -755,6 +755,52 @@ def test_elemental_aim_matches_direct_gesture_and_tunes_in_place(instrument, com
     assert instance.params[field] == value and owner.state_revision == revision + 1
 
 
+@pytest.mark.parametrize(("component_id", "target_y"), [
+    ("cellular_tapestry", 69), ("frostwork", 77), ("reaction_diffusion_garden", 77),
+    ("wind_in_the_reeds", 77), ("conway_life", 77), ("cyclic_reef", 77),
+])
+def test_growing_pattern_aim_reaches_existing_runtime(instrument, component_id, target_y):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["animation"].update(component_id=component_id, parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    canonical = manager._canonical_receiver_scene
+    fixed_time = datetime.fromisoformat("2026-11-13T19:00:00-05:00")
+    initial = ScenePresentationContext(canonical, 0, fixed_time)
+    runtime.render(initial)
+    direct = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    direct.render(initial)
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, StickMotion(0, 2, 3), StickMotion(1, 2, 3))
+    assert menu.card().marker == (18, target_y)
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert direct.dispatch_animation_interaction(canonical, "primary", 18, target_y)
+    for step in range(1, 20):
+        frame = ScenePresentationContext(canonical, step / 20, fixed_time)
+        np.testing.assert_array_equal(runtime.render(frame).pixels, direct.render(frame).pixels)
+    assert manager._canonical_receiver_runtime is runtime
+    assert manager.get_scene_state() == canonical.scene
+
+
+def test_reaction_diffusion_manual_reseed_and_initial_density(instrument):
+    manager, _owner, _runner, _gamepad, menu = instrument
+    scene = starter()
+    scene["animation"].update(component_id="reaction_diffusion_garden", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    interval = next(row for row in menu._animation_rows() if row.name == "Auto reseed interval")
+    interval.adjust(-1, steps=24)
+    assert manager.get_scene_state()["animation"]["parameters"]["perturbation_interval"] == 0
+    assert manager._canonical_receiver_runtime is runtime
+    scene = manager.get_scene_state()
+    scene["animation"]["parameters"]["density"] = 1.5
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    assert manager._canonical_receiver_runtime is not runtime
+
+
 def test_invalid_catalog_parameter_cannot_change_active_runtime(instrument):
     manager, owner, _runner, _gamepad, menu = instrument
     assert handle_command(manager, "start_scene", {"scene": starter()})

@@ -61,6 +61,22 @@ class ConwayLifeAnimationTests(unittest.TestCase):
         self.assertEqual(animation.semantic_snapshot()["generation"], 1)
         self.assertSetEqual(self._live(animation), {(2, 3), (3, 3), (4, 3)})
 
+    def test_aim_edits_frozen_grid_and_later_rate_increase_keeps_phase(self) -> None:
+        life = ConwayLifeAnimation(self.controller, {"initial_density": 0, "generations_per_second": 0})
+        life.generate_frame(30, 0)
+        self.assertTrue(life.handle_interaction("primary", 3, 2))
+        self.assertFalse(life.handle_interaction("primary", 3, 2))
+        changed = life.generate_frame(30, 1)
+        self.assertTrue(changed.changed)
+        self.assertSetEqual(self._live(life), {(3, 2)})
+        self.assertFalse(life.generate_frame(60, 2).changed)
+        life.update_parameters({"generations_per_second": 20})
+        life.generate_frame(60, 3)
+        self.assertEqual(life.semantic_snapshot()["generation"], 0)
+        life.generate_frame(60.05, 4)
+        self.assertEqual(life.semantic_snapshot()["generation"], 1)
+        self.assertEqual(life.params["seed_cells"], ())
+
     def test_palette_context_is_presentation_only_and_preserves_semantics(self) -> None:
         animation = ConwayLifeAnimation(self.controller, {"seed": 811, "initial_density": 0.2})
         parameters = dict(animation.params)

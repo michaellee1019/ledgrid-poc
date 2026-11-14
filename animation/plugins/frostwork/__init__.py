@@ -12,6 +12,7 @@ SEMANTIC_PALETTE_ROLES = ("background_low", "primary", "accent")
 class FrostworkAnimation(CadencedSculpture):
     PREFERRED_PARAMETERS = ('melt_cycle', 'temperature', 'density', 'motion', 'background_level')
     POINT_ACTION_LABELS = {'primary': 'Plant crystal'}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
 
     ANIMATION_NAME = "Frostwork"
     ANIMATION_DESCRIPTION = "Branching ice advances from a cold border, sparkles at its tips, and melts"
@@ -21,6 +22,7 @@ class FrostworkAnimation(CadencedSculpture):
     INTERACTION_TYPES = frozenset(("primary",))
     COMPONENT_DEFAULTS = {"motion": .46, "density": .48, "background_level": .14, "seed": 1401,
                           "temperature": .35, "melt_cycle": .55}
+    LIVE_TUNABLE_PARAMETERS = frozenset(COMPONENT_DEFAULTS) - {"seed"}
 
     def __init__(self, controller, config=None):
         super().__init__(controller, config)

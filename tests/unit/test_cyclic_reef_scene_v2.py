@@ -104,12 +104,26 @@ class CyclicReefSceneV2Tests(unittest.TestCase):
         self.assertEqual(self.interface.composer_control.commands, before_commands)
         self.assertEqual(self.client.post("/api/composer/preview", json=preview_request).get_json()["basis"], preview.get_json()["basis"])
 
+    def test_seeded_patch_clips_to_corner_and_does_not_change_authored_seed(self):
+        reef = CyclicReefAnimation(PreviewLEDController(33, 138))
+        reef.generate_frame(0, 0)
+        initial = reef.state.copy()
+        expected = (int(initial[0, 0]) + 1) % reef.params["species_count"]
+        self.assertTrue(reef.handle_interaction("primary", 0, 0))
+        self.assertFalse(reef.handle_interaction("primary", 32, 137))
+        self.assertTrue(reef.generate_frame(0, 1).changed)
+        self.assertTrue((reef.state[:2, :2] == expected).all())
+        self.assertTrue((reef.state[2:, :] == initial[2:, :]).all())
+        self.assertTrue((reef.state[:2, 2:] == initial[:2, 2:]).all())
+        self.assertFalse(reef.generate_frame(0, 2).changed)
+        self.assertEqual(reef.params["seed"], reef.DEFAULTS["seed"])
+
     def test_composer_card_keeps_reef_controls_local(self) -> None:
         descriptor = current_component_catalog().require(provider="python", component_id="cyclic_reef", version=1)
         controls = descriptor.controls()
         self.assertTrue({'takeover_threshold', 'grazers', 'topology', 'mutation', 'species_count'} <= set(controls))
         self.assertEqual(set(controls), set(descriptor.default_parameters()))
-        self.assertEqual(controls["mutation"]["step"], .001)
+        self.assertEqual(controls["mutation"]["step"], .0005)
 
 if __name__ == "__main__":
     unittest.main()

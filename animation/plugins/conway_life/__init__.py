@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import re
+from threading import Lock
 from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
@@ -63,6 +64,10 @@ class ConwayLifeAnimation(AnimationBase):
     # the legacy direct plant-modifier bridge.
     PLANT_MODIFIER_SUPPORT = frozenset()
     MAX_CATCH_UP_GENERATIONS = 8
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Toggle life cell"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    LIVE_TUNABLE_PARAMETERS = frozenset({"generations_per_second"})
 
     DEFAULTS = MappingProxyType({
         "seed": 1971,
@@ -98,7 +103,12 @@ class ConwayLifeAnimation(AnimationBase):
         self._last_render_key: tuple[Any, ...] | None = None
         self._revision = 0
         self._generation = 0
+        self._edit_revision = 0
         self._last_generation_tick: int | None = None
+        self._last_phase_time: float | None = None
+        self._generation_phase = 0.0
+        self._interaction_lock = Lock()
+        self._pending_cell: tuple[int, int] | None = None
         self._presentation_context: ResolvedScene | None = None
         self._active_seed = int(self.params["seed"])
         self._active_rule = str(self.params["rule"])
@@ -119,7 +129,7 @@ class ConwayLifeAnimation(AnimationBase):
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 1971, "description": "Deterministic initial-world seed"},
             "rule": {"type": "str", "options": ["B3/S23", "B36/S23"], "default": "B3/S23", "description": "Life birth/survival rule"},
             "initial_density": {"type": "float", "min": 0.0, "max": 0.4, "default": 0.14, "description": "Seeded live-cell density"},
-            "generations_per_second": {"type": "float", "min": 0.5, "max": 20.0, "default": 5.0, "description": "Local scaled-time generation cadence"},
+            "generations_per_second": {"type": "float", "min": 0.0, "max": 20.0, "default": 5.0, "description": "Local generations per second. Zero pauses evolution while cells stay editable."},
             "seed_cells": {"type": "cells", "default": [], "max_items": 4554, "strip_min": 0, "strip_max": 32, "led_min": 0, "led_max": 137, "description": "Optional deterministic [strip, led] live cells"},
         }
 
@@ -141,6 +151,16 @@ class ConwayLifeAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        if (kind != "primary" or not 0.0 <= x < self.width
+                or not 0.0 <= y < self.height or not 0 < strength <= 1):
+            return False
+        with self._interaction_lock:
+            if self._pending_cell is not None:
+                return False
+            self._pending_cell = (int(x), int(y))
+        return True
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> OverlayFrame:
         del frame_count
         if self._presentation_context is None:
@@ -149,15 +169,24 @@ class ConwayLifeAnimation(AnimationBase):
             context = self._presentation_context
             phase_time, palette_id, parameters = context.phase_time, self._palette_id(context), context.parameters
         self._apply_parameters(self._normalized_parameters(parameters))
-        tick = int(max(0.0, float(phase_time)) * float(self.params["generations_per_second"]) + 1.0e-7)
-        if self._last_generation_tick is None:
-            self._last_generation_tick = tick
+        rate = self.params["generations_per_second"]
+        if self._last_phase_time is None or phase_time < self._last_phase_time:
+            self._generation_phase = max(0.0, phase_time) * rate
+            self._last_generation_tick = int(self._generation_phase + 1e-7)
         else:
-            target = min(tick, self._last_generation_tick + self.MAX_CATCH_UP_GENERATIONS)
-            while self._last_generation_tick < target:
-                self._step()
-                self._last_generation_tick += 1
-        key = (self._generation, palette_id, self._active_seed, self._active_rule)
+            self._generation_phase += (phase_time - self._last_phase_time) * rate
+        self._last_phase_time = phase_time
+        tick = int(self._generation_phase + 1e-7)
+        for _ in range(min(tick - self._last_generation_tick, self.MAX_CATCH_UP_GENERATIONS)):
+            self._step()
+        self._last_generation_tick = tick
+        with self._interaction_lock:
+            cell, self._pending_cell = self._pending_cell, None
+        if cell is not None:
+            self._grid[cell] = not self._grid[cell]
+            self._age[cell] = int(self._grid[cell])
+            self._edit_revision += 1
+        key = (self._generation, self._edit_revision, palette_id, self._active_seed, self._active_rule)
         if key == self._last_render_key:
             return OverlayFrame(self._last_pixels, revision=self._revision, changed=False)
 
@@ -211,6 +240,11 @@ class ConwayLifeAnimation(AnimationBase):
             self._age[self._grid] = 1
         self._generation = 0
         self._last_generation_tick = None
+        self._last_phase_time = None
+        self._generation_phase = 0.0
+        self._edit_revision = 0
+        with self._interaction_lock:
+            self._pending_cell = None
         self._last_render_key = None
 
     def _step(self) -> None:
@@ -254,7 +288,7 @@ class ConwayLifeAnimation(AnimationBase):
         if not isinstance(rule, str) or _RULE.fullmatch(rule) is None:
             raise ValueError("rule must use B.../S... digits from 0 to 8")
         result["rule"] = rule
-        for name, minimum, maximum in (("initial_density", 0.0, 0.4), ("generations_per_second", 0.5, 20.0)):
+        for name, minimum, maximum in (("initial_density", 0.0, 0.4), ("generations_per_second", 0.0, 20.0)):
             value = result[name]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not minimum <= float(value) <= maximum:
                 raise ValueError(f"{name} must be a number from {minimum} to {maximum}")

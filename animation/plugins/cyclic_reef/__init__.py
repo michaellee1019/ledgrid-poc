@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from threading import Lock
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -21,7 +22,7 @@ class CyclicReefAnimation(AnimationBase):
     """
     PREFERRED_PARAMETERS = ('species_count', 'takeover_threshold', 'mutation', 'grazers', 'boundary_glow')
     PARAMETER_CONTROLS = {
-        'mutation': {'step': 0.001},
+        'mutation': {'step': 0.0005},
     }
 
 
@@ -33,6 +34,10 @@ class CyclicReefAnimation(AnimationBase):
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
     CAPABILITIES = frozenset(("semantic_palette_roles", "scaled_context", "effect_intent"))
     PLANT_MODIFIER_SUPPORT = frozenset()
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Seed coral"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    LIVE_TUNABLE_PARAMETERS = frozenset({"takeover_threshold", "mutation", "boundary_glow", "topology"})
     BASE_SIMULATION_HZ, MAX_CATCH_UP_STEPS, MAX_GRAZERS = 12.0, 12, 48
     TOPOLOGIES = ("wrap", "closed")
     DEFAULTS = MappingProxyType({
@@ -68,6 +73,9 @@ class CyclicReefAnimation(AnimationBase):
         self._last_render_key: tuple[Any, ...] | None = None
         self._presentation_context: ResolvedScene | None = None
         self._rng = np.random.default_rng(self.params["seed"])
+        self._interaction_lock = Lock()
+        self._pending_seed: tuple[int, int] | None = None
+        self._edit_revision = 0
         self._reset_colony()
 
     @classmethod
@@ -113,6 +121,26 @@ class CyclicReefAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        if (kind != "primary" or not 0.0 <= x < self.width
+                or not 0.0 <= y < self.height or not 0 < strength <= 1):
+            return False
+        with self._interaction_lock:
+            if self._pending_seed is not None:
+                return False
+            self._pending_seed = (int(x), int(y))
+        return True
+
+    def _plant_seed(self) -> None:
+        with self._interaction_lock:
+            seed, self._pending_seed = self._pending_seed, None
+        if seed is None:
+            return
+        x, y = seed
+        species = (int(self.state[y, x]) + 1) % self.params["species_count"]
+        self.state[max(0, y - 1):y + 2, max(0, x - 1):x + 2] = species
+        self._edit_revision += 1
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
         del frame_count
         if self._presentation_context is None:
@@ -131,7 +159,8 @@ class CyclicReefAnimation(AnimationBase):
             while self._last_tick < target:
                 self._step()
                 self._last_tick += 1
-        key = (self._last_tick, palette_id, self.params["boundary_glow"], self.params["topology"])
+        self._plant_seed()
+        key = (self._last_tick, self._edit_revision, palette_id, self.params["boundary_glow"], self.params["topology"])
         if key == self._last_render_key:
             return RenderedFrame(self._pixels, changed=False, dirty_ranges=())
         self._paint(palette_id)
@@ -162,6 +191,9 @@ class CyclicReefAnimation(AnimationBase):
         self._grazer_dx = self._rng.integers(-1, 2, count, dtype=np.int8)
         self._grazer_dy = self._rng.integers(-1, 2, count, dtype=np.int8)
         self._last_tick = None
+        self._edit_revision = 0
+        with self._interaction_lock:
+            self._pending_seed = None
 
     def _shift(self, source: np.ndarray, dy: int, dx: int) -> np.ndarray:
         shifted = np.roll(np.roll(source, dy, axis=0), dx, axis=1)

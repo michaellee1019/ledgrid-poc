@@ -194,6 +194,7 @@ class SculpturePrimaryInteractionTests(unittest.TestCase):
         self.assertFalse(np.array_equal(primary.bend, baseline.bend))
         self.assertEqual(self._rng(primary), self._rng(baseline))
         self.assertEqual(primary.get_runtime_stats(), {
+            "stem_count": len(primary.base_x),
             "primary_interactions_received": 1, "primary_interactions_applied": 1,
             "primary_interactions_rejected": 5, "primary_interaction_pending": False,
         })
