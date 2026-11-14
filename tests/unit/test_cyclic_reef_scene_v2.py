@@ -78,7 +78,7 @@ class CyclicReefSceneV2Tests(unittest.TestCase):
         self.assertEqual(params["boundary_glow"], .2)
         for name, expected in {"species_count": 6, "takeover_threshold": 2, "mutation": .006, "grazers": 18, "topology": "wrap", "pace": 1.3}.items():
             self.assertEqual(params[name], expected)
-        self.assertIs(current_component_catalog().require(provider="python", component_id="cyclic_reef", version=1), CyclicReefAnimation.component_descriptor())
+        self.assertEqual(current_component_catalog().require(provider="python", component_id="cyclic_reef", version=1).factory.__name__, CyclicReefAnimation.__name__)
 
     def test_invalid_reef_controls_reject_before_live_or_preview_mutation(self) -> None:
         scene = self.interface.composer_presets.apply(self._scene(), "showcase")
@@ -105,14 +105,11 @@ class CyclicReefSceneV2Tests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/composer/preview", json=preview_request).get_json()["basis"], preview.get_json()["basis"])
 
     def test_composer_card_keeps_reef_controls_local(self) -> None:
-        root = __import__("pathlib").Path(__file__).resolve().parents[2]
-        template = (root / "web" / "templates" / "composer.html").read_text(encoding="utf-8")
-        script = (root / "web" / "static" / "js" / "composer_slice.js").read_text(encoding="utf-8")
-        self.assertIn('id="reefPresetCards"', template)
-        self.assertIn("components/cyclic_reef/presets", script)
-        self.assertIn("reefParameters(next.animation.parameters)", script)
-        self.assertNotIn("output_power", script)
-
+        descriptor = current_component_catalog().require(provider="python", component_id="cyclic_reef", version=1)
+        controls = descriptor.controls()
+        self.assertTrue({'takeover_threshold', 'grazers', 'topology', 'mutation', 'species_count'} <= set(controls))
+        self.assertEqual(set(controls), set(descriptor.default_parameters()))
+        self.assertEqual(controls["mutation"]["step"], .001)
 
 if __name__ == "__main__":
     unittest.main()

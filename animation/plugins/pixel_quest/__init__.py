@@ -50,6 +50,15 @@ class Burst:
 
 class PixelQuestAnimation(AnimationBase):
     """Endless procedural quest with deterministic autoplay combat."""
+    PREFERRED_PARAMETERS = ('difficulty', 'quest_cadence_hz')
+    PARAMETER_CONTROLS = {
+        'quest_cadence_hz': {'label': 'quest speed'},
+    }
+    PLAYER_BUTTONS = {
+        'a': ('Attack', False),
+        'b': ('Magic', False),
+    }
+
 
     ANIMATION_NAME = "Pixel Quest: Wildlands"
     ANIMATION_DESCRIPTION = (
@@ -148,7 +157,8 @@ class PixelQuestAnimation(AnimationBase):
             raise ValueError("show_hud must be a boolean")
         return result
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         return {
             "quest_cadence_hz": {"type": "float", "min": 3.0, "max": 36.0, "default": 12.0,
                       "description": "Quest simulation ticks per second"},

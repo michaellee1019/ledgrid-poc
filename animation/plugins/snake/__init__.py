@@ -45,6 +45,20 @@ class SnakeAgent:
 
 class SnakeAnimation(AnimationBase):
     """Self-playing Snake with only local Scene v2 creative controls."""
+    PREFERRED_PARAMETERS = ('move_cadence', 'snake_count', 'food_count', 'growth_per_food')
+    PARAMETER_CONTROLS = {
+        'move_cadence': {'label': 'moves/sec', 'unit': 'Hz'},
+        'background': {'control': 'fixed', 'option_labels': {'void': 'Black'}},
+        'initial_length': {'max_parameter': 'max_length'},
+        'max_length': {'min_parameter': 'initial_length'},
+    }
+    PLAYER_BUTTONS = {
+        'up': ('Turn up', False),
+        'down': ('Turn down', True),
+        'left': ('Turn left', True),
+        'right': ('Turn right', True),
+    }
+
 
     ANIMATION_NAME, ANIMATION_DESCRIPTION = "Snake Garden", "Autonomous snakes, food, obstacles, portals, and glowing trails"
     ANIMATION_AUTHOR, ANIMATION_VERSION = "LED Grid Team", "2.0"
@@ -93,7 +107,8 @@ class SnakeAnimation(AnimationBase):
     def component_descriptor(cls) -> ComponentDescriptor:
         return cls.COMPONENT_DESCRIPTOR
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "move_cadence": {"type": "float", "min": 1., "max": 24., "default": 9., "description": "Grid moves each second"},
             "snake_count": {"type": "int", "min": 1, "max": 12, "default": 3, "description": "Autonomous snakes in play"},
@@ -101,10 +116,10 @@ class SnakeAnimation(AnimationBase):
             "max_length": {"type": "int", "min": 12, "max": 320, "default": 180, "description": "Safe maximum grown length"},
             "food_count": {"type": "int", "min": 1, "max": 24, "default": 5, "description": "Food kept on the board"},
             "growth_per_food": {"type": "int", "min": 1, "max": 12, "default": 3, "description": "Cells gained after eating"},
-            "ruleset": {"type": "str", "options": list(self.RULESETS), "default": "wrap", "description": "Edges, portals, or competitive play"},
-            "obstacles": {"type": "str", "options": list(self.OBSTACLES), "default": "none", "description": "Obstacle layout"},
-            "visual_style": {"type": "str", "options": list(self.STYLES), "default": "rainbow", "description": "Color treatment"},
-            "background": {"type": "str", "options": list(self.BACKGROUNDS), "default": "void", "description": "Game backdrop"},
+            "ruleset": {"type": "str", "options": list(cls.RULESETS), "default": "wrap", "description": "Edges, portals, or competitive play"},
+            "obstacles": {"type": "str", "options": list(cls.OBSTACLES), "default": "none", "description": "Obstacle layout"},
+            "visual_style": {"type": "str", "options": list(cls.STYLES), "default": "rainbow", "description": "Color treatment"},
+            "background": {"type": "str", "options": list(cls.BACKGROUNDS), "default": "void", "description": "Game backdrop"},
             "trails": {"type": "float", "min": 0., "max": 1., "default": .72, "description": "Trail brightness"},
             "trail_decay": {"type": "float", "min": .2, "max": 8., "default": 2.5, "description": "Trail fade speed"},
             "glow": {"type": "float", "min": 0., "max": 1., "default": .55, "description": "Neighbor-cell glow"},

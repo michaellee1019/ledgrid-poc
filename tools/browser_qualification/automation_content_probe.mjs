@@ -13,7 +13,7 @@ try {
   if (mode === 'advanced') {
     await page.waitForFunction(() => document.querySelector('#previewPalette').value === 'spectrum'
       && Number(document.querySelector('#sceneSpeed').value) === .9
-      && Number(document.querySelector('#backgroundGain').value) === .25);
+      && Number(document.querySelector('#background-solid_background-gain')?.value) === .25);
   }
   const publication = page.waitForResponse(response => response.url().endsWith('/api/v1/scene') && response.request().method() === 'PUT');
   await page.selectOption('#animationChoice', 'gradient');

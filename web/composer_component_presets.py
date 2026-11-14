@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
+from animation.core.component_catalog import ComponentCatalog
 from animation.core.plant_awareness import PlantModifierState
 
 
@@ -96,9 +97,9 @@ def _fireworks_presentation(
 class ComponentPresetCatalog:
     """Read a small authored preset family without giving it scene authority."""
 
-    def __init__(self, root: Path, normalizers: Mapping[str, Callable[[Mapping[str, Any]], dict[str, Any]]]) -> None:
+    def __init__(self, root: Path, catalog: ComponentCatalog) -> None:
         self.root = Path(root)
-        self._normalizers = dict(normalizers)
+        self._components = {descriptor.component_id: descriptor for descriptor in catalog.descriptors}
         self._membership = self._read_membership()
 
     @staticmethod
@@ -132,11 +133,11 @@ class ComponentPresetCatalog:
         return result
 
     def _choice(self, component_id: str, preset_id: str) -> dict[str, Any]:
-        normalizer = self._normalizers.get(component_id)
+        descriptor = self._components.get(component_id)
         membership = self._membership.get(component_id)
-        if normalizer is None or membership is None or preset_id not in membership["preset_ids"]:
+        if descriptor is None or membership is None or preset_id not in membership["preset_ids"]:
             raise ValueError("Unknown authored preset")
-        path = self.root / "animation" / "plugins" / component_id / "presets" / f"{preset_id}.json"
+        path = self.root / "animation" / "plugins" / descriptor.package_id / "presets" / f"{preset_id}.json"
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -159,7 +160,7 @@ class ComponentPresetCatalog:
         if _LEGACY_GLOBAL_FIELDS & set(raw):
             raise ValueError(f"Preset {preset_id} contains legacy global fields")
         try:
-            parameters = normalizer(raw["params"])
+            parameters = descriptor.normalize_parameters(raw["params"], authored_preset=True)
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Preset {preset_id} has non-local parameters") from exc
         choice = {
@@ -177,13 +178,13 @@ class ComponentPresetCatalog:
         return choice
 
     def choices(self, component_id: str) -> list[dict[str, Any]]:
-        if component_id not in self._normalizers or component_id not in self._membership:
-            raise ValueError("Component has no authored preset catalog")
-        return [self._choice(component_id, preset_id) for preset_id in self._membership[component_id]["preset_ids"]]
+        self.provider(component_id)
+        return [self._choice(component_id, preset_id)
+                for preset_id in self._membership.get(component_id, {}).get("preset_ids", ())]
 
     def operator_choices(self, component_id: str, presets_dir: Path) -> list[dict[str, Any]]:
         """Return authored choices plus retained, provider-qualified personal presets."""
-        if component_id not in self._membership or component_id not in self._normalizers:
+        if component_id not in self._components:
             return []
         authored = {choice["preset_id"]: choice for choice in self.choices(component_id)}
         personal_dir = presets_dir / self.provider(component_id) / component_id
@@ -215,26 +216,26 @@ class ComponentPresetCatalog:
         membership = self._membership.get(component_id)
         return bool(
             membership is not None
-            and component_id in self._normalizers
+            and component_id in self._components
             and preset_id in membership["preset_ids"]
         )
 
     def provider(self, component_id: str) -> str:
         """Return the reviewed provider for a component-owned preset family."""
-        membership = self._membership.get(component_id)
-        if membership is None or component_id not in self._normalizers:
-            raise ValueError("Component has no authored preset catalog")
-        return membership["provider"]
+        descriptor = self._components.get(component_id)
+        if descriptor is None:
+            raise ValueError("Unknown Composer component")
+        return descriptor.provider.value
 
     def normalize_parameters(
         self, component_id: str, parameters: Mapping[str, Any]
     ) -> dict[str, Any]:
         """Validate one current component-local parameter payload."""
-        normalizer = self._normalizers.get(component_id)
-        if normalizer is None or component_id not in self._membership:
-            raise ValueError("Component has no authored preset catalog")
+        descriptor = self._components.get(component_id)
+        if descriptor is None:
+            raise ValueError("Unknown Composer component")
         try:
-            return normalizer(parameters)
+            return descriptor.normalize_parameters(parameters)
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Preset has non-local parameters") from exc
 

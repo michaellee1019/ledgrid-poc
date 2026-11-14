@@ -17,6 +17,7 @@ from animation.browser_preview.python.shim_presentation_contracts import (
 from animation.core.presentation_contracts import AnimationRuntimeContext
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from tools.build_browser_python_bundle import build_bundle
+from animation.core.composer_catalog import current_component_catalog
 from web.composer_component_presets import ComponentPresetCatalog
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -101,9 +102,7 @@ class BrowserClockContextTests(unittest.TestCase):
         self._check_bundle(fresh=False)
 
     def _check_bundle(self, *, fresh):
-        cases = ComponentPresetCatalog(ROOT, {
-            "clock_overlay": ClockOverlayAnimation._normalized_parameters,
-        }).choices("clock_overlay")
+        cases = ComponentPresetCatalog(ROOT, current_component_catalog()).choices("clock_overlay")
         self.assertEqual(len(cases), 3)
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)

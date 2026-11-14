@@ -50,6 +50,14 @@ _HUE_GOLDEN = np.float32(0.6180339887)
 
 
 class LavaLampAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('heat', 'blob_count', 'blob_scale', 'viscosity', 'turbulence')
+    PARAMETER_CONTROLS = {
+        'interaction_radius': {'preserve_on_preset': True, 'unit': 'px'},
+        'interaction_strength': {'preserve_on_preset': True},
+        'blob_count': {'ui_max': 12},
+    }
+    POINT_ACTION_LABELS = {'primary': 'Stir lava'}
+
     ANIMATION_NAME = "Lava Lamp"
     ANIMATION_DESCRIPTION = "Thermal wax blobs rise, merge, cool, and flow around the living wall"
     ANIMATION_AUTHOR = "LED Grid Team"
@@ -208,7 +216,8 @@ class LavaLampAnimation(AnimationBase):
         self._allocate_geometry()
         self._reset_simulation()
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         return {
             "blob_count": {"type": "int", "min": 3, "max": 12, "default": 7,
                            "description": "Target number of thermal wax bodies."},

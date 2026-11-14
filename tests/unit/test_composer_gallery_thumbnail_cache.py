@@ -27,7 +27,7 @@ const layout = {matches:true, addEventListener(event, handler) { assert.equal(ev
 const context = {
   state:{gallery:{detail:'early',favorites:new Set()},scene:{}},
   $: selector => ({'#galleryGrid':grid,'#galleryDetail':detail.parent ? detail : null,'#galleryCount':count,'#galleryEmpty':empty})[selector],
-  galleryEntries:()=>entries,
+  galleryEntries:()=>entries, componentKey:(entry)=>entry?.key,
   window:{matchMedia:()=>layout}, document:{createElement:()=>new Element()},
   galleryThumbnail:()=>new Element(),
 };

@@ -15,6 +15,8 @@ from animation.core.presentation_contracts import ResolvedScene
 
 class FireflySynchronyAnimation(AnimationBase):
     """A calm, semantic-palette meadow of locally synchronising fireflies."""
+    PREFERRED_PARAMETERS = ('population', 'synchrony', 'wandering', 'pulse_softness', 'coupling_radius')
+
 
     ANIMATION_NAME = "Firefly Meadow"
     ANIMATION_DESCRIPTION = "A wandering meadow of gently synchronising fireflies"
@@ -70,9 +72,10 @@ class FireflySynchronyAnimation(AnimationBase):
     def palette_roles(cls, palette_id: str) -> Mapping[str, tuple[float, float, float]]:
         return cls.SEMANTIC_PALETTES.get(str(palette_id), cls.SEMANTIC_PALETTES["neutral"])
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
-            "population": {"type": "int", "min": self.MIN_FIREFLIES, "max": self.MAX_FIREFLIES, "default": 100, "description": "Number of fireflies in the meadow"},
+            "population": {"type": "int", "min": cls.MIN_FIREFLIES, "max": cls.MAX_FIREFLIES, "default": 100, "description": "Number of fireflies in the meadow"},
             "synchrony": {"type": "float", "min": 0.0, "max": 2.0, "default": 0.85, "description": "How strongly nearby fireflies pulse together"},
             "wandering": {"type": "float", "min": 0.0, "max": 2.0, "default": 0.55, "description": "How freely the fireflies drift through the meadow"},
             "pulse_softness": {"type": "float", "min": 0.1, "max": 1.0, "default": 0.50, "description": "How softly each firefly fades in and out"},

@@ -25,15 +25,13 @@ class PixelStorySceneV2Tests(unittest.TestCase):
     classes = (AsciiDropAnimation, EmojiAnimation, ChristmasTreeAnimation, NightTrainWindowsAnimation)
 
     def test_catalog_and_checked_preset_counts_are_exact(self) -> None:
-        catalog = ComponentPresetCatalog(Path(__file__).resolve().parents[2], {
-            animation.COMPONENT_ID: animation._normalized_parameters for animation in self.classes
-        })
+        catalog = ComponentPresetCatalog(Path(__file__).resolve().parents[2], current_component_catalog())
         self.assertEqual([len(catalog.choices(animation.COMPONENT_ID)) for animation in self.classes], [5, 4, 4, 4])
         component_catalog = current_component_catalog()
         for animation in self.classes:
             descriptor = animation.component_descriptor()
             self.assertEqual((descriptor.provider.value, descriptor.role.value, descriptor.timing_policy.value, descriptor.alpha_behavior.value, descriptor.palette_policy.value), ("python", "animation", "scaled_context", "opaque", "semantic"))
-            self.assertIs(component_catalog.require(provider="python", component_id=animation.COMPONENT_ID, version=1), descriptor)
+            self.assertEqual(component_catalog.require(provider="python", component_id=animation.COMPONENT_ID, version=1).default_parameters(), descriptor.default_parameters())
 
     def test_local_controls_render_opaque_and_reject_legacy_globals(self) -> None:
         controller = PreviewLEDController(strips=33, leds_per_strip=138)
@@ -83,24 +81,13 @@ class PixelStorySceneV2Tests(unittest.TestCase):
                 np.testing.assert_array_equal(warmed.pixels, fresh.pixels)
 
     def test_composer_surface_qualifies_all_four_pixel_story_instruments(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        source = (root / "web" / "static" / "js" / "composer_slice.js").read_text(encoding="utf-8")
-        css = (root / "web" / "static" / "css" / "composer_slice.css").read_text(encoding="utf-8")
-        self.assertIn("label[hidden] { display: none !important; }", css)
-        controls = {
-            "ascii_drop": ("asciiDropPresetCards", "#asciiPhrase"),
-            "emoji": ("emojiAnimationPresetCards", "#emojiFace"),
-            "christmas_tree": ("christmasTreePresetCards", "#treeSeason"),
-            "night_train_windows": ("nightTrainPresetCards", "#trainRoute"),
-        }
-        for component_id, (card_id, local_control) in controls.items():
+        client = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True).app.test_client()
+        gallery = {entry["component_id"]: entry for entry in client.get("/api/composer/gallery").get_json()["entries"]}
+        for component_id, field in {"ascii_drop": "phrase", "emoji": "face", "christmas_tree": "season",
+                                    "night_train_windows": "route"}.items():
             with self.subTest(component=component_id):
-                self.assertIn(f"'{component_id}'", source)
-                self.assertIn(card_id, source)
-                self.assertIn(local_control, source)
-        self.assertIn("label.hidden = !visible", source)
-        self.assertIn("['#asciiPhrase'].forEach((selector) => $(selector).addEventListener('input', edit));", source)
-        self.assertIn("asciiDropParameters(next.animation.parameters)", source)
+                self.assertIn(field, gallery[component_id]["parameter_schema"])
+                self.assertGreater(gallery[component_id]["preset_count"], 0)
 
     def test_composer_api_serves_every_pixel_story_card(self) -> None:
         client = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True).app.test_client()

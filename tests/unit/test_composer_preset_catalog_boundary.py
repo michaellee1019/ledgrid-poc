@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from animation.plugins.ascii_drop import AsciiDropAnimation
 from web import composer_component_presets
+from animation.core.composer_catalog import current_component_catalog
 from web.composer_component_presets import ComponentPresetCatalog
 
 
@@ -49,18 +50,14 @@ class ComposerPresetCatalogBoundaryTests(unittest.TestCase):
             candidate = copy.deepcopy(payload)
             candidate["preset_id"] = preset_id
             (directory / f"{preset_id}.json").write_text(json.dumps(candidate), encoding="utf-8")
-        return ComponentPresetCatalog(Path(self.tempdir.name), {
-            "ascii_drop": AsciiDropAnimation._normalized_parameters,
-        })
+        return ComponentPresetCatalog(Path(self.tempdir.name), current_component_catalog())
 
     def tearDown(self) -> None:
         if hasattr(self, "tempdir"):
             self.tempdir.cleanup()
 
     def test_membership_freezes_the_current_component_and_preset_packet(self) -> None:
-        catalog = ComponentPresetCatalog(ROOT, {
-            "ascii_drop": AsciiDropAnimation._normalized_parameters,
-        })
+        catalog = ComponentPresetCatalog(ROOT, current_component_catalog())
         self.assertEqual(len(catalog._membership), 47)
         self.assertEqual(sum(len(entry["preset_ids"]) for entry in catalog._membership.values()), 270)
         self.assertEqual(catalog._membership["clock_overlay"]["preset_ids"], [
@@ -92,7 +89,7 @@ class ComposerPresetCatalogBoundaryTests(unittest.TestCase):
                 path.write_text(json.dumps(candidate), encoding="utf-8")
                 with self.subTest(field=field, value=value), patch.object(composer_component_presets, "_MEMBERSHIP_PATH", path):
                     with self.assertRaisesRegex(RuntimeError, "membership is malformed"):
-                        ComponentPresetCatalog(Path(directory), {"ascii_drop": AsciiDropAnimation._normalized_parameters})
+                        ComponentPresetCatalog(Path(directory), current_component_catalog())
 
     def test_untracked_file_is_never_discovered_or_applied(self) -> None:
         catalog = self._catalog(self._raw())

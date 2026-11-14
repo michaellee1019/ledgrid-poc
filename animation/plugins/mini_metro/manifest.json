@@ -1,4 +1,5 @@
 {
+  "composer": true,
   "plugin_id": "mini_metro",
   "class": "MiniMetroAnimation",
   "icon": "🚇",

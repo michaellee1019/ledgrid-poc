@@ -12,6 +12,7 @@ import colorsys
 import math
 import threading
 import time
+from datetime import datetime
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -67,6 +68,15 @@ class AnimationBase(ABC):
     VIBE_CAPABILITIES = frozenset()
     VIBE_COLOR_POLICY = "preserve"
     VIBE_PARAMETER_MAPPINGS: Mapping[str, Any] = MappingProxyType({})
+
+    _fixed_wall_time: datetime | None = None
+
+    def set_wall_time(self, value: datetime | None) -> None:
+        """Set the runtime-owned wall clock for this render."""
+        self._fixed_wall_time = value
+
+    def wall_time(self) -> datetime:
+        return self._fixed_wall_time or datetime.now().astimezone()
 
     def __init__(self, controller: Any, config: Optional[Dict[str, Any]] = None):
         self.controller = controller
@@ -153,7 +163,8 @@ class AnimationBase(ABC):
     def generate_frame(self, time_elapsed: float, frame_count: int) -> FrameOutput:
         raise NotImplementedError
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         schema = {
             "speed": {"type": "float", "min": 0.1, "max": 5.0, "default": 1.0},
             "brightness": {"type": "float", "min": 0.0, "max": 1.0, "default": 1.0},

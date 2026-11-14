@@ -15,6 +15,8 @@ from animation.libraries.scene_palettes import HOLIDAY_TRIPLES, hsv_to_rgb_field
 
 
 class OceanWavesAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('swell', 'chop', 'foam', 'travel')
+
     ANIMATION_NAME = "Ocean Waves"
     ANIMATION_DESCRIPTION = "Rolling ocean swells with foam crests traveling down the wall"
     ANIMATION_AUTHOR = "LED Grid Team"
@@ -86,7 +88,8 @@ class OceanWavesAnimation(AnimationBase):
     def palette_roles(cls, palette_id: str) -> Mapping[str, tuple[float, float, float]]:
         return cls.SEMANTIC_PALETTES.get(str(palette_id), cls.SEMANTIC_PALETTES["neutral"])
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "swell": {"type": "float", "min": 0.15, "max": 1.0, "default": 0.68,
                       "description": "Height of the rolling ocean swells."},

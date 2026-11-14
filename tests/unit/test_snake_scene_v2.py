@@ -172,7 +172,7 @@ class SnakeSceneV2Tests(unittest.TestCase):
         self.assertTrue(local.get_json()["published"])
         self.assertEqual(local.get_json()["state"], "live")
         self.assertEqual(self.client.get("/api/composer/recovery?client_id=snake").get_json()["recovery"]["scene"]["animation"]["component_id"], "snake")
-        self.assertIs(current_component_catalog().require(provider="python", component_id="snake", version=1), SnakeAnimation.component_descriptor())
+        self.assertEqual(current_component_catalog().require(provider="python", component_id="snake", version=1).factory.__name__, SnakeAnimation.__name__)
 
     def test_portal_bloom_glow_remix_keeps_preview_live_and_unshown_params_in_lockstep(self) -> None:
         portal_bloom = self.interface.composer_presets.apply(self._scene(), "portal-bloom")
@@ -217,16 +217,12 @@ class SnakeSceneV2Tests(unittest.TestCase):
                 self.assertEqual(int(frame.pixels.max()), 0)
 
     def test_composer_card_keeps_snake_controls_local(self) -> None:
-        root = __import__("pathlib").Path(__file__).resolve().parents[2]
-        template = (root / "web" / "templates" / "composer.html").read_text(encoding="utf-8")
-        script = (root / "web" / "static" / "js" / "composer_slice.js").read_text(encoding="utf-8")
-        self.assertIn('id="snakePresetCards"', template); self.assertIn("components/snake/presets", script)
-        self.assertIn("next.animation.parameters = preset.parameters", script); self.assertIn("'#snakeCadence'", script)
-        self.assertIn("snakeParameters(next.animation.parameters)", script)
-        self.assertIn("if (choice === 'snake')", script)
-        self.assertIn("gain: 0", script)
-        self.assertNotIn("output_power", script)
-
+        descriptor = current_component_catalog().require(provider="python", component_id="snake", version=1)
+        controls = descriptor.controls()
+        self.assertTrue({'background', 'max_length', 'initial_length', 'move_cadence'} <= set(controls))
+        self.assertEqual(set(controls), set(descriptor.default_parameters()))
+        self.assertEqual(controls["background"]["control"], "fixed")
+        self.assertEqual(controls["initial_length"]["max_parameter"], "max_length")
 
 if __name__ == "__main__":
     unittest.main()

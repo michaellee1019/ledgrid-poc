@@ -1,4 +1,5 @@
 {
+  "composer": true,
   "plugin_id": "lava_lamp",
   "class": "LavaLampAnimation",
   "icon": "🫧",

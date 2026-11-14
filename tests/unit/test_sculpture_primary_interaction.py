@@ -218,10 +218,8 @@ class SculpturePrimaryInteractionTests(unittest.TestCase):
         interface.composer_looks = SceneLookStore(Path(self.tmp.name) / "looks.json")
         interface.working_draft = WorkingDraftStore(Path(self.tmp.name) / "recovery.json")
         client = interface.app.test_client()
-        script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        start = script.index("const primaryInstruments = Object.freeze")
-        end = script.index("function renderLibrary()", start)
-        gesture = script[start:end]
+        gallery = client.get("/api/composer/gallery").get_json()["entries"]
+        capabilities = {entry["component_id"]: entry["input_capability"] for entry in gallery}
 
         for sequence, renderer in enumerate((CellularTapestryAnimation, FrostworkAnimation, ReactionDiffusionGardenAnimation, WindInTheReedsAnimation), start=1):
             scene = self._scene(renderer, dict(renderer.COMPONENT_DEFAULTS))
@@ -248,9 +246,9 @@ class SculpturePrimaryInteractionTests(unittest.TestCase):
             self.assertEqual(preview.status_code, 200, preview.get_json())
 
         for component_id in ("cellular_tapestry", "frostwork", "reaction_diffusion_garden", "wind_in_the_reeds"):
-            self.assertIn(f"{component_id}:", gesture)
+            self.assertTrue(capabilities[component_id]["actions"]["primary"]["position"])
         for component_id in ("flow_field_silk", "living_stained_glass", "quasicrystal_bloom"):
-            self.assertNotIn(f"{component_id}:", gesture)
+            self.assertEqual(capabilities[component_id]["mode"], "none")
 
     def test_living_primary_routes_through_normal_live_api_path(self) -> None:
         manager = AnimationManager(self.controller, auto_start=False)

@@ -1,4 +1,5 @@
 {
+  "composer": true,
   "plugin_id": "emoji_arranger",
   "class": "EmojiArrangerAnimation",
   "icon": "🎭",

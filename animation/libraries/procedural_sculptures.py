@@ -88,12 +88,13 @@ class CadencedSculpture(AnimationBase, ABC):
             if not low <= float(values[name]) <= high: raise ValueError(f"{name} is out of range")
         if not 0 <= int(values["seed"]) <= 999999: raise ValueError("seed is out of range")
 
-    def get_parameter_schema(self):
+    @classmethod
+    def get_parameter_schema(cls):
         return {
-            "motion": {"type":"float", "min":0., "max":2., "default":self.COMPONENT_DEFAULTS["motion"], "description":"Local structural motion"},
-            "density": {"type":"float", "min":.05, "max":2., "default":self.COMPONENT_DEFAULTS["density"], "description":"Local structural density"},
-            "background_level": {"type":"float", "min":0., "max":1., "default":self.COMPONENT_DEFAULTS["background_level"], "description":"Local field depth"},
-            "seed": {"type":"int", "min":0, "max":999999, "default":self.COMPONENT_DEFAULTS["seed"], "description":"Deterministic arrangement seed"},
+            "motion": {"type":"float", "min":0., "max":2., "default":cls.COMPONENT_DEFAULTS["motion"], "description":"Local structural motion"},
+            "density": {"type":"float", "min":.05, "max":2., "default":cls.COMPONENT_DEFAULTS["density"], "description":"Local structural density"},
+            "background_level": {"type":"float", "min":0., "max":1., "default":cls.COMPONENT_DEFAULTS["background_level"], "description":"Local field depth"},
+            "seed": {"type":"int", "min":0, "max":999999, "default":cls.COMPONENT_DEFAULTS["seed"], "description":"Deterministic arrangement seed"},
         }
 
     def update_parameters(self, new_params):

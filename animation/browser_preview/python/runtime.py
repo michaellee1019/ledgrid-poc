@@ -36,7 +36,6 @@ DEFAULT_INSTANCE_ID = "primary"
 MAX_RUNTIME_INSTANCES = 8
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_MISSING = object()
 _DIRECTIONAL_INPUTS = frozenset(
     {"left", "right", "down", "rotate-left", "rotate-right", "drop"}
 )
@@ -534,24 +533,8 @@ class BrowserPreviewRuntime:
         wall_time: Optional[float],
     ) -> Any:
         animation = instance.animation
-        if wall_time is None or not hasattr(animation, "_clock_now"):
-            return animation.generate_frame(elapsed, frame_index)
-
-        previous = animation.__dict__.get("_clock_now", _MISSING)
-
-        def fixed_clock_now(owner: Any) -> datetime:
-            local = datetime.fromtimestamp(wall_time).astimezone()
-            apply_offset = getattr(owner, "_apply_clock_offset", None)
-            return apply_offset(local) if apply_offset is not None else local
-
-        animation._clock_now = MethodType(fixed_clock_now, animation)
-        try:
-            return animation.generate_frame(elapsed, frame_index)
-        finally:
-            if previous is _MISSING:
-                del animation.__dict__["_clock_now"]
-            else:
-                animation.__dict__["_clock_now"] = previous
+        animation.set_wall_time(None if wall_time is None else datetime.fromtimestamp(wall_time).astimezone())
+        return animation.generate_frame(elapsed, frame_index)
 
     def render(
         self,

@@ -37,7 +37,7 @@ class LivingShowcaseSceneV2Tests(unittest.TestCase):
         scene = _current_scene(); scene["animation"] = {"component_id":component_id,"version":1,"provider":"python","role":"animation","parameters":{}}; return scene
 
     def test_exact_twenty_authored_rows_are_local_and_no_default(self):
-        presets = ComponentPresetCatalog(ROOT, {key: cls._normalized_parameters for key, cls in RENDERERS.items()})
+        presets = ComponentPresetCatalog(ROOT, current_component_catalog())
         self.assertEqual(sum(COUNTS.values()), 20)
         for component_id, count in COUNTS.items():
             paths = sorted((ROOT / "animation/plugins" / component_id / "presets").glob("*.json")); self.assertEqual(len(paths), count); self.assertNotIn("default", [path.stem for path in paths])
@@ -108,7 +108,7 @@ class LivingShowcaseSceneV2Tests(unittest.TestCase):
     def test_qualified_catalog_final_preview_and_bounded_cadence(self):
         catalog = current_component_catalog(); fingerprints = set()
         for component_id, renderer in RENDERERS.items():
-            descriptor = renderer.component_descriptor(); self.assertIs(catalog.require(provider="python", component_id=component_id, version=1), descriptor); self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value), ("opaque", "semantic"))
+            descriptor = renderer.component_descriptor(); self.assertEqual(catalog.require(provider="python", component_id=component_id, version=1).default_parameters(), descriptor.default_parameters()); self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value), ("opaque", "semantic"))
             animation = renderer(self.controller, renderer.COMPONENT_DEFAULTS); first = animation.generate_frame(0., 0); later = animation.generate_frame(1.2, 1)
             self.assertEqual(first.pixels.shape, (33 * 138, 3)); self.assertEqual(first.pixels.dtype, np.uint8); self.assertFalse(np.array_equal(first.pixels, later.pixels)); fingerprints.add(first.pixels.tobytes())
             frame = ComposerFinalPreview(catalog, ROOT).render(normalize_composer_scene({"origin":"composer","scene":self.scene(component_id)}, catalog), 1., datetime.now().astimezone()); self.assertEqual(frame.pixels.shape, (33 * 138, 3))

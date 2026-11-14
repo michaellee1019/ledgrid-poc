@@ -20,7 +20,7 @@
   // an id while resetting its sequence would make the next authored edit stale.
   const clientId = newUuid();
   const state = { status: {connected: false, running: false, armed: false, current: null, desired: null, observed: null, revision: 0}, library: {items: [], favorites: []}, filter: 'look', query: '', selection: null,
-    scene: null, history: [], redo: [], sequence: 0, intent: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, componentPresets: {}, authoredValidationError: null,
+    scene: null, history: [], redo: [], sequence: 0, intent: 0, submitting: false, previewGeneration: 0, refreshInFlight: false, dirty: false, components: new Map(), componentPresets: Object.create(null), authoredValidationError: null,
     gallery: {entries: [], digest: null, query: '', filter: 'all', favorites: new Set(), detail: null, detailToken: 0},
     publication: {queued: null, afterStop: null, inFlight: null, scheduled: false},
     wall: {
@@ -30,7 +30,11 @@
     playlist: {id: null, entries: [], saved: [], requestId: null, runId: null,
       saving: false, switching: false, adding: false, baseline: null, actionError: null, retryStart: null, dismissedStatusError: null, startIntent: null, stopPromise: null, statusIntent: 0, statusPoll: 0}
   };
-  window.ComposerEditorContext = Object.freeze({snapshot: () => structuredClone({scene: state.scene, selection: state.selection, dirty: state.dirty, intent: state.intent})});
+  window.ComposerEditorContext = Object.freeze({
+    snapshot: () => structuredClone({scene: state.scene, selection: state.selection, dirty: state.dirty, intent: state.intent}),
+    componentName: (ref) => componentDescriptor(ref)?.name || ref?.component_id,
+    parameterLabel: (ref, name) => componentDescriptor(ref)?.parameter_schema?.[name]?.label || parameterLabel(name),
+  });
   const identity = (value) => value ? `r${value.revision} · ${value.digest}` : 'None';
   const beginIntent = () => ++state.intent;
   const intentIsCurrent = (intent) => intent === state.intent;
@@ -82,220 +86,13 @@
     {id: 'hue_shift', label: 'Hue shift', enabled: '#plantHueShiftEnabled', strength: '#plantHueShiftStrength', value: '#plantHueShiftValue'},
   ]);
   const plantOpticIds = new Set(plantOptics.map(({id}) => id));
-  const clockParameters = (existing = {}) => ({...existing, format_24h: $('#clockFormat').value === '24', show_seconds: $('#clockSeconds').checked, clock_offset_minutes: Math.trunc(number('#clockTimeOffset'))});
-  const emojiParameters = () => ({text: $('#emojiText').value, x_offset: Math.trunc(number('#emojiXOffset')), y_offset: Math.trunc(number('#emojiYOffset')), char_spacing: Math.trunc(number('#emojiCharSpacing')), line_spacing: Math.trunc(number('#emojiLineSpacing')), scroll_speed: number('#emojiScrollSpeed'), pulse_speed: number('#emojiPulseSpeed')});
-  const fireflyParameters = (existing = {}) => ({...existing, population: Math.trunc(number('#fireflyPopulation')), synchrony: number('#fireflySynchrony'), wandering: number('#fireflyWandering'), pulse_softness: number('#fireflyPulseSoftness'), meadow_glow: number('#fireflyMeadowGlow')});
-  const fireworksParameters = () => ({launch_cadence: number('#fireworksCadence'), shell_population: Math.trunc(number('#fireworksPopulation')), burst_size: number('#fireworksBurstSize'), burst_style: $('#fireworksStyle').value, gravity: number('#fireworksGravity'), trails: number('#fireworksTrails'), crackle: number('#fireworksCrackle'), twinkle: number('#fireworksTwinkle'), seed: Math.trunc(number('#fireworksSeed'))});
-  const lavaParameters = (existing = {}) => ({...existing, blob_count: Math.trunc(number('#lavaBlobCount')), blob_scale: number('#lavaBlobScale'), viscosity: number('#lavaViscosity'), heat: number('#lavaHeat'), turbulence: number('#lavaTurbulence'), glow: number('#lavaGlow'), seed: Math.trunc(number('#lavaSeed'))});
-  const flameParameters = (existing = {}) => ({...existing, ignition_cadence: number('#flameCadence'), flare_size: number('#flameSize'), ember_linger: number('#flameEmbers'), flicker: number('#flameFlicker')});
-  const fluidParameters = (existing = {}) => ({...existing, flow_rate: number('#fluidFlow'), current: number('#fluidCurrent'), bubble_lift: number('#fluidBubbles'), surface_energy: number('#fluidSurface')});
-  const fishTankParameters = (existing = {}) => ({...existing, fish_count: Math.trunc(number('#tankFishCount')), swim_speed: number('#tankSwimSpeed'), schooling: number('#tankSchooling'), bubbles: number('#tankBubbles'), weeds: number('#tankWeeds'), seed: Math.trunc(number('#tankSeed'))});
-  const oceanWavesParameters = (existing = {}) => ({...existing, swell: number('#oceanSwell'), chop: number('#oceanChop'), foam: number('#oceanFoam'), travel: number('#oceanTravel'), seed: Math.trunc(number('#oceanSeed'))});
-  const miniMetroParameters = (existing = {}) => ({...existing, stations: Math.trunc(number('#metroStations')), lines: Math.trunc(number('#metroLines')), trains: Math.trunc(number('#metroTrains')), traffic: number('#metroTraffic'), train_speed: number('#metroSpeed'), seed: Math.trunc(number('#metroSeed'))});
-  // Keep seed and HUD in an authored preset/remix even though the instrument
-  // deliberately exposes only the six immediate race controls.
-  const canopyParameters = (existing = {}) => ({...existing, world_theme: $('#canopyWorld').value, qualifying_heats: Math.trunc(number('#canopyHeats')), course_difficulty: number('#canopyCourse'), enemy_density: number('#canopyDensity'), rivalry: number('#canopyRivalry'), powerup_rate: number('#canopyPowerups')});
-  const reefParameters = (existing = {}) => ({...existing, species_count: Math.trunc(number('#reefSpecies')), takeover_threshold: Math.trunc(number('#reefThreshold')), mutation: number('#reefMutation'), grazers: Math.trunc(number('#reefGrazers')), boundary_glow: number('#reefGlow'), topology: $('#reefTopology').value, pace: number('#reefPace'), seed: Math.trunc(number('#reefSeed'))});
-  const tetrisParameters = (existing = {}) => ({...existing, tetromino_count: Math.trunc(number('#tetrisPieces')), fall_rate: number('#tetrisFallRate'), bot_imperfection: number('#tetrisRisk'), smooth_drop: $('#tetrisSmoothDrop').checked});
-  const lavaInteractionParameters = (parameters = {}) => Object.fromEntries(['interaction_radius', 'interaction_strength'].filter((name) => Object.hasOwn(parameters, name)).map((name) => [name, parameters[name]]));
-  const snakeParameters = (existing = {}) => ({...existing, move_cadence: number('#snakeCadence'), snake_count: Math.trunc(number('#snakeCount')), food_count: Math.trunc(number('#snakeFood')), growth_per_food: Math.trunc(number('#snakeGrowth')), ruleset: $('#snakeRules').value, obstacles: $('#snakeObstacles').value, trails: number('#snakeTrails'), glow: number('#snakeGlow'), seed: Math.trunc(number('#snakeSeed'))});
-  const mazeParameters = (existing = {}) => ({...existing, chase_cadence_hz: number('#mazeCadence'), difficulty: number('#mazeDifficulty'), show_ai_targets: $('#mazeRadar').checked});
-  const pinballParameters = (existing = {}) => ({...existing, table_tick_hz: number('#pinballTicks'), chaos: number('#pinballChaos')});
-  const questParameters = (existing = {}) => ({...existing, quest_cadence_hz: number('#questCadence'), difficulty: number('#questDifficulty'), show_hud: $('#questHud').checked});
-  const asciiDropParameters = (existing = {}) => ({...existing, phrase: $('#asciiPhrase').value, story: $('#asciiStory').value, fall_speed: number('#asciiSpeed'), density: number('#asciiDensity')});
-  const emojiAnimationParameters = (existing = {}) => ({...existing, face: $('#emojiFace').value, mood: $('#emojiMood').value, pulse_hz: number('#emojiAnimationPulse'), scale: number('#emojiAnimationScale')});
-  const treeParameters = (existing = {}) => ({...existing, season: $('#treeSeason').value, tree_height: Math.trunc(number('#treeHeight')), snowfall: number('#treeSnowfall')});
-  const trainParameters = (existing = {}) => ({...existing, route: $('#trainRoute').value, travel_speed: number('#trainSpeed'), window_glow: number('#trainGlow')});
-  const ambientIds = Object.freeze(['gradient', 'rainbow', 'solid', 'sparkle', 'wave']);
-  const ambientParameters = (id, existing = {}) => {
-    const fields = {gradient: ['gradientDirection','gradientDrift','gradientMotion','gradientSeed'], rainbow: ['rainbowBands','rainbowTravel','rainbowDirection','rainbowSeed'], solid: ['solidGlow','solidBreath','solidSeed'], sparkle: ['sparkleDensity','sparkleLinger','sparkleTwinkle','sparkleNight','sparkleSeed'], wave: ['waveAxis','waveFrequency','waveTravel','waveShape','waveDirection','waveSeed']}[id];
-    const names = {gradient: ['direction','drift','motion','seed'], rainbow: ['bands','travel','direction','seed'], solid: ['glow','breath','seed'], sparkle: ['density','linger','twinkle','night','seed'], wave: ['axis','frequency','travel','shape','direction','seed']}[id];
-    return {...existing, ...Object.fromEntries(fields.map((field, index) => { const control = document.getElementById(field); const name = names[index]; return [name, control.tagName === 'SELECT' ? control.value : (name === 'seed' || name === 'direction' ? Math.trunc(number(`#${field}`)) : number(`#${field}`))]; }))};
-  };
-  const atmosphereIds = Object.freeze(['circadian_window', 'cloud_canyon', 'desert_wind', 'moonlit_fog_banks', 'rain_on_glass', 'tidal_bioluminescence', 'waterfall_veil']);
-  const sculptureIds = Object.freeze(['cellular_tapestry', 'flow_field_silk', 'frostwork', 'living_stained_glass', 'quasicrystal_bloom', 'living_ecosystem', 'physarum_network', 'reaction_diffusion_garden', 'wind_in_the_reeds']);
-  const sculptureSpecs = Object.freeze({
-    cellular_tapestry: {prefix:'tapestry', defaults:{motion:.48,density:.54,background_level:.16,seed:2801,rule:90,mutation:.01,wrap:true,row_interval:.55}, fields:[['rule','Rule'],['mutation','Mutation'],['row_interval','Weave pace']]},
-    flow_field_silk: {prefix:'silk', defaults:{motion:.52,density:.5,background_level:.14,seed:1901,turbulence:.35,persistence:.8}, fields:[['turbulence','Curl'],['persistence','Silk linger'],['motion','Drift']]},
-    frostwork: {prefix:'frost', defaults:{motion:.46,density:.48,background_level:.14,seed:1401,temperature:.35,melt_cycle:.55}, fields:[['temperature','Cold growth'],['melt_cycle','Melt cycle'],['density','Crystal density']]},
-    living_stained_glass: {prefix:'glass', defaults:{motion:.34,density:.52,background_level:.18,seed:2201,lead_width:.3,light_direction:.4}, fields:[['lead_width','Leadwork'],['light_direction','Light angle'],['motion','Pane drift']]},
-    quasicrystal_bloom: {prefix:'bloom', defaults:{motion:.42,density:.56,background_level:.16,seed:2701,symmetry:10,spatial_scale:2.4,warp:.18}, fields:[['symmetry','Symmetry'],['spatial_scale','Rosette scale'],['warp','Bloom warp']]},
-    living_ecosystem: {prefix:'ecosystem', defaults:{motion:.55,density:.62,background_level:.22,seed:7319,migration:.55,predator_pressure:.38,canopy_density:.58,mutation:.1,night_life:.42}, fields:[['migration','Migration'],['predator_pressure','Hunter pressure'],['canopy_density','Canopy cover']]},
-    physarum_network: {prefix:'physarum', defaults:{motion:.58,density:.6,background_level:.16,seed:10101,agent_count:700,branching:.75,diffusion:.62,nutrient_layout:'constellation',pulse_visibility:.4}, fields:[['agent_count','Explorers'],['branching','Route branching'],['diffusion','Trail diffusion']]},
-    reaction_diffusion_garden: {prefix:'garden', defaults:{motion:.52,density:.58,background_level:.14,seed:9101,morphology:'coral',growth_rate:1,seeding_mode:'scattered',edge_glow:.65,color_by_age:.6,perturbation_interval:24}, fields:[['growth_rate','Growth'],['edge_glow','Front glow'],['color_by_age','History color']]},
-    wind_in_the_reeds: {prefix:'reeds', defaults:{motion:.5,density:.58,background_level:.18,seed:6101,wind:.65,gustiness:.55,stem_density:1,season:'late_summer',motes:.45,silhouette_strength:.5}, fields:[['wind','Wind bend'],['gustiness','Gust fronts'],['stem_density','Stem density']]},
-  });
-  const sculptureControlId = (id, name) => `${sculptureSpecs[id].prefix}${name[0].toUpperCase()}${name.slice(1)}`;
-  const sculptureParameters = (id, existing = {}) => ({...existing, ...Object.fromEntries(sculptureSpecs[id].fields.map(([name]) => [name, ['rule','symmetry','agent_count'].includes(name) ? Math.trunc(number(`#${sculptureControlId(id, name)}`)) : number(`#${sculptureControlId(id, name)}`)]))});
-  const atmosphereSpecs = Object.freeze({
-    circadian_window: {prefix: 'circadian', defaults: {motion: .35, density: .5, mood: 'natural', seed: 29001, hour: -1, time_scale: 1}, fields: [['motion','Motion'],['density','Sky detail'],['mood','Sky mood',[['natural','Natural'],['ember','Ember'],['sleeper','Sleeper'],['pastel','Pastel']]],['seed','Sky seed'],['hour','Clock hour'],['time_scale','Day scale']]},
-    cloud_canyon: {prefix: 'cloud', defaults: {motion: .42, density: .46, mood: 'moonlit', seed: 4301}, fields: [['motion','Cloud drift'],['density','Bank density'],['mood','Canyon mood',[['moonlit','Moonlit'],['daylight','Daylight'],['ember','Ember'],['violet','Violet']]],['seed','Canyon seed']]},
-    desert_wind: {prefix: 'desert', defaults: {motion: .35, density: .5, mood: 'ochre', seed: 8001}, fields: [['motion','Wind drift'],['density','Sand detail'],['mood','Dune mood',[['ochre','Ochre'],['mars','Mars'],['predawn','Predawn'],['candlelight','Candlelight']]],['seed','Dune seed']]},
-    moonlit_fog_banks: {prefix: 'fog', defaults: {motion: .35, density: .5, mood: 'moonlit', seed: 7101}, fields: [['motion','Fog drift'],['density','Bank density'],['mood','Fog mood',[['moonlit','Moonlit'],['predawn','Predawn'],['sleeper','Sleeper'],['aurora','Aurora']]],['seed','Fog seed']]},
-    rain_on_glass: {prefix: 'rain', defaults: {motion: .42, density: .46, mood: 'moonlit', seed: 4101}, fields: [['motion','Drop fall'],['density','Droplet count'],['mood','Rain mood',[['moonlit','Moonlit'],['garden','Garden'],['ember','Ember'],['pastel','Pastel']]],['seed','Rain seed']]},
-    tidal_bioluminescence: {prefix: 'tidal', defaults: {motion: .42, density: .46, mood: 'moonlit', seed: 4501}, fields: [['motion','Swell pace'],['density','Plankton'],['mood','Tide mood',[['moonlit','Moonlit'],['boreal','Boreal'],['violet','Violet']]],['seed','Tide seed']]},
-    waterfall_veil: {prefix: 'waterfall', defaults: {motion: .42, density: .46, mood: 'garden', seed: 4401}, fields: [['motion','Fall speed'],['density','Stream count'],['mood','Falls mood',[['garden','Garden'],['moonlit','Moonlit'],['violet','Violet']]],['seed','Falls seed']]},
-  });
-  const atmosphereControlId = (id, name) => `${atmosphereSpecs[id].prefix}${name[0].toUpperCase()}${name.slice(1)}`;
-  const atmosphereParameters = (id, existing = {}) => ({...existing, ...Object.fromEntries(atmosphereSpecs[id].fields.map(([name]) => {
-    const control = document.getElementById(atmosphereControlId(id, name));
-    return [name, name === 'mood' ? control.value : (name === 'seed' ? Math.trunc(Number(control.value)) : Number(control.value))];
-  }))});
-  const emojiWidget = () => ({id: 'composer-emoji-message', component: {component_id: 'emoji_arranger', version: 1, provider: 'python', role: 'widget', parameters: emojiParameters()}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: 0}});
-  const pixelChaseFields = Object.freeze([
-    {id: 'chaseRate', key: 'pixels_per_second', label: 'Movement rate', value: 120, min: .5, max: 1000, step: .5},
-    {id: 'chaseCount', key: 'pixel_count', label: 'Chase heads', value: 3, min: 1, max: 32, step: 1},
-    {id: 'chaseTailStyle', key: 'tail_style', label: 'Tail style', value: 'fade', options: [['none', 'None'], ['solid', 'Solid'], ['fade', 'Fade']]},
-    {id: 'chaseTailLength', key: 'tail_length', label: 'Tail length', value: 4, min: 0, max: 32, step: 1},
-    {id: 'chaseCycle', key: 'color_cycle_speed', label: 'Palette cycle', value: .2, min: 0, max: 4, step: .01},
-  ]);
-  const pixelChaseSelectors = Object.freeze(pixelChaseFields.map((field) => `#${field.id}`));
-  const pixelChaseParameters = () => Object.fromEntries(pixelChaseFields.map((field) => {
-    const control = document.getElementById(field.id);
-    return [field.key, field.options ? control.value : field.step === 1 ? Math.trunc(Number(control.value)) : Number(control.value)];
-  }));
-  const plantGlowFields = Object.freeze([
-    {id: 'plantGlowRadius', key: 'glow_radius', label: 'Halo radius', value: 2, min: 0, max: 5, step: 1},
-    {id: 'plantGlowStrength', key: 'glow_strength', label: 'Glow strength', value: .72, min: 0, max: 1.5, step: .01},
-    {id: 'plantGlowFalloff', key: 'glow_falloff', label: 'Halo falloff', value: 1.4, min: .1, max: 4, step: .1},
-    {id: 'plantGlowBreathSpeed', key: 'breath_speed', label: 'Breathing rate', value: .18, min: 0, max: 2, step: .01},
-    {id: 'plantGlowBreathDepth', key: 'breath_depth', label: 'Breathing depth', value: .24, min: 0, max: .8, step: .01},
-    {id: 'plantGlowShimmer', key: 'shimmer', label: 'Shimmer', value: .1, min: 0, max: .5, step: .01},
-    {id: 'plantGlowFoliage', key: 'foliage_intensity', label: 'Foliage light', value: 1, min: 0, max: 1, step: .01},
-    {id: 'plantGlowGlobes', key: 'globe_intensity', label: 'Globe light', value: 1, min: 0, max: 1.5, step: .01},
-  ]);
-  const plantGlowSelectors = Object.freeze(plantGlowFields.map((field) => `#${field.id}`));
-  const plantGlowParameters = () => Object.fromEntries(plantGlowFields.map((field) => {
-    const control = document.getElementById(field.id);
-    return [field.key, field.options ? control.value : field.step === 1 ? Math.trunc(Number(control.value)) : Number(control.value)];
-  }));
-  const mediaSpecs = Object.freeze({"gif_animation":{"name":"GIF Animation","prefix":"mediaGif","fields":[{"key":"gif_name","label":"Clip","value":"penguin_top_center.gif","options":[["axolotl-bubble-column.gif","Axolotl-Bubble-Column"],["balloon-blobs.gif","Balloon-Blobs"],["bumblebee-garden.gif","Bumblebee-Garden"],["cactus-bloom-dance.gif","Cactus-Bloom-Dance"],["campfire-ghost-stories.gif","Campfire-Ghost-Stories"],["coral-fish-friends.gif","Coral-Fish-Friends"],["cotton-candy-clouds.gif","Cotton-Candy-Clouds"],["cozy-shelf-naps.gif","Cozy-Shelf-Naps"],["cozy-window-cats.gif","Cozy-Window-Cats"],["cupcake-sprinkle-party.gif","Cupcake-Sprinkle-Party"],["curtain-cat-watch.gif","Curtain-Cat-Watch"],["firefly-bottle.gif","Firefly-Bottle"],["frog-pond-ripple.gif","Frog-Pond-Ripple"],["grape-bounce.gif","Grape-Bounce"],["happy-star-fall.gif","Happy-Star-Fall"],["hydrangea-rain.gif","Hydrangea-Rain"],["jellyfish-lanterns.gif","Jellyfish-Lanterns"],["jolly-slime-stack.gif","Jolly-Slime-Stack"],["koi-ribbon.gif","Koi-Ribbon"],["lantern-tree.gif","Lantern-Tree"],["moon-bunny-meadow.gif","Moon-Bunny-Meadow"],["moonlit-ducks.gif","Moonlit-Ducks"],["mushroom-village.gif","Mushroom-Village"],["peach-orchard.gif","Peach-Orchard"],["penguin-ice-fishing.gif","Penguin-Ice-Fishing"],["penguin_top_center.gif","Penguin Top Center"],["planet-parade.gif","Planet-Parade"],["pocket-rocket.gif","Pocket-Rocket"],["shy-ghost-parade.gif","Shy-Ghost-Parade"],["sleepy-bat-cave.gif","Sleepy-Bat-Cave"],["snails-after-rain.gif","Snails-After-Rain"],["sunflower-hamsters.gif","Sunflower-Hamsters"],["tiny-robot-patrol.gif","Tiny-Robot-Patrol"]]},{"key":"playback_speed","label":"Playback rate","value":1,"min":0.1,"max":4,"step":0.1},{"key":"fit_mode","label":"Fit","value":"stretch","options":[["stretch","Stretch"],["contain","Contain"],["cover","Cover"]]},{"key":"flip_y","label":"Flip vertically","value":true,"type":"checkbox"}]}});
-  const mediaIds = Object.freeze(Object.keys(mediaSpecs));
-  const mediaControlId = (id, field) => `${mediaSpecs[id].prefix}_${field.key}`;
-  const mediaControls = Object.fromEntries(mediaIds.map((id) => [id, mediaSpecs[id].fields.map((field) => `#${mediaControlId(id, field)}`)]));
-  const mediaParameters = (id) => Object.fromEntries(mediaSpecs[id].fields.map((field) => {
-    const control = document.getElementById(mediaControlId(id, field));
-    return [field.key, field.type === 'checkbox' ? control.checked : field.options ? control.value : Number(control.value)];
-  }));
-  function installMediaControls() {
-    mediaIds.forEach((id) => {
-      $('#animationChoice').append(new Option(mediaSpecs[id].name, id));
-      mediaSpecs[id].fields.forEach((field) => {
-        const label = document.createElement('label'); label.textContent = field.label;
-        const control = document.createElement(field.options ? 'select' : 'input'); control.id = mediaControlId(id, field);
-        if (field.options) field.options.forEach(([value, name]) => control.append(new Option(name, value)));
-        else if (field.type === 'checkbox') control.type = 'checkbox';
-        else { control.type = 'number'; control.min = String(field.min); control.max = String(field.max); control.step = String(field.step); }
-        if (field.type === 'checkbox') control.checked = field.value; else control.value = field.value;
-        label.append(control); $('#animationControls').append(label);
-      });
-    });
-  }
-  const componentPresetTargets = Object.freeze({gif_animation: 'gif-animation-preset-cards', plant_glow: 'plant-glow-preset-cards', pixel_chase: 'pixel-chase-preset-cards', aurora_curtains: 'aurora-curtains-preset-cards', conway_life: 'conway-life-preset-cards', tetris: 'tetris-preset-cards', firefly_synchrony: 'firefly-synchrony-preset-cards', fireworks: 'fireworksPresetCards', flame_burst: 'flame-burst-preset-cards', fluid_tank: 'fluid-tank-preset-cards', fish_tank: 'fish-tank-preset-cards', ocean_waves: 'ocean-waves-preset-cards', mini_metro: 'mini-metro-preset-cards', lava_lamp: 'lavaPresetCards', snake: 'snakePresetCards', cyclic_reef: 'reefPresetCards', canopy_cup: 'canopyPresetCards', maze_chase: 'mazePresetCards', pinball: 'pinballPresetCards', pixel_quest: 'questPresetCards', ascii_drop: 'asciiDropPresetCards', emoji: 'emojiAnimationPresetCards', christmas_tree: 'christmasTreePresetCards', night_train_windows: 'nightTrainPresetCards', gradient: 'gradient-preset-cards', rainbow: 'rainbow-preset-cards', solid: 'solid-preset-cards', sparkle: 'sparkle-preset-cards', wave: 'wave-preset-cards'});
-  const atmospherePresetTargets = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
-  const sculpturePresetTargets = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, `${id.replaceAll('_', '-')}-preset-cards`])));
-  const componentControls = Object.freeze({...mediaControls,plant_glow: plantGlowSelectors, pixel_chase: pixelChaseSelectors, aurora_curtains: ['#curtainDensity', '#foldDepth', '#glowIntensity'], conway_life: ['#lifeSeed', '#lifeRate'], tetris: ['#tetrisPieces', '#tetrisFallRate', '#tetrisRisk', '#tetrisSmoothDrop'], firefly_synchrony: ['#fireflyPopulation', '#fireflySynchrony', '#fireflyWandering', '#fireflyPulseSoftness', '#fireflyMeadowGlow'], fireworks: ['#fireworksCadence', '#fireworksPopulation', '#fireworksBurstSize', '#fireworksStyle', '#fireworksGravity', '#fireworksTrails', '#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'], flame_burst: ['#flameCadence', '#flameSize', '#flameEmbers', '#flameFlicker'], fluid_tank: ['#fluidFlow', '#fluidCurrent', '#fluidBubbles', '#fluidSurface'], fish_tank: ['#tankFishCount', '#tankSwimSpeed', '#tankSchooling', '#tankBubbles', '#tankWeeds', '#tankSeed'], ocean_waves: ['#oceanSwell', '#oceanChop', '#oceanFoam', '#oceanTravel', '#oceanSeed'], mini_metro: ['#metroStations', '#metroLines', '#metroTrains', '#metroTraffic', '#metroSpeed', '#metroSeed'], lava_lamp: ['#lavaBlobCount', '#lavaBlobScale', '#lavaViscosity', '#lavaHeat', '#lavaTurbulence', '#lavaGlow', '#lavaSeed'], snake: ['#snakeCadence', '#snakeCount', '#snakeFood', '#snakeGrowth', '#snakeRules', '#snakeObstacles', '#snakeTrails', '#snakeGlow', '#snakeSeed'], canopy_cup: ['#canopyWorld', '#canopyHeats', '#canopyCourse', '#canopyDensity', '#canopyRivalry', '#canopyPowerups'], cyclic_reef: ['#reefSpecies', '#reefThreshold', '#reefMutation', '#reefGrazers', '#reefGlow', '#reefTopology', '#reefPace', '#reefSeed'], maze_chase: ['#mazeCadence', '#mazeDifficulty', '#mazeRadar'], pinball: ['#pinballTicks', '#pinballChaos'], pixel_quest: ['#questCadence', '#questDifficulty', '#questHud'], ascii_drop: ['#asciiPhrase', '#asciiStory', '#asciiSpeed', '#asciiDensity'], emoji: ['#emojiFace', '#emojiMood', '#emojiAnimationPulse', '#emojiAnimationScale'], christmas_tree: ['#treeSeason', '#treeHeight', '#treeSnowfall'], night_train_windows: ['#trainRoute', '#trainSpeed', '#trainGlow'], gradient: ['#gradientDirection','#gradientDrift','#gradientMotion','#gradientSeed'], rainbow: ['#rainbowBands','#rainbowTravel','#rainbowDirection','#rainbowSeed'], solid: ['#solidGlow','#solidBreath','#solidSeed'], sparkle: ['#sparkleDensity','#sparkleLinger','#sparkleTwinkle','#sparkleNight','#sparkleSeed'], wave: ['#waveAxis','#waveFrequency','#waveTravel','#waveShape','#waveDirection','#waveSeed']});
-  const atmosphereControls = Object.freeze(Object.fromEntries(atmosphereIds.map((id) => [id, atmosphereSpecs[id].fields.map(([name]) => `#${atmosphereControlId(id, name)}`)])));
-  const sculptureControls = Object.freeze(Object.fromEntries(sculptureIds.map((id) => [id, sculptureSpecs[id].fields.map(([name]) => `#${sculptureControlId(id, name)}`)])));
-
-  function installPixelChaseControls() {
-    $('#animationChoice').append(new Option('Pixel Chase', 'pixel_chase'));
-    pixelChaseFields.forEach((field) => {
-      const label = document.createElement('label'); label.textContent = field.label;
-      const control = document.createElement(field.options ? 'select' : 'input'); control.id = field.id;
-      if (field.options) field.options.forEach(([value, name]) => control.append(new Option(name, value)));
-      else { control.type = 'number'; control.min = String(field.min); control.max = String(field.max); control.step = String(field.step); }
-      control.value = field.value; label.append(control); $('#animationControls').append(label);
-    });
-  }
-  function installPlantGlowControls() {
-    $('#animationChoice').append(new Option('Plant Glow', 'plant_glow'));
-    plantGlowFields.forEach((field) => {
-      const label = document.createElement('label'); label.textContent = field.label;
-      const control = document.createElement(field.options ? 'select' : 'input'); control.id = field.id;
-      if (field.options) field.options.forEach(([value, name]) => control.append(new Option(name, value)));
-      else { control.type = 'number'; control.min = String(field.min); control.max = String(field.max); control.step = String(field.step); }
-      control.value = field.value; label.append(control); $('#animationControls').append(label);
-    });
-  }
-  function installPixelStoryControls() {
-    const field = (id, label, value, options = null) => { const wrapper = document.createElement('label'); wrapper.textContent = label; const control = document.createElement(options ? 'select' : 'input'); control.id = id; if (options) options.forEach(([optionValue, title]) => control.append(new Option(title, optionValue))); else { control.type = id === 'asciiPhrase' ? 'text' : 'number'; control.step = '.01'; } control.value = value; wrapper.append(control); $('#animationControls').append(wrapper); };
-    field('asciiPhrase', 'ASCII phrase', 'HELLO'); field('asciiStory', 'ASCII story', 'terminal', [['terminal','Terminal'],['matrix','Matrix'],['love','Love letter'],['datastream','Datastream'],['overflow','Overflow']]); field('asciiSpeed', 'Glyph speed', '13'); field('asciiDensity', 'Glyph density', '.45');
-    field('emojiFace', 'Emoji type', 'smile', [['smile','Smile'],['heart','Heart']]); field('emojiMood', 'Emoji mood', 'golden', [['golden','Golden'],['neon','Neon'],['rose','Rose'],['ice','Ice']]); field('emojiAnimationPulse', 'Emoji pulse', '.8'); field('emojiAnimationScale', 'Emoji scale', '1');
-    field('treeSeason', 'Tree season', 'classic', [['classic','Classic'],['party','Party'],['quiet','Quiet'],['blizzard','Blizzard']]); field('treeHeight', 'Tree height', '58'); field('treeSnowfall', 'Tree snowfall', '.35');
-    field('trainRoute', 'Train route', 'sleeper', [['sleeper','Sleeper'],['moonlit','Moonlit'],['ember','Ember'],['synthwave','Synthwave']]); field('trainSpeed', 'Train pace', '1'); field('trainGlow', 'Window glow', '.65');
-  }
-  function installTetrisControls() {
-    const target = $('#animationControls');
-    const numberField = (id, label, value, minimum, maximum, step) => {
-      const wrapper = document.createElement('label'); wrapper.textContent = label;
-      const control = document.createElement('input'); control.id = id; control.type = 'number';
-      control.min = minimum; control.max = maximum; control.step = step; control.value = value;
-      wrapper.append(control); target.append(wrapper);
-    };
-    numberField('tetrisPieces', 'Pieces', '5', '1', '128', '1');
-    numberField('tetrisFallRate', 'Fall rate', '3', '.2', '5', '.1');
-    numberField('tetrisRisk', 'Bot risk', '.18', '0', '.6', '.01');
-    const wrapper = document.createElement('label'); wrapper.textContent = 'Smooth drop';
-    const control = document.createElement('input'); control.id = 'tetrisSmoothDrop'; control.type = 'checkbox'; control.checked = true;
-    wrapper.append(control); target.append(wrapper);
-  }
-  function installAmbientControls() {
-    const field = (id, label, value, options = null) => { const wrapper = document.createElement('label'); wrapper.textContent = label; const control = document.createElement(options ? 'select' : 'input'); control.id = id; if (options) options.forEach(([key, name]) => control.append(new Option(name, key))); else { control.type = 'number'; control.step = '.01'; } control.value = value; wrapper.append(control); $('#animationControls').append(wrapper); };
-    field('gradientDirection','Gradient direction','vertical',[['vertical','Vertical'],['horizontal','Horizontal'],['diagonal','Diagonal']]); field('gradientDrift','Gradient drift','.22'); field('gradientMotion','Gradient motion','.72'); field('gradientSeed','Gradient seed','6101');
-    field('rainbowBands','Rainbow bands','1.4'); field('rainbowTravel','Rainbow travel','.65'); field('rainbowDirection','Rainbow direction','1'); field('rainbowSeed','Rainbow seed','6102'); field('solidGlow','Solid glow','.68'); field('solidBreath','Solid breath','0'); field('solidSeed','Solid seed','6103');
-    field('sparkleDensity','Sparkle density','.2'); field('sparkleLinger','Sparkle linger','.65'); field('sparkleTwinkle','Sparkle twinkle','.72'); field('sparkleNight','Sparkle night','.08'); field('sparkleSeed','Sparkle seed','6104');
-    field('waveAxis','Wave axis','vertical',[['vertical','Vertical'],['horizontal','Horizontal'],['diagonal','Diagonal']]); field('waveFrequency','Wave frequency','2'); field('waveTravel','Wave travel','.45'); field('waveShape','Wave shape','.8'); field('waveDirection','Wave direction','1'); field('waveSeed','Wave seed','6105');
-  }
-  function installAtmosphereControls() {
-    const target = $('#animationControls');
-    atmosphereIds.forEach((id) => atmosphereSpecs[id].fields.forEach(([name, label, options]) => {
-      const wrapper = document.createElement('label'); wrapper.textContent = label;
-      const control = document.createElement(options ? 'select' : 'input'); control.id = atmosphereControlId(id, name);
-      if (options) options.forEach(([value, title]) => control.append(new Option(title, value)));
-      else { control.type = 'number'; control.step = name === 'seed' ? '1' : '.01'; if (name === 'seed') { control.min = '0'; control.max = '999999'; } }
-      control.value = atmosphereSpecs[id].defaults[name]; wrapper.append(control); target.append(wrapper);
-    }));
-  }
-  function installSculptureControls() {
-    const target = $('#animationControls');
-    sculptureIds.forEach((id) => sculptureSpecs[id].fields.forEach(([name, label]) => {
-      const wrapper = document.createElement('label'); wrapper.textContent = label; const control = document.createElement('input'); control.type = 'number'; control.step = name === 'rule' || name === 'symmetry' ? '1' : '.01'; control.id = sculptureControlId(id, name); control.value = sculptureSpecs[id].defaults[name]; wrapper.append(control); target.append(wrapper);
-    }));
-  }
-
   function sameLocalParameters(left, right) {
     if (left === right) return true;
     if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
     const leftKeys = Object.keys(left).sort(); const rightKeys = Object.keys(right).sort();
     return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && sameLocalParameters(left[key], right[key]));
   }
-  function componentLabel(componentId) { return [...$('#animationChoice').options].find((option) => option.value === componentId)?.textContent || componentId; }
-  function setComponentRegion(target, visible) {
-    if (!target) return;
-    target.hidden = !visible; target.inert = !visible; target.setAttribute('aria-hidden', String(!visible));
-    target.querySelectorAll('button,input,select,textarea').forEach((control) => { control.disabled = !visible; });
-  }
-  function nestComponentControls() {
-    const animationInspector = $('#animation-title').closest('.inspector');
-    [
-      ['snake', '#snake-title'],
-      ['canopy_cup', '#canopy-title'],
-      ['cyclic_reef', '#reef-title'],
-      ['maze_chase pinball pixel_quest', '#arcade-trio-title'],
-    ].forEach(([componentIds, headingSelector]) => {
-      const region = document.querySelector(headingSelector)?.closest('.inspector');
-      if (!region) return;
-      region.classList.add('component-controls');
-      region.dataset.animationComponents = componentIds;
-    });
-    document.querySelectorAll('.control-workspace > .inspector[data-animation-components]').forEach((region) => {
-      if (region.parentElement === animationInspector) return;
-      region.classList.add('component-controls');
-      animationInspector.append(region);
-    });
-  }
-  const semanticControls = [];
+  const semanticControls = new Map();
   let controlEditSessions = new WeakMap();
   let historyGeneration = 0;
   let authoredTargetFps = null;
@@ -304,8 +101,7 @@
     spectrum: ['#d6275c', '#36c5f0', '#f6d743'], ember: ['#2a0c07', '#e0522d', '#ffca70'],
     rainbow: ['#2a0048', '#ff285a', '#28ff8c'],
   });
-  function semanticScope() { return [...document.querySelectorAll('.inspectors .inspector')]; }
-  function isSemanticControl(control) { return control.matches('input:not([type="hidden"]), select, textarea') && !control.dataset.semanticInstrument; }
+  function isSemanticControl(control) { return control.matches('input:not([type="hidden"]):not([type="range"]), select, textarea') && !control.dataset.semanticInstrument; }
   function dispatchSemanticEdit(control, previous = null) { void edit({target: control}, previous); }
   function beginControlEdit(control) {
     if (!controlEditSessions.has(control)) controlEditSessions.set(control, {previous: historySnapshot(), remembered: false});
@@ -325,7 +121,7 @@
     return control.step === '1' ? Math.round(next) : Number(next.toFixed(6));
   }
   function controlDefault(control) { return control.dataset.semanticDefault; }
-  function controlWords(control) { return String(control.id || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^a-z0-9]+/i).filter(Boolean).map((word) => word.toLowerCase()); }
+  function controlWords(control) { return String(control.closest('[data-parameter]')?.dataset.parameter || control.id || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^a-z0-9]+/i).filter(Boolean).map((word) => word.toLowerCase()); }
   function isSeedControl(control) { return controlWords(control).includes('seed'); }
   function controlLabelText(label) {
     return [...label.childNodes]
@@ -337,23 +133,39 @@
   function addControlMeta(label, control) {
     const defaults = controlDefault(control); if (defaults == null) return;
     const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'semantic-reset'; reset.textContent = 'Reset'; reset.setAttribute('aria-label', `Reset ${controlLabelText(label)} to default`);
-    reset.addEventListener('click', () => { control.value = defaults; control.checked = defaults === 'true'; syncSemanticControls(); dispatchSemanticEdit(control); });
+    reset.addEventListener('click', () => {
+      control.value = defaults; control.checked = defaults === 'true'; syncSemanticControls();
+      dispatchSemanticEdit(control);
+    });
     const meta = document.createElement('small'); meta.className = 'semantic-default'; meta.textContent = `Default ${defaults}`; reset.title = `Reset to ${defaults}`;
     label.append(meta, reset);
   }
+  function syncNumericRange(record) {
+    const {control, range} = record;
+    range.min = control.dataset.uiMin || control.min;
+    range.max = control.dataset.uiMax || control.max;
+    const exactStep = control.step && control.step !== 'any' ? control.step : '.01';
+    const coarseStep = Number(control.dataset.coarseStep);
+    const span = Number(range.max) - Number(range.min);
+    const steps = span / coarseStep;
+    range.step = coarseStep > 0 && Math.abs(steps - Math.round(steps)) < 1e-6 ? String(coarseStep) : exactStep;
+    const describe = (element) => element.setAttribute('aria-description', `Range ${element.min} to ${element.max}.`);
+    describe(range);
+    describe(control);
+    if (finiteControlValue(control)) range.value = control.value;
+  }
   function decorateNumeric(label, control) {
-    if (control.min === '' || control.max === '') return;
-    // Both inputs need explicit names: an implicit label only names its first
-    // labelable descendant, which becomes the slider after decoration.
-    const section = label.closest('.inspector')?.querySelector('h2')?.textContent.trim();
+    const section = label.closest('section')?.getAttribute('aria-label') || label.closest('.inspector')?.querySelector('h2')?.textContent.trim();
     const setting = [section, controlLabelText(label)].filter(Boolean).join(': ');
-    const rangeDescription = `Range ${control.min} to ${control.max}.`;
-    const range = document.createElement('input'); range.type = 'range'; range.className = 'semantic-range'; range.min = control.min; range.max = control.max; range.step = control.step && control.step !== 'any' ? control.step : '0.01';
+    const range = document.createElement('input'); range.type = 'range'; range.className = 'semantic-range';
     range.setAttribute('aria-label', `${setting} adjustment`);
     control.setAttribute('aria-label', `${setting} exact value`);
-    range.setAttribute('aria-description', rangeDescription); control.setAttribute('aria-description', rangeDescription);
-    const wrap = document.createElement('span'); wrap.className = 'semantic-number'; control.classList.add('semantic-exact'); control.before(wrap); wrap.append(range, control);
-    const record = {kind: 'number', control, range, lastValue: control.value}; semanticControls.push(record);
+    const wrap = document.createElement('span');
+    wrap.className = 'semantic-number'; control.classList.add('semantic-exact');
+    control.before(wrap); wrap.append(range, control);
+    const record = {kind: 'number', control, range, lastValue: control.value};
+    semanticControls.set(control, record);
+    syncNumericRange(record);
     range.addEventListener('pointerdown', () => beginControlEdit(control));
     range.addEventListener('keydown', () => beginControlEdit(control));
     range.addEventListener('pointerup', () => finishControlEditAfterEvent(control));
@@ -361,11 +173,10 @@
     range.addEventListener('keyup', () => finishControlEditAfterEvent(control));
     range.addEventListener('change', () => finishControlEditAfterEvent(control));
     range.addEventListener('input', () => {
-      const value = normalControlValue(control, range.value); if (value == null) return; const changed = String(value) !== control.value; control.value = String(value); record.lastValue = control.value;
+      const value = normalControlValue(range, range.value); if (value == null) return; const changed = String(value) !== control.value; control.value = String(value); record.lastValue = control.value;
       if (changed) dispatchSemanticEdit(control);
     });
-    const protect = (event) => { if (finiteControlValue(control)) { control.removeAttribute('aria-invalid'); record.lastValue = control.value; range.value = control.value; return; } control.setAttribute('aria-invalid', 'true'); event.stopImmediatePropagation(); };
-    control.addEventListener('input', protect); control.addEventListener('input', () => dispatchSemanticEdit(control)); control.addEventListener('change', protect); control.addEventListener('blur', () => { if (!finiteControlValue(control)) control.value = record.lastValue; });
+    wireExactNumber(record);
     if (isSeedControl(control)) {
       const randomize = document.createElement('button'); randomize.type = 'button'; randomize.className = 'semantic-randomize'; randomize.textContent = 'Randomize';
       randomize.addEventListener('click', () => { const min = Math.ceil(Number(control.min)); const max = Math.floor(Number(control.max)); const bytes = new Uint32Array(1); crypto.getRandomValues(bytes); control.value = String(min + (bytes[0] % Math.max(1, max - min + 1))); range.value = control.value; record.lastValue = control.value; dispatchSemanticEdit(control); });
@@ -381,7 +192,7 @@
       if (palette) { const swatch = document.createElement('span'); swatch.className = 'semantic-swatch'; (PALETTE_SWATCHES[option.value] || ['#1b2d35', '#4f8290', '#b9e9dc']).forEach((color) => { const stripe = document.createElement('i'); stripe.style.background = color; swatch.append(stripe); }); button.append(swatch, document.createTextNode(option.textContent)); } else button.textContent = option.textContent;
       button.addEventListener('click', () => { control.value = option.value; syncSemanticControls(); dispatchSemanticEdit(control); });
       button.addEventListener('keydown', (event) => { if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; event.preventDefault(); const direction = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1; const next = buttons[(index + direction + buttons.length) % buttons.length]; next.focus(); next.click(); }); choices.append(button); return button; });
-    control.classList.add('semantic-source'); control.setAttribute('aria-hidden', 'true'); control.tabIndex = -1; control.after(choices); semanticControls.push({kind: 'choices', control, buttons}); addControlMeta(label, control);
+    control.classList.add('semantic-source'); control.setAttribute('aria-hidden', 'true'); control.tabIndex = -1; control.after(choices); semanticControls.set(control, {kind: 'choices', control, buttons}); addControlMeta(label, control);
   }
   function decorateSwitch(label, control) {
     const compactPlantOptic = Boolean(control.closest('.final-optic-row'));
@@ -392,153 +203,482 @@
         if (optic) syncPlantOpticControl(optic);
       }
       dispatchSemanticEdit(control);
-    }); control.classList.add('semantic-source'); control.setAttribute('aria-hidden', 'true'); control.tabIndex = -1; control.after(button); semanticControls.push({kind: 'switch', control, button});
+    }); control.classList.add('semantic-source'); control.setAttribute('aria-hidden', 'true'); control.tabIndex = -1; control.after(button); semanticControls.set(control, {kind: 'switch', control, button});
     if (!compactPlantOptic) addControlMeta(label, control);
   }
+  function wireExactNumber(record) {
+    const {control, range} = record;
+    const protect = (event) => {
+      if (finiteControlValue(control)) {
+        control.removeAttribute('aria-invalid');
+        if (range) range.value = control.value;
+        return;
+      }
+      control.setAttribute('aria-invalid', 'true'); event.stopImmediatePropagation();
+    };
+    control.addEventListener('input', protect);
+    control.addEventListener('input', () => dispatchSemanticEdit(control));
+    control.addEventListener('change', protect);
+    control.addEventListener('blur', () => { if (!finiteControlValue(control)) control.value = record.lastValue; });
+  }
   function decorateExactNumber(label, control) {
-    const record = {kind: 'exact', control, lastValue: control.value}; semanticControls.push(record);
-    const protect = (event) => { if (finiteControlValue(control)) { control.removeAttribute('aria-invalid'); record.lastValue = control.value; return; } control.setAttribute('aria-invalid', 'true'); event.stopImmediatePropagation(); };
-    control.addEventListener('input', protect); control.addEventListener('input', () => dispatchSemanticEdit(control)); control.addEventListener('change', protect); control.addEventListener('blur', () => { if (!finiteControlValue(control)) control.value = record.lastValue; });
+    const record = {kind: 'exact', control, lastValue: control.value};
+    semanticControls.set(control, record);
+    wireExactNumber(record);
     addControlMeta(label, control);
   }
-  function decorateText(label, control) {
-    control.classList.add('semantic-text'); addControlMeta(label, control);
-    if (!['asciiPhrase', 'emojiText'].includes(control.id)) return;
-    control.addEventListener('focus', () => beginControlEdit(control));
-    control.addEventListener('beforeinput', () => beginControlEdit(control));
-    control.addEventListener('change', () => finishControlEditAfterEvent(control));
-    control.addEventListener('blur', () => finishControlEditAfterEvent(control));
-  }
-  function installSemanticControls() {
-    semanticScope().forEach((scope) => scope.querySelectorAll('input,select,textarea').forEach((control) => {
-      if (!isSemanticControl(control)) return; control.dataset.semanticInstrument = 'true'; control.dataset.semanticDefault = control.type === 'checkbox' ? String(control.checked) : control.value;
-      const label = control.closest('label'); if (!label) return; label.classList.add('semantic-control');
+  function installSemanticControls(scope) {
+    scope.querySelectorAll('input,select,textarea').forEach((control) => {
+      if (!isSemanticControl(control)) return;
+      const label = control.closest('label');
+      if (!label || ['animationChoice', 'backgroundChoice', 'widgetChoice'].includes(control.id)) return;
+      control.dataset.semanticInstrument = 'true';
+      if (!Object.hasOwn(control.dataset, 'semanticDefault') && !parameterEdits.has(control)) {
+        control.dataset.semanticDefault = control.type === 'checkbox' ? String(control.checked) : control.value;
+      }
+      label.classList.add('semantic-control');
       if (control.type === 'checkbox') decorateSwitch(label, control);
       else if (control.tagName === 'SELECT') decorateChoices(label, control);
       else if (control.type === 'number' && control.min !== '' && control.max !== '') decorateNumeric(label, control);
       else if (control.type === 'number') decorateExactNumber(label, control);
-      else decorateText(label, control);
+      else { control.classList.add('semantic-text'); addControlMeta(label, control); }
+    });
+  }
+  function syncSemanticControls() {
+    for (const [control, record] of semanticControls) {
+      if (!control.isConnected) { semanticControls.delete(control); continue; }
+      if (record.kind === 'number') syncNumericRange(record);
+      if ((record.kind === 'number' || record.kind === 'exact') && finiteControlValue(control)
+          && control.getAttribute('aria-invalid') !== 'true') record.lastValue = control.value;
+      if (record.kind === 'choices') record.buttons.forEach((button) => {
+        const selected = button.dataset.value === control.value;
+        button.setAttribute('aria-checked', String(selected)); button.tabIndex = selected ? 0 : -1;
+      });
+      if (record.kind === 'switch') record.button.setAttribute('aria-checked', String(control.checked));
+    }
+  }
+  const componentEditors = new Map();
+  const widgetEditors = new Map();
+  const parameterEdits = new WeakMap();
+  const presetRequests = new Map();
+  const componentRoles = ['animation', 'background', 'widget'];
+  const sceneComponentRoles = ['animation', 'background'];
+  const manualPlacement = (strip = 0, led = 0) => ({
+    mode: 'manual', strip_translation: strip, led_translation: led,
+  });
+
+  function componentKey(ref) {
+    return ref && `${ref.provider}:${ref.component_id}:v${ref.version}`;
+  }
+  function componentDescriptor(ref) {
+    const entry = state.components.get(componentKey(ref));
+    return entry?.role === ref?.role && entry?.available !== false ? entry : null;
+  }
+  function componentRef(entry, parameters = entry.parameters || {}) {
+    const {component_id, version, provider, role} = entry;
+    return {component_id, version, provider, role, parameters: structuredClone(parameters)};
+  }
+  function defaultComponent(role, component_id) {
+    const ref = {component_id, version: 1, provider: 'python', role};
+    return componentRef(ref, componentDescriptor(ref)?.parameters);
+  }
+  function defaultScene() {
+    return {schema: 'ledgrid.scene.v2',
+      background: defaultComponent('background', 'solid_background'),
+      animation: defaultComponent('animation', 'aurora_curtains'),
+      widgets: [], plants: {effects: {version: 1, active: [], strengths: {}}},
+      look: {palette_id: $('#previewPalette').value, pace: number('#sceneSpeed'), presentation_brightness: number('#sceneLuminance')},
+    };
+  }
+  function componentOption(entry) {
+    const option = new Option(entry.name, entry.component_id);
+    option.dataset.componentKey = componentKey(entry);
+    option.disabled = entry.available === false;
+    return option;
+  }
+  function selectedComponent(select) {
+    return state.components.get(select.selectedOptions[0]?.dataset.componentKey);
+  }
+  function installComponentChoices() {
+    for (const role of componentRoles) {
+      const select = $(`#${role}Choice`);
+      const entries = [...state.components.values()].filter((entry) => entry.role === role);
+      select.replaceChildren(...entries.map(componentOption));
+      select.disabled = !entries.some((entry) => entry.available !== false);
+    }
+    $('#addWidget').disabled = $('#widgetChoice').disabled;
+  }
+  function selectComponentRef(select, ref) {
+    const key = componentKey(ref);
+    let option = [...select.options].find((item) => item.dataset.componentKey === key);
+    if (!option && ref) {
+      select.querySelector('[data-preserved]')?.remove();
+      option = new Option(`${ref.component_id} (preserved)`, ref.component_id);
+      option.dataset.componentKey = key;
+      option.dataset.preserved = 'true';
+      option.disabled = true;
+      select.append(option);
+    }
+    if (option && !option.dataset.preserved) select.querySelector('[data-preserved]')?.remove();
+    if (option) option.selected = true;
+  }
+  function parameterLabel(name) {
+    const words = name.replaceAll('_', ' ');
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+  function supportedParameter(spec) {
+    return spec.control !== 'fixed' && ['int', 'float', 'bool', 'str', 'color', 'cells'].includes(spec.type);
+  }
+  function parameterBound(spec, bound, parameters) {
+    const supplied = parameters[spec[`${bound}_parameter`]];
+    if (!Number.isFinite(supplied)) return spec[bound];
+    if (!Number.isFinite(spec[bound])) return supplied;
+    return bound === 'min' ? Math.max(spec[bound], supplied) : Math.min(spec[bound], supplied);
+  }
+  function setNumberBounds(control, spec, parameters) {
+    const min = parameterBound(spec, 'min', parameters);
+    const max = parameterBound(spec, 'max', parameters);
+    control.min = Number.isFinite(min) ? String(min) : '';
+    control.max = Number.isFinite(max) ? String(max) : '';
+    control.dataset.uiMin = Number.isFinite(spec.ui_min) ? String(Math.max(spec.ui_min, min ?? -Infinity)) : control.min;
+    control.dataset.uiMax = Number.isFinite(spec.ui_max) ? String(Math.min(spec.ui_max, max ?? Infinity)) : control.max;
+    control.dataset.coarseStep = spec.coarse_step ?? '';
+  }
+  function parameterInputValue(control, spec, options) {
+    if (options.length) return options.find((option) => String(option) === control.value);
+    if (control.type === 'checkbox') return control.checked;
+    if (spec.type === 'int' || spec.type === 'float') {
+      const value = control.valueAsNumber;
+      if (!Number.isFinite(value) || control.validity.rangeUnderflow || control.validity.rangeOverflow) return undefined;
+      if (spec.type === 'int' && !Number.isInteger(value)) return undefined;
+      return value;
+    }
+    if (spec.type === 'color') return control.value.slice(1).match(/../g).map((channel) => parseInt(channel, 16));
+    if (spec.type === 'cells') {
+      let cells;
+      try { cells = JSON.parse(control.value); } catch (_) { return undefined; }
+      const inBounds = (value, min, max) => Number.isInteger(value) && value >= (min ?? -Infinity) && value <= (max ?? Infinity);
+      if (!Array.isArray(cells) || cells.length > (spec.max_items ?? Infinity)
+          || cells.some((cell) => !Array.isArray(cell) || cell.length !== 2
+            || !inBounds(cell[0], spec.strip_min, spec.strip_max) || !inBounds(cell[1], spec.led_min, spec.led_max))) return undefined;
+      return cells;
+    }
+    if (Number.isInteger(spec.max_length) && [...control.value].length > spec.max_length) return undefined;
+    return control.value;
+  }
+  function parameterControlValue(value, spec) {
+    if (spec.type === 'color' && Array.isArray(value)) return `#${value.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+    if (spec.type === 'cells') return JSON.stringify(value ?? []);
+    return String(value ?? '');
+  }
+  function createParameterControl({prefix, name, spec, defaultValue, parameters, update}) {
+    const label = document.createElement('label');
+    label.dataset.parameter = name;
+    label.textContent = spec.label || parameterLabel(name);
+    const options = Array.isArray(spec.options) ? spec.options : [];
+    if (spec.autoplay_only) label.title = 'Applies to autoplay.';
+    const control = document.createElement(options.length ? 'select' : spec.type === 'cells' ? 'textarea' : 'input');
+    control.id = `${prefix}-${name}`;
+    if (options.length) {
+      for (const option of options) control.append(new Option(spec.option_labels?.[option] || String(option), String(option)));
+    } else if (spec.type === 'int' || spec.type === 'float') {
+      control.type = 'number';
+      control.step = spec.step ?? (spec.type === 'int' ? 1 : .01);
+      setNumberBounds(control, spec, parameters);
+    } else if (spec.type === 'bool') control.type = 'checkbox';
+    else if (spec.type === 'color') control.type = 'color';
+    else if (spec.type === 'cells') { control.rows = 3; control.spellcheck = false; }
+    else if (spec.control === 'emoji_text') { control.inputMode = 'text'; control.autocapitalize = 'off'; }
+    if (spec.description) control.title = spec.description;
+    if (spec.unit) label.textContent += ` (${spec.unit})`;
+    if (defaultValue !== undefined) control.dataset.semanticDefault = parameterControlValue(defaultValue, spec);
+    label.append(control);
+    let lastValue;
+    function sync(nextParameters, force = false) {
+      const value = nextParameters[name] ?? defaultValue;
+      if (control.type === 'number') setNumberBounds(control, spec, nextParameters);
+      if (force || !sameLocalParameters(lastValue, value)) {
+        if (control.type === 'checkbox') control.checked = Boolean(value);
+        else if (control.value !== parameterControlValue(value, spec)) control.value = parameterControlValue(value, spec);
+        control.removeAttribute('aria-invalid');
+      }
+      lastValue = value;
+    }
+    sync(parameters, true);
+    parameterEdits.set(control, (scene) => {
+      const value = parameterInputValue(control, spec, options);
+      if (value === undefined) { control.setAttribute('aria-invalid', 'true'); return false; }
+      control.removeAttribute('aria-invalid');
+      return update(scene, name, value);
+    });
+    const isLiveText = !options.length && spec.type === 'str' && spec.mutation !== 'commit';
+    control.addEventListener('change', edit);
+    if (isLiveText || spec.type === 'color') control.addEventListener('input', edit);
+    if (isLiveText || control.type === 'number' || spec.type === 'color') {
+      control.addEventListener('focus', () => beginControlEdit(control));
+      control.addEventListener('beforeinput', () => beginControlEdit(control));
+      control.addEventListener('change', () => finishControlEditAfterEvent(control));
+      control.addEventListener('blur', () => finishControlEditAfterEvent(control));
+    }
+    control.addEventListener('blur', () => { if (control.getAttribute('aria-invalid') === 'true') sync({[name]: lastValue}, true); });
+    return {label, sync};
+  }
+  function positionedAction(entry) {
+    const actions = entry?.input_capability?.actions || {};
+    return Object.entries(actions).find(([, action]) => action.position);
+  }
+  function createComponentEditor(host, ref, resolveRef, prefix) {
+    const entry = componentDescriptor(ref);
+    host.replaceChildren();
+    if (!entry) {
+      const message = document.createElement('p'); message.className = 'status-line';
+      message.textContent = state.components.size
+        ? `Unsupported ${ref.role} component ${ref.component_id}, version ${ref.version}.`
+        : 'Loading component controls…';
+      host.append(message);
+      return {entry, sync() {}};
+    }
+    const cards = document.createElement('div'); cards.className = 'operation-row component-presets';
+    cards.setAttribute('aria-label', `${entry.name} presets`); cards.hidden = true;
+    const presetState = document.createElement('p'); presetState.className = 'status-line component-preset-state';
+    presetState.setAttribute('aria-live', 'polite'); presetState.hidden = true;
+    host.append(cards, presetState);
+    const schema = entry.parameter_schema || {};
+    const names = Object.keys(schema).filter((name) => supportedParameter(schema[name]));
+    const preferred = entry.preferred_parameters?.length ? entry.preferred_parameters.filter((name) => names.includes(name)) : names;
+    const primaryNames = preferred.slice(0, 4);
+    const fields = names.map((name) => [name, createParameterControl({
+      prefix, name, spec: schema[name], defaultValue: entry.parameters?.[name], parameters: ref.parameters,
+      update: (scene, key, value) => {
+        const target = resolveRef(scene);
+        if (!target || componentKey(target) !== componentKey(ref)) return false;
+        target.parameters[key] = value;
+      },
+    })]);
+    if (fields.length) {
+      const disclosure = document.createElement('section');
+      disclosure.className = 'control-disclosure';
+      disclosure.dataset.componentId = entry.component_id;
+      disclosure.setAttribute('aria-label', `${entry.name} controls`);
+      const primary = document.createElement('div'); primary.className = 'primary-control-grid'; primary.setAttribute('aria-label', 'Primary controls');
+      const fieldsByName = new Map(fields);
+      for (const name of primaryNames) primary.append(fieldsByName.get(name).label);
+      disclosure.append(primary);
+      const advanced = fields.filter(([name]) => !primaryNames.includes(name));
+      if (advanced.length) {
+        const details = document.createElement('details'); details.className = 'advanced-controls';
+        const summary = document.createElement('summary'); summary.textContent = 'Advanced tuning';
+        const grid = document.createElement('div'); grid.className = 'advanced-control-grid';
+        grid.setAttribute('aria-label', 'Advanced controls');
+        advanced.forEach(([, field]) => grid.append(field.label));
+        details.append(summary, grid); disclosure.append(details);
+      }
+      host.append(disclosure);
+    }
+    const pointAction = positionedAction(entry)?.[1];
+    if (pointAction) {
+      const gesture = document.createElement('p');
+      gesture.className = 'status-line'; gesture.textContent = `Tap the live preview to ${pointAction.label.toLocaleLowerCase()}.`;
+      host.append(gesture);
+    }
+    if (entry.input_capability?.mode === 'player' && entry.component_id === 'tetris') {
+      // Tetris has a dedicated controller-guarded player route.
+      const play = document.createElement('a'); play.className = 'button secondary tetris-player-link'; play.href = '/play/tetris'; play.textContent = 'Play Tetris on wall';
+      host.append(play);
+    }
+    installSemanticControls(host);
+    let activeRef = ref;
+    let choices = [];
+    function syncPresetState() {
+      const match = choices.find((preset) => sameLocalParameters(preset.parameters, activeRef.parameters));
+      [...cards.children].forEach((button, index) => {
+        const active = match === choices[index];
+        button.setAttribute('aria-pressed', String(active)); button.classList.toggle('active', active);
+      });
+      presetState.hidden = !choices.length;
+      const text = match ? `Preset: ${match.name}` : 'Custom remix';
+      if (choices.length) updatePlacementText(presetState, text);
+    }
+    if (entry.preset_count > 0 || (ref.role !== 'animation' && entry.preset_count == null)) {
+      loadComponentPresets(entry).then((presets) => {
+        if (!host.contains(cards)) return;
+        choices = presets;
+        for (const preset of presets) {
+          const button = document.createElement('button');
+          button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name;
+          button.addEventListener('click', () => {
+            void edit(null, null, (next) => {
+              const target = resolveRef(next);
+              if (!target || componentKey(target) !== componentKey(ref)) return false;
+              target.parameters = presetParameters(entry, preset, target.parameters);
+              applyAuthoredPresetPresentation(next, preset);
+            });
+          });
+          cards.append(button);
+        }
+        cards.hidden = !presets.length;
+        syncPresetState();
+      }).catch((error) => {
+        if (host.contains(cards)) { presetState.hidden = false; presetState.textContent = error.message; }
+      });
+    }
+    return {entry, sync(nextRef, force) {
+      activeRef = nextRef;
+      const parameters = {...entry.parameters, ...nextRef.parameters};
+      fields.forEach(([, field]) => field.sync(parameters, force));
+      syncPresetState();
+    }};
+  }
+  function presetParameters(entry, preset, previous = {}) {
+    const next = structuredClone(preset.parameters);
+    for (const [name, spec] of Object.entries(entry.parameter_schema || {})) {
+      if (spec.preserve_on_preset && Object.hasOwn(previous, name)) next[name] = structuredClone(previous[name]);
+    }
+    return next;
+  }
+  function loadComponentPresets(entry) {
+    if (Object.hasOwn(state.componentPresets, entry.component_id)) return Promise.resolve(state.componentPresets[entry.component_id]);
+    const pending = presetRequests.get(entry.component_id);
+    if (pending) return pending;
+    const request = requestJson(`${api}/components/${encodeURIComponent(entry.component_id)}/presets`).then((body) => {
+      const presets = Array.isArray(body.presets) ? body.presets : [];
+      state.componentPresets[entry.component_id] = presets;
+      refreshPlaylistIdentities();
+      return presets;
+    }).finally(() => presetRequests.delete(entry.component_id));
+    presetRequests.set(entry.component_id, request);
+    return request;
+  }
+  function createWidgetEditor(widget, entry) {
+    const element = document.createElement('section');
+    element.className = 'widget-settings';
+    element.dataset.widgetId = widget.id;
+    const title = document.createElement('h3'); title.textContent = entry?.name || parameterLabel(widget.component.component_id);
+    element.setAttribute('aria-label', title.textContent);
+    const actions = document.createElement('div'); actions.className = 'operation-row';
+    const visible = document.createElement('input'); visible.type = 'checkbox';
+    const visibility = document.createElement('label'); visibility.textContent = `Show ${title.textContent}`; visibility.append(visible);
+    const findWidget = (scene) => scene.widgets.find((item) => item.id === widget.id);
+    visible.dataset.semanticDefault = 'true';
+    parameterEdits.set(visible, (scene) => { const target = findWidget(scene); if (!target) return false; target.visible = visible.checked; });
+    visible.addEventListener('change', edit);
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'button text'; remove.textContent = `Remove ${title.textContent}`;
+    remove.addEventListener('click', () => { void edit(null, null, (scene) => { scene.widgets = scene.widgets.filter((item) => item.id !== widget.id); }); });
+    actions.append(visibility, remove);
+    const settings = document.createElement('div'); settings.className = 'widget-settings';
+    const controls = document.createElement('div'); settings.append(controls);
+    const placement = document.createElement('details'); placement.className = 'advanced-controls';
+    const summary = document.createElement('summary'); summary.textContent = 'Placement';
+    const grid = document.createElement('div'); grid.className = 'advanced-control-grid';
+    const modeLabel = document.createElement('label'); modeLabel.textContent = 'Position';
+    const mode = document.createElement('select');
+    mode.append(new Option('Manual', 'manual'), new Option('Automatic', 'auto'));
+    modeLabel.append(mode); grid.append(modeLabel);
+    const placementStatus = document.createElement('p'); placementStatus.className = 'status-line'; placementStatus.setAttribute('role', 'status');
+    const prefix = `widget-${widget.id}`;
+    const bounds = {strip_translation: {label: 'Across', min: -32, max: 32}, led_translation: {label: 'Down', min: -137, max: 137}};
+    const defaultPlacement = {...manualPlacement(), ...entry?.default_placement};
+    let manual = widget.placement.mode === 'manual' ? widget.placement : defaultPlacement;
+    const offsets = Object.entries(bounds).map(([name, bounds]) => createParameterControl({
+      prefix, name, spec: {type: 'int', ...bounds}, defaultValue: defaultPlacement[name], parameters: manual,
+      update: (scene, key, value) => {
+        const target = findWidget(scene);
+        if (target?.placement.mode !== 'manual') return false;
+        target.placement[key] = value;
+      },
     }));
+    offsets.forEach(({label}) => grid.append(label));
+    parameterEdits.set(mode, (scene) => {
+      const target = findWidget(scene);
+      if (!target) return false;
+      target.placement = mode.value === 'auto' ? {mode: 'auto'} : manualPlacement(manual.strip_translation, manual.led_translation);
+    });
+    mode.addEventListener('change', edit);
+    grid.append(placementStatus);
+    placement.append(summary, grid);
+    settings.append(placement);
+    element.append(title, actions, settings);
+    const editor = createComponentEditor(controls, widget.component, (scene) => findWidget(scene)?.component, prefix);
+    installSemanticControls(element);
+    return {entry, element, placementStatus, sync(nextWidget, force) {
+      visible.checked = nextWidget.visible;
+      settings.hidden = !nextWidget.visible;
+      const current = nextWidget.placement;
+      mode.value = current.mode;
+      if (current.mode === 'manual') manual = current;
+      offsets.forEach((field) => { field.label.hidden = current.mode !== 'manual'; field.sync(manual, force); });
+      editor.sync(nextWidget.component, force);
+    }};
+  }
+  function syncComponentEditors(force = false) {
+    if (!state.scene) return;
+    for (const role of sceneComponentRoles) {
+      const ref = state.scene[role];
+      selectComponentRef($(`#${role}Choice`), ref);
+      let editor = componentEditors.get(role);
+      if (editor?.key !== componentKey(ref) || editor?.entry !== componentDescriptor(ref)) {
+        editor = createComponentEditor($(`#${role}Controls`), ref, (scene) => scene[role], `${role}-${ref.component_id}`);
+        editor.key = componentKey(ref);
+        componentEditors.set(role, editor);
+      }
+      editor.sync(ref, force);
+    }
+    const widgets = state.scene.widgets;
+    const widgetIds = new Set(widgets.map(({id}) => id));
+    for (const [id, editor] of widgetEditors) {
+      if (!widgetIds.has(id)) { editor.element.remove(); widgetEditors.delete(id); }
+    }
+    const host = $('#widgetEditors');
+    widgets.forEach((widget, index) => {
+      let editor = widgetEditors.get(widget.id);
+      const entry = componentDescriptor(widget.component);
+      if (editor?.key !== componentKey(widget.component) || editor?.entry !== entry) {
+        editor?.element.remove();
+        editor = createWidgetEditor(widget, entry);
+        editor.key = componentKey(widget.component);
+        widgetEditors.set(widget.id, editor);
+      }
+      if (host.children[index] !== editor.element) host.insertBefore(editor.element, host.children[index] || null);
+      editor.sync(widget, force);
+    });
     syncSemanticControls();
   }
-  function syncSemanticControls() { semanticControls.forEach((record) => {
-    if (record.kind === 'number') { if (finiteControlValue(record.control)) { record.range.value = record.control.value; record.lastValue = record.control.value; record.control.removeAttribute('aria-invalid'); } }
-    else if (record.kind === 'exact' && finiteControlValue(record.control)) { record.lastValue = record.control.value; record.control.removeAttribute('aria-invalid'); }
-    else if (record.kind === 'choices') record.buttons.forEach((button) => { const selected = button.dataset.value === record.control.value; button.setAttribute('aria-checked', String(selected)); button.tabIndex = selected ? 0 : -1; });
-    else if (record.kind === 'switch') record.button.setAttribute('aria-checked', String(record.control.checked));
-  }); }
-  function presetStatus() {
-    let target = $('#animationPresetState');
-    if (!target) {
-      target = document.createElement('p'); target.id = 'animationPresetState'; target.className = 'status-line'; target.setAttribute('aria-live', 'polite');
-      $('#animationControls').before(target);
-    }
-    return target;
+  function sceneFromControls() {
+    const next = structuredClone(state.scene || defaultScene());
+    applyPlantOptics(next);
+    next.look = {
+      palette_id: $('#previewPalette').value,
+      pace: number('#sceneSpeed'),
+      presentation_brightness: number('#sceneLuminance'),
+    };
+    return next;
   }
-  // These are presentation choices only.  The scene continues to retain every
-  // authored value, while the first encounter with a renderer reads as a small
-  // playable instrument instead of an undifferentiated settings form.
-  const advancedControlSuffixes = Object.freeze({
-    conway_life: ['#lifeSeed'],
-    fireworks: ['#fireworksCrackle', '#fireworksTwinkle', '#fireworksSeed'],
-    lava_lamp: ['#lavaTurbulence', '#lavaGlow', '#lavaSeed'],
-    fish_tank: ['#tankSeed'],
-    ocean_waves: ['#oceanSeed'],
-    mini_metro: ['#metroSeed'],
-    snake: ['#snakeTrails', '#snakeGlow', '#snakeSeed'],
-    cyclic_reef: ['#reefPace', '#reefSeed'],
-    gradient: ['#gradientSeed'], rainbow: ['#rainbowSeed'], solid: ['#solidSeed'],
-    sparkle: ['#sparkleSeed'], wave: ['#waveSeed'],
-  });
-  function allComponentControlSelectors(componentId) {
-    return componentControls[componentId] || atmosphereControls[componentId] || sculptureControls[componentId] || [];
-  }
-  function disclosureHost(componentId) {
-    if (componentControls[componentId] || atmosphereControls[componentId] || sculptureControls[componentId]) {
-      const control = $(allComponentControlSelectors(componentId)[0]);
-      return control?.closest('.field-grid');
-    }
-    return null;
-  }
-  function clearControlDisclosure() {
-    document.querySelectorAll('.control-disclosure').forEach((disclosure) => {
-      const host = disclosure.parentElement;
-      [...disclosure.querySelectorAll(':scope label')].forEach((label) => host.append(label));
-      disclosure.remove();
+  function syncScenePresentation(scene) {
+    $('#previewPalette').value = scene.look?.palette_id ?? 'mist';
+    syncSceneSpeed(scene.look?.pace ?? DEFAULT_SCENE_PACE);
+    $('#sceneLuminance').value = scene.look?.presentation_brightness ?? .82;
+    const plantEffects = scene.plants?.effects || {};
+    const activeOptics = new Set(plantEffects.active || []);
+    const strengths = plantEffects.strengths || {};
+    plantOptics.forEach((optic) => {
+      $(optic.enabled).checked = activeOptics.has(optic.id);
+      $(optic.strength).value = strengths[optic.id] ?? .5;
+      syncPlantOpticControl(optic);
     });
   }
-  function buildControlDisclosure(componentId) {
-    // Live inputs must keep their focus and open disclosure while updating.
-    const existing = document.querySelector('.control-disclosure');
-    if (existing?.dataset.componentId === componentId) return;
-    clearControlDisclosure();
-    const selectors = allComponentControlSelectors(componentId);
-    const host = disclosureHost(componentId);
-    if (!host || !selectors.length) return;
-    const controls = selectors.map((selector) => ({selector, label: $(selector)?.closest('label')})).filter(({label}) => label);
-    if (!controls.length) return;
-    const advanced = new Set(advancedControlSuffixes[componentId] || selectors.filter((selector) => /seed|offset|path|diagnostic|runtime/i.test(selector)));
-    const primaryControls = controls.filter(({selector}) => !advanced.has(selector)).slice(0, 4);
-    const primaryLabels = primaryControls.map(({label}) => label);
-    const advancedLabels = controls.filter(control => !primaryControls.includes(control)).map(({label}) => label);
-    const disclosure = document.createElement('section');
-    disclosure.className = 'control-disclosure';
-    disclosure.dataset.componentId = componentId;
-    disclosure.setAttribute('aria-label', `${componentLabel(componentId)} controls`);
-    const primary = document.createElement('div');
-    primary.className = 'primary-control-grid';
-    primary.setAttribute('aria-label', 'Primary controls');
-    primaryLabels.forEach((label) => primary.append(label));
-    disclosure.append(primary);
-    if (advancedLabels.length) {
-      const details = document.createElement('details');
-      details.className = 'advanced-controls';
-      const summary = document.createElement('summary');
-      summary.textContent = 'Advanced tuning';
-      const grid = document.createElement('div');
-      grid.className = 'advanced-control-grid';
-      grid.setAttribute('aria-label', 'Advanced controls');
-      advancedLabels.forEach((label) => grid.append(label));
-      details.append(summary, grid);
-      disclosure.append(details);
-    }
-    host.prepend(disclosure);
+  function applyScene(scene) {
+    clearSaveFeedback();
+    state.scene = structuredClone(scene);
+    syncScenePresentation(scene);
+    syncComponentEditors(true);
+    placementWarning();
   }
-  function syncComponentPresetUI() {
-    const componentId = state.scene?.animation?.component_id;
-    [...Object.entries(componentPresetTargets), ...Object.entries(atmospherePresetTargets), ...Object.entries(sculpturePresetTargets)].forEach(([id, targetId]) => setComponentRegion(document.getElementById(targetId), id === componentId));
-    [...Object.entries(componentControls), ...Object.entries(atmosphereControls), ...Object.entries(sculptureControls)].forEach(([id, selectors]) => selectors.forEach((selector) => {
-      const control = $(selector); if (!control) return;
-      const visible = id === componentId; const label = control.closest('label') || control;
-      label.hidden = !visible; control.disabled = !visible; control.setAttribute('aria-hidden', String(!visible));
-    }));
-    document.querySelectorAll('[data-animation-components]').forEach((region) => {
-      setComponentRegion(region, region.dataset.animationComponents.split(' ').includes(componentId));
-    });
-    const choices = state.componentPresets[componentId] || [];
-    const selected = choices.find((choice) => sameLocalParameters(choice.parameters, state.scene?.animation?.parameters));
-    const cards = document.getElementById(componentPresetTargets[componentId] || atmospherePresetTargets[componentId] || sculpturePresetTargets[componentId]);
-    if (cards) cards.querySelectorAll('button').forEach((button) => {
-      const active = selected?.name === button.textContent; button.setAttribute('aria-pressed', String(active)); button.classList.toggle('active', active);
-    });
-    const status = presetStatus();
-    status.textContent = selected ? `Preset: ${selected.name}.` : choices.length ? `Custom remix — ${componentLabel(componentId)} parameters differ from every authored preset.` : `No authored presets for ${componentLabel(componentId)}.`;
-    buildControlDisclosure(componentId);
-  }
-  function rememberComponentPresets(componentId, presets) { state.componentPresets[componentId] = presets; syncComponentPresetUI(); refreshPlaylistIdentities(); }
-  function clockWidgets(scene = state.scene) { return (scene?.widgets || []).filter((widget) => widget.component?.component_id === 'clock_overlay'); }
-  function syncClockPresetUI() {
-    const clocks = clockWidgets(); const selected = (state.componentPresets.clock_overlay || []).find((choice) => clocks.length === 1 && sameLocalParameters(choice.parameters, clocks[0].component?.parameters));
-    $('#clockPresetCards').querySelectorAll('button').forEach((button) => { const active = selected?.name === button.textContent; button.setAttribute('aria-pressed', String(active)); button.classList.toggle('active', active); });
+  function widgetPlacementName(widgetId) {
+    const ref = state.scene?.widgets.find((widget) => widget.id === widgetId)?.component;
+    return componentDescriptor(ref)?.name || ref?.component_id || `Widget ${widgetId}`;
   }
 
-  function defaultScene() {
-    return { schema: 'ledgrid.scene.v2',
-      background: {component_id: 'solid_background', version: 1, provider: 'python', role: 'background', parameters: {gain: number('#backgroundGain'), seed: 4201}},
-      animation: {component_id: 'aurora_curtains', version: 1, provider: 'python', role: 'animation', parameters: {curtain_density: number('#curtainDensity'), fold_depth: number('#foldDepth'), glow_intensity: number('#glowIntensity'), source_fps: 30, seed: 4201}},
-      widgets: [], plants: {effects: {version: 1, active: [], strengths: {}}},
-      look: {palette_id: $('#previewPalette').value, pace: number('#sceneSpeed'), presentation_brightness: number('#sceneLuminance')} };
-  }
   const GALLERY_FAVORITES_KEY = 'ledgrid-composer-gallery-favorites-v1';
   function readGalleryFavorites() {
     try { return new Set(JSON.parse(window.localStorage.getItem(GALLERY_FAVORITES_KEY) || '[]').filter((key) => typeof key === 'string')); }
@@ -556,7 +696,7 @@
   }
   function galleryScene(entry, parameters = entry.parameters) {
     const next = structuredClone(state.scene || defaultScene());
-    next.animation = {component_id: entry.component_id, version: entry.version, provider: entry.provider, role: 'animation', parameters: structuredClone(parameters)};
+    next.animation = componentRef(entry, parameters);
     return next;
   }
   function stableGalleryJson(value) {
@@ -616,11 +756,10 @@
     placeGalleryDetail(entry);
     if (!entry.available) return;
     const loading = document.createElement('span'); loading.className = 'muted'; loading.textContent = 'Loading presets…'; presets.append(loading);
-    fetch(`${api}/components/${encodeURIComponent(entry.component_id)}/presets`).then((response) => response.json().then((body) => ({response, body}))).then(({response, body}) => {
-      if (!response.ok) throw new Error(body.error || 'Presets are unavailable.');
+    loadComponentPresets(entry).then((choices) => {
       if (state.gallery.detail !== entry.key || state.gallery.detailToken !== detailToken) return;
       presets.replaceChildren();
-      (body.presets || []).forEach((preset) => {
+      choices.forEach((preset) => {
         const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary gallery-preset'; button.title = preset.description || preset.name;
         button.setAttribute('aria-label', preset.name);
         const label = document.createElement('span'); label.textContent = preset.name;
@@ -634,7 +773,10 @@
     if (!entry.available) return;
     const intentToken = beginIntent();
     const previous = structuredClone(state.scene || defaultScene());
-    const next = galleryScene(entry, preset ? preset.parameters : entry.parameters);
+    const parameters = preset
+      ? presetParameters(entry, preset, componentKey(previous.animation) === componentKey(entry) ? previous.animation.parameters : {})
+      : entry.parameters;
+    const next = galleryScene(entry, parameters);
     if (preset) applyAuthoredPresetPresentation(next, preset);
     state.dirty = true; applyScene(next);
     try {
@@ -658,7 +800,7 @@
     grid.replaceChildren();
     entries.forEach((entry) => {
       const card = document.createElement('div'); card.className = 'gallery-card'; card.dataset.galleryKey = entry.key; card.setAttribute('role', 'listitem');
-      const select = document.createElement('button'); select.type = 'button'; select.className = 'gallery-select'; select.setAttribute('aria-current', String(state.scene?.animation?.component_id === entry.component_id)); select.disabled = !entry.available; select.setAttribute('aria-label', `Play & edit ${entry.name}`);
+      const select = document.createElement('button'); select.type = 'button'; select.className = 'gallery-select'; select.setAttribute('aria-current', String(componentKey(state.scene?.animation) === componentKey(entry))); select.disabled = !entry.available; select.setAttribute('aria-label', `Play & edit ${entry.name}`);
       const thumbnail = galleryThumbnail(entry);
       const copy = document.createElement('span'); copy.className = 'gallery-card-copy';
       const title = document.createElement('span'); title.className = 'gallery-card-title'; title.textContent = entry.name;
@@ -682,7 +824,19 @@
   async function loadGallery() {
     try {
       const response = await fetch(`${api}/gallery`, {cache: 'no-store'}); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Gallery is unavailable.');
-      state.gallery.entries = Array.isArray(body.entries) ? body.entries : []; state.gallery.digest = body.catalog_digest; state.gallery.favorites = readGalleryFavorites(); renderGallery(); refreshPlaylistIdentities();
+      state.gallery.entries = Array.isArray(body.entries) ? body.entries : [];
+      state.gallery.digest = body.catalog_digest;
+      state.gallery.favorites = readGalleryFavorites();
+      const entries = new Map(state.gallery.entries.map((entry) => [componentKey(entry), entry]));
+      if (Array.isArray(body.components)) body.components.forEach((entry) => {
+        const key = componentKey(entry);
+        entries.set(key, {...entries.get(key), ...entry});
+      });
+      state.components = entries;
+      installComponentChoices();
+      syncComponentEditors();
+      renderGallery();
+      refreshPlaylistIdentities();
     } catch (error) { $('#galleryCount').textContent = 'Unavailable'; $('#galleryEmpty').hidden = false; $('#galleryEmpty').textContent = error.message || 'Gallery is unavailable.'; }
   }
   function syncPlantOpticControl(optic) {
@@ -719,189 +873,6 @@
     });
     next.plants = {effects: {version: 1, active: preservedActive, strengths: preservedStrengths}};
   }
-  function sceneFromControls() {
-    const next = structuredClone(state.scene || defaultScene());
-    next.background.parameters = {...next.background.parameters, gain: number('#backgroundGain')};
-    const choice = $('#animationChoice').value;
-    if (choice !== next.animation.component_id) next.animation = choice === 'plant_glow'
-      ? {component_id: 'plant_glow', version: 1, provider: 'python', role: 'animation', parameters: plantGlowParameters()}
-      : choice === 'pixel_chase'
-      ? {component_id: 'pixel_chase', version: 1, provider: 'python', role: 'animation', parameters: pixelChaseParameters()}
-      : mediaIds.includes(choice)
-      ? {component_id: choice, version: 1, provider: 'python', role: 'animation', parameters: mediaParameters(choice)}
-      : sculptureIds.includes(choice)
-      ? {component_id: choice, version: 1, provider: 'python', role: 'animation', parameters: sculptureParameters(choice, sculptureSpecs[choice].defaults)}
-      : atmosphereIds.includes(choice)
-      ? {component_id: choice, version: 1, provider: 'python', role: 'animation', parameters: atmosphereParameters(choice)}
-      : ambientIds.includes(choice)
-      ? {component_id: choice, version: 1, provider: 'python', role: 'animation', parameters: ambientParameters(choice)}
-      : choice === 'conway_life'
-      ? {component_id: 'conway_life', version: 1, provider: 'python', role: 'animation', parameters: {seed: number('#lifeSeed'), rule: 'B3/S23', initial_density: .14, generations_per_second: number('#lifeRate'), seed_cells: []}}
-      : choice === 'tetris'
-        ? {component_id: 'tetris', version: 1, provider: 'python', role: 'animation', parameters: tetrisParameters({seed: 4201, smooth_drop_strength: .6, smooth_drop_max_pieces: 32, render_fps: 150, high_density_render_fps: 150})}
-        : choice === 'firefly_synchrony'
-          ? {component_id: 'firefly_synchrony', version: 1, provider: 'python', role: 'animation', parameters: fireflyParameters({seed: 7319, coupling_radius: 8})}
-          : choice === 'fireworks'
-            ? {component_id: 'fireworks', version: 1, provider: 'python', role: 'animation', parameters: fireworksParameters()}
-          : choice === 'flame_burst'
-            ? {component_id: 'flame_burst', version: 1, provider: 'python', role: 'animation', parameters: flameParameters({seed: 6201})}
-          : choice === 'fluid_tank'
-            ? {component_id: 'fluid_tank', version: 1, provider: 'python', role: 'animation', parameters: fluidParameters({seed: 6211})}
-          : choice === 'fish_tank'
-            ? {component_id: 'fish_tank', version: 1, provider: 'python', role: 'animation', parameters: fishTankParameters()}
-          : choice === 'ocean_waves'
-            ? {component_id: 'ocean_waves', version: 1, provider: 'python', role: 'animation', parameters: oceanWavesParameters()}
-          : choice === 'mini_metro'
-            ? {component_id: 'mini_metro', version: 1, provider: 'python', role: 'animation', parameters: miniMetroParameters()}
-          : choice === 'canopy_cup'
-            ? {component_id: 'canopy_cup', version: 1, provider: 'python', role: 'animation', parameters: canopyParameters({seed: 4242, show_hud: true})}
-          : choice === 'cyclic_reef'
-            ? {component_id: 'cyclic_reef', version: 1, provider: 'python', role: 'animation', parameters: reefParameters()}
-          : choice === 'lava_lamp'
-            ? {component_id: 'lava_lamp', version: 1, provider: 'python', role: 'animation', parameters: lavaParameters()}
-          : choice === 'snake'
-            ? {component_id: 'snake', version: 1, provider: 'python', role: 'animation', parameters: snakeParameters()}
-            : choice === 'maze_chase'
-              ? {component_id: 'maze_chase', version: 1, provider: 'python', role: 'animation', parameters: mazeParameters({seed: 1980, render_fps: 60})}
-              : choice === 'pinball'
-                ? {component_id: 'pinball', version: 1, provider: 'python', role: 'animation', parameters: pinballParameters({seed: 95, render_fps: 100})}
-                : choice === 'pixel_quest'
-                ? {component_id: 'pixel_quest', version: 1, provider: 'python', role: 'animation', parameters: questParameters({seed: 1986, render_fps: 45})}
-                : choice === 'ascii_drop'
-                  ? {component_id: 'ascii_drop', version: 1, provider: 'python', role: 'animation', parameters: asciiDropParameters({seed: 8088})}
-                  : choice === 'emoji'
-                    ? {component_id: 'emoji', version: 1, provider: 'python', role: 'animation', parameters: emojiAnimationParameters({seed: 2026})}
-                    : choice === 'christmas_tree'
-                      ? {component_id: 'christmas_tree', version: 1, provider: 'python', role: 'animation', parameters: treeParameters({twinkle_hz: 1, seed: 1225})}
-                      : choice === 'night_train_windows'
-                        ? {component_id: 'night_train_windows', version: 1, provider: 'python', role: 'animation', parameters: trainParameters({star_density: .35, seed: 1984})}
-        : {component_id: 'aurora_curtains', version: 1, provider: 'python', role: 'animation', parameters: {curtain_density: number('#curtainDensity'), fold_depth: number('#foldDepth'), glow_intensity: number('#glowIntensity'), source_fps: 30, seed: 4201}};
-    else if (choice === 'plant_glow') next.animation.parameters = plantGlowParameters();
-    else if (choice === 'pixel_chase') next.animation.parameters = pixelChaseParameters();
-    else if (mediaIds.includes(choice)) next.animation.parameters = mediaParameters(choice);
-    else if (sculptureIds.includes(choice)) next.animation.parameters = sculptureParameters(choice, next.animation.parameters);
-    else if (atmosphereIds.includes(choice)) next.animation.parameters = atmosphereParameters(choice, next.animation.parameters);
-    else if (ambientIds.includes(choice)) next.animation.parameters = ambientParameters(choice, next.animation.parameters);
-    else if (choice === 'conway_life') next.animation.parameters = {...next.animation.parameters, seed: number('#lifeSeed'), generations_per_second: number('#lifeRate')};
-    else if (choice === 'tetris') next.animation.parameters = tetrisParameters(next.animation.parameters);
-    else if (choice === 'aurora_curtains') next.animation.parameters = {...next.animation.parameters, curtain_density: number('#curtainDensity'), fold_depth: number('#foldDepth'), glow_intensity: number('#glowIntensity')};
-    else if (choice === 'firefly_synchrony') next.animation.parameters = fireflyParameters(next.animation.parameters);
-    else if (choice === 'fireworks') next.animation.parameters = fireworksParameters();
-    else if (choice === 'flame_burst') next.animation.parameters = flameParameters(next.animation.parameters);
-    else if (choice === 'fluid_tank') next.animation.parameters = fluidParameters(next.animation.parameters);
-    else if (choice === 'fish_tank') next.animation.parameters = fishTankParameters(next.animation.parameters);
-    else if (choice === 'ocean_waves') next.animation.parameters = oceanWavesParameters(next.animation.parameters);
-    else if (choice === 'mini_metro') next.animation.parameters = miniMetroParameters(next.animation.parameters);
-    else if (choice === 'canopy_cup') next.animation.parameters = canopyParameters(next.animation.parameters);
-    else if (choice === 'cyclic_reef') next.animation.parameters = reefParameters(next.animation.parameters);
-    else if (choice === 'lava_lamp') next.animation.parameters = lavaParameters(next.animation.parameters);
-    else if (choice === 'snake') next.animation.parameters = snakeParameters(next.animation.parameters);
-    else if (choice === 'maze_chase') next.animation.parameters = mazeParameters(next.animation.parameters);
-    else if (choice === 'pinball') next.animation.parameters = pinballParameters(next.animation.parameters);
-    else if (choice === 'pixel_quest') next.animation.parameters = questParameters(next.animation.parameters);
-    else if (choice === 'ascii_drop') next.animation.parameters = asciiDropParameters(next.animation.parameters);
-    else if (choice === 'emoji') next.animation.parameters = emojiAnimationParameters(next.animation.parameters);
-    else if (choice === 'christmas_tree') next.animation.parameters = treeParameters(next.animation.parameters);
-    else if (choice === 'night_train_windows') next.animation.parameters = trainParameters(next.animation.parameters);
-    const clockIndexes = next.widgets.reduce((indexes, widget, index) => widget.component?.component_id === 'clock_overlay' ? [...indexes, index] : indexes, []);
-    if (clockIndexes.length === 1) { const clock = next.widgets[clockIndexes[0]]; if (state.lastControl === 'clockEnabled') clock.visible = $('#clockEnabled').checked; else if (['clockFormat', 'clockSeconds', 'clockTimeOffset'].includes(state.lastControl)) clock.component.parameters = clockParameters(clock.component.parameters); else if (['clockAcross', 'clockOffset'].includes(state.lastControl)) clock.placement = {...clock.placement, mode: 'manual', strip_translation: Math.trunc(number('#clockAcross')), led_translation: Math.trunc(number('#clockOffset'))}; }
-    else if (clockIndexes.length === 0 && state.lastControl === 'clockEnabled' && $('#clockEnabled').checked) next.widgets.push({id: 'composer-clock', component: {component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget', parameters: clockParameters()}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: -8}});
-    const emojiIndexes = next.widgets.reduce((indexes, widget, index) => widget.component?.component_id === 'emoji_arranger' ? [...indexes, index] : indexes, []);
-    if (emojiIndexes.length === 1) { const emoji = next.widgets[emojiIndexes[0]]; if (state.lastControl === 'emojiEnabled') emoji.visible = $('#emojiEnabled').checked; else if (state.lastControl?.startsWith('emoji')) emoji.component.parameters = emojiParameters(); }
-    else if (emojiIndexes.length === 0 && state.lastControl === 'emojiEnabled' && $('#emojiEnabled').checked) next.widgets.push(emojiWidget());
-    applyPlantOptics(next);
-    if (choice === 'snake') {
-      next.background.parameters = {...next.background.parameters, gain: 0};
-      $('#backgroundGain').value = '0';
-    }
-    next.look = {palette_id: $('#previewPalette').value, pace: number('#sceneSpeed'), presentation_brightness: number('#sceneLuminance')};
-    return next;
-  }
-  function applyScene(scene) {
-    clearSaveFeedback();
-    state.scene = structuredClone(scene);
-    const animation = scene.animation || {};
-    const parameters = animation.parameters || {};
-    mediaIds.forEach((id) => mediaSpecs[id].fields.forEach((field) => {
-      const value = animation.component_id === id ? parameters[field.key] ?? field.value : field.value;
-      const control = document.getElementById(mediaControlId(id, field));
-      if (field.type === 'checkbox') control.checked = value; else control.value = value;
-    }));
-    const plantGlow = animation.component_id === 'plant_glow' ? parameters : {};
-    plantGlowFields.forEach((field) => { document.getElementById(field.id).value = plantGlow[field.key] ?? field.value; });
-    const chase = animation.component_id === 'pixel_chase' ? parameters : {};
-    pixelChaseFields.forEach((field) => { document.getElementById(field.id).value = chase[field.key] ?? field.value; });
-    if (![...$('#animationChoice').options].some((option) => option.value === animation.component_id)) $('#animationChoice').append(new Option(`${animation.component_id} (preserved)`, animation.component_id));
-    $('#animationChoice').value = animation.component_id;
-    if (ambientIds.includes(animation.component_id)) {
-      const mapping = {gradient: [['gradientDirection','direction','vertical'],['gradientDrift','drift',.22],['gradientMotion','motion',.72],['gradientSeed','seed',6101]], rainbow: [['rainbowBands','bands',1.4],['rainbowTravel','travel',.65],['rainbowDirection','direction',1],['rainbowSeed','seed',6102]], solid: [['solidGlow','glow',.68],['solidBreath','breath',0],['solidSeed','seed',6103]], sparkle: [['sparkleDensity','density',.2],['sparkleLinger','linger',.65],['sparkleTwinkle','twinkle',.72],['sparkleNight','night',.08],['sparkleSeed','seed',6104]], wave: [['waveAxis','axis','vertical'],['waveFrequency','frequency',2],['waveTravel','travel',.45],['waveShape','shape',.8],['waveDirection','direction',1],['waveSeed','seed',6105]]};
-      mapping[animation.component_id].forEach(([field, key, fallback]) => { document.getElementById(field).value = parameters[key] ?? fallback; });
-    }
-    if (sculptureIds.includes(animation.component_id)) sculptureSpecs[animation.component_id].fields.forEach(([name]) => {
-      document.getElementById(sculptureControlId(animation.component_id, name)).value = parameters[name] ?? sculptureSpecs[animation.component_id].defaults[name];
-    });
-    if (atmosphereIds.includes(animation.component_id)) atmosphereSpecs[animation.component_id].fields.forEach(([name]) => {
-      document.getElementById(atmosphereControlId(animation.component_id, name)).value = parameters[name] ?? atmosphereSpecs[animation.component_id].defaults[name];
-    });
-    $('#lifeSeed').value = parameters.seed ?? 4201; $('#lifeRate').value = parameters.generations_per_second ?? 5;
-    const tetris = animation.component_id === 'tetris' ? parameters : {};
-    $('#tetrisPieces').value = tetris.tetromino_count ?? 5; $('#tetrisFallRate').value = tetris.fall_rate ?? 3; $('#tetrisRisk').value = tetris.bot_imperfection ?? .18; $('#tetrisSmoothDrop').checked = tetris.smooth_drop ?? true;
-    const aurora = animation.component_id === 'aurora_curtains' ? parameters : {};
-    $('#curtainDensity').value = aurora.curtain_density ?? .56; $('#foldDepth').value = aurora.fold_depth ?? .58;
-    $('#glowIntensity').value = aurora.glow_intensity ?? .62; $('#backgroundGain').value = scene.background?.parameters?.gain ?? .62;
-    $('#mazeCadence').value = parameters.chase_cadence_hz ?? 9; $('#mazeDifficulty').value = parameters.difficulty ?? .82; $('#mazeRadar').checked = Boolean(parameters.show_ai_targets);
-    $('#pinballTicks').value = parameters.table_tick_hz ?? 40.5; $('#pinballChaos').value = parameters.chaos ?? .72;
-    $('#questCadence').value = parameters.quest_cadence_hz ?? 12; $('#questDifficulty').value = parameters.difficulty ?? 1; $('#questHud').checked = parameters.show_hud ?? true;
-    const ascii = animation.component_id === 'ascii_drop' ? parameters : {}; $('#asciiPhrase').value = ascii.phrase ?? 'HELLO'; $('#asciiStory').value = ascii.story ?? 'terminal'; $('#asciiSpeed').value = ascii.fall_speed ?? 13; $('#asciiDensity').value = ascii.density ?? .45;
-    const emojiAnimation = animation.component_id === 'emoji' ? parameters : {}; $('#emojiFace').value = emojiAnimation.face ?? 'smile'; $('#emojiMood').value = emojiAnimation.mood ?? 'golden'; $('#emojiAnimationPulse').value = emojiAnimation.pulse_hz ?? .8; $('#emojiAnimationScale').value = emojiAnimation.scale ?? 1;
-    const tree = animation.component_id === 'christmas_tree' ? parameters : {}; $('#treeSeason').value = tree.season ?? 'classic'; $('#treeHeight').value = tree.tree_height ?? 58; $('#treeSnowfall').value = tree.snowfall ?? .35;
-    const train = animation.component_id === 'night_train_windows' ? parameters : {}; $('#trainRoute').value = train.route ?? 'sleeper'; $('#trainSpeed').value = train.travel_speed ?? 1; $('#trainGlow').value = train.window_glow ?? .65;
-    const firefly = animation.component_id === 'firefly_synchrony' ? parameters : {};
-    $('#fireflyPopulation').value = firefly.population ?? 100; $('#fireflySynchrony').value = firefly.synchrony ?? .85;
-    $('#fireflyWandering').value = firefly.wandering ?? .55; $('#fireflyPulseSoftness').value = firefly.pulse_softness ?? .5; $('#fireflyMeadowGlow').value = firefly.meadow_glow ?? .12;
-    const fireworks = animation.component_id === 'fireworks' ? parameters : {};
-    $('#fireworksCadence').value = fireworks.launch_cadence ?? 1.15; $('#fireworksPopulation').value = fireworks.shell_population ?? 54; $('#fireworksBurstSize').value = fireworks.burst_size ?? .29; $('#fireworksStyle').value = fireworks.burst_style ?? 'mixed'; $('#fireworksGravity').value = fireworks.gravity ?? .38; $('#fireworksTrails').value = fireworks.trails ?? .72; $('#fireworksCrackle').value = fireworks.crackle ?? .24; $('#fireworksTwinkle').value = fireworks.twinkle ?? .35; $('#fireworksSeed').value = fireworks.seed ?? 1776;
-    const flame = animation.component_id === 'flame_burst' ? parameters : {}; $('#flameCadence').value = flame.ignition_cadence ?? .9; $('#flameSize').value = flame.flare_size ?? .42; $('#flameEmbers').value = flame.ember_linger ?? .45; $('#flameFlicker').value = flame.flicker ?? .35;
-    const fluid = animation.component_id === 'fluid_tank' ? parameters : {}; $('#fluidFlow').value = fluid.flow_rate ?? .72; $('#fluidCurrent').value = fluid.current ?? .35; $('#fluidBubbles').value = fluid.bubble_lift ?? .42; $('#fluidSurface').value = fluid.surface_energy ?? .38;
-    const fishTank = animation.component_id === 'fish_tank' ? parameters : {}; $('#tankFishCount').value = fishTank.fish_count ?? 8; $('#tankSwimSpeed').value = fishTank.swim_speed ?? .8; $('#tankSchooling').value = fishTank.schooling ?? .4; $('#tankBubbles').value = fishTank.bubbles ?? .45; $('#tankWeeds').value = fishTank.weeds ?? .55; $('#tankSeed').value = fishTank.seed ?? 4240;
-    const oceanWaves = animation.component_id === 'ocean_waves' ? parameters : {}; $('#oceanSwell').value = oceanWaves.swell ?? .68; $('#oceanChop').value = oceanWaves.chop ?? .38; $('#oceanFoam').value = oceanWaves.foam ?? .55; $('#oceanTravel').value = oceanWaves.travel ?? .9; $('#oceanSeed').value = oceanWaves.seed ?? 3301;
-    const miniMetro = animation.component_id === 'mini_metro' ? parameters : {}; $('#metroStations').value = miniMetro.stations ?? 9; $('#metroLines').value = miniMetro.lines ?? 3; $('#metroTrains').value = miniMetro.trains ?? 4; $('#metroTraffic').value = miniMetro.traffic ?? .55; $('#metroSpeed').value = miniMetro.train_speed ?? .85; $('#metroSeed').value = miniMetro.seed ?? 8080;
-    const lava = animation.component_id === 'lava_lamp' ? parameters : {};
-    $('#lavaBlobCount').value = lava.blob_count ?? 7; $('#lavaBlobScale').value = lava.blob_scale ?? 1; $('#lavaViscosity').value = lava.viscosity ?? .68; $('#lavaHeat').value = lava.heat ?? .72; $('#lavaTurbulence').value = lava.turbulence ?? .24; $('#lavaGlow').value = lava.glow ?? .58; $('#lavaSeed').value = lava.seed ?? 1977;
-    const canopy = animation.component_id === 'canopy_cup' ? parameters : {};
-    $('#canopyWorld').value = canopy.world_theme ?? 'tournament'; $('#canopyHeats').value = canopy.qualifying_heats ?? 7; $('#canopyCourse').value = canopy.course_difficulty ?? 1; $('#canopyDensity').value = canopy.enemy_density ?? .55; $('#canopyRivalry').value = canopy.rivalry ?? .55; $('#canopyPowerups').value = canopy.powerup_rate ?? .6;
-    const reef = animation.component_id === 'cyclic_reef' ? parameters : {};
-    $('#reefSpecies').value = reef.species_count ?? 5; $('#reefThreshold').value = reef.takeover_threshold ?? 2; $('#reefMutation').value = reef.mutation ?? .002; $('#reefGrazers').value = reef.grazers ?? 8; $('#reefGlow').value = reef.boundary_glow ?? .55; $('#reefTopology').value = reef.topology ?? 'wrap'; $('#reefPace').value = reef.pace ?? 1; $('#reefSeed').value = reef.seed ?? 13100;
-    const snake = animation.component_id === 'snake' ? parameters : {};
-    $('#snakeCadence').value = snake.move_cadence ?? 9; $('#snakeCount').value = snake.snake_count ?? 3; $('#snakeFood').value = snake.food_count ?? 5; $('#snakeGrowth').value = snake.growth_per_food ?? 3; $('#snakeRules').value = snake.ruleset ?? 'wrap'; $('#snakeObstacles').value = snake.obstacles ?? 'none'; $('#snakeTrails').value = snake.trails ?? .72; $('#snakeGlow').value = snake.glow ?? .55; $('#snakeSeed').value = snake.seed ?? 1976;
-    const clocks = (scene.widgets || []).filter((widget) => widget.component?.component_id === 'clock_overlay');
-    const clock = clocks.length === 1 ? clocks[0] : null;
-    const clockParameters = clock?.component?.parameters || {};
-    $('#clockEnabled').checked = Boolean(clock?.visible); $('#clockFormat').value = clockParameters.format_24h ? '24' : '12'; $('#clockSeconds').checked = clockParameters.show_seconds ?? true; $('#clockTimeOffset').value = clockParameters.clock_offset_minutes ?? 0; $('#clockAcross').value = clock?.placement?.strip_translation ?? 0; $('#clockOffset').value = clock?.placement?.led_translation ?? -8;
-    const emojis = (scene.widgets || []).filter((widget) => widget.component?.component_id === 'emoji_arranger');
-    const emoji = emojis.length === 1 ? emojis[0] : null; const message = emoji?.component?.parameters || {};
-    $('#emojiEnabled').checked = Boolean(emoji?.visible); $('#emojiText').value = message.text ?? 'HI🔥'; $('#emojiXOffset').value = message.x_offset ?? 8; $('#emojiYOffset').value = message.y_offset ?? 3;
-    $('#emojiCharSpacing').value = message.char_spacing ?? 1; $('#emojiLineSpacing').value = message.line_spacing ?? 1; $('#emojiScrollSpeed').value = message.scroll_speed ?? 0; $('#emojiPulseSpeed').value = message.pulse_speed ?? .5;
-    syncWidgetDisclosure();
-    if (clocks.length > 1) placementWarning({warning: 'Multiple Clock widgets are preserved; this inspector edits only a scene with one Clock widget.'});
-    $('#previewPalette').value = scene.look?.palette_id ?? 'mist'; syncSceneSpeed(scene.look?.pace ?? DEFAULT_SCENE_PACE); $('#sceneLuminance').value = scene.look?.presentation_brightness ?? .82;
-    const plantEffects = scene.plants?.effects || {}; const activeOptics = new Set(plantEffects.active || []); const strengths = plantEffects.strengths || {};
-    plantOptics.forEach((optic) => { $(optic.enabled).checked = activeOptics.has(optic.id); $(optic.strength).value = strengths[optic.id] ?? .5; syncPlantOpticControl(optic); });
-    renderPlantOpticsStatus();
-    if (clocks.length <= 1) placementWarning(); syncClockPresetUI();
-    syncComponentPresetUI();
-    syncSemanticControls();
-  }
-  function syncWidgetDisclosure() {
-    $('#clockSettings').hidden = !$('#clockEnabled').checked;
-    $('#emojiSettings').hidden = !$('#emojiEnabled').checked;
-  }
-  function widgetPlacementName(widgetId) {
-    const componentId = (state.scene?.widgets || []).find((widget) => widget.id === widgetId)?.component?.component_id;
-    if (componentId === 'clock_overlay') return 'Clock';
-    if (componentId === 'emoji_arranger') return 'Emoji message';
-    return `Widget ${widgetId}`;
-  }
   function updatePlacementText(node, text) {
     if (node && node.textContent !== text) node.textContent = text;
   }
@@ -913,20 +884,11 @@
   }
   function placementWarning(placements = null) {
     const warning = $('#widgetWarning');
-    const clockStatus = $('#clockPlacementStatus');
-    if (placements?.warning) {
-      updatePlacementWarning(warning, placements.warning);
-      updatePlacementText(clockStatus, clockWidgets().length > 1 ? 'Choose a scene with one Clock to edit its position.' : 'Waiting for the Clock position preview.');
-      return;
-    }
     const entries = Object.entries(placements || {});
-    const clock = clockWidgets()[0];
-    const resolvedClock = clock ? placements?.[clock.id] : null;
-    if (clockStatus) {
-      if (clockWidgets().length > 1) updatePlacementText(clockStatus, 'Choose a scene with one Clock to edit its position.');
-      else if (!clock?.visible) updatePlacementText(clockStatus, 'Turn on Show time to position the Clock.');
-      else if (!resolvedClock) updatePlacementText(clockStatus, 'Waiting for the Clock position preview.');
-      else updatePlacementText(clockStatus, `Clock is at Across ${resolvedClock.strip_translation}, Down ${resolvedClock.led_translation}${resolvedClock.clamped ? ' (kept on the wall)' : ''}.`);
+    for (const [id, editor] of widgetEditors) {
+      const resolved = placements?.[id];
+      const message = resolved ? `Across ${resolved.strip_translation}, Down ${resolved.led_translation}${resolved.clamped ? ' (kept on the wall)' : ''}.` : '';
+      updatePlacementText(editor.placementStatus, message);
     }
     const messages = entries.filter(([, placement]) => placement?.warning).map(([widgetId, placement]) => {
       const details = [];
@@ -1057,9 +1019,6 @@
     )));
     if (shouldAdopt) {
       const current = composerSceneFromWall(scenePayload.scene, observation);
-      if (![...$('#animationChoice').options].some((option) => option.value === current.animation.component_id)) {
-        $('#animationChoice').append(new Option(current.animation.component_id.replaceAll('_', ' '), current.animation.component_id));
-      }
       state.scene = current; state.selection = null; clearHistory(); state.dirty = false; state.wall.dirty = false;
       state.wall.adoptedLook = structuredClone(current.look);
       state.wall.adoptedVibeId = observation?.vibe?.state?.vibe_id || observation?.vibe?.vibe_id || null;
@@ -1124,7 +1083,7 @@
     const result = await requestJson(`${api}/undo-ack`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({client_id: clientId, revision})});
     renderStatus(result.status || result);
   }
-  function schedulePreview() { const generation = ++state.previewGeneration; const candidate = sceneFromControls(); state.scene = candidate; previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
+  function schedulePreview() { const generation = ++state.previewGeneration; const candidate = state.scene || defaultScene(); previewScheduler.submitAuthored(candidate, {generation}).catch((error) => { if (generation === state.previewGeneration) $('#previewStatus').textContent = error.message; }); }
   function historySnapshot(scene = state.scene || defaultScene(), targetFps = authoredTargetFps ?? boundedTargetFps($('#targetFps').value)) {
     return {scene: structuredClone(scene), targetFps: boundedTargetFps(targetFps)};
   }
@@ -1156,6 +1115,7 @@
       state.authoredValidationError = response.ok ? null : (result.error || 'Current scene could not be accepted.');
       if (!response.ok) throw Object.assign(new Error(state.authoredValidationError), {result, status: response.status});
       finishAuthored();
+      state.composerInteractionBasis = (result.status || result).current?.digest || null;
       // A result always carries the server's authoritative desired/observed
       // snapshot.  Do not infer output state from an old local draft.
       renderStatus(result.status || result);
@@ -1203,7 +1163,7 @@
     if (!automatic) state.wall.retryBlocked = false;
     if (rememberEdit) remember(previous || structuredClone(state.scene || defaultScene()));
     clearSaveFeedback();
-    state.scene = scene; state.wall.dirty = true; syncComponentPresetUI(); schedulePreview(); state.submitting = true;
+    state.scene = scene; state.wall.dirty = true; syncComponentEditors(); schedulePreview(); state.submitting = true;
     const sceneSnapshot = structuredClone(scene);
     const targetFps = boundedTargetFps($('#targetFps').value);
     authoredTargetFps = targetFps;
@@ -1232,13 +1192,13 @@
     if (!state.scene || state.wall.activating || state.publication.queued || state.publication.afterStop || state.publication.inFlight) return Promise.resolve({coalesced: true});
     return submit(structuredClone(state.scene)).catch((error) => { $('#operationMessage').textContent = error.message; });
   }
-  async function edit(event, priorScene = null) {
+  async function edit(event, priorScene = null, changeScene = null) {
     const control = event?.target || null;
-    state.lastControl = control?.id || null;
-    if (state.lastControl === 'clockEnabled' || state.lastControl === 'emojiEnabled') syncWidgetDisclosure();
-    if (control && ['asciiPhrase', 'emojiText'].includes(control.id) && !controlEditSessions.has(control)) beginControlEdit(control);
     const previousDraft = historySnapshot();
     const next = sceneFromControls();
+    const update = changeScene || parameterEdits.get(control);
+    if (update && update(next) === false) return;
+    if (changeScene) syncScenePresentation(next);
     const targetFps = boundedTargetFps($('#targetFps').value);
     if (sameLocalParameters(next, state.scene) && targetFps === authoredTargetFps) return;
     const session = control && controlEditSessions.get(control);
@@ -1263,91 +1223,32 @@
     if (preset.presentation?.look) next.look = {...next.look, ...preset.presentation.look};
     if (Number.isFinite(preset.presentation?.background_gain)) next.background = {...next.background, parameters: {...next.background.parameters, gain: preset.presentation.background_gain}};
   }
-  async function loadFireworksPresets() {
-    try {
-      const response = await fetch(`${api}/components/fireworks/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
-      const target = $('#fireworksPresetCards'); target.replaceChildren();
-      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'fireworks') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = preset.parameters; applyAuthoredPresetPresentation(next, preset); state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
-      rememberComponentPresets('fireworks', body.presets);
-    } catch (error) { $('#operationMessage').textContent = error.message || 'Fireworks presets are unavailable.'; }
-  }
-  async function loadSnakePresets() {
-    try {
-      const response = await fetch(`${api}/components/snake/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
-      const target = $('#snakePresetCards'); target.replaceChildren();
-      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'snake') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = preset.parameters; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
-      rememberComponentPresets('snake', body.presets);
-      document.querySelectorAll('[data-snake-control]').forEach((node) => { node.addEventListener('change', edit); node.addEventListener('input', edit); });
-    } catch (error) { $('#operationMessage').textContent = error.message || 'Snake presets are unavailable.'; }
-  }
-  async function loadLavaPresets() {
-    try {
-      const response = await fetch(`${api}/components/lava_lamp/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
-      const target = $('#lavaPresetCards'); target.replaceChildren();
-      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'lava_lamp') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = {...preset.parameters, ...lavaInteractionParameters(next.animation.parameters)}; if (preset.installation_effects) next.plants = {...next.plants, effects: preset.installation_effects}; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
-      rememberComponentPresets('lava_lamp', body.presets);
-    } catch (error) { $('#operationMessage').textContent = error.message || 'Lava Lamp presets are unavailable.'; }
-  }
-  async function loadReefPresets() {
-    try {
-      const response = await fetch(`${api}/components/cyclic_reef/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
-      const target = $('#reefPresetCards'); target.replaceChildren();
-      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== 'cyclic_reef') return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = preset.parameters; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
-      rememberComponentPresets('cyclic_reef', body.presets);
-      document.querySelectorAll('[data-reef-control]').forEach((node) => { node.addEventListener('change', edit); node.addEventListener('input', edit); });
-    } catch (error) { $('#operationMessage').textContent = error.message || 'Cyclic Reef presets are unavailable.'; }
-  }
-  async function loadClockPresets() {
-    try {
-      const response = await fetch(`${api}/components/clock_overlay/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
-      const target = $('#clockPresetCards'); target.replaceChildren();
-      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { const clocks = clockWidgets(); if (clocks.length > 1) { placementWarning({warning: 'Multiple Clock widgets are preserved; choose one before using a Clock preset.'}); return; } const previous = structuredClone(state.scene || defaultScene()); const next = structuredClone(state.scene || defaultScene()); const clock = clockWidgets(next)[0]; if (clock) clock.component.parameters = preset.parameters; else next.widgets.push({id: 'composer-clock', component: {component_id: 'clock_overlay', version: 1, provider: 'python', role: 'widget', parameters: preset.parameters}, visible: true, placement: {mode: 'manual', strip_translation: 0, led_translation: -8}}); state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
-      state.componentPresets.clock_overlay = body.presets; syncClockPresetUI();
-    } catch (error) { $('#operationMessage').textContent = error.message || 'Clock presets are unavailable.'; }
-  }
-  function existingPresetCards(componentId) {
-    const targetId = componentPresetTargets[componentId] || `${componentId.replaceAll('_', '-')}-preset-cards`;
-    let target = document.getElementById(targetId);
-    if (!target) {
-      target = document.createElement('div'); target.id = targetId; target.className = 'operation-row'; target.setAttribute('aria-label', `${componentId} presets`);
-      $('#animationControls').before(target);
-    }
-    return target;
-  }
-  async function loadExistingComponentPresets(componentId) {
-    try {
-      const response = await fetch(`${api}/components/${componentId}/presets`); const body = await response.json(); if (!response.ok) throw new Error(body.error);
-      const target = existingPresetCards(componentId); target.replaceChildren();
-      body.presets.forEach((preset) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary'; button.textContent = preset.name; button.title = preset.description || preset.name; button.addEventListener('click', async () => { if (state.scene?.animation?.component_id !== componentId) return; const previous = structuredClone(state.scene); const next = structuredClone(state.scene); next.animation.parameters = preset.parameters; state.dirty = true; applyScene(next); try { await submit(next, {rememberEdit: true}); } catch (error) { state.scene = previous; applyScene(previous); $('#operationMessage').textContent = error.message; } }); target.append(button); });
-      rememberComponentPresets(componentId, body.presets);
-    } catch (error) { $('#operationMessage').textContent = error.message || `${componentId} presets are unavailable.`; }
-  }
   function filteredItems() { const query = state.query.toLocaleLowerCase(); let items = state.library.items.filter((item) => item.name.toLocaleLowerCase().includes(query)); if (state.filter === 'favorites') items = items.filter((item) => state.library.favorites.some((favorite) => favorite.kind === item.kind && favorite.id === item.id)); else if (state.filter !== 'all') items = items.filter((item) => item.kind === state.filter); return items; }
-  const primaryInstruments = Object.freeze({
-    lava_lamp: {label: 'Lava Lamp', accepted: 'Lava stirred on the installed final scene.', rejected: 'Lava Lamp did not accept that stir.'},
-    flame_burst: {label: 'Flame Burst', accepted: 'Flame Burst ignited on the installed final scene.', rejected: 'Flame Burst did not accept that ignition.'},
-    fluid_tank: {label: 'Fluid Tank', accepted: 'Fluid Tank pulsed on the installed final scene.', rejected: 'Fluid Tank did not accept that flow pulse.'},
-    pinball: {label: 'Arcade Pinball', accepted: 'Pinball flipper nudged on the installed final scene.', rejected: 'Arcade Pinball did not accept that flipper nudge.'},
-    cellular_tapestry: {label: 'Cellular Tapestry', accepted: 'Cellular Tapestry queued a column injection.', rejected: 'Cellular Tapestry did not accept that column injection.'},
-    frostwork: {label: 'Frostwork', accepted: 'Frostwork queued a crystal nucleus.', rejected: 'Frostwork did not accept that crystal nucleus.'},
-    reaction_diffusion_garden: {label: 'Reaction-Diffusion Garden', accepted: 'Reaction-Diffusion Garden queued a chemistry seed.', rejected: 'Reaction-Diffusion Garden did not accept that chemistry seed.'},
-    wind_in_the_reeds: {label: 'Wind in the Reeds', accepted: 'Wind in the Reeds queued a local bend.', rejected: 'Wind in the Reeds did not accept that bend.'},
-  });
   async function triggerInstrumentAtPointer(event) {
-    const componentId = state.scene?.animation?.component_id;
-    const trigger = primaryInstruments[componentId];
-    if (event.button !== 0 || event.isPrimary === false || !trigger) return;
+    const entry = componentDescriptor(state.scene?.animation);
+    const positioned = positionedAction(entry);
+    if (event.button !== 0 || event.isPrimary === false || !positioned) return;
+    const [kind, action] = positioned;
     const status = state.status;
-    if (!status?.running || !status?.armed || !status?.current) return;
-    const canvas = $('#scenePreview'); const rect = canvas.getBoundingClientRect();
+    if (!status?.running || !status?.armed || !status?.current || state.submitting) return;
+    const activeRef = state.wall.observation?.scene?.animation
+      || state.wall.observation?.active_identity?.component_identities?.find((component) => component.slot_id === 'animation');
+    if (activeRef && activeRef.component_id !== entry.component_id) return;
+    const canvas = $('#scenePreview');
+    const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
-    const x = Math.min(32.999, Math.max(0, (event.clientX - rect.left) * 33 / rect.width));
-    const y = Math.min(137.999, Math.max(0, (1 - (event.clientY - rect.top) / rect.height) * 138));
+    const x = Math.min(canvas.width - .001, Math.max(0, (event.clientX - rect.left) * canvas.width / rect.width));
+    const y = Math.min(canvas.height - .001, Math.max(0, (1 - (event.clientY - rect.top) / rect.height) * canvas.height));
+    const basis = state.composerInteractionBasis;
+    const scene_digest = activeRef?.component_id === entry.component_id && /^[a-f0-9]{64}$/.test(basis) ? basis : null;
     try {
-      const response = await fetch('/api/interaction', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({kind: 'primary', x, y, strength: 1})});
-      const body = await response.json(); if (!response.ok || body.accepted !== true) throw new Error(body.error || trigger.rejected);
-      $('#previewStatus').textContent = trigger.accepted;
-    } catch (error) { $('#operationMessage').textContent = error.message || `${trigger.label} trigger unavailable.`; }
+      const body = await requestJson('/api/interaction', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({kind, x, y, strength: 1, component_id: entry.component_id, ...(scene_digest ? {scene_digest} : {})}),
+      });
+      if (body.accepted !== true) throw new Error(action.rejected || `${entry.name} did not accept the interaction.`);
+      $('#previewStatus').textContent = action.accepted || `${entry.name} accepted the interaction.`;
+    } catch (error) { $('#operationMessage').textContent = error.message; }
   }
   function renderLibrary() { const target = $('#libraryList'); target.replaceChildren(); const items = filteredItems(); $('#libraryEmpty').hidden = items.length > 0; items.forEach((item) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.setAttribute('aria-current', String(state.selection?.kind === item.kind && state.selection?.id === item.id)); button.innerHTML = `<span>${item.name}</span><span class="library-kind">${item.kind === 'starter' ? 'Built-in' : 'Saved'}</span>`; button.addEventListener('click', () => openItem(item)); const row = document.createElement('li'); row.append(button); target.append(row); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.classList.toggle('active', button.dataset.libraryFilter === state.filter)); }
   async function openItem(item) {
@@ -1501,7 +1402,7 @@
       if (!as) focusSceneName();
       return false;
     }
-    const scene = structuredClone(sceneFromControls());
+    const scene = sceneFromControls();
     const authoredName = $('#sceneName').value;
     const intent = state.intent;
     const selection = state.selection;
@@ -1592,6 +1493,7 @@
     const animation = entry.scene?.animation || entry.scene?.background;
     const componentId = animation?.component_id;
     const catalog = state.gallery.entries.find((item) => item.component_id === componentId);
+    if (catalog?.preset_count > 0 && !Object.hasOwn(state.componentPresets, componentId)) void loadComponentPresets(catalog).catch(() => {});
     const preset = (state.componentPresets[componentId] || []).find((item) => sameLocalParameters(item.parameters, animation?.parameters));
     const name = catalog?.name || componentId || 'Unknown animation';
     return {catalog, preset, text: `${name} · ${preset ? preset.name : state.componentPresets[componentId] ? 'Custom settings' : 'Preset details unavailable'}`};
@@ -1933,22 +1835,26 @@
   function wire() {
     $('#sceneCopyForm').addEventListener('submit', (event) => { event.preventDefault(); void save(true, $('#sceneCopyName').value); });
     $('#sceneCopyCancel').addEventListener('click', () => $('#sceneCopyDialog').close());
-    ['#backgroundGain','#curtainDensity','#foldDepth','#glowIntensity','#animationChoice','#lifeSeed','#lifeRate','#tetrisPieces','#tetrisFallRate','#tetrisRisk','#tetrisSmoothDrop','#fireflyPopulation','#fireflySynchrony','#fireflyWandering','#fireflyPulseSoftness','#fireflyMeadowGlow','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksStyle','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#fireworksSeed','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#tankFishCount','#tankSwimSpeed','#tankSchooling','#tankBubbles','#tankWeeds','#tankSeed','#oceanSwell','#oceanChop','#oceanFoam','#oceanTravel','#oceanSeed','#metroStations','#metroLines','#metroTrains','#metroTraffic','#metroSpeed','#metroSeed','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow','#lavaSeed','#canopyWorld','#canopyHeats','#canopyCourse','#canopyDensity','#canopyRivalry','#canopyPowerups','#mazeCadence','#mazeDifficulty','#mazeRadar','#pinballTicks','#pinballChaos','#questCadence','#questDifficulty','#questHud','#asciiPhrase','#asciiStory','#asciiSpeed','#asciiDensity','#emojiFace','#emojiMood','#emojiAnimationPulse','#emojiAnimationScale','#treeSeason','#treeHeight','#treeSnowfall','#trainRoute','#trainSpeed','#trainGlow','#clockEnabled','#emojiEnabled','#emojiText','#emojiXOffset','#emojiYOffset','#emojiCharSpacing','#emojiLineSpacing','#emojiScrollSpeed','#emojiPulseSpeed','#previewPalette','#sceneLuminance', ...Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave'))].forEach((selector) => $(selector).addEventListener('change', edit));
-    [...pixelChaseSelectors, ...plantGlowSelectors, ...Object.values(mediaControls).flat()].forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
+    ['#previewPalette', '#sceneLuminance'].forEach((selector) => $(selector).addEventListener('change', edit));
+    sceneComponentRoles.forEach((role) => $(`#${role}Choice`).addEventListener('change', (event) => {
+      const entry = selectedComponent(event.target);
+      if (entry?.role === role && entry.available !== false) void edit(event, null, (scene) => { scene[role] = componentRef(entry); });
+    }));
+    $('#addWidgetForm').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const component = selectedComponent($('#widgetChoice'));
+      if (component?.role !== 'widget' || component.available === false) return;
+      void edit(null, null, (scene) => {
+        scene.widgets.push({
+          id: `widget-${newUuid()}`, component: componentRef(component), visible: true,
+          placement: structuredClone(component.default_placement?.mode ? component.default_placement : manualPlacement()),
+        });
+      });
+    });
     wireLiveRange($('#sceneSpeed'), (event) => { syncSceneSpeed(number('#sceneSpeed')); edit(event); });
     wireLiveRange($('#targetFps'), (event) => { syncTargetFps($('#targetFps').value); edit(event); });
     $('#resetSceneSpeed').addEventListener('click', () => { syncSceneSpeed(DEFAULT_SCENE_PACE); edit({target: $('#sceneSpeed')}); });
-    ['#clockFormat','#clockSeconds','#clockTimeOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
-    ['#clockAcross','#clockOffset'].forEach((selector) => $(selector).addEventListener('input', edit));
-    ['#tetrisPieces','#tetrisFallRate','#tetrisRisk','#fireworksCadence','#fireworksPopulation','#fireworksBurstSize','#fireworksGravity','#fireworksTrails','#fireworksCrackle','#fireworksTwinkle','#flameCadence','#flameSize','#flameEmbers','#flameFlicker','#fluidFlow','#fluidCurrent','#fluidBubbles','#fluidSurface','#tankFishCount','#tankSwimSpeed','#tankSchooling','#tankBubbles','#tankWeeds','#oceanSwell','#oceanChop','#oceanFoam','#oceanTravel','#metroStations','#metroLines','#metroTrains','#metroTraffic','#metroSpeed','#lavaBlobCount','#lavaBlobScale','#lavaViscosity','#lavaHeat','#lavaTurbulence','#lavaGlow'].forEach((selector) => $(selector).addEventListener('input', edit));
-    Object.values(atmosphereControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
-    Object.values(sculptureControls).flat().forEach((selector) => { $(selector).addEventListener('change', edit); $(selector).addEventListener('input', edit); });
-    Object.values(componentControls).flat().filter((selector) => selector.startsWith('#gradient') || selector.startsWith('#rainbow') || selector.startsWith('#solid') || selector.startsWith('#sparkle') || selector.startsWith('#wave')).forEach((selector) => $(selector).addEventListener('input', edit));
-    // Phrase editing is the ASCII instrument itself: publish each real text
-    // input so the Preview and live remix visibly answer while typing.
-    ['#asciiPhrase', '#emojiText'].forEach((selector) => $(selector).addEventListener('input', edit));
     plantOptics.forEach(wirePlantOptic);
-    $('#removeEmoji').addEventListener('click', async () => { const next = structuredClone(state.scene || defaultScene()); next.widgets = next.widgets.filter((widget) => widget.component?.component_id !== 'emoji_arranger'); state.lastControl = 'removeEmoji'; try { await submit(next, {rememberEdit: true}); applyScene(next); } catch (error) { $('#operationMessage').textContent = error.message; } });
     $('#scenePreview').addEventListener('pointerdown', triggerInstrumentAtPointer);
     $('#librarySearch').addEventListener('input', (event) => { state.query = event.target.value; renderLibrary(); }); document.querySelectorAll('[data-library-filter]').forEach((button) => button.addEventListener('click', () => { state.filter = button.dataset.libraryFilter; renderLibrary(); }));
     $('#gallerySearch').addEventListener('input', (event) => { state.gallery.query = event.target.value; renderGallery(); });
@@ -1971,19 +1877,13 @@
     $('#playlistDismissError').addEventListener('click', () => { state.playlist.actionError = null; state.playlist.dismissedStatusError = state.playlist.statusErrorKey; renderPlaylistActionFailure(); });
     document.addEventListener('keydown', handleSceneHistoryShortcut);
   }
-  installPixelChaseControls(); installPlantGlowControls(); installMediaControls(); installPixelStoryControls(); installTetrisControls(); installAmbientControls(); installAtmosphereControls(); installSculptureControls(); nestComponentControls(); installSemanticControls(); wire(); updateHistoryActions(); applyScene(defaultScene()); authoredTargetFps = boundedTargetFps($('#targetFps').value);
-  if (![...$('#animationChoice').options].some((option) => option.value === 'snake')) $('#animationChoice').append(new Option('Snake Garden', 'snake'));
-  if (![...$('#animationChoice').options].some((option) => option.value === 'canopy_cup')) $('#animationChoice').append(new Option('Canopy Cup', 'canopy_cup'));
-  if (![...$('#animationChoice').options].some((option) => option.value === 'maze_chase')) $('#animationChoice').append(new Option('Maze Chase', 'maze_chase'));
-  if (![...$('#animationChoice').options].some((option) => option.value === 'pinball')) $('#animationChoice').append(new Option('Arcade Pinball', 'pinball'));
-  if (![...$('#animationChoice').options].some((option) => option.value === 'pixel_quest')) $('#animationChoice').append(new Option('Pixel Quest', 'pixel_quest'));
-  if (![...$('#animationChoice').options].some((option) => option.value === 'ascii_drop')) $('#animationChoice').append(new Option('ASCII Drop', 'ascii_drop'));
-  if (![...$('#animationChoice').options].some((option) => option.value === 'emoji')) $('#animationChoice').append(new Option('Emoji Animation', 'emoji'));
-  if (![...$('#animationChoice').options].some((option) => option.value === 'christmas_tree')) $('#animationChoice').append(new Option('Christmas Tree', 'christmas_tree'));
-  if (![...$('#animationChoice').options].some((option) => option.value === 'night_train_windows')) $('#animationChoice').append(new Option('Night Train Windows', 'night_train_windows'));
-  [['gradient','Gradient Field'],['rainbow','Rainbow River'],['solid','Solid Glow'],['sparkle','Sparkle Night'],['wave','Wave Ribbons']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
-  [['circadian_window','Circadian Window'],['cloud_canyon','Cloud Canyon'],['desert_wind','Desert Wind'],['moonlit_fog_banks','Moonlit Fog Banks'],['rain_on_glass','Rain on Glass'],['tidal_bioluminescence','Tidal Bioluminescence'],['waterfall_veil','Waterfall Veil']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
-  [['cellular_tapestry','Cellular Tapestry'],['flow_field_silk','Flow-Field Silk'],['frostwork','Frostwork'],['living_stained_glass','Living Stained Glass'],['quasicrystal_bloom','Quasicrystal Bloom'],['living_ecosystem','Living Ecosystem'],['physarum_network','Physarum Network'],['reaction_diffusion_garden','Reaction-Diffusion Garden'],['wind_in_the_reeds','Wind in the Reeds']].forEach(([id, name]) => { if (![...$('#animationChoice').options].some((option) => option.value === id)) $('#animationChoice').append(new Option(name, id)); });
+  installSemanticControls($('#look-title').closest('.inspector'));
+  installSemanticControls($('#plants-title').closest('.inspector'));
+  wire();
+  updateHistoryActions();
+  applyScene(defaultScene());
+  authoredTargetFps = boundedTargetFps($('#targetFps').value);
+
   let nimbusLooksRevision = null;
   let nimbusSceneRevision = null;
   async function reconcileNimbus(observation, intent) {
@@ -2028,6 +1928,7 @@
     if (observation.scene) state.wall.scene = structuredClone(observation.scene);
       if (observation.command_result?.state === 'failed' && observation.command_result.request_id === state.wall.requestId) { state.wall.activationError = observation.command_result.error || 'Controller playback failed; output may have been interrupted.'; state.wall.retryBlocked = true; }
       state.wall.statusUnavailable = false;
+      state.composerInteractionBasis = status.current?.digest || null;
       syncFrameRateObservation(observation);
       if (!status.undo_invalidated) await reconcileNimbus(observation, nimbusIntent);
       renderStatus(status);
@@ -2058,7 +1959,7 @@
   window.addEventListener('online', refreshStatus);
   installGalleryLayoutListener();
   function recoverFromInvalidRecovery(body) { state.revision = body.status?.revision || 0; applyScene(defaultScene()); if (body.status) renderStatus(body.status); $('#operationMessage').textContent = `${body.error || 'Saved current scene needs recovery.'} Select a built-in scene to replace it immediately.`; }
-  async function hydrateCurrentScene() {
+  async function hydrateCurrentScene(catalogReady) {
     const hydrationIntent = state.intent;
     await refreshStatus();
     if (!intentIsCurrent(hydrationIntent)) return;
@@ -2073,12 +1974,23 @@
     if (body.recovery) {
       state.scene = body.recovery.scene; state.selection = body.recovery.opened_look_id ? {kind:'look', id:body.recovery.opened_look_id} : null;
       state.dirty = false; applyScene(state.scene); await restoreSavedSelection();
-    } else { applyScene(defaultScene()); state.scene = defaultScene(); state.dirty = false; }
+    } else {
+      await catalogReady;
+      if (!intentIsCurrent(hydrationIntent)) return;
+      applyScene(defaultScene());
+      state.dirty = false;
+    }
     // The legacy Composer may be empty after restart while the canonical wall
     // still has a selected Scene. Hydration must not republish that Scene or
     // restart stopped output. The operator chooses when to resume output.
 
   }
   renderPlaylist();
-  hydrateCurrentScene().then(() => Promise.all([loadLibrary(), loadGallery(), loadPlaylists(), refreshPlaylistStatus()])).then(loadFireworksPresets).then(loadSnakePresets).then(loadLavaPresets).then(loadReefPresets).then(loadClockPresets).then(() => Promise.all(['flame_burst', 'fluid_tank', 'fish_tank', 'ocean_waves', 'mini_metro', 'aurora_curtains', 'conway_life', 'tetris', 'firefly_synchrony', 'canopy_cup', 'maze_chase', 'pinball', 'pixel_quest', 'pixel_chase', 'plant_glow', ...mediaIds, 'ascii_drop', 'emoji', 'christmas_tree', 'night_train_windows', ...ambientIds, ...atmosphereIds, ...sculptureIds].map(loadExistingComponentPresets))).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); }).then(() => { setInterval(() => { if (!document.hidden) { refreshStatus(); refreshPlaylistStatus(); } }, 1000); }).catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
+  const catalogReady = loadGallery();
+  Promise.all([
+    catalogReady,
+    hydrateCurrentScene(catalogReady).then(() => Promise.all([loadLibrary(), loadPlaylists(), refreshPlaylistStatus()])),
+  ]).then(() => { previewScheduler.start(); schedulePreview(); return refreshStatus(); })
+    .then(() => { setInterval(() => { if (!document.hidden) { refreshStatus(); refreshPlaylistStatus(); } }, 1000); })
+    .catch((error) => { $('#operationMessage').textContent = error.message || 'Local Composer server unavailable.'; if (error.serverUnavailable) window.dispatchEvent(new Event('composer-server-unavailable')); });
 })();

@@ -19,6 +19,8 @@ _HUE_GOLDEN = np.float32(0.6180339887)
 
 
 class FishTankAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('fish_count', 'swim_speed', 'schooling', 'bubbles', 'weeds')
+
     ANIMATION_NAME = "Fish Tank"
     ANIMATION_DESCRIPTION = "A tall aquarium of swimming fish, swaying weeds, and rising bubbles"
     ANIMATION_AUTHOR = "LED Grid Team"
@@ -113,9 +115,10 @@ class FishTankAnimation(AnimationBase):
     def palette_roles(cls, palette_id: str) -> Mapping[str, tuple[float, float, float]]:
         return cls.SEMANTIC_PALETTES.get(str(palette_id), cls.SEMANTIC_PALETTES["neutral"])
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
-            "fish_count": {"type": "int", "min": self.MIN_FISH, "max": self.MAX_FISH, "default": 8,
+            "fish_count": {"type": "int", "min": cls.MIN_FISH, "max": cls.MAX_FISH, "default": 8,
                            "description": "How many fish swim the tank."},
             "swim_speed": {"type": "float", "min": 0.25, "max": 1.8, "default": 0.8,
                            "description": "How quickly the fish cruise."},

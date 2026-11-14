@@ -127,26 +127,27 @@ class ComposerSliceTests(unittest.TestCase):
         self.interface.working_draft = WorkingDraftStore(Path(self.tmp.name) / "recovery.json")
         self.client = self.interface.app.test_client()
 
-    def test_disabled_widget_settings_are_hidden_without_rewriting_widget_values(self) -> None:
-        html = Path("web/templates/composer.html").read_text(encoding="utf-8")
-        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
+    def test_widget_editor_mounts_from_catalog_without_template_controls(self) -> None:
+        html = self.client.get("/composer").get_data(as_text=True)
         audit = _ComposerElementAudit()
         audit.feed(html)
-        elements = {attrs.get("id"): (tag, attrs) for tag, attrs in audit.elements if attrs.get("id")}
+        elements = {attrs["id"]: (tag, attrs) for tag, attrs in audit.elements if "id" in attrs}
+        self.assertEqual(elements["widgetChoice"][0], "select")
+        self.assertIn("disabled", elements["widgetChoice"][1])
+        self.assertEqual(elements["addWidgetForm"][0], "form")
+        self.assertEqual(elements["widgetEditors"][0], "div")
+        self.assertNotIn('id="clockSettings"', html)
+        self.assertNotIn('id="emojiSettings"', html)
 
-        self.assertEqual(elements["clockSettings"], ("div", {"id": "clockSettings", "class": "widget-settings", "hidden": ""}))
-        self.assertEqual(elements["emojiSettings"], ("div", {"id": "emojiSettings", "class": "widget-settings", "hidden": ""}))
-        self.assertLess(html.index('id="clockEnabled"'), html.index('id="clockSettings"'))
-        self.assertLess(html.index('id="emojiEnabled"'), html.index('id="emojiSettings"'))
-        self.assertLess(html.index('id="clockSettings"'), html.index('id="clockFormat"'))
-        self.assertLess(html.index('id="emojiSettings"'), html.index('id="emojiText"'))
-        self.assertIn("function syncWidgetDisclosure()", script)
-        self.assertIn("$('#clockSettings').hidden = !$('#clockEnabled').checked;", script)
-        self.assertIn("$('#emojiSettings').hidden = !$('#emojiEnabled').checked;", script)
-        self.assertIn("if (state.lastControl === 'clockEnabled' || state.lastControl === 'emojiEnabled') syncWidgetDisclosure();", script)
-        self.assertIn("'#emojiLineSpacing'", script)
-        self.assertIn("if (state.lastControl === 'clockEnabled') clock.visible = $('#clockEnabled').checked;", script)
-        self.assertIn("if (state.lastControl === 'emojiEnabled') emoji.visible = $('#emojiEnabled').checked;", script)
+        payload = self.client.get("/api/composer/gallery").get_json()
+        widgets = {entry["component_id"]: entry for entry in payload["components"] if entry["role"] == "widget"}
+        clock = widgets["clock_overlay"]
+        self.assertEqual(clock["default_placement"], {"mode": "manual", "strip_translation": 0, "led_translation": -8})
+        self.assertEqual(clock["parameter_schema"]["format_24h"]["options"], [False, True])
+        message = widgets["emoji_arranger"]
+        self.assertEqual(message["parameter_schema"]["text"]["control"], "emoji_text")
+        self.assertEqual(message["parameter_schema"]["text"]["max_length"], 64)
+        self.assertIn("line_spacing", message["parameter_schema"])
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -155,8 +156,10 @@ class ComposerSliceTests(unittest.TestCase):
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn("Operations", html)
         self.assertIn("Live view", html)
-        self.assertIn("conway_life", Path("web/static/js/composer_slice.js").read_text(encoding="utf-8"))
-        self.assertIn("tetris", Path("web/static/js/composer_slice.js").read_text(encoding="utf-8"))
+        self.assertIn('id="animationChoice"', html)
+        self.assertIn('id="animationControls"', html)
+        gallery = self.client.get("/api/composer/gallery").get_json()
+        self.assertTrue({"conway_life", "tetris"} <= {entry["component_id"] for entry in gallery["entries"]})
         self.assertIn('id="liveAction"', html)
         self.assertNotIn("previewCanvas", html)
         self.assertNotIn("Tools", html)
@@ -209,7 +212,7 @@ class ComposerSliceTests(unittest.TestCase):
         self.assertIn('await submit(next, {intentToken, rememberEdit: true, previous})', selection)
         self.assertLess(selection.index('if (!intentIsCurrent(intentToken) || published.coalesced) return;'), selection.index('refreshGallerySelection();'))
         self.assertIn('if (!intentIsCurrent(intentToken)) return;', selection)
-        self.assertIn("select.setAttribute('aria-current', String(state.scene?.animation?.component_id === entry.component_id))", script)
+        self.assertIn("select.setAttribute('aria-current', String(componentKey(state.scene?.animation) === componentKey(entry)))", script)
         self.assertNotIn('/activate', selection)
         self.assertNotIn('/check', selection)
 
@@ -275,8 +278,7 @@ const context = {
   $: (selector) => selector === '#galleryDetail' ? detail : grid,
   window: {matchMedia: () => ({matches: false})},
   document: {createElement: makeElement},
-  fetch: () => new Promise((resolve) => pending.push(resolve)),
-  encodeURIComponent,
+  loadComponentPresets: () => new Promise((resolve) => pending.push(resolve)),
   selectGalleryEntry() {},
 };
 vm.runInNewContext(process.argv[1] + '; this.place = placeGalleryDetail; this.show = showGalleryDetail;', context);
@@ -287,11 +289,11 @@ assert.equal(context.place({key: 'late'}), true);
 assert.equal(cards[2].afterNode, detail, 'phone detail follows the selected one-card row');
 context.show({key: 'early', component_id: 'early', name: 'Early', description: '', available: true, preset_count: 1});
 context.show({key: 'late', component_id: 'late', name: 'Late', description: '', available: true, preset_count: 1});
-pending[1]({ok: true, json: async () => ({presets: [{name: 'Late preset', parameters: {}}]})});
+pending[1]([{name: 'Late preset', parameters: {}}]);
 setImmediate(() => {
   setImmediate(() => {
     assert.equal(detail.children[4].children[0]['aria-label'], 'Late preset');
-    pending[0]({ok: true, json: async () => ({presets: [{name: 'Stale early preset', parameters: {}}]})});
+    pending[0]([{name: 'Stale early preset', parameters: {}}]);
     setImmediate(() => setImmediate(() => {
       assert.equal(detail.children[4].children[0]['aria-label'], 'Late preset', 'stale presets cannot replace the newest detail');
     }));
@@ -479,19 +481,14 @@ assert.match(context.result, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-
         self.assertIn("if (error.serverUnavailable)", script)
 
     def test_catalog_uses_the_real_clock_overlay_descriptor_and_client_preserves_error_state(self) -> None:
-        descriptor = ClockOverlayAnimation.component_descriptor()
-        self.assertIs(
-            self.interface.composer_catalog.require(
-                provider="python", component_id="clock_overlay", version=1,
-            ),
-            descriptor,
-        )
-        self.assertIs(
-            self.interface.composer_catalog.require(
-                provider="python", component_id="conway_life", version=1,
-            ),
-            ConwayLifeAnimation.component_descriptor(),
-        )
+        for component_id, implementation in (
+            ("clock_overlay", ClockOverlayAnimation), ("conway_life", ConwayLifeAnimation),
+        ):
+            descriptor = self.interface.composer_catalog.require(provider="python", component_id=component_id, version=1)
+            declared = implementation.component_descriptor()
+            self.assertEqual(descriptor.factory.__name__, implementation.__name__)
+            self.assertEqual(descriptor.default_parameters(), declared.default_parameters())
+            self.assertEqual(descriptor.role, declared.role)
         with self.assertRaises(ValueError):
             self.interface.composer_catalog.require(
                 provider="python", component_id="alert", version=1,
@@ -595,7 +592,7 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
             (
                 script[
                     script.index("function sameLocalParameters") : script.index(
-                        "function componentLabel"
+                        "const semanticControls"
                     )
                 ],
                 script[
@@ -609,8 +606,8 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
                     )
                 ],
                 script[
-                    script.index("function decorateExactNumber") : script.index(
-                        "function decorateText"
+                    script.index("function wireExactNumber") : script.index(
+                        "function installSemanticControls"
                     )
                 ],
                 script[
@@ -620,7 +617,7 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
                 ],
                 script[
                     script.index("async function edit") : script.index(
-                        "async function loadFireworksPresets"
+                        "function applyAuthoredPresetPresentation"
                     )
                 ],
                 script[
@@ -639,7 +636,7 @@ const nodes = {
 };
 const state = {
   history: [], redo: [], scene: {value: 0, text: '', enabled: false}, dirty: false,
-  publication: {queued: null, inFlight: null}, lastControl: null,
+  publication: {queued: null, inFlight: null},
 };
 const controls = {scene: structuredClone(state.scene)};
 const published = [];
@@ -652,7 +649,6 @@ const context = {
   sceneFromControls: () => structuredClone(controls.scene),
   beginIntent() { state.intent = (state.intent || 0) + 1; return state.intent; },
   intentIsCurrent(intent) { return intent === state.intent; },
-  syncWidgetDisclosure() {},
   syncTargetFps(value) { nodes['#targetFps'].value = String(value); },
   applyScene(scene) { state.scene = structuredClone(scene); controls.scene = structuredClone(scene); },
 };
@@ -660,10 +656,11 @@ const run = vm.runInNewContext(`
 let authoredTargetFps = 200;
 let controlEditSessions = new WeakMap();
 let historyGeneration = 0;
-const semanticControls = [];
+const semanticControls = new Map();
+const parameterEdits = new WeakMap();
 const exactPublished = [];
 function addControlMeta() {}
-function dispatchSemanticEdit(control) { exactPublished.push(control.value); }
+function dispatchSemanticEdit(control) { exactPublished.push(control.value); semanticControls.get(control).lastValue = control.value; }
 ${process.argv[1]}
 async function submit(scene, options = {}) {
   if (options.rememberEdit) remember(options.previous || historySnapshot());
@@ -675,7 +672,7 @@ async function submit(scene, options = {}) {
 }
 function reset(scene = {value: 0, text: '', enabled: false}, targetFps = 200) {
   state.scene = structuredClone(scene); controls.scene = structuredClone(scene);
-  state.history = []; state.redo = []; state.dirty = false; state.lastControl = null;
+  state.history = []; state.redo = []; state.dirty = false;
   nodes['#targetFps'].value = String(targetFps); nodes['#operationMessage'].textContent = '';
   authoredTargetFps = targetFps; published.length = 0; failNext = false;
 }
@@ -700,16 +697,19 @@ function reset(scene = {value: 0, text: '', enabled: false}, targetFps = 200) {
   await rewind('undo');
   assert.equal(target.value, '200'); assert.equal(published.at(-1).targetFps, 200);
 
-  const text = {id: 'asciiPhrase'};
+  const text = {value: ''};
+  parameterEdits.set(text, (scene) => { scene.text = text.value; });
   reset(); beginControlEdit(text);
-  for (const value of ['H', 'HI', 'HIC']) { controls.scene.text = value; await edit({target: text}); }
+  for (const value of ['H', 'HI', 'HIC']) { text.value = value; await edit({target: text}); }
   await edit({target: text}); finishControlEdit(text);
   assert.equal(published.map(item => item.scene.text).join(','), 'H,HI,HIC');
   assert.equal(state.history.length, 1); await rewind('undo'); assert.equal(state.scene.text, '');
 
-  const checkbox = {id: 'clockEnabled'};
-  reset(); controls.scene.enabled = true; await edit({target: checkbox}); await edit({target: checkbox});
+  const checkbox = {checked: true};
+  parameterEdits.set(checkbox, (scene) => { scene.enabled = checkbox.checked; });
+  reset(); await edit({target: checkbox}); await edit({target: checkbox});
   assert.equal(published.length, 1); assert.equal(state.history.length, 1);
+  parameterEdits.delete(checkbox);
 
   reset(); controls.scene.value = 9; failNext = true; await edit({target: speed});
   assert.equal(state.scene.value, 0); assert.equal(controls.scene.value, 0);
@@ -727,10 +727,10 @@ function reset(scene = {value: 0, text: '', enabled: false}, targetFps = 200) {
   controls.scene.value = 2; failNext = true; await edit({target: checkbox});
   assert.equal(JSON.stringify(state.redo), redoBeforeFailure); assert.equal(state.scene.value, 0);
 
-  reset(); beginControlEdit(text); controls.scene.text = 'H'; await edit({target: text});
-  clearHistory(); controls.scene.text = 'HI'; await edit({target: text});
+  reset(); beginControlEdit(text); text.value = 'H'; await edit({target: text});
+  clearHistory(); beginControlEdit(text); text.value = 'HI'; await edit({target: text});
   assert.equal(state.history.length, 1); assert.equal(state.history[0].scene.text, 'H');
-  controls.scene.text = 'HIC'; await edit({target: text}); assert.equal(state.history.length, 1);
+  text.value = 'HIC'; await edit({target: text}); assert.equal(state.history.length, 1);
 
   class ExactControl {
     constructor(value) { this.value = value; this.listeners = {}; this.attributes = {}; }
@@ -765,12 +765,7 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("wireLiveRange($('#sceneSpeed')", script)
         self.assertIn("wireLiveRange($('#targetFps')", script)
-        self.assertIn("['#asciiPhrase', '#emojiText']", script)
         self.assertIn("intentIsCurrent(intentToken)", script)
-        self.assertEqual(
-            script.count("control.addEventListener('input', () => dispatchSemanticEdit(control))"),
-            2,
-        )
         save_source = script[script.index("async function save(as,") : script.index("async function rewind")]
         self.assertNotIn("submit(", save_source)
 
@@ -1026,7 +1021,7 @@ const context = {
   $: (selector) => nodes[selector],
   boundedTargetFps: (value) => Number(value), newUuid: () => `id-${stats.publicationPosts + 1}`,
   beginIntent: () => ++state.intent, intentIsCurrent: (intent) => intent === state.intent,
-  remember() {}, syncComponentPresetUI() {}, schedulePreview() {},
+  remember() {}, syncComponentEditors() {}, schedulePreview() {},
   identity: () => '-',
   document: {createTextNode: text => ({textContent: text}), createElement: () => new Node()},
   wallStatus: () => state.status, stopOutputNow: async () => {}, syncFrameRateObservation() {}, acknowledgeUndo: async () => {},
@@ -1099,14 +1094,20 @@ Promise.resolve(run).catch((error) => { console.error(error); process.exitCode =
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
-    def test_readding_after_primary_removal_selects_the_missing_slot_and_checks(self) -> None:
-        """The client must restore the missing Conway lower slot without duplicates."""
-        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        self.assertIn("await submit(next, {rememberEdit: true});", script)
-        # Equivalent authored output after add-two, remove-Conway, add again.
-        response = self.client.post("/api/composer/scene", json={"origin": "composer", "scene": _current_scene(), "client_id": "desktop", "client_sequence": 1})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["state"], "live")
+    def test_removing_and_readding_widget_preserves_order_and_remaining_widget(self) -> None:
+        from tests.unit.test_composer_runtime_preview import _clock
+        scene = _current_scene()
+        second = _clock("second", [240, 140, 50], led=-8)
+        scene["widgets"] = [_clock("first", [255, 224, 128], led=-4), second]
+        for sequence, expected_order in enumerate((["first", "second"], ["second"], ["second", "new"]), 1):
+            response = self.client.post("/api/composer/scene", json={
+                "origin": "composer", "scene": scene, "client_id": "desktop", "client_sequence": sequence,
+            })
+            self.assertEqual(response.status_code, 200, response.get_json())
+            recovered = self.client.get("/api/composer/recovery").get_json()["recovery"]["scene"]["widgets"]
+            self.assertEqual([widget["id"] for widget in recovered], expected_order)
+            self.assertEqual(next(widget for widget in recovered if widget["id"] == "second")["placement"], second["placement"])
+            scene["widgets"] = [second] if sequence == 1 else [second, _clock("new", [180, 70, 220], led=0)]
 
     def test_third_overlay_is_rejected_before_local_adapter_mutation(self) -> None:
         rejected = self.client.post("/api/composer/check", json=_scene([_conway(), _overlay("clock_upper"), _overlay("extra")]))

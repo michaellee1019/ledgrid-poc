@@ -31,6 +31,12 @@ COMPAT_GIF_DIRECTORY = "assets/gifs"
 
 class GifAnimation(AnimationBase):
     """Play pre-rendered animated GIF files."""
+    PREFERRED_PARAMETERS = ("gif_name", "playback_speed", "fit_mode", "flip_y")
+    PARAMETER_CONTROLS = {
+        'playback_speed': {'unit': '×'},
+        "gif_name": {"label": "Clip"},
+    }
+
 
     ANIMATION_NAME = "GIF Animation"
     ANIMATION_DESCRIPTION = "Plays packaged GIF artwork with its authored frame timing"
@@ -150,12 +156,13 @@ class GifAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         return {
             "gif_name": {
                 "type": "str",
-                "options": [path.name for path in self._list_gif_files()],
-                "default": self.DEFAULTS["gif_name"],
+                "options": [path.name for path in cls._list_gif_files()],
+                "default": cls.DEFAULTS["gif_name"],
                 "description": "Packaged GIF artwork",
             },
             "playback_speed": {
@@ -172,7 +179,7 @@ class GifAnimation(AnimationBase):
             },
             "fit_mode": {
                 "type": "str",
-                "options": list(self.FIT_MODES),
+                "options": list(cls.FIT_MODES),
                 "default": "stretch",
                 "description": "stretch, contain, or cover frame fit.",
             },
@@ -259,15 +266,17 @@ class GifAnimation(AnimationBase):
         self._durations_sec = durations
         self._loaded_gif_path = selected
 
-    def _list_gif_files(self, directory: Optional[Path] = None) -> List[Path]:
+    @classmethod
+    def _list_gif_files(cls, directory: Optional[Path] = None) -> List[Path]:
         target = directory
         if target is None:
-            target = self._resolve_gif_directory()
+            target = cls._resolve_gif_directory()
         if not target.exists():
             return []
         return sorted([p for p in target.iterdir() if p.is_file() and p.suffix.lower() == ".gif"])
 
-    def _resolve_gif_directory(self) -> Path:
+    @staticmethod
+    def _resolve_gif_directory() -> Path:
         """Keep current Scene media selection inside the packaged library."""
         return PACKAGED_GIF_DIRECTORY
 

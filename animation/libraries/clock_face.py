@@ -93,7 +93,7 @@ class ClockFaceRenderer:
 
     def _clock_now(self) -> datetime:
         """Return local wall time, isolated so render tests can replace it."""
-        return self._apply_clock_offset(datetime.now().astimezone())
+        return self._apply_clock_offset(self.wall_time())
 
     def _apply_clock_offset(self, value: datetime) -> datetime:
         return value + timedelta(

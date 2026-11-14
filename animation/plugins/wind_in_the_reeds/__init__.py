@@ -156,6 +156,9 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class WindInTheReedsAnimation(CadencedSculpture):
+    PREFERRED_PARAMETERS = ('wind', 'gustiness', 'stem_density', 'motes', 'silhouette_strength')
+    POINT_ACTION_LABELS = {'primary': 'Bend reeds'}
+
     ANIMATION_NAME="Wind in the Reeds"; ANIMATION_DESCRIPTION="A tactile field of reeds bends beneath travelling gust fronts"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="wind_in_the_reeds"; SOURCE_FPS=24.
     INTERACTION_TYPES=frozenset(("primary",))
@@ -217,7 +220,8 @@ class WindInTheReedsAnimation(CadencedSculpture):
         weight=np.exp(-.5*(x_delta*x_delta+y_delta*y_delta))
         self.bend=np.clip(self.bend+.85*strength*weight,-1.5,1.5)
         self._primary_interactions_applied+=1
-    def get_parameter_schema(self):
+    @classmethod
+    def get_parameter_schema(cls):
         s=super().get_parameter_schema();s.update({"wind":{"type":"float","min":0.,"max":2.,"default":.65,"description":"Steady reed bend"},"gustiness":{"type":"float","min":0.,"max":2.,"default":.55,"description":"Coherent travelling gusts"},"stem_density":{"type":"float","min":.25,"max":1.5,"default":1.,"description":"Reed field density"},"season":{"type":"str","options":["spring","late_summer","winter"],"default":"late_summer","description":"Stem character"},"motes":{"type":"float","min":0.,"max":2.,"default":.45,"description":"Floating seed motes"},"silhouette_strength":{"type":"float","min":0.,"max":1.,"default":.5,"description":"Foreground depth"}});return s
     @classmethod
     def _validate_local_parameters(cls,v):

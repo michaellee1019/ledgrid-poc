@@ -1,4 +1,5 @@
 {
+  "composer": true,
   "plugin_id": "tetris",
   "class": "TetrisAnimation",
   "icon": "🧱",

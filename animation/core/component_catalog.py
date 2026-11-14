@@ -7,8 +7,9 @@ catalog verifies its declared provider, role, rendering, and fidelity facts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
+import math
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -74,6 +75,49 @@ class PlantCapability(str, Enum):
 
 
 @dataclass(frozen=True)
+class ComponentAction:
+    """One semantic action and its optional physical controller binding."""
+
+    label: str
+    button: str | None = None
+    release: bool = False
+    repeat: bool = False
+    position: bool = False
+    chord: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.label or (self.chord is not None and (
+            not self.position or self.button is None or not 1 <= self.chord < 16
+        )):
+            raise ValueError("Invalid component action declaration")
+
+    def public(self) -> dict[str, Any]:
+        return {
+            "label": self.label, "button": self.button, "release": self.release,
+            "repeat": self.repeat, "position": self.position, "chord": self.chord,
+        }
+
+
+@dataclass(frozen=True)
+class ComponentInput:
+    """The animation's input ownership and available semantic actions."""
+
+    mode: str = "none"
+    actions: Mapping[str, ComponentAction] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"none", "actions", "player"} or (self.mode == "none") == bool(self.actions):
+            raise ValueError("Invalid component input declaration")
+        object.__setattr__(self, "actions", MappingProxyType(dict(self.actions)))
+
+    def public(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "actions": {name: action.public() for name, action in self.actions.items()},
+        }
+
+
+@dataclass(frozen=True)
 class ComponentDescriptor:
     """A fully declared capability record for one catalog component."""
 
@@ -93,6 +137,21 @@ class ComponentDescriptor:
     parameter_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = field(
         default=None, compare=False, repr=False
     )
+
+    name: str = ""
+    description: str = ""
+    package_id: str = ""
+    parameter_schema: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    preferred_parameters: tuple[str, ...] = ()
+    input_capability: ComponentInput = field(default_factory=ComponentInput)
+    default_placement: Mapping[str, Any] = field(default_factory=dict)
+    live_parameters: frozenset[str] = frozenset()
+    factory: Callable[[Any, Mapping[str, Any]], Any] | None = field(
+        default=None, compare=False, repr=False
+    )
+    # Older descriptors without a canonical normalizer kept the author's JSON
+    # number encodings. Keep that identity while applying the same validator.
+    preserve_parameter_encoding: bool = False
 
     def __post_init__(self) -> None:
         if not self.component_id or not isinstance(self.component_id, str):
@@ -148,6 +207,8 @@ class ComponentDescriptor:
         if not isinstance(self.defaults, Mapping):
             raise ValueError("defaults must be a mapping")
         object.__setattr__(self, "defaults", _freeze_default(self.defaults))
+        object.__setattr__(self, "parameter_schema", _freeze_default(self.parameter_schema))
+        object.__setattr__(self, "default_placement", _freeze_default(self.default_placement))
         if self.parameter_normalizer is not None and not callable(self.parameter_normalizer):
             raise ValueError("parameter_normalizer must be callable")
         self._validate_role_shape()
@@ -156,6 +217,28 @@ class ComponentDescriptor:
         """Return a mutable JSON-ready copy without exposing catalog state."""
 
         return _thaw_default(self.defaults)
+
+    def controls(self) -> dict[str, Any]:
+        """Serialize the static controls for an editor or catalog response."""
+        return _thaw_default(self.parameter_schema)
+
+    def normalize_parameters(self, values: Mapping[str, Any], *, authored_preset: bool = False) -> dict[str, Any]:
+        """Validate complete component values and return JSON-ready parameters."""
+        from animation.component_parameters import validate_component_parameters
+
+        # Authored packages can carry historical preset keys that their own
+        # normalizer checks and strips before entering a current Scene.
+        authored = values if authored_preset else validate_component_parameters(
+            values, intensity_parameter=self.intensity_parameter,
+        )
+        merged = {**self.default_parameters(), **authored}
+        if self.parameter_normalizer is None:
+            return validate_component_parameters(merged, intensity_parameter=self.intensity_parameter)
+        validated = self.parameter_normalizer(merged)
+        return validate_component_parameters(
+            merged if self.preserve_parameter_encoding and not authored_preset else _thaw_default(validated),
+            intensity_parameter=self.intensity_parameter,
+        )
 
     @property
     def accepts_installation_geometry_contact(self) -> bool:
@@ -180,6 +263,51 @@ class ComponentDescriptor:
         elif self.role is ComponentRole.WIDGET:
             if self.provider is not ComponentProvider.PYTHON or self.alpha_behavior is not AlphaBehavior.PREMULTIPLIED_RGBA:
                 raise ValueError("Scene v2 Widget must be Python premultiplied_rgba")
+
+
+def component_definition(
+    package_id: str, implementation: type, descriptor: ComponentDescriptor,
+) -> ComponentDescriptor:
+    """Bind a package's static renderer, controls and input to its Scene identity."""
+    if descriptor.factory is not None:
+        return replace(descriptor, package_id=package_id)
+    normalizer = implementation._normalized_parameters
+    schema = implementation.get_parameter_schema()
+    defaults = descriptor.default_parameters()
+    preferred = getattr(implementation, "PREFERRED_PARAMETERS", ())
+    live = getattr(implementation, "LIVE_TUNABLE_PARAMETERS", frozenset())
+    annotations = getattr(implementation, "PARAMETER_CONTROLS", {})
+    controls = {}
+    for name in defaults:
+        definition = {**schema[name], **annotations.get(name, {}), "default": defaults[name]}
+        definition.setdefault("label", name.replace("_", " "))
+        definition.setdefault("mutation", "live" if name in live else "rebuild")
+        if "min" in definition and "max" in definition and not definition.get("options"):
+            span = definition.get("ui_max", definition["max"]) - definition.get("ui_min", definition["min"])
+            integer = definition["type"] == "int"
+            definition.setdefault("step", 1 if integer or span > 30 else .01 if span <= 2 else .1)
+            definition.setdefault("coarse_step", max(1, math.ceil(span / 10)) if integer else span / 10)
+        controls[name] = definition
+    point_bindings = getattr(implementation, "NIMBUS_POINT_BINDINGS", {})
+    point_labels = getattr(implementation, "POINT_ACTION_LABELS", {})
+    actions = {}
+    for name in sorted(implementation.INTERACTION_TYPES):
+        button, chord = point_bindings.get(name, (None, None))
+        actions[name] = ComponentAction(point_labels.get(name, name.capitalize()), button, position=True, chord=chord)
+    player_buttons = getattr(implementation, "PLAYER_BUTTONS", {})
+    for button, (label, repeat, *release) in player_buttons.items():
+        actions[button] = ComponentAction(label, button, repeat=repeat, release=any(release))
+    mode = "player" if player_buttons else "actions" if actions else "none"
+    return replace(
+        descriptor, package_id=package_id, factory=implementation,
+        name=getattr(implementation, "COMPOSER_NAME", implementation.ANIMATION_NAME),
+        description=implementation.ANIMATION_DESCRIPTION,
+        parameter_schema=controls, preferred_parameters=preferred, live_parameters=live,
+        parameter_normalizer=descriptor.parameter_normalizer or normalizer,
+        preserve_parameter_encoding=descriptor.parameter_normalizer is None,
+        input_capability=ComponentInput(mode, actions),
+        default_placement=getattr(implementation, "DEFAULT_WIDGET_PLACEMENT", {}),
+    )
 
 
 class ComponentCatalog:

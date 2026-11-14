@@ -2,6 +2,8 @@
 from animation.libraries.procedural_longform import LongformSceneBase
 
 class DesertWindAnimation(LongformSceneBase):
+    PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+
     ANIMATION_NAME = "Desert Wind"
     ANIMATION_DESCRIPTION = "Layered dunes erode slowly while grains skim luminous crests"
     ANIMATION_AUTHOR = "LED Grid Team"

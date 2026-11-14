@@ -173,8 +173,7 @@ function environment({save,run}){
     def test_every_user_panel_has_a_stable_collapsed_preference(self) -> None:
         for panel_id in (
             "scenes", "gallery", "preview", "global-scene", "background",
-            "animation", "widgets", "plants", "look", "snake", "canopy",
-            "reef", "arcade-trio", "operations",
+            "animation", "widgets", "plants", "look", "operations",
         ):
             self.assertIn(f"['{panel_id}',", self.layout)
         self.assertIn("ledgrid.composer.compact-panels.v2", self.layout)

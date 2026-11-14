@@ -23,6 +23,8 @@ class PlantGlowAnimation(AnimationBase):
     presentation halo from the provider-qualified contact; it never authors or
     persists calibration geometry.
     """
+    PREFERRED_PARAMETERS = ('glow_strength', 'glow_radius', 'breath_speed', 'breath_depth', 'shimmer')
+
 
     ANIMATION_NAME = "Plant Glow"
     ANIMATION_DESCRIPTION = "Breathing semantic light traces the wall's foliage and rooting globes"
@@ -163,7 +165,8 @@ class PlantGlowAnimation(AnimationBase):
             result[name] = float(value)
         return result
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "glow_radius": {
                 "type": "int", "min": 0, "max": 5, "default": 2,

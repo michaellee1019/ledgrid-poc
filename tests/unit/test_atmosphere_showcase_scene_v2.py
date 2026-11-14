@@ -63,7 +63,7 @@ class AtmosphereShowcaseSceneV2Tests(unittest.TestCase):
         return scene
 
     def test_exact_authored_rows_are_the_only_component_choices(self) -> None:
-        catalog = ComponentPresetCatalog(ROOT, {key: value._normalized_parameters for key, value in RENDERERS.items()})
+        catalog = ComponentPresetCatalog(ROOT, current_component_catalog())
         self.assertEqual(sum(EXPECTED.values()), 26)
         for component_id, count in EXPECTED.items():
             paths = sorted((ROOT / "animation/plugins" / component_id / "presets").glob("*.json"))
@@ -84,7 +84,7 @@ class AtmosphereShowcaseSceneV2Tests(unittest.TestCase):
         catalog = current_component_catalog()
         fingerprints = set()
         for component_id, renderer in RENDERERS.items():
-            self.assertIs(catalog.require(provider="python", component_id=component_id, version=1), renderer.component_descriptor())
+            self.assertEqual(catalog.require(provider="python", component_id=component_id, version=1).factory.__name__, renderer.__name__)
             animation = renderer(self.controller, renderer.COMPONENT_DEFAULTS)
             left = animation.generate_frame(.0, 0).pixels.copy()
             right = animation.generate_frame(.2, 1).pixels.copy()
@@ -247,14 +247,11 @@ class AtmosphereShowcaseSceneV2Tests(unittest.TestCase):
         )
 
     def test_selected_only_controls_keep_hidden_preset_parameters(self) -> None:
-        script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        css = (ROOT / "web/static/css/composer_slice.css").read_text(encoding="utf-8")
-        self.assertIn("const atmosphereIds", script)
-        self.assertIn("atmosphereParameters = (id, existing = {}) => ({...existing", script)
-        self.assertIn("Object.values(atmosphereControls).flat().forEach", script)
-        self.assertIn("...Object.entries(atmospherePresetTargets)", script)
-        self.assertIn(".operation-row[hidden] { display: none !important; }", css)
-        self.assertIn("label[hidden] { display: none !important; }", css)
+        catalog = current_component_catalog()
+        for component_id, renderer in RENDERERS.items():
+            descriptor = catalog.require(provider="python", component_id=component_id, version=1)
+            self.assertEqual(set(descriptor.controls()), set(renderer.COMPONENT_DEFAULTS))
+            self.assertNotIn("seed", descriptor.preferred_parameters)
 
 
 if __name__ == "__main__":

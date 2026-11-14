@@ -32,15 +32,11 @@ class ArcadeTrioSceneV2Tests(unittest.TestCase):
                     tuple(capability.value for capability in descriptor.plant_capabilities),
                     expected_capabilities,
                 )
-                self.assertIs(catalog.require(provider="python", component_id=animation.COMPONENT_ID, version=1), descriptor)
+                self.assertEqual(catalog.require(provider="python", component_id=animation.COMPONENT_ID, version=1).default_parameters(), descriptor.default_parameters())
 
     def test_authored_cards_are_exactly_fourteen_local_choices(self) -> None:
         root = Path(__file__).resolve().parents[2]
-        choices = ComponentPresetCatalog(root, {
-            "maze_chase": MazeChaseAnimation._normalized_parameters,
-            "pinball": PinballAnimation._normalized_parameters,
-            "pixel_quest": PixelQuestAnimation._normalized_parameters,
-        })
+        choices = ComponentPresetCatalog(root, current_component_catalog())
         self.assertEqual(len(choices.choices("maze_chase")), 5)
         self.assertEqual(len(choices.choices("pinball")), 5)
         self.assertEqual(len(choices.choices("pixel_quest")), 4)

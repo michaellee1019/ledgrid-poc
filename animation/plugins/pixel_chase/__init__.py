@@ -16,6 +16,11 @@ from animation.core.presentation_contracts import ResolvedScene
 
 class PixelChaseAnimation(AnimationBase):
     """Evenly spaced heads traverse the complete physical LED path."""
+    PREFERRED_PARAMETERS = ('pixel_count', 'pixels_per_second', 'tail_length', 'color_cycle_speed')
+    PARAMETER_CONTROLS = {
+        'pixels_per_second': {'unit': 'px/s'},
+    }
+
 
     ANIMATION_NAME = "Pixel Chase"
     ANIMATION_DESCRIPTION = "Configurable light heads and tails chase through every physical LED"
@@ -68,11 +73,12 @@ class PixelChaseAnimation(AnimationBase):
         if result["tail_style"] not in cls.TAIL_STYLES: raise ValueError(f"tail_style must be one of {list(cls.TAIL_STYLES)!r}")
         return result
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "pixels_per_second": {"type": "float", "min": .5, "max": 1000., "default": 120., "description": "Physical LEDs travelled per scaled second"},
             "pixel_count": {"type": "int", "min": 1, "max": 32, "default": 3, "description": "Evenly spaced chase heads"},
-            "tail_style": {"type": "str", "options": list(self.TAIL_STYLES), "default": "fade", "description": "Trailing light falloff"},
+            "tail_style": {"type": "str", "options": list(cls.TAIL_STYLES), "default": "fade", "description": "Trailing light falloff"},
             "tail_length": {"type": "int", "min": 0, "max": 32, "default": 4, "description": "LEDs behind each head"},
             "color_cycle_speed": {"type": "float", "min": 0., "max": 4., "default": .2, "description": "Semantic palette cycling speed"},
         }

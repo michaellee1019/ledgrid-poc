@@ -4,6 +4,8 @@ from animation.libraries.procedural_atmospheres import ProceduralAtmosphereBase
 
 
 class CloudCanyonAnimation(ProceduralAtmosphereBase):
+    PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+
     ANIMATION_NAME = "Cloud Canyon"
     ANIMATION_DESCRIPTION = "Billowing cloud banks occlude broad shafts leaking through a tall canyon"
     ANIMATION_AUTHOR = "LED Grid Team"

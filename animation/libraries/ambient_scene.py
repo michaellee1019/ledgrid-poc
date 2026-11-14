@@ -62,8 +62,9 @@ class AmbientSceneAnimation(AnimationBase):
             elif isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(float(value)) or not low<=float(value)<=high: raise ValueError(f"{name} must be a finite number from {low} to {high}")
             elif kind=="float": result[name]=float(value)
         return result
-    def get_parameter_schema(self):
-        return {name:{"type":"str" if s[0]=="choice" else s[0],"default":self.DEFAULTS[name],**({"options":list(s[1])} if s[0]=="choice" else ({"min":s[1],"max":s[2]} if s[0] in {"int","float"} else {})),"description":s[3]} for name,s in self.SCHEMA.items()}
+    @classmethod
+    def get_parameter_schema(cls):
+        return {name:{"type":"str" if s[0]=="choice" else s[0],"default":cls.DEFAULTS[name],**({"options":list(s[1])} if s[0]=="choice" else ({"min":s[1],"max":s[2]} if s[0] in {"int","float"} else {})),"description":s[3]} for name,s in cls.SCHEMA.items()}
     def update_parameters(self, values): self.params=self._normalized_parameters({**self.params,**dict(values)}); self._last_key=None
     def on_presentation_context_changed(self, old, new):
         del old

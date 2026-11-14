@@ -10,6 +10,9 @@ SEMANTIC_PALETTE_ROLES = ("background_low", "primary", "accent")
 
 
 class FrostworkAnimation(CadencedSculpture):
+    PREFERRED_PARAMETERS = ('melt_cycle', 'temperature', 'density', 'motion', 'background_level')
+    POINT_ACTION_LABELS = {'primary': 'Plant crystal'}
+
     ANIMATION_NAME = "Frostwork"
     ANIMATION_DESCRIPTION = "Branching ice advances from a cold border, sparkles at its tips, and melts"
     PLANT_MODIFIER_SUPPORT = frozenset(("emitter", "obstacle", "illuminate"))
@@ -30,7 +33,8 @@ class FrostworkAnimation(CadencedSculpture):
         self.age = np.zeros(self._shape, np.float32)
         self.occupied[:, -1] = True
 
-    def get_parameter_schema(self):
+    @classmethod
+    def get_parameter_schema(cls):
         s = super().get_parameter_schema()
         s.update({
             "temperature": {"type":"float","min":0,"max":1,"default":0.35,"description":"Cold growth versus sublimation"},

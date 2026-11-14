@@ -202,6 +202,25 @@ class ActivePiece:
 
 class TetrisAnimation(AnimationBase):
     """Classic Tetris with a coordinated self-playing bot."""
+    PREFERRED_PARAMETERS = ('fall_rate', 'tetromino_count', 'bot_imperfection', 'smooth_drop_strength')
+    PARAMETER_CONTROLS = {
+        'tetromino_count': {'label': 'bot pieces', 'autoplay_only': True},
+        'bot_imperfection': {'label': 'bot errors', 'autoplay_only': True},
+        'smooth_drop': {'autoplay_only': True},
+        'smooth_drop_strength': {'autoplay_only': True},
+        'smooth_drop_max_pieces': {'label': 'smooth piece limit', 'autoplay_only': True},
+        'high_density_render_fps': {'label': 'dense render FPS'},
+    }
+    PLAYER_BUTTONS = {
+        'left': ('Move left', True),
+        'right': ('Move right', True),
+        'up': ('Rotate left', False),
+        'down': ('Soft drop', True),
+        'a': ('Rotate right', False),
+        'b': ('Drop', False),
+        'y': ('Release', False),
+    }
+
 
     ANIMATION_NAME = "Tetris"
     ANIMATION_DESCRIPTION = "Autoplaying Tetris board with coordinated falling tetrominoes"
@@ -309,7 +328,8 @@ class TetrisAnimation(AnimationBase):
             min(MAX_TETROMINO_COUNT, int(self.params.get('tetromino_count', 5))),
         )
 
-    def get_parameter_schema(self) -> Dict[str, Any]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Any]:
         return {
             'seed': {
                 'type': 'int', 'min': 0, 'max': 999999, 'default': 4201,

@@ -14,7 +14,7 @@ class CanonicalReceiverSceneMixin:
     """Retain the public manager adapter while receivers accept full RGB only."""
 
     def scene_v2_component_catalog(self):
-        from web.composer_final_preview import current_component_catalog
+        from animation.core.composer_catalog import current_component_catalog
         return current_component_catalog()
 
     def _prepare_canonical_receiver_scene(self, payload):
@@ -34,21 +34,19 @@ class CanonicalReceiverSceneMixin:
         else:
             self._resolve_scene_state(payload)
 
-    def start_canonical_scene(self, payload, *, tetris_player=False):
-        if tetris_player:
+    def start_canonical_scene(self, payload, *, enter_player=False):
+        if enter_player:
             # A failed game preflight must leave the current scene playing.
             try:
                 canonical, runtime = self._prepare_canonical_receiver_scene(payload)
-                if canonical.scene['animation']['component_id'] != 'tetris':
-                    raise ValueError('Controller play requires a Tetris scene')
                 if not runtime.dispatch_game_input("play"):
-                    raise RuntimeError('Tetris player controls are unavailable')
+                    raise RuntimeError('Player controls are unavailable')
             except Exception as exc:
-                raise ValueError(f'Tetris player mode could not be prepared: {exc}') from exc
+                raise ValueError(f'Player mode could not be prepared: {exc}') from exc
         self._requested_scene = deepcopy(payload)
         self._playback_error = None
         try:
-            if not tetris_player:
+            if not enter_player:
                 canonical, runtime = self._prepare_canonical_receiver_scene(payload)
             if self.stop_animation(clear_leds=False) is False:
                 raise RuntimeError('previous host playback did not stop')
@@ -98,6 +96,20 @@ class CanonicalReceiverSceneMixin:
                     return runtime, state
             return None, None
 
+    def nimbus_point_input(self):
+        """Describe the current ambient gesture and the Scene it belongs to."""
+        with self._scene_state_guard():
+            runtime, canonical = self._canonical_receiver_runtime, self._canonical_receiver_scene
+            if not self.is_running or not self._canonical_host_full_mode or runtime is None or canonical is None:
+                return None
+            capability = runtime.input_capability()
+            if capability.mode != "actions":
+                return None
+            for action_id, action in capability.actions.items():
+                if action.position and action.button and action.chord:
+                    return (canonical.scene["animation"]["component_id"], canonical.identity.digest), action_id, action
+            return None
+
     def dispatch_game_input(self, target, action):
         with self._scene_state_guard():
             if target is not None and target is self.nimbus_game()[0]:
@@ -111,6 +123,6 @@ class CanonicalReceiverSceneMixin:
             runtime = self._canonical_receiver_runtime
             if not self.is_running or not self._canonical_host_full_mode or canonical is None or runtime is None:
                 raise ValueError('No active canonical Scene renderer is available')
-            if canonical.identity.digest != scene_digest or canonical.scene['animation']['component_id'] != component_id:
+            if (canonical.identity.digest != scene_digest or canonical.scene['animation']['component_id'] != component_id):
                 raise ValueError('Active Scene or animation component changed')
             return runtime.dispatch_animation_interaction(canonical, kind, x, y, strength)

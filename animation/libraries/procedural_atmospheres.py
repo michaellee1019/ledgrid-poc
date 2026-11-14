@@ -219,7 +219,8 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._last_elapsed = None
         self._simulation_time = 0.0
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema.pop("color_saturation", None)
         schema.pop("color_value", None)
@@ -230,7 +231,7 @@ class ProceduralAtmosphereBase(AnimationBase):
                        "description": "Macro advection and fine-motion rate"},
             "density": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.46,
                         "description": "Scene coverage or event population"},
-            "mood": {"type": "str", "options": list(MOOD_PALETTES), "default": self.DEFAULT_MOOD,
+            "mood": {"type": "str", "options": list(MOOD_PALETTES), "default": cls.DEFAULT_MOOD,
                      "description": "Color and light atmosphere"},
             "background": {"type": "str", "options": list(BACKGROUND_LEVELS), "default": "soft",
                            "description": "Ambient light behind the primary scene"},
@@ -238,7 +239,7 @@ class ProceduralAtmosphereBase(AnimationBase):
                                  "description": "Strength of the ambient background"},
             "source_fps": {"type": "float", "min": 20.0, "max": 40.0, "default": 30.0,
                            "description": "Bounded source redraw cadence"},
-            "seed": {"type": "int", "min": 0, "max": 999999, "default": self.DEFAULT_SEED,
+            "seed": {"type": "int", "min": 0, "max": 999999, "default": cls.DEFAULT_SEED,
                      "description": "Deterministic long-form scene seed"},
         })
         return schema

@@ -9,7 +9,6 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from animation.component_parameters import validate_component_parameters
 from animation.core.component_catalog import (
     AlphaBehavior,
     ComponentCatalog,
@@ -139,26 +138,9 @@ def _normalize_component(value: Any, catalog: ComponentCatalog, expected_role: C
             raise SceneContractError("Animation must be Python premultiplied_rgba or opaque")
     elif descriptor.provider is not ComponentProvider.PYTHON or descriptor.alpha_behavior is not AlphaBehavior.PREMULTIPLIED_RGBA:
         raise SceneContractError("Widget must be Python premultiplied_rgba")
-    # Descriptor defaults are recursively frozen catalog facts.  Component
-    # normalization receives its own JSON-ready copy, so no scene can mutate a
-    # shared descriptor through nested list or mapping values.
-    defaults = descriptor.default_parameters()
-    if descriptor.provider is not ComponentProvider.PYTHON:
-        raise SceneContractError('only host Python components are supported')
     if 'bundle_digest' in value:
         raise SceneContractError('host components must not declare bundle_digest')
-    authored = validate_component_parameters(value["parameters"], intensity_parameter=descriptor.intensity_parameter)
-    parameters = validate_component_parameters(
-        {**defaults, **authored}, intensity_parameter=descriptor.intensity_parameter
-    )
-    if descriptor.parameter_normalizer is not None:
-        try:
-            parameters = descriptor.parameter_normalizer(parameters)
-        except (TypeError, ValueError) as exc:
-            raise SceneContractError(str(exc)) from exc
-        parameters = validate_component_parameters(
-            parameters, intensity_parameter=descriptor.intensity_parameter
-        )
+    parameters = descriptor.normalize_parameters(value["parameters"])
     result = {
         "component_id": descriptor.component_id,
         "version": descriptor.version,

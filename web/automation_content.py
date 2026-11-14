@@ -48,7 +48,7 @@ class AutomationContent:
                 identity = f"preset:python:{component_id}:{summary['preset_id']}"
                 try:
                     preset, effects = self._preset(component_id, summary['preset_id'])
-                    parameters = descriptor.parameter_normalizer(preset['params']) if descriptor.parameter_normalizer else preset['params']
+                    parameters = descriptor.normalize_parameters(preset['params'])
                     matches[identity] = {'component_id': component_id, 'role': descriptor.role.value,
                                          'parameters': parameters, 'effects': effects}
                     entries.append({'id': identity, 'kind': 'preset', 'name': summary['name'], 'component_id': component_id, 'supported': True})

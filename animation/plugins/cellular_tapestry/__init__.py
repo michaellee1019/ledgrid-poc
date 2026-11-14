@@ -8,6 +8,12 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class CellularTapestryAnimation(CadencedSculpture):
+    PREFERRED_PARAMETERS = ('density', 'motion', 'mutation', 'row_interval')
+    PARAMETER_CONTROLS = {
+        'row_interval': {'unit': 's'},
+    }
+    POINT_ACTION_LABELS = {'primary': 'Inject column'}
+
     ANIMATION_NAME="Cellular Tapestry"
     ANIMATION_DESCRIPTION="Each new automaton row pushes a woven historical record down the wall"
     PLANT_MODIFIER_SUPPORT=frozenset(("obstacle","habitat","emitter"))
@@ -31,7 +37,8 @@ class CellularTapestryAnimation(CadencedSculpture):
         self.current=np.zeros(self._shape[0],bool); self.current[self._shape[0]//2]=True
         self.rows_written=0
 
-    def get_parameter_schema(self):
+    @classmethod
+    def get_parameter_schema(cls):
         s=super().get_parameter_schema();s.update({
             "rule":{"type":"int","min":0,"max":255,"default":90,"description":"Elementary cellular automaton rule"},
             "mutation":{"type":"float","min":0,"max":0.15,"default":0.01,"description":"Rare deterministic bit mutation rate"},

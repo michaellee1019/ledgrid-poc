@@ -120,6 +120,18 @@ class ScorePopup:
 
 class MazeChaseAnimation(AnimationBase):
     """A complete, self-playing maze-chase match with arcade enemy AI."""
+    PREFERRED_PARAMETERS = ('difficulty', 'chase_cadence_hz')
+    PARAMETER_CONTROLS = {
+        'chase_cadence_hz': {'label': 'chase speed'},
+        'show_ai_targets': {'label': 'AI targets'},
+    }
+    PLAYER_BUTTONS = {
+        'up': ('Turn up', False),
+        'down': ('Turn down', True),
+        'left': ('Turn left', True),
+        'right': ('Turn right', True),
+    }
+
 
     ANIMATION_NAME = "Neon Maze Chase"
     ANIMATION_DESCRIPTION = "Autoplaying pellet maze with strategic hunters, power chains, scores, lives, and arcade intermissions"
@@ -323,7 +335,8 @@ class MazeChaseAnimation(AnimationBase):
             raise ValueError("show_ai_targets must be a boolean")
         return result
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         return {
             "chase_cadence_hz": {"type": "float", "min": 1.5, "max": 18.0, "default": 9.0,
                       "description": "Maze decision cadence in ticks per second"},

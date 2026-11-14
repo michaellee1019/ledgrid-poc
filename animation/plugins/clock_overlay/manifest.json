@@ -1,4 +1,5 @@
 {
+  "composer": true,
   "plugin_id": "clock_overlay",
   "class": "ClockOverlayAnimation",
   "icon": "🕰️",

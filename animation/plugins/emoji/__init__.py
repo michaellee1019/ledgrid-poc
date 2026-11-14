@@ -10,6 +10,8 @@ from animation.core.presentation_contracts import ResolvedScene
 from animation.libraries.pixel_art import EMOJI_PATTERNS
 
 class EmojiAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('scale', 'pulse_hz')
+
     ANIMATION_NAME, ANIMATION_DESCRIPTION, ANIMATION_AUTHOR, ANIMATION_VERSION = "Emoji", "A breathing pixel face, not a text message", "LED Grid Team", "2.0"
     COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "emoji", 1, "python", "animation"
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
@@ -35,7 +37,8 @@ class EmojiAnimation(AnimationBase):
             result[name]=float(value)
         if isinstance(result["seed"],bool) or not isinstance(result["seed"],int) or not 0<=result["seed"]<=999999: raise ValueError("seed must be an integer from 0 to 999999")
         return result
-    def get_parameter_schema(self): return {"face":{"type":"str","options":list(self.FACES),"default":"smile","description":"Pixel face type"},"mood":{"type":"str","options":list(self.MOODS),"default":"golden","description":"Emotion and local colors"},"pulse_hz":{"type":"float","min":.1,"max":3,"default":.8,"description":"Breathing tempo"},"scale":{"type":"float","min":.55,"max":1.8,"default":1,"description":"Face scale"},"seed":{"type":"int","min":0,"max":999999,"default":2026,"description":"Repeatable sparkle phase"}}
+    @classmethod
+    def get_parameter_schema(cls): return {"face":{"type":"str","options":list(cls.FACES),"default":"smile","description":"Pixel face type"},"mood":{"type":"str","options":list(cls.MOODS),"default":"golden","description":"Emotion and local colors"},"pulse_hz":{"type":"float","min":.1,"max":3,"default":.8,"description":"Breathing tempo"},"scale":{"type":"float","min":.55,"max":1.8,"default":1,"description":"Face scale"},"seed":{"type":"int","min":0,"max":999999,"default":2026,"description":"Repeatable sparkle phase"}}
     def update_parameters(self,new_params): self.params=self._normalized_parameters({**self.params,**dict(new_params)}); self._key=None
     def on_presentation_context_changed(self,old,new):
         del old

@@ -70,13 +70,10 @@ class CanopyCupSceneV2Tests(unittest.TestCase):
         self.assertEqual(CanopyCupAnimation._normalized_parameters(remix)["rivalry"], .35)
 
     def test_desktop_uses_shared_selected_and_remixed_preset_affordance(self) -> None:
-        template = Path("web/templates/composer.html").read_text(encoding="utf-8")
-        script = Path("web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        for marker in ("canopyPresetCards", "canopyWorld", "canopyHeats", "canopyCourse", "canopyDensity", "canopyRivalry", "canopyPowerups"):
-            self.assertIn(marker, template)
-            self.assertIn(marker, script)
-        self.assertIn("canopy_cup: 'canopyPresetCards'", script)
-        self.assertIn("canopyParameters(next.animation.parameters)", script)
+        descriptor = current_component_catalog().require(provider="python", component_id="canopy_cup", version=1)
+        controls = descriptor.controls()
+        self.assertTrue({'enemy_density', 'qualifying_heats', 'world_theme', 'rivalry', 'powerup_rate', 'course_difficulty'} <= set(controls))
+        self.assertEqual(set(controls), set(descriptor.default_parameters()))
 
     def test_bounded_deterministic_33_by_138_cadence_and_rejected_edit(self) -> None:
         parameters = {"seed": 9090, "world_theme": "crystal_sunset", "qualifying_heats": 5, "course_difficulty": 1.2, "enemy_density": .7, "rivalry": 1., "powerup_rate": 1., "show_hud": True}

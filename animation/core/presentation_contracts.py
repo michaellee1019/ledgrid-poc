@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import datetime
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -1011,6 +1012,8 @@ class ResolvedScene:
     plant_inputs: Mapping[str, float]
     installation_geometry: InstallationGeometryContact | None = None
     trace: tuple[str, ...] = PIPELINE_TRACE
+
+    wall_time: datetime | None = None
 
 
 @dataclass(frozen=True)

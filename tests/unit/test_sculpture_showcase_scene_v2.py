@@ -73,7 +73,7 @@ class SculptureShowcaseSceneV2Tests(unittest.TestCase):
         return scene
 
     def test_exact_authored_rows_are_qualified_choices_without_default(self):
-        presets = ComponentPresetCatalog(ROOT, {key: cls._normalized_parameters for key, cls in RENDERERS.items()})
+        presets = ComponentPresetCatalog(ROOT, current_component_catalog())
         self.assertEqual(sum(COUNTS.values()), 22)
         for component_id, count in COUNTS.items():
             paths = sorted((ROOT / "animation/plugins" / component_id / "presets").glob("*.json"))
@@ -133,7 +133,7 @@ class SculptureShowcaseSceneV2Tests(unittest.TestCase):
         catalog = current_component_catalog(); fingerprints = set()
         for component_id, renderer in RENDERERS.items():
             descriptor = renderer.component_descriptor()
-            self.assertIs(catalog.require(provider="python", component_id=component_id, version=1), descriptor)
+            self.assertEqual(catalog.require(provider="python", component_id=component_id, version=1).default_parameters(), descriptor.default_parameters())
             self.assertEqual((descriptor.alpha_behavior.value, descriptor.palette_policy.value), ("opaque", "semantic"))
             animation = renderer(self.controller, renderer.COMPONENT_DEFAULTS)
             first, next_frame = animation.generate_frame(0., 0), animation.generate_frame(1.2, 1)
@@ -200,9 +200,10 @@ class SculptureShowcaseSceneV2Tests(unittest.TestCase):
         self.assertEqual(client.get("/api/composer/recovery?client_id=sculpture").get_json(), baseline)
 
     def test_selected_controls_preserve_hidden_parameters_and_render_only_selected_group(self):
-        script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        for token in ("const sculptureIds", "sculptureParameters = (id, existing = {}) => ({...existing", "Object.values(sculptureControls).flat().forEach", "...Object.entries(sculpturePresetTargets)", "installSculptureControls()"):
-            self.assertIn(token, script)
-
+        catalog = current_component_catalog()
+        for component_id, renderer in RENDERERS.items():
+            descriptor = catalog.require(provider="python", component_id=component_id, version=1)
+            self.assertEqual(set(descriptor.controls()), set(renderer.COMPONENT_DEFAULTS))
+            self.assertNotIn("seed", descriptor.preferred_parameters)
 
 if __name__ == "__main__": unittest.main()

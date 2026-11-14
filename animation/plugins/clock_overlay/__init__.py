@@ -32,6 +32,13 @@ def _dirty_ranges(previous: np.ndarray, current: np.ndarray) -> tuple[tuple[int,
 
 class ClockOverlayAnimation(AnimationBase):
     """A cached, current-time digital clock in canonical RGBA8 overlay form."""
+    COMPOSER_NAME = "Clock"
+    DEFAULT_WIDGET_PLACEMENT = {"mode": "manual", "strip_translation": 0, "led_translation": -8}
+    PARAMETER_CONTROLS = {
+        'clock_offset_minutes': {'unit': 'min'},
+        'format_24h': {'label': 'Clock format', 'options': [False, True], 'option_labels': {'false': '12-hour', 'true': '24-hour'}},
+    }
+
 
     ANIMATION_NAME = "Clock Overlay"
     ANIMATION_DESCRIPTION = "Current wall time as a transparent composed layer"
@@ -106,7 +113,8 @@ class ClockOverlayAnimation(AnimationBase):
         self._revision = 0
         self._semantic_color = self.SEMANTIC_PALETTES["neutral"]
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         return {
             "format_24h": {"type": "bool", "default": False, "description": "Use 24-hour time"},
             "show_seconds": {"type": "bool", "default": True, "description": "Show seconds and update each second"},
@@ -120,7 +128,7 @@ class ClockOverlayAnimation(AnimationBase):
 
     def _clock_now(self) -> datetime:
         """Isolated wall-time source so tests and callers can provide fixed time."""
-        return self._apply_clock_offset(datetime.now().astimezone())
+        return self._apply_clock_offset(self.wall_time())
 
     def _apply_clock_offset(self, wall_time: datetime) -> datetime:
         """Apply the same authored offset to local and injected preview time."""
@@ -132,6 +140,7 @@ class ClockOverlayAnimation(AnimationBase):
         """Accept both installed-final Preview and live-manager contexts."""
 
         if isinstance(context, ResolvedScene):
+            self.set_wall_time(context.wall_time)
             if context.palette is None or not isinstance(
                 context.palette.get("palette_id"), str
             ):

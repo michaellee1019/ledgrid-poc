@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime
 from functools import lru_cache
 from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Tuple
@@ -174,13 +173,15 @@ class LongformSceneBase(AnimationBase):
         self.on_presentation_context_changed(self._presentation_context, context)
 
     def render_resolved_scene(self, context: ResolvedScene):
+        self.set_wall_time(context.wall_time)
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
     def scene_defaults(self) -> Dict[str, Any]:
         return {}
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema["speed"].update({"min": 0.0, "max": 3.0, "default": 1.0})
         schema["brightness"].update({"default": 0.42, "max": 1.0})
@@ -189,8 +190,8 @@ class LongformSceneBase(AnimationBase):
                        "description": "Macro motion intensity without changing scene density"},
             "density": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.5,
                         "description": "Amount of scene detail without changing motion"},
-            "mood": {"type": "str", "default": self.DEFAULT_MOOD,
-                     "options": list(dict.fromkeys((*self.MOODS, "daylight", "pastel", "synthwave", "candlelight", "aurora"))),
+            "mood": {"type": "str", "default": cls.DEFAULT_MOOD,
+                     "options": list(dict.fromkeys((*cls.MOODS, "daylight", "pastel", "synthwave", "candlelight", "aurora"))),
                      "description": "Luminance-capped color family"},
             "background": {"type": "str", "default": "soft", "options": list(BACKGROUND_LEVELS),
                            "description": "Ambient light behind the primary scene"},
@@ -201,10 +202,11 @@ class LongformSceneBase(AnimationBase):
             "seed": {"type": "int", "min": 0, "max": 2147483647, "default": 1729,
                      "description": "Deterministic scene seed"},
         })
-        schema.update(self.scene_schema())
+        schema.update(cls.scene_schema())
         return schema
 
-    def scene_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def scene_schema(cls) -> Dict[str, Dict[str, Any]]:
         return {}
 
     def update_parameters(self, new_params: Dict[str, Any]):
@@ -350,7 +352,7 @@ class LongformSceneBase(AnimationBase):
         self.colorize(value, crest * 0.4 + grains)
 
     def _clock_now(self):
-        return datetime.now().astimezone()
+        return self.wall_time()
 
     def _current_hour(self, t: float) -> float:
         fixed = float(self.params.get("hour", -1.0))

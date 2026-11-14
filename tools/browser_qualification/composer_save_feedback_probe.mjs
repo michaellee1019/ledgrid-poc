@@ -32,15 +32,18 @@ try {
     const originalItem = (await library()).find(item=>item.name===name);
     const original = await getLook(originalItem.id);
     assert.match(await page.locator('#saveFeedback').textContent(), /current revision/);
-    await page.locator('#curtainDensity').fill('0.37');
-    await page.locator('#curtainDensity').dispatchEvent('input');
+    await page.locator('#animation-aurora_curtains-curtain_density').fill('0.37');
+    await page.locator('#animation-aurora_curtains-curtain_density').dispatchEvent('input');
     assert.equal(await page.locator('#saveFeedback').isVisible(), false, 'parameter edit clears success');
     await page.locator('[data-panel-id="plants"] .panel-toggle').click();
     await page.locator('#plantIlluminateEnabled').evaluate(e=>{e.checked=true;e.dispatchEvent(new Event('change',{bubbles:true}));});
     await page.locator('#plantIlluminateStrength').evaluate(e=>{e.value='.4';e.dispatchEvent(new Event('input',{bubbles:true}));});
     await page.locator('[data-panel-id="widgets"] .panel-toggle').click();
-    await page.locator('#clockEnabled').evaluate(e=>{e.checked=true;e.dispatchEvent(new Event('change',{bubbles:true}));});
-    await page.locator('#clockAcross').evaluate(e=>{e.value='3';e.dispatchEvent(new Event('input',{bubbles:true}));});
+    await page.locator('#widgetChoice').selectOption('clock_overlay');
+    await page.locator('#addWidget').click();
+    const clock = page.locator('#widgetEditors > section[aria-label="Clock"]').last();
+    await clock.getByText('Placement', {exact: true}).click();
+    await clock.locator('[data-parameter="strip_translation"] input[type="number"]').fill('3');
     await page.locator('[data-workspace-view="browse"]').click();
     await page.locator('[data-workspace-view="edit"]').click();
     assert.equal(await page.locator('#saveFeedback').isVisible(), false);
@@ -51,7 +54,7 @@ try {
     await page.locator('#sceneCopySubmit').click();
     await page.waitForFunction(()=>document.querySelector('#sceneCopyError').textContent.includes('Choose a different name'));
     assert.equal(await page.locator('#sceneCopyDialog').isVisible(),true);
-    assert.equal(await page.locator('#curtainDensity').inputValue(),'0.37');
+    assert.equal(await page.locator('#animation-aurora_curtains-curtain_density').inputValue(),'0.37');
     assert.deepEqual(await getLook(original.id),original,'collision leaves original intact');
     let fail=true;
     await page.route('**/api/composer/looks',async route=>{
@@ -62,7 +65,7 @@ try {
     await page.locator('#sceneCopyName').fill(copyName);
     await page.locator('#sceneCopySubmit').click();
     await page.waitForFunction(()=>document.querySelector('#sceneCopyError').textContent.includes('Save failed'));
-    assert.equal(await page.locator('#curtainDensity').inputValue(),'0.37');
+    assert.equal(await page.locator('#animation-aurora_curtains-curtain_density').inputValue(),'0.37');
     fail=false;
     await page.locator('#sceneCopySubmit').click();
     await page.waitForFunction(()=>!document.querySelector('#sceneCopyDialog').open);
@@ -81,8 +84,8 @@ try {
       await route.continue();
     });
     await page.locator('#saveScene').click(); await arrived;
-    await page.locator('#curtainDensity').fill('0.39');
-    await page.locator('#curtainDensity').dispatchEvent('input');
+    await page.locator('#animation-aurora_curtains-curtain_density').fill('0.39');
+    await page.locator('#animation-aurora_curtains-curtain_density').dispatchEvent('input');
     release();
     await page.waitForFunction(()=>document.querySelector('#saveFeedback').dataset.state==='dirty');
     assert.match(await page.locator('#saveFeedback').textContent(), /earlier revision.*unsaved/);
@@ -91,7 +94,7 @@ try {
     await page.reload();
     await page.waitForFunction(expected=>document.querySelector('#sceneName').value===expected,copyName);
     await page.locator('[data-workspace-view="edit"]').click();
-    assert.equal(await page.locator('#curtainDensity').inputValue(),'0.39','late save cannot erase newer recovery');
+    assert.equal(await page.locator('#animation-aurora_curtains-curtain_density').inputValue(),'0.39','late save cannot erase newer recovery');
     await page.waitForFunction(()=>document.querySelector('#saveState').textContent==='Unsaved changes');
     await page.locator('#saveScene').click();
     await page.waitForFunction(()=>document.querySelector('#saveFeedback').dataset.state==='success');

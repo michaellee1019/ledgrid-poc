@@ -2,6 +2,8 @@
 from animation.libraries.procedural_longform import LongformSceneBase
 
 class MoonlitFogBanksAnimation(LongformSceneBase):
+    PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+
     ANIMATION_NAME = "Moonlit Fog Banks"
     ANIMATION_DESCRIPTION = "Slow fog banks reveal a hidden moon above dark ridges"
     ANIMATION_AUTHOR = "LED Grid Team"

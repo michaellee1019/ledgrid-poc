@@ -55,7 +55,7 @@ def handle_command(manager, action, data, *, gamepad=None):
         if action == 'start_tetris_player':
             from web.starter_looks import tetris_player_scene
 
-            return manager.start_canonical_scene(tetris_player_scene(), tetris_player=True)
+            return manager.start_canonical_scene(tetris_player_scene(), enter_player=True)
         if action == 'tune_scene':
             return manager.tune_canonical_scene(data['scene'])
         if action == 'automation_interaction':
@@ -127,7 +127,7 @@ def nimbus_command(manager, coordinator, gamepad, action, data):
 
 
 def poll_wall_composer(manager, gamepad, menu):
-    from drivers.nimbus_gamepad import StickBank, StickMotion
+    from drivers.nimbus_gamepad import ChordPress, StickBank, StickMotion
 
     game, player_state = manager.nimbus_game()
     active = manager.is_running and manager.output_brightness > 0
@@ -136,16 +136,32 @@ def poll_wall_composer(manager, gamepad, menu):
     tuning = not player and active
     browsing = not menu.is_open and not player
     track_bank = active and (menu.is_open or not player)
+    capability = game.input_capability() if player else None
+    player_buttons = tuple(action for action in capability.actions.values() if action.button and not action.position) if capability else ()
+    point_input = manager.nimbus_point_input() if browsing else None
+    aim_binding = point_input[2] if point_input else None
     buttons = gamepad.poll(target, navigating=menu.is_open,
                            tuning_sticks=tuning, browsing=browsing, track_bank=track_bank,
                            enter_player=browsing and active and game is not None,
-                           steering_releases=player and manager.current_animation_name == "canopy_cup")
+                           release_buttons=tuple(action.button for action in player_buttons if action.release),
+                           repeat_buttons=tuple(action.button for action in player_buttons if action.repeat),
+                           point_binding=(aim_binding.button, aim_binding.chord) if aim_binding else None)
     menu.shoulder_bank = gamepad.shoulder_bank
+    aiming = bool(active and aim_binding and gamepad.shoulder_bank == aim_binding.chord)
+    if aiming:
+        basis, action_id, binding = point_input
+        menu.begin_aim(basis, binding)
+    elif getattr(menu, "aiming", False):
+        menu.leave_aim()
     motions = []
+    fire = False
     for button in buttons:
+        if isinstance(button, ChordPress):
+            fire = aiming and button.bank == aim_binding.chord and button.button == aim_binding.button
+            continue
         if isinstance(button, StickBank):
             menu.shoulder_bank = button.bank
-            if track_bank:
+            if track_bank and not aiming:
                 was_momentary = menu.momentary
                 menu.select_stick_bank(button.bank)
                 if was_momentary and not menu.is_open:
@@ -153,7 +169,8 @@ def poll_wall_composer(manager, gamepad, menu):
                     return
             continue
         if isinstance(button, StickMotion):
-            motions.append(button)
+            if not aiming or button.bank == aim_binding.chord:
+                motions.append(button)
             continue
         if button == 'disconnect':
             manager.dispatch_game_input(game, 'disconnect')
@@ -178,6 +195,8 @@ def poll_wall_composer(manager, gamepad, menu):
                     menu._feedback('Wall light', str(exc), error=exc)
             gamepad.handoff(menu)
             return
+        if aiming:
+            continue
         if menu.is_open:
             playback_revision = menu.playback_revision
             menu.press(button)
@@ -198,7 +217,12 @@ def poll_wall_composer(manager, gamepad, menu):
             if menu.quick_browse(button):
                 gamepad.discard_pending()
                 return
-    if tuning and motions:
+    if aiming:
+        if motions:
+            menu.aim_sticks(motions)
+        if fire:
+            menu.fire_aim(action_id)
+    elif tuning and motions:
         menu.tune_sticks(motions)
 
 

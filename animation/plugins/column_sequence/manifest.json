@@ -1,4 +1,5 @@
 {
+  "composer": true,
   "plugin_id": "column_sequence",
   "class": "ColumnSequenceAnimation",
   "icon": "🔢",

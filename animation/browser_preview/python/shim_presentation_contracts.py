@@ -9,6 +9,7 @@ timing enum and validated premultiplied RGBA frame.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any, Mapping, Optional, Tuple
 
@@ -73,6 +74,7 @@ class ResolvedScene:
     phase_time: float
     plant_inputs: Mapping[str, float]
     trace: Tuple[str, ...] = ()
+    wall_time: datetime | None = None
 
 
 def _normalize_dirty_ranges(

@@ -15,7 +15,7 @@ from animation.core.wall_menu_frame import (
     ACCENT, CARD_HEIGHT, DISABLED_EDGE, DISABLED_TEXT, HEIGHT, MUTED, SHOULDER_HEIGHT, STICK_CARD_HEIGHT, TITLE_HEIGHT,
     WHITE, MenuCard, WallMenuFrame,
 )
-from drivers.nimbus_gamepad import StickBank, StickMotion
+from drivers.nimbus_gamepad import ChordPress, StickBank, StickMotion
 from ipc.playlist_runtime import PlaylistRunner
 from ipc.runtime_control import controller_activation_coordinator
 from ipc.scene_contract import normalize_composer_scene
@@ -28,8 +28,7 @@ from web.composer_final_preview import current_component_catalog, installed_plan
 from web.numbered_preset_store import PRESET_COUNT, NumberedPresetStore
 from web.scene_look_store import SceneLookStore
 from web.starter_looks import get_starter
-from web.wall_composer import (MENU_CHOICE_LABELS, MENU_PARAM_LABELS, PRIMARY_ANIMATION_STICKS,
-                               STICK_BANK_COLORS, STICK_BANKS, STICK_FEEDBACK_SECONDS, WallComposer)
+from web.wall_composer import STICK_BANK_COLORS, STICK_BANKS, STICK_FEEDBACK_SECONDS, WallComposer
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -634,7 +633,7 @@ def test_right_stick_steps_are_larger_than_menu_steps_and_clamp(instrument):
     fine = manager.get_scene_state()["animation"]["parameters"]["glow_intensity"]
     inputs(manager, gamepad, menu, StickMotion(2, 2))
     coarse = manager.get_scene_state()["animation"]["parameters"]["glow_intensity"]
-    definition = menu._schema(manager.get_scene_state()["animation"])["glow_intensity"]
+    definition = menu._descriptor(manager.get_scene_state()["animation"]).parameter_schema["glow_intensity"]
     step = (definition["max"] - definition["min"]) / 10
     assert fine - opening == pytest.approx(step)
     assert coarse - fine == pytest.approx(2 * step)
@@ -689,6 +688,46 @@ def test_sticks_do_not_tune_while_playing_or_wake_stopped_output(instrument):
     assert not manager.is_running
 
 
+def test_flame_aim_uses_logical_wall_coordinates_and_rejects_stale_basis(instrument):
+    manager, owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["animation"].update(component_id="flame_burst", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    flame = runtime._runtime._animation.instance
+    old_basis = manager.nimbus_point_input()[0]
+    revision = owner.state_revision
+
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, "up", "a", StickMotion(0, 2, 3), StickMotion(1, 2, 3))
+    assert menu.card().marker == (18, 77)
+    assert flame._pending_ignition is None
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert flame._pending_ignition == pytest.approx((18 / 32 * 2 - 1, 77 / 137 * 2 - 1, 1))
+    assert owner.state_revision == revision
+    assert manager._canonical_receiver_runtime is runtime
+    assert manager.nimbus_game() == (None, None)
+
+    assert handle_command(manager, "start_scene", {"scene": scene | {"look": {**scene["look"], "pace": .8}}})
+    component_id, scene_digest = old_basis
+    with pytest.raises(ValueError, match="Active Scene"):
+        manager.dispatch_canonical_interaction(component_id, scene_digest, "primary", 18, 77)
+    assert manager._canonical_receiver_runtime._runtime._animation.instance._pending_ignition is None
+
+
+def test_invalid_catalog_parameter_cannot_change_active_runtime(instrument):
+    manager, owner, _runner, _gamepad, menu = instrument
+    assert handle_command(manager, "start_scene", {"scene": starter()})
+    before = manager.get_scene_state()
+    runtime = manager._canonical_receiver_runtime
+    revision = owner.state_revision
+    with pytest.raises(ValueError, match="curtain_density"):
+        menu._edit(("animation", "parameters", "curtain_density"), {"invalid": True})
+    assert manager.get_scene_state() == before
+    assert manager._canonical_receiver_runtime is runtime
+    assert owner.state_revision == revision
+
+
 def test_pace_changes_keep_the_current_phase(instrument):
     manager, _owner, _runner, _gamepad, menu = instrument
     assert handle_command(manager, "start_scene", {"scene": starter()})
@@ -735,15 +774,13 @@ def test_menu_covers_all_catalog_parameter_definitions(instrument):
     _manager, _owner, _runner, _gamepad, menu = instrument
     rows = gallery_entries(menu.catalog, menu.presets)
     assert len(rows) == len([d for d in menu.catalog.descriptors if d.role.value == "animation"])
-    assert {component["component_id"] for component in rows} == set(PRIMARY_ANIMATION_STICKS)
     for component in rows:
         component_id = component["component_id"]
         params = component["parameters"]
         fields = menu._parameter_rows(("animation",), component)
-        assert set(PRIMARY_ANIMATION_STICKS[component_id]) <= set(params)
+        assert set(component["preferred_parameters"]) <= set(params)
         assert len(fields) == len(params)
-        names = {MENU_CHOICE_LABELS.get((component_id, key), (
-            MENU_PARAM_LABELS.get(key, key.replace("_", " ")),))[0] for key in params}
+        names = {definition["label"] for definition in component["parameter_schema"].values()}
         assert {row.name for row in fields} == names
         for field in fields:
             if component_id == "snake" and field.name == "background":
@@ -752,7 +789,8 @@ def test_menu_covers_all_catalog_parameter_definitions(instrument):
                 assert field.adjust or field.select, (component_id, field)
     for descriptor in menu.catalog.descriptors:
         if descriptor.role.value == "widget":
-            component = {"component_id": descriptor.component_id, "parameters": descriptor.default_parameters()}
+            component = {"component_id": descriptor.component_id, "provider": "python",
+                         "version": descriptor.version, "parameters": descriptor.default_parameters()}
             assert len(menu._parameter_rows(("widgets", 0, "component"), component)) == len(component["parameters"])
 
 

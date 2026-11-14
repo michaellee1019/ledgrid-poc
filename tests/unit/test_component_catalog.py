@@ -40,66 +40,12 @@ class ComponentCatalogTests(unittest.TestCase):
         self.assertEqual(set(entries), {
             "solid_background", "aurora_curtains", "canopy_cup", "ascii_drop", "emoji", "christmas_tree", "night_train_windows", "conway_life", "tetris", "firefly_synchrony", "fireworks", "flame_burst", "fluid_tank", "fish_tank", "ocean_waves", "mini_metro", "cyclic_reef", "lava_lamp", "snake", "maze_chase", "pinball", "pixel_quest", "pixel_chase", "plant_glow", "gif_animation", "gradient", "rainbow", "solid", "sparkle", "wave", "column_sequence", "circadian_window", "cloud_canyon", "desert_wind", "moonlit_fog_banks", "rain_on_glass", "tidal_bioluminescence", "waterfall_veil", "cellular_tapestry", "flow_field_silk", "frostwork", "living_stained_glass", "quasicrystal_bloom", "living_ecosystem", "physarum_network", "reaction_diffusion_garden", "wind_in_the_reeds", "clock_overlay", "emoji_arranger",
         })
-        self.assertEqual(
-            [
-                (entry.provider.value, entry.role.value, entry.timing_policy.value,
-                 entry.alpha_behavior.value, entry.palette_policy.value,
-                 tuple(capability.value for capability in entry.plant_capabilities),
-                 entry.fidelity_exceptions)
-                for entry in catalog.descriptors
-            ],
-            [
-                ("python", "background", "scaled_context", "none", "semantic", ("final_optics",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("simulation_inputs",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent", "simulation_inputs"), ()),
-                ("python", "animation", "scaled_context", "premultiplied_rgba", "preserve", ("none",), ("authored_media_colors",)),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "preserve", ("none",), ("authored_media_colors",)),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent",), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
-                ("python", "animation", "scaled_context", "opaque", "semantic", ("effect_intent", "simulation_inputs"), ()),
-                ("python", "widget", "wall_clock", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
-                ("python", "widget", "scaled_context", "premultiplied_rgba", "semantic", ("effect_intent",), ()),
-            ],
-        )
+        for entry in catalog.descriptors:
+            with self.subTest(component=entry.component_id):
+                self.assertEqual(entry.provider.value, "python")
+                self.assertIsNotNone(entry.factory)
+                self.assertEqual(set(entry.controls()), set(entry.default_parameters()))
+                self.assertEqual(entry.normalize_parameters({}), entry.default_parameters())
 
     def test_plugin_manifests_match_their_qualified_descriptors(self) -> None:
         catalog = current_component_catalog()

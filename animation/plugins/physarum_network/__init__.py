@@ -148,6 +148,8 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class PhysarumNetworkAnimation(CadencedSculpture):
+    PREFERRED_PARAMETERS = ('agent_count', 'branching', 'diffusion', 'pulse_visibility', 'motion')
+
     ANIMATION_NAME="Physarum Network"; ANIMATION_DESCRIPTION="Explorer agents reinforce luminous nutrient routes"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="physarum_network"; SOURCE_FPS=24.; MAX_AGENTS=1800
     PLANT_MODIFIER_SUPPORT=frozenset(("habitat",))
@@ -184,8 +186,9 @@ class PhysarumNetworkAnimation(CadencedSculpture):
             angle=np.linspace(0,np.pi*2,count,endpoint=False); self.nutrients=np.column_stack((self._shape[0]/2+np.cos(angle)*self._shape[0]*.32,self._shape[1]/2+np.sin(angle)*self._shape[1]*.32))
         else: self.nutrients=np.column_stack((self.rng.uniform(0,self._shape[0],count),self.rng.uniform(0,self._shape[1],count)))
     def reset_simulation(self): super().reset_simulation(); self._init_network()
-    def get_parameter_schema(self):
-        s=super().get_parameter_schema(); s.update({"agent_count":{"type":"int","min":80,"max":self.MAX_AGENTS,"default":700,"description":"Capped explorer population"},"branching":{"type":"float","min":.1,"max":1.5,"default":.75,"description":"Sensor steering breadth"},"diffusion":{"type":"float","min":.1,"max":.9,"default":.62,"description":"Pheromone diffusion rate"},"nutrient_layout":{"type":"str","options":["constellation","ladder","rings"],"default":"constellation","description":"Resource constellation"},"pulse_visibility":{"type":"float","min":0.,"max":1.,"default":.4,"description":"Route pulse visibility"}}); return s
+    @classmethod
+    def get_parameter_schema(cls):
+        s=super().get_parameter_schema(); s.update({"agent_count":{"type":"int","min":80,"max":cls.MAX_AGENTS,"default":700,"description":"Capped explorer population"},"branching":{"type":"float","min":.1,"max":1.5,"default":.75,"description":"Sensor steering breadth"},"diffusion":{"type":"float","min":.1,"max":.9,"default":.62,"description":"Pheromone diffusion rate"},"nutrient_layout":{"type":"str","options":["constellation","ladder","rings"],"default":"constellation","description":"Resource constellation"},"pulse_visibility":{"type":"float","min":0.,"max":1.,"default":.4,"description":"Route pulse visibility"}}); return s
     @classmethod
     def _validate_local_parameters(cls,v):
         super()._validate_local_parameters(v)

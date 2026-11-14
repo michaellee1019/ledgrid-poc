@@ -4,6 +4,8 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class QuasicrystalBloomAnimation(CadencedSculpture):
+    PREFERRED_PARAMETERS = ('spatial_scale', 'warp', 'motion', 'density', 'background_level')
+
     ANIMATION_NAME="Quasicrystal Bloom"
     ANIMATION_DESCRIPTION="Five- to twelve-fold non-repeating rosettes open and tunnel in place"
     PLANT_MODIFIER_SUPPORT=frozenset(("refract","shadow","illuminate"))
@@ -15,7 +17,8 @@ class QuasicrystalBloomAnimation(CadencedSculpture):
     def __init__(self,controller,config=None):
         super().__init__(controller,config)
 
-    def get_parameter_schema(self):
+    @classmethod
+    def get_parameter_schema(cls):
         s=super().get_parameter_schema();s.update({
             "symmetry":{"type":"int","options":[5,8,10,12],"default":10,"description":"Rotational plane-wave order"},
             "spatial_scale":{"type":"float","min":0.8,"max":5,"default":2.4,"description":"Rosette spatial frequency"},

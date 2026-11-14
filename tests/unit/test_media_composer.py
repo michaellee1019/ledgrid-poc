@@ -1,16 +1,12 @@
 """Current media selection, local controls and exact Composer activation."""
-from copy import deepcopy
-from pathlib import Path
-import subprocess
 import unittest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
+from web.app import AnimationWebInterface
 
 
 class MediaComposerTests(unittest.TestCase):
     def test_retained_media_presets_render_through_host_preview(self):
-        from tests.unit.test_composer_slice import _PreviewManager, _WallChannel, _current_scene
-        from web.app import AnimationWebInterface
         interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
         client = interface.app.test_client()
         response = client.get('/api/composer/components/gif_animation/presets')
@@ -24,55 +20,26 @@ class MediaComposerTests(unittest.TestCase):
                 response = client.post('/api/composer/preview', json={'origin':'composer', 'scene':scene})
                 self.assertEqual(response.status_code, 200, response.get_json())
 
-    def test_shipped_media_selection_and_control_remix_preserve_scene(self):
-        source = (ROOT / "web/static/js/composer_slice.js").read_text()
-        fields = source[source.index("const mediaSpecs"):source.index("const componentPresetTargets")]
-        factory = source[source.index("function sceneFromControls()"):source.index("function applyScene(")]
-        script = r'''
-const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const nodes = {
-  animationChoice:{value:'gif_animation'}, backgroundGain:{value:'.62'},
-  previewPalette:{value:'ember'}, sceneSpeed:{value:'.7'}, sceneLuminance:{value:'.8'},
-};
-const prior = {schema:'ledgrid.scene.v2',
-  background:{component_id:'native_aurora',parameters:{gain:.62,seed:8012}},
-  animation:{component_id:'plant_glow',parameters:{glow_strength:.72}},
-  widgets:[{id:'keep-widget',visible:true}],
-  plants:{effects:{version:1,active:['shadow'],strengths:{shadow:.35}}},
-  look:{palette_id:'mist',pace:1,presentation_brightness:1},
-};
-const state = {scene:structuredClone(prior),lastControl:'animationChoice'};
-const context = vm.createContext({state,structuredClone,
- document:{getElementById:id=>nodes[id]}, $:selector=>nodes[selector.slice(1)],
- number:selector=>Number(nodes[selector.slice(1)].value),applyPlantOptics:()=>{},
- sculptureIds:[],atmosphereIds:[],ambientIds:[],
-});
-vm.runInContext(process.argv[1]+process.argv[2],context);
-const specs = JSON.parse(JSON.stringify(vm.runInContext('mediaSpecs',context)));
-for (const [id,spec] of Object.entries(specs)) {
-  for (const field of spec.fields) nodes[`${spec.prefix}_${field.key}`] = {value:String(field.value),checked:field.value};
-}
-const render=()=>JSON.parse(JSON.stringify(vm.runInContext('sceneFromControls()',context)));
-for (const [id, spec] of Object.entries(specs)) {
-  state.scene=structuredClone(prior);nodes.animationChoice.value=id;
-  const selected=render();
-  assert.equal(selected.animation.component_id,id);
-  assert.equal(selected.animation.role,'animation');
-  assert.deepEqual(selected.animation.parameters,Object.fromEntries(spec.fields.map(f=>[f.key,f.value])));
-  for(const key of ['background','widgets','plants']) assert.deepEqual(selected[key],prior[key]);
-  assert.deepEqual(state.scene,prior);
-  state.scene=selected;
-  const numberField=spec.fields.find(f=>!f.options&&f.type!=='checkbox');
-  const checkbox=spec.fields.find(f=>f.type==='checkbox');
-  nodes[`${spec.prefix}_${numberField.key}`].value='2';
-  nodes[`${spec.prefix}_${checkbox.key}`].checked=!checkbox.value;
-  state.lastControl=`${spec.prefix}_${numberField.key}`;
-  const remixed=render();
-  assert.equal(remixed.animation.parameters[numberField.key],2);
-  assert.equal(remixed.animation.parameters[checkbox.key],!checkbox.value);
-  for(const key of ['background','widgets','plants']) assert.deepEqual(remixed[key],prior[key]);
-}
-'''
-        result = subprocess.run(["node", "-e", script, fields, factory], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    def test_catalog_media_defaults_and_remix_preserve_scene(self):
+        interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
+        client = interface.app.test_client()
+        gallery = client.get('/api/composer/gallery').get_json()
+        media = next(entry for entry in gallery['entries'] if entry['component_id'] == 'gif_animation')
+        public = next(entry for entry in gallery['components'] if entry['component_id'] == 'gif_animation')
+        schema = media['parameter_schema']
+        self.assertEqual(schema, public['parameter_schema'])
+        self.assertIn('gif_name', media['preferred_parameters'])
+        self.assertIn(media['parameters']['gif_name'], schema['gif_name']['options'])
+        self.assertEqual(schema['playback_speed']['type'], 'float')
+        self.assertEqual(schema['flip_y']['type'], 'bool')
+
+        scene = _current_scene()
+        scene['background']['parameters']['seed'] = 8012
+        scene['plants']['effects'] = {'version': 1, 'active': ['shadow'], 'strengths': {'shadow': .35}}
+        scene['animation'] = {key: media[key] for key in ('component_id', 'provider', 'version', 'role', 'parameters')}
+        parameters = {**media['parameters'], 'playback_speed': 2, 'flip_y': not media['parameters']['flip_y']}
+        scene['animation']['parameters'] = parameters
+        result = client.post('/api/composer/scene', json={'origin': 'composer', 'scene': scene})
+        self.assertEqual(result.status_code, 200, result.get_json())
+        recovery = client.get('/api/composer/recovery').get_json()['recovery']['scene']
+        self.assertEqual(recovery, scene)

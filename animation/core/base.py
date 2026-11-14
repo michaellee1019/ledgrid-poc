@@ -4,6 +4,7 @@ Base animation class and plugin system for LED Grid
 """
 
 import time
+from datetime import datetime
 import colorsys
 import threading
 from abc import ABC, abstractmethod
@@ -54,6 +55,15 @@ class AnimationBase(ABC):
     VIBE_COLOR_POLICY = "preserve"
     VIBE_PARAMETER_MAPPINGS: Mapping[str, Any] = MappingProxyType({})
     
+    _fixed_wall_time: datetime | None = None
+
+    def set_wall_time(self, value: datetime | None) -> None:
+        """Set the runtime-owned wall clock for this render."""
+        self._fixed_wall_time = value
+
+    def wall_time(self) -> datetime:
+        return self._fixed_wall_time or datetime.now().astimezone()
+
     def __init__(self, controller, config: Dict[str, Any] = None):
         """
         Initialize animation
@@ -245,7 +255,8 @@ class AnimationBase(ABC):
         """
         pass
     
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         """
         Return schema describing configurable parameters
         

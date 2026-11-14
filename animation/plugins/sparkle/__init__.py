@@ -2,6 +2,8 @@
 from types import MappingProxyType
 from animation.libraries.ambient_scene import AmbientSceneAnimation
 class SparkleAnimation(AmbientSceneAnimation):
+    PREFERRED_PARAMETERS = ('linger', 'density', 'twinkle', 'night')
+
     ANIMATION_NAME="Sparkle"; ANIMATION_DESCRIPTION="A seeded constellation of semantic glitter"; ANIMATION_VERSION="2.0"; COMPONENT_ID="sparkle"; STYLE="sparkle"
     # Local controls preserve existing stars, their hues, and the RNG stream.
     LIVE_TUNABLE_PARAMETERS = frozenset({"density", "linger", "twinkle", "night"})

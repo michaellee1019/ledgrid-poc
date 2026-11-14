@@ -9,6 +9,8 @@ from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
 
 class ChristmasTreeAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('snowfall', 'tree_height', 'twinkle_hz')
+
     ANIMATION_NAME, ANIMATION_DESCRIPTION, ANIMATION_AUTHOR, ANIMATION_VERSION = "Christmas Tree", "A blinking evergreen and gentle snow", "LED Grid Team", "3.0"
     COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "christmas_tree", 1, "python", "animation"
     FRAME_FORMAT, TIMING_POLICY, PALETTE_POLICY = "rgb_uint8_strip_major", "scaled_context", "semantic"
@@ -34,7 +36,8 @@ class ChristmasTreeAnimation(AnimationBase):
             out[name]=float(value)
         if isinstance(out["seed"],bool) or not isinstance(out["seed"],int) or not 0<=out["seed"]<=999999: raise ValueError("seed must be an integer from 0 to 999999")
         return out
-    def get_parameter_schema(self): return {"season":{"type":"str","options":list(self.SEASONS),"default":"classic","description":"Winter story and ornaments"},"tree_height":{"type":"int","min":24,"max":116,"default":58,"description":"Evergreen height"},"snowfall":{"type":"float","min":0,"max":1,"default":.35,"description":"Snowflake density"},"twinkle_hz":{"type":"float","min":.1,"max":3,"default":1,"description":"Light twinkle tempo"},"seed":{"type":"int","min":0,"max":999999,"default":1225,"description":"Repeatable decoration layout"}}
+    @classmethod
+    def get_parameter_schema(cls): return {"season":{"type":"str","options":list(cls.SEASONS),"default":"classic","description":"Winter story and ornaments"},"tree_height":{"type":"int","min":24,"max":116,"default":58,"description":"Evergreen height"},"snowfall":{"type":"float","min":0,"max":1,"default":.35,"description":"Snowflake density"},"twinkle_hz":{"type":"float","min":.1,"max":3,"default":1,"description":"Light twinkle tempo"},"seed":{"type":"int","min":0,"max":999999,"default":1225,"description":"Repeatable decoration layout"}}
     def update_parameters(self,new_params): self.params=self._normalized_parameters({**self.params,**dict(new_params)});self._key=None
     def on_presentation_context_changed(self,old,new):
         del old

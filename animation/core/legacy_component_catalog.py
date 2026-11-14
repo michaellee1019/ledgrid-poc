@@ -9,6 +9,7 @@ host once loading is complete.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from pathlib import Path
@@ -246,18 +247,19 @@ def bind_python_implementation(
         total_leds = strip_count * leds_per_strip
         debug = False
 
-    instance = animation_class(_CatalogController())
-    schema = _normalize_parameter_schema(instance.get_parameter_schema())
-    authored_defaults = instance.authored_params_snapshot()
-    # Existing plugins occasionally refined their constructor defaults without
-    # updating the descriptive schema inherited from AnimationBase.  The loaded
-    # descriptor is an execution contract, so its defaults must reproduce actual
-    # no-config construction rather than silently changing behavior in a scene.
+    schema_method = inspect.getattr_static(animation_class, "get_parameter_schema")
+    if isinstance(schema_method, classmethod):
+        schema = _normalize_parameter_schema(animation_class.get_parameter_schema())
+        descriptor_method = getattr(animation_class, "component_descriptor", None)
+        authored_defaults = descriptor_method().default_parameters() if descriptor_method else {}
+    else:
+        # External and loader-only plugins may still supply instance metadata.
+        instance = animation_class(_CatalogController())
+        schema = _normalize_parameter_schema(instance.get_parameter_schema())
+        authored_defaults = instance.authored_params_snapshot()
     for name, definition in schema.items():
         if name in authored_defaults:
-            definition["default"] = _json_copy(
-                authored_defaults[name], f"component default {name}"
-            )
+            definition["default"] = _json_copy(authored_defaults[name], f"component default {name}")
     defaults = {name: definition["default"] for name, definition in schema.items()}
     plugin_id = str(descriptor["plugin_id"])
     declared_role = str(descriptor["role"])

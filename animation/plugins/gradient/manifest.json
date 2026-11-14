@@ -1,1 +1,1 @@
-{"plugin_id":"gradient","class":"GradientAnimation","icon":"🌈","gallery":"show","vibe":{"color_policy":"semantic","timing_adapter":"scaled_context","capabilities":["palette_roles","tempo"],"semantic_roles":["accent","background_low","primary"]}}
+{"composer":true,"plugin_id":"gradient","class":"GradientAnimation","icon":"🌈","gallery":"show","vibe":{"color_policy":"semantic","timing_adapter":"scaled_context","capabilities":["palette_roles","tempo"],"semantic_roles":["accent","background_low","primary"]}}

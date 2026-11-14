@@ -4,6 +4,8 @@ from animation.libraries.procedural_atmospheres import ProceduralAtmosphereBase
 
 
 class RainOnGlassAnimation(ProceduralAtmosphereBase):
+    PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+
     ANIMATION_NAME = "Rain on Glass"
     ANIMATION_DESCRIPTION = "Refractive beads descend through a dim moonlit or city-lit window"
     ANIMATION_AUTHOR = "LED Grid Team"

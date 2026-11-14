@@ -149,6 +149,10 @@ burst, and gravity with R1. Changes to a shell's settings apply at launch.
 Campfire uses heat in the base bank and sparks, smoke, and flicker with R1.
 Scene light is independent of master brightness.
 
+With Flame Burst playing and the HUD closed, hold L1 + R1. The wall shows an
+aim marker. Move it with the left stick and press A to ignite a flare. Release
+the shoulders to return to scene controls.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu

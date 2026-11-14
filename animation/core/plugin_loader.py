@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Type
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 from .base import AnimationBase
+from .plant_awareness import FRAMEWORK_VISUAL_MODIFIERS
 from .component_catalog import (
     bind_python_implementation,
     filter_catalog,
@@ -618,7 +619,21 @@ class AnimationPluginLoader:
             "vibe": json.loads(json.dumps(manifest.get("vibe", {}))),
         }
         try:
-            info = plugin_class(_InfoController()).get_info()
+            if isinstance(inspect.getattr_static(plugin_class, "get_parameter_schema"), classmethod):
+                descriptor = self.get_component_descriptor(plugin_name) or {}
+                parameters = descriptor.get("parameter_schema", {})
+                info = {
+                    "name": getattr(plugin_class, "ANIMATION_NAME", plugin_class.__name__),
+                    "description": getattr(plugin_class, "ANIMATION_DESCRIPTION", "No description"),
+                    "author": getattr(plugin_class, "ANIMATION_AUTHOR", "Unknown"),
+                    "version": getattr(plugin_class, "ANIMATION_VERSION", "1.0"),
+                    "parameters": parameters, "current_params": descriptor.get("defaults", {}),
+                    "interaction_types": sorted(plugin_class.INTERACTION_TYPES),
+                    "plant_modifier_support": sorted(plugin_class.PLANT_MODIFIER_SUPPORT | FRAMEWORK_VISUAL_MODIFIERS),
+                    "unsupported_plant_modifiers": [],
+                }
+            else:
+                info = plugin_class(_InfoController()).get_info()
             info.update(manifest_info)
             info["plugin_name"] = plugin_name
             info["file_path"] = str(self.plugin_files.get(plugin_name, ""))

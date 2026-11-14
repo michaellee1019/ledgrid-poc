@@ -263,7 +263,7 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         edited = copy.deepcopy(scene); edited["animation"]["parameters"]["heat"] = .33
         self.assertTrue(client.post("/api/composer/scene", json={"origin": "composer", "scene": edited, "client_id": "lava", "client_sequence": 2}).get_json()["published"])
         self.assertEqual(client.get("/api/composer/recovery?client_id=lava").get_json()["recovery"]["scene"]["animation"]["parameters"]["heat"], .33)
-        self.assertIs(current_component_catalog().require(provider="python", component_id="lava_lamp", version=1), LavaLampAnimation.component_descriptor())
+        self.assertEqual(current_component_catalog().require(provider="python", component_id="lava_lamp", version=1).factory.__name__, LavaLampAnimation.__name__)
 
     def test_control_remix_preserves_hidden_parameters_across_preview_live_and_recovery(self) -> None:
         interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
@@ -443,20 +443,13 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         self.assertGreaterEqual(refracted.get_runtime_stats()["interactions_applied"], 1)
 
     def test_composer_canvas_uses_only_bounded_primary_interaction_for_live_instruments(self) -> None:
-        script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        self.assertIn("const lavaParameters = (existing = {}) => ({...existing", script)
-        self.assertIn("lavaParameters(next.animation.parameters)", script)
-        self.assertIn("const lavaInteractionParameters = (parameters = {})", script)
-        self.assertIn("next.animation.parameters = {...preset.parameters, ...lavaInteractionParameters(next.animation.parameters)}", script)
-        start = script.index("const primaryInstruments = Object.freeze")
-        end = script.index("function renderLibrary()", start)
-        interaction = script[start:end]
-        for token in ("lava_lamp:", "flame_burst:", "fluid_tank:", "componentId", "!trigger", "event.button !== 0", "event.isPrimary === false", "status?.running", "status?.armed", "Math.min(32.999", "Math.min(137.999", "kind: 'primary'", "strength: 1", "body.accepted !== true", "fetch('/api/interaction'"):
-            self.assertIn(token, interaction)
-        for token in ("preset.installation_effects", "next.plants = {...next.plants, effects: preset.installation_effects}"):
-            self.assertIn(token, script)
-        self.assertNotIn("/api/preview/lava_lamp/interaction", interaction)
-
+        descriptor = current_component_catalog().require(provider="python", component_id="lava_lamp", version=1)
+        controls = descriptor.controls()
+        self.assertTrue({'interaction_strength', 'interaction_radius'} <= set(controls))
+        self.assertEqual(set(controls), set(descriptor.default_parameters()))
+        self.assertTrue(controls["interaction_radius"]["preserve_on_preset"])
+        self.assertTrue(controls["interaction_strength"]["preserve_on_preset"])
+        self.assertTrue(descriptor.input_capability.actions["primary"].position)
 
 if __name__ == "__main__":
     unittest.main()

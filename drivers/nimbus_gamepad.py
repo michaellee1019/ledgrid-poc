@@ -44,6 +44,13 @@ class StickMotion:
     repeated: bool = False
 
 
+@dataclass(frozen=True)
+class ChordPress:
+    """A press made while the declared aim chord was physically held."""
+    button: str
+    bank: int
+
+
 class _StickAxis:
     def __init__(self, index):
         self.index = index
@@ -136,7 +143,8 @@ class NimbusGamepad:
 
     def poll(self, target: object | None, *, navigating=False,
              tuning_sticks=False, browsing=False, track_bank=False,
-             enter_player=False, steering_releases=False) -> tuple[str | StickBank | StickMotion, ...]:
+             enter_player=False, release_buttons=(), repeat_buttons=GAME_REPEAT,
+             point_binding=None) -> tuple[str | StickBank | StickMotion | ChordPress, ...]:
         """Read a bounded batch, keeping held inputs within their current mode."""
         now = self._clock()
         watch_bank = navigating or track_bank
@@ -195,11 +203,17 @@ class NimbusGamepad:
                     # the new mode with the current held buttons as baseline.
                     self._held = held
                     return (*actions, transition)
-                if steering_releases:
-                    actions.extend("release-" + button for button in ("left", "right")
-                                   if button in self._held and button not in held)
-                repeat = MENU_REPEAT if navigating else () if browsing else GAME_REPEAT
+                actions.extend("release-" + button for button in release_buttons
+                               if button in self._held and button not in held)
+                repeat = MENU_REPEAT if navigating else () if browsing else repeat_buttons
+                edge_start = len(actions)
                 self._record_edges(held, actions, now, repeat)
+                if point_binding is not None and bank == point_binding[1]:
+                    point_button = point_binding[0]
+                    edges = actions[edge_start:]
+                    del actions[edge_start:]
+                    if point_button in edges:
+                        actions.append(ChordPress(point_button, bank))
                 if tuning_sticks:
                     for axis, value in zip(self._axes, self._stick_values):
                         sibling = self._stick_values[axis.index ^ 1]

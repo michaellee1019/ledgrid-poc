@@ -7,7 +7,6 @@ receipts of the installed output; no controller or publication is touched.
 from __future__ import annotations
 
 import hashlib
-import importlib
 import io
 import json
 from datetime import datetime, timedelta
@@ -40,21 +39,7 @@ PRESETS = {"gif_animation": "axolotl-bubble-column", "cloud_canyon": "daylight-c
 
 
 def preset_catalog(catalog):
-    # Some older descriptors omit the optional normalizer. Use the same
-    # plugin-owned normalization as Composer's preset endpoint for all ages.
-    normalizers = {}
-    for descriptor in catalog.descriptors:
-        if descriptor.role.value != "animation":
-            continue
-        module = importlib.import_module(f"animation.plugins.{descriptor.component_id}")
-        classes = {value for value in vars(module).values()
-                   if isinstance(value, type)
-                   and getattr(value, "COMPONENT_ID", None) == descriptor.component_id}
-        if len(classes) != 1:
-            raise ValueError(f"Ambiguous preset provider: {descriptor.component_id}")
-        normalizers[descriptor.component_id] = classes.pop()._normalized_parameters
-    return ComponentPresetCatalog(ROOT, normalizers)
-
+    return ComponentPresetCatalog(ROOT, catalog)
 
 def catalog_scene(descriptor, choice=None):
     parameters = descriptor.default_parameters()

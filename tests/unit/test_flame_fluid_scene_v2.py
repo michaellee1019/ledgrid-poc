@@ -44,7 +44,7 @@ class FlameFluidSceneV2Tests(unittest.TestCase):
     def test_catalog_final_preview_and_rejected_candidate_are_atomic(self) -> None:
         catalog = current_component_catalog()
         for renderer in (FlameBurstAnimation, FluidTankAnimation):
-            self.assertIs(catalog.require(provider="python", component_id=renderer.COMPONENT_ID, version=1), renderer.component_descriptor())
+            self.assertEqual(catalog.require(provider="python", component_id=renderer.COMPONENT_ID, version=1).factory.__name__, renderer.__name__)
             scene = _current_scene(); scene["animation"] = {"component_id": renderer.COMPONENT_ID, "version": 1, "provider": "python", "role": "animation", "parameters": dict(renderer.DEFAULTS)}
             canonical = normalize_composer_scene({"origin": "composer", "scene": scene}, catalog)
             preview = ComposerFinalPreview(catalog, ROOT).render(canonical, 1.0, __import__("datetime").datetime.now().astimezone())
@@ -112,14 +112,15 @@ class FlameFluidSceneV2Tests(unittest.TestCase):
             self.assertEqual(left._last_render_key, right._last_render_key)
 
     def test_local_remix_keeps_hidden_seed_and_selected_only_contract(self) -> None:
-        catalog = ComponentPresetCatalog(ROOT, {"flame_burst": FlameBurstAnimation._normalized_parameters, "fluid_tank": FluidTankAnimation._normalized_parameters})
+        catalog = ComponentPresetCatalog(ROOT, current_component_catalog())
         scene = _current_scene(); scene["animation"] = {"component_id": "flame_burst", "version": 1, "provider": "python", "role": "animation", "parameters": {**FlameBurstAnimation.DEFAULTS, "seed": 999}}
         selected = catalog.apply(scene, "solar-pulse")
         remixed = {**selected["animation"]["parameters"], "flicker": .8}
         self.assertIn("seed", remixed); self.assertEqual(remixed["seed"], selected["animation"]["parameters"]["seed"])
-        script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        for token in ("flameParameters = (existing = {}) => ({...existing", "fluidParameters = (existing = {}) => ({...existing", "flame_burst: ['#flameCadence'", "fluid_tank: ['#fluidFlow'", "setComponentRegion(document.getElementById(targetId), id === componentId)"):
-            self.assertIn(token, script)
+        canonical = normalize_composer_scene({"origin": "composer", "scene": {
+            **selected, "animation": {**selected["animation"], "parameters": remixed},
+        }}, current_component_catalog())
+        self.assertEqual(canonical.scene["animation"]["parameters"], remixed)
 
     def test_preset_api_and_live_state_keep_one_valid_basis_after_rejection(self) -> None:
         interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
@@ -135,18 +136,15 @@ class FlameFluidSceneV2Tests(unittest.TestCase):
         recovery = client.get("/api/composer/recovery?client_id=flow").get_json()["recovery"]["scene"]
         self.assertEqual(recovery["animation"]["parameters"], dict(FluidTankAnimation.DEFAULTS))
 
-    def test_installed_final_pointer_routes_only_primary_instruments(self) -> None:
-        script = (ROOT / "web/static/js/composer_slice.js").read_text(encoding="utf-8")
-        start = script.index("const primaryInstruments = Object.freeze")
-        end = script.index("function renderLibrary()", start)
-        gesture = script[start:end]
-        for component_id, message in (("lava_lamp", "Lava stirred on the installed final scene."), ("flame_burst", "Flame Burst ignited on the installed final scene."), ("fluid_tank", "Fluid Tank pulsed on the installed final scene.")):
-            self.assertIn(f"{component_id}:", gesture)
-            self.assertIn(message, gesture)
-        self.assertIn("const trigger = primaryInstruments[componentId];", gesture)
-        self.assertLess(gesture.index("!trigger) return"), gesture.index("fetch('/api/interaction'"))
-        self.assertIn("body: JSON.stringify({kind: 'primary', x, y, strength: 1})", gesture)
-        self.assertIn("body.accepted !== true", gesture)
+    def test_gallery_declares_point_actions_from_each_instrument(self) -> None:
+        interface = AnimationWebInterface(_WallChannel(), _PreviewManager(), local_mode=True)
+        payload = interface.app.test_client().get("/api/composer/gallery").get_json()
+        entries = {entry["component_id"]: entry for entry in payload["entries"]}
+        for cls in (LavaLampAnimation, FlameBurstAnimation, FluidTankAnimation):
+            input_capability = entries[cls.COMPONENT_ID]["input_capability"]
+            self.assertEqual(input_capability["mode"], "actions")
+            self.assertTrue(input_capability["actions"]["primary"]["position"])
+        self.assertEqual(entries["aurora_curtains"]["input_capability"]["mode"], "none")
 
     def test_live_primary_trigger_api_accepts_only_supported_instrument_input(self) -> None:
         for renderer in (FlameBurstAnimation, FluidTankAnimation):

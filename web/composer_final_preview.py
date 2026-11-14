@@ -1,14 +1,12 @@
 """Inert, continuously-cadenced final preview for Composer Scene v2.
 
-This is deliberately a presentation seam, not a second scene model.  It owns
-the host background plus calibrated
-final plant optics.  CanonicalSceneRuntime continues to own ordering, alpha
+The runtime supplies calibrated geometry and final plant optics.  CanonicalSceneRuntime continues to own ordering, alpha
 composition, resolved palette/pace, and the single output-brightness boundary.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
@@ -17,7 +15,6 @@ from typing import Any, Mapping
 import numpy as np
 
 from animation.core.component_catalog import ComponentCatalog, ComponentDescriptor
-from animation.core.compositing import BaseFrame
 from animation.core.manager import PreviewLEDController
 from animation.core.installation_profile_runtime import InstallationProfileRuntimeView
 from animation.core.plant_awareness import (
@@ -28,132 +25,8 @@ from animation.core.plant_awareness import (
 from animation.core.scene_runtime import (
     CanonicalSceneRuntime, CanonicalSceneRuntimeError, RuntimeFrame, ScenePresentationContext,
 )
-from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
-from animation.plugins.canopy_cup import CanopyCupAnimation
-from animation.plugins.ascii_drop import AsciiDropAnimation
-from animation.plugins.christmas_tree import ChristmasTreeAnimation
-from animation.plugins.clock_overlay import ClockOverlayAnimation
-from animation.plugins.conway_life import ConwayLifeAnimation
-from animation.plugins.emoji_arranger import EmojiArrangerAnimation
-from animation.plugins.emoji import EmojiAnimation
-from animation.plugins.firefly_synchrony import FireflySynchronyAnimation
-from animation.plugins.fireworks import FireworksAnimation
-from animation.plugins.flame_burst import FlameBurstAnimation
-from animation.plugins.fluid_tank import FluidTankAnimation
-from animation.plugins.fish_tank import FishTankAnimation
-from animation.plugins.ocean_waves import OceanWavesAnimation
-from animation.plugins.mini_metro import MiniMetroAnimation
-from animation.plugins.cyclic_reef import CyclicReefAnimation
-from animation.plugins.lava_lamp import LavaLampAnimation
-from animation.plugins.maze_chase import MazeChaseAnimation
-from animation.plugins.night_train_windows import NightTrainWindowsAnimation
-from animation.plugins.pinball import PinballAnimation
-from animation.plugins.pixel_quest import PixelQuestAnimation
-from animation.plugins.pixel_chase import PixelChaseAnimation
-from animation.plugins.plant_glow import PlantGlowAnimation
-from animation.plugins.gif_animation import GifAnimation
-from animation.plugins.snake import SnakeAnimation
-from animation.plugins.tetris import TetrisAnimation
-from animation.plugins.gradient import GradientAnimation
-from animation.plugins.rainbow import RainbowAnimation
-from animation.plugins.solid import SolidColorAnimation
-from animation.plugins.sparkle import SparkleAnimation
-from animation.plugins.wave import WaveAnimation
-from animation.plugins.column_sequence import ColumnSequenceAnimation
-from animation.plugins.circadian_window import CircadianWindowAnimation
-from animation.plugins.cloud_canyon import CloudCanyonAnimation
-from animation.plugins.desert_wind import DesertWindAnimation
-from animation.plugins.moonlit_fog_banks import MoonlitFogBanksAnimation
-from animation.plugins.rain_on_glass import RainOnGlassAnimation
-from animation.plugins.tidal_bioluminescence import TidalBioluminescenceAnimation
-from animation.plugins.waterfall_veil import WaterfallVeilAnimation
-from animation.plugins.cellular_tapestry import CellularTapestryAnimation
-from animation.plugins.flow_field_silk import FlowFieldSilkAnimation
-from animation.plugins.frostwork import FrostworkAnimation
-from animation.plugins.living_stained_glass import LivingStainedGlassAnimation
-from animation.plugins.quasicrystal_bloom import QuasicrystalBloomAnimation
-from animation.plugins.living_ecosystem import LivingEcosystemAnimation
-from animation.plugins.physarum_network import PhysarumNetworkAnimation
-from animation.plugins.reaction_diffusion_garden import ReactionDiffusionGardenAnimation
-from animation.plugins.wind_in_the_reeds import WindInTheReedsAnimation
+from animation.core.composer_catalog import current_component_catalog
 from ipc.scene_contract import CanonicalScene
-def solid_background_descriptor() -> ComponentDescriptor:
-    """Use the established Solid host renderer as the Scene background."""
-    return ComponentDescriptor(
-        component_id="solid_background", version=1, provider="python", role="background",
-        timing_policy="scaled_context", alpha_behavior="none", palette_policy="semantic",
-        plant_capabilities=("final_optics",), fidelity_exceptions=(),
-        intensity_parameter="gain", defaults={"gain": 0.62, "seed": 4201},
-    )
-
-
-def current_component_descriptors() -> tuple[ComponentDescriptor, ...]:
-    """Return the complete, deliberately small Scene v2 component packet.
-
-    This is the sole Composer assembly seam. Retaining a demonstrated
-    component means adding its fully qualified descriptor here; policy stays
-    with the component declaration rather than being reimplemented by callers.
-    """
-
-    return (
-        solid_background_descriptor(),
-        AuroraCurtainsAnimation.component_descriptor(),
-        CanopyCupAnimation.component_descriptor(),
-        AsciiDropAnimation.component_descriptor(),
-        EmojiAnimation.component_descriptor(),
-        ChristmasTreeAnimation.component_descriptor(),
-        NightTrainWindowsAnimation.component_descriptor(),
-        ConwayLifeAnimation.component_descriptor(),
-        TetrisAnimation.component_descriptor(),
-        FireflySynchronyAnimation.component_descriptor(),
-        FireworksAnimation.component_descriptor(),
-        FlameBurstAnimation.component_descriptor(),
-        FluidTankAnimation.component_descriptor(),
-        FishTankAnimation.component_descriptor(),
-        OceanWavesAnimation.component_descriptor(),
-        MiniMetroAnimation.component_descriptor(),
-        CyclicReefAnimation.component_descriptor(),
-        LavaLampAnimation.component_descriptor(),
-        SnakeAnimation.component_descriptor(),
-        MazeChaseAnimation.component_descriptor(),
-        PinballAnimation.component_descriptor(),
-        PixelQuestAnimation.component_descriptor(),
-        PixelChaseAnimation.component_descriptor(),
-        PlantGlowAnimation.component_descriptor(),
-        GifAnimation.component_descriptor(),
-        GradientAnimation.component_descriptor(),
-        RainbowAnimation.component_descriptor(),
-        SolidColorAnimation.component_descriptor(),
-        SparkleAnimation.component_descriptor(),
-        WaveAnimation.component_descriptor(),
-        ColumnSequenceAnimation.component_descriptor(),
-        CircadianWindowAnimation.component_descriptor(),
-        CloudCanyonAnimation.component_descriptor(),
-        DesertWindAnimation.component_descriptor(),
-        MoonlitFogBanksAnimation.component_descriptor(),
-        RainOnGlassAnimation.component_descriptor(),
-        TidalBioluminescenceAnimation.component_descriptor(),
-        WaterfallVeilAnimation.component_descriptor(),
-        CellularTapestryAnimation.component_descriptor(),
-        FlowFieldSilkAnimation.component_descriptor(),
-        FrostworkAnimation.component_descriptor(),
-        LivingStainedGlassAnimation.component_descriptor(),
-        QuasicrystalBloomAnimation.component_descriptor(),
-        LivingEcosystemAnimation.component_descriptor(),
-        PhysarumNetworkAnimation.component_descriptor(),
-        ReactionDiffusionGardenAnimation.component_descriptor(),
-        WindInTheReedsAnimation.component_descriptor(),
-        ClockOverlayAnimation.component_descriptor(),
-        EmojiArrangerAnimation.component_descriptor(),
-    )
-
-
-def current_component_catalog() -> ComponentCatalog:
-    """Build the current Composer catalog from its finite packet."""
-
-    return ComponentCatalog(current_component_descriptors())
-
-
 
 
 @dataclass
@@ -201,12 +74,6 @@ class InstalledFinalSceneRuntime:
         self.controller = controller or PreviewLEDController(strips=33, leds_per_strip=138)
         if (getattr(self.controller, "strip_count", None), getattr(self.controller, "leds_per_strip", None)) != (33, 138):
             raise ValueError("installed Scene v2 presentation requires a 33x138 controller")
-        self._wall_time = datetime.now().astimezone()
-        self._project_root = project_root
-        self._background: SolidColorAnimation | None = None
-        self._background_seed: int | None = None
-        self._background_key: Any = None
-        self._background_frame: Any = None
         self._geometry = PlantMaskCache(_PlantGeometryOwner(33, 138, project_root))
         self._installation_profile_view: InstallationProfileRuntimeView | None = None
         self._geometry_contact: InstallationGeometryContact | None = None
@@ -214,33 +81,12 @@ class InstalledFinalSceneRuntime:
         self._runtime = CanonicalSceneRuntime(
             self.controller,
             catalog,
-            background_renderer=self._render_host_background,
-            animation_factory=self._animation_factory,
-            widget_factory=self._widget_factory,
             plant_input_resolver=self._plant_inputs,
             plant_optics=self._plant_optics,
             widget_safe_geometry=self._widget_safe_geometry,
-            wall_time_consumer=self._set_wall_time,
         )
         self._active_digest: str | None = None
         self._lock = RLock()
-
-    def _render_host_background(self, context: Any, frame_count: int) -> BaseFrame:
-        parameters = context.parameters
-        key = (tuple(parameters.items()), context.palette['palette_id'] if context.palette else 'neutral')
-        if key == self._background_key:
-            return BaseFrame(self._background_frame, changed=False, dirty_ranges=())
-        seed = parameters.get('seed', 4201)
-        if self._background is None or self._background_seed != seed:
-            self._background = SolidColorAnimation(self.controller, {"glow": 0.68, "breath": 0, "seed": seed})
-            self._background_seed = seed
-        rendered = self._background.render_resolved_scene(replace(context, descriptor=SolidColorAnimation.component_descriptor(), parameters={"glow": .68, "breath": 0, "seed": seed}))
-        pixels = np.asarray(rendered.pixels if hasattr(rendered, 'pixels') else rendered, dtype=np.uint8)
-        pixels = np.rint(pixels.astype(np.float32) * float(parameters.get('gain', .62))).astype(np.uint8)
-        self._background_key = key
-        self._background_frame = pixels
-        return BaseFrame(pixels, changed=True)
-
 
     def render(self, presentation: ScenePresentationContext) -> RuntimeFrame:
         """Render one installed-final frame without mutating publication state."""
@@ -279,11 +125,6 @@ class InstalledFinalSceneRuntime:
         view = self._installation_profile_view
         return view.plant_masks if isinstance(view, InstallationProfileRuntimeView) else self._geometry.get()
 
-    def _set_wall_time(self, wall_time: Any) -> None:
-        if not isinstance(wall_time, datetime) or wall_time.tzinfo is None:
-            raise ValueError("Scene v2 presentation wall_time must be a timezone-aware datetime")
-        self._wall_time = wall_time
-
     def dispatch_animation_interaction(
         self, canonical: CanonicalScene, kind: str, x: float, y: float,
         strength: float = 1.0,
@@ -291,6 +132,13 @@ class InstalledFinalSceneRuntime:
         """Apply a gesture to this exact published final-preview basis only."""
 
         with self._lock:
+            component = canonical.scene["animation"]
+            descriptor = self._runtime.catalog.require(
+                provider=component["provider"], component_id=component["component_id"], version=component["version"],
+            )
+            action = descriptor.input_capability.actions.get(kind)
+            if action is None or not action.position:
+                raise CanonicalSceneRuntimeError(f"interaction {kind!r} is not supported")
             if canonical.identity.digest != self._active_digest:
                 self._runtime.activate(canonical)
                 self._active_digest = canonical.identity.digest
@@ -304,114 +152,9 @@ class InstalledFinalSceneRuntime:
         with self._lock:
             return self._runtime.dispatch_game_input(action)
 
-    def _animation_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
-        if descriptor.component_id == AuroraCurtainsAnimation.COMPONENT_ID:
-            return AuroraCurtainsAnimation(controller, parameters)
-        if descriptor.component_id == ConwayLifeAnimation.COMPONENT_ID:
-            return ConwayLifeAnimation(controller, parameters)
-        if descriptor.component_id == TetrisAnimation.COMPONENT_ID:
-            return TetrisAnimation(controller, parameters)
-        if descriptor.component_id == CanopyCupAnimation.COMPONENT_ID:
-            return CanopyCupAnimation(controller, parameters)
-        if descriptor.component_id == AsciiDropAnimation.COMPONENT_ID:
-            return AsciiDropAnimation(controller, parameters)
-        if descriptor.component_id == EmojiAnimation.COMPONENT_ID:
-            return EmojiAnimation(controller, parameters)
-        if descriptor.component_id == ChristmasTreeAnimation.COMPONENT_ID:
-            return ChristmasTreeAnimation(controller, parameters)
-        if descriptor.component_id == NightTrainWindowsAnimation.COMPONENT_ID:
-            return NightTrainWindowsAnimation(controller, parameters)
-        if descriptor.component_id == FireflySynchronyAnimation.COMPONENT_ID:
-            return FireflySynchronyAnimation(controller, parameters)
-        if descriptor.component_id == FireworksAnimation.COMPONENT_ID:
-            return FireworksAnimation(controller, parameters)
-        if descriptor.component_id == FlameBurstAnimation.COMPONENT_ID:
-            return FlameBurstAnimation(controller, parameters)
-        if descriptor.component_id == FluidTankAnimation.COMPONENT_ID:
-            return FluidTankAnimation(controller, parameters)
-        if descriptor.component_id == FishTankAnimation.COMPONENT_ID:
-            return FishTankAnimation(controller, parameters)
-        if descriptor.component_id == OceanWavesAnimation.COMPONENT_ID:
-            return OceanWavesAnimation(controller, parameters)
-        if descriptor.component_id == MiniMetroAnimation.COMPONENT_ID:
-            return MiniMetroAnimation(controller, parameters)
-        if descriptor.component_id == CyclicReefAnimation.COMPONENT_ID:
-            return CyclicReefAnimation(controller, parameters)
-        if descriptor.component_id == LavaLampAnimation.COMPONENT_ID:
-            return LavaLampAnimation(controller, parameters)
-        if descriptor.component_id == SnakeAnimation.COMPONENT_ID:
-            return SnakeAnimation(controller, parameters)
-        if descriptor.component_id == MazeChaseAnimation.COMPONENT_ID:
-            return MazeChaseAnimation(controller, parameters)
-        if descriptor.component_id == PinballAnimation.COMPONENT_ID:
-            return PinballAnimation(controller, parameters)
-        if descriptor.component_id == PixelQuestAnimation.COMPONENT_ID:
-            return PixelQuestAnimation(controller, parameters)
-        if descriptor.component_id == GifAnimation.COMPONENT_ID:
-            return GifAnimation(controller, parameters)
-        if descriptor.component_id == PlantGlowAnimation.COMPONENT_ID:
-            return PlantGlowAnimation(controller, parameters)
-        if descriptor.component_id == PixelChaseAnimation.COMPONENT_ID:
-            return PixelChaseAnimation(controller, parameters)
-        if descriptor.component_id == GradientAnimation.COMPONENT_ID:
-            return GradientAnimation(controller, parameters)
-        if descriptor.component_id == RainbowAnimation.COMPONENT_ID:
-            return RainbowAnimation(controller, parameters)
-        if descriptor.component_id == SolidColorAnimation.COMPONENT_ID:
-            return SolidColorAnimation(controller, parameters)
-        if descriptor.component_id == SparkleAnimation.COMPONENT_ID:
-            return SparkleAnimation(controller, parameters)
-        if descriptor.component_id == WaveAnimation.COMPONENT_ID:
-            return WaveAnimation(controller, parameters)
-        if descriptor.component_id == ColumnSequenceAnimation.COMPONENT_ID:
-            return ColumnSequenceAnimation(controller, parameters)
-        if descriptor.component_id == CircadianWindowAnimation.COMPONENT_ID:
-            animation = CircadianWindowAnimation(controller, parameters)
-            animation._clock_now = lambda: self._wall_time
-            return animation
-        if descriptor.component_id == CloudCanyonAnimation.COMPONENT_ID:
-            return CloudCanyonAnimation(controller, parameters)
-        if descriptor.component_id == DesertWindAnimation.COMPONENT_ID:
-            return DesertWindAnimation(controller, parameters)
-        if descriptor.component_id == MoonlitFogBanksAnimation.COMPONENT_ID:
-            return MoonlitFogBanksAnimation(controller, parameters)
-        if descriptor.component_id == RainOnGlassAnimation.COMPONENT_ID:
-            return RainOnGlassAnimation(controller, parameters)
-        if descriptor.component_id == TidalBioluminescenceAnimation.COMPONENT_ID:
-            return TidalBioluminescenceAnimation(controller, parameters)
-        if descriptor.component_id == WaterfallVeilAnimation.COMPONENT_ID:
-            return WaterfallVeilAnimation(controller, parameters)
-        if descriptor.component_id == CellularTapestryAnimation.COMPONENT_ID:
-            return CellularTapestryAnimation(controller, parameters)
-        if descriptor.component_id == FlowFieldSilkAnimation.COMPONENT_ID:
-            return FlowFieldSilkAnimation(controller, parameters)
-        if descriptor.component_id == FrostworkAnimation.COMPONENT_ID:
-            return FrostworkAnimation(controller, parameters)
-        if descriptor.component_id == LivingStainedGlassAnimation.COMPONENT_ID:
-            return LivingStainedGlassAnimation(controller, parameters)
-        if descriptor.component_id == QuasicrystalBloomAnimation.COMPONENT_ID:
-            return QuasicrystalBloomAnimation(controller, parameters)
-        if descriptor.component_id == LivingEcosystemAnimation.COMPONENT_ID:
-            return LivingEcosystemAnimation(controller, parameters)
-        if descriptor.component_id == PhysarumNetworkAnimation.COMPONENT_ID:
-            return PhysarumNetworkAnimation(controller, parameters)
-        if descriptor.component_id == ReactionDiffusionGardenAnimation.COMPONENT_ID:
-            return ReactionDiffusionGardenAnimation(controller, parameters)
-        if descriptor.component_id == WindInTheReedsAnimation.COMPONENT_ID:
-            return WindInTheReedsAnimation(controller, parameters)
-        raise ValueError(f"Composer preview cannot render Animation {descriptor.component_id!r}")
-
-    def _widget_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
-        if descriptor.component_id == ClockOverlayAnimation.COMPONENT_ID:
-            clock = ClockOverlayAnimation(controller, parameters)
-            # The component deliberately owns wall-clock cadence.  The source is
-            # injected at this preview boundary so deterministic requests neither
-            # read the host clock nor alter the shared clock implementation.
-            clock._clock_now = lambda: clock._apply_clock_offset(self._wall_time)  # type: ignore[method-assign]
-            return clock
-        if descriptor.component_id == EmojiArrangerAnimation.COMPONENT_ID:
-            return EmojiArrangerAnimation(controller, parameters)
-        raise ValueError(f"Composer preview cannot render Widget {descriptor.component_id!r}")
+    def input_capability(self):
+        with self._lock:
+            return self._runtime.input_capability()
 
     def _plant_inputs(self, _plants: Mapping[str, Any], descriptor: ComponentDescriptor) -> Mapping[str, Any]:
         geometry = self._installation_geometry()
@@ -481,5 +224,4 @@ __all__ = [
     "ComposerFinalPreview", "InstalledFinalSceneRuntime", "NATIVE_AURORA_BUNDLE_DIGEST",
     "NATIVE_AURORA_COMPONENT_ID", "NATIVE_AURORA_HOST_ARTIFACT_DIGEST",
     "NATIVE_AURORA_PAYLOAD_DIGEST", "current_component_catalog",
-    "current_component_descriptors", "solid_background_descriptor",
 ]

@@ -34,6 +34,18 @@ class Burst:
 
 class PinballAnimation(AnimationBase):
     """A CPU-light pinball show inspired by colorful 1990s PC tables."""
+    PREFERRED_PARAMETERS = ('table_tick_hz', 'chaos')
+    PARAMETER_CONTROLS = {
+        'table_tick_hz': {'label': 'table speed'},
+        'chaos': {'autoplay_only': True},
+    }
+    PLAYER_BUTTONS = {
+        'left': ('Nudge left', True),
+        'right': ('Nudge right', True),
+        'a': ('Flip', False),
+    }
+    POINT_ACTION_LABELS = {'primary': 'Flip and nudge'}
+
 
     ANIMATION_NAME = "Arcade Pinball"
     ANIMATION_DESCRIPTION = "Fast self-playing 90s PC pinball with scores, streaks, jackpots, and minigames"
@@ -185,7 +197,8 @@ class PinballAnimation(AnimationBase):
         self.params = candidate
         self.last_render_elapsed = None
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         return {
             "table_tick_hz": {
                 "type": "float", "min": 12.0, "max": 90.0, "default": 40.5,

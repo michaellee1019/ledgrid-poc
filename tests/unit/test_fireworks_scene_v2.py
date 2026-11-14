@@ -62,19 +62,15 @@ class FireworksSceneV2Tests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/composer/recovery?client_id=fireworks").get_json()["recovery"]["scene"]["animation"]["component_id"], "fireworks")
         with self.assertRaisesRegex(ValueError, "non-local parameters"):
             FireworksAnimation._normalized_parameters({"brightness": .4})
-        self.assertIs(current_component_catalog().require(provider="python", component_id="fireworks", version=1), FireworksAnimation.component_descriptor())
+        self.assertEqual(current_component_catalog().require(provider="python", component_id="fireworks", version=1).factory.__name__, FireworksAnimation.__name__)
 
     def test_composer_card_keeps_preset_and_control_edits_in_one_scene_lane(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        template = (root / "web" / "templates" / "composer.html").read_text(encoding="utf-8")
-        script = (root / "web" / "static" / "js" / "composer_slice.js").read_text(encoding="utf-8")
-        self.assertIn('id="fireworksPresetCards"', template)
-        self.assertIn("components/fireworks/presets", script)
-        self.assertIn("next.animation.parameters = preset.parameters", script)
-        self.assertIn("applyAuthoredPresetPresentation(next, preset)", script)
-        self.assertIn("'#fireworksCadence'", script)
-        self.assertNotIn("output_power", script)
-
+        gallery = self.client.get("/api/composer/gallery").get_json()["entries"]
+        entry = next(item for item in gallery if item["component_id"] == "fireworks")
+        self.assertIn("launch_cadence", entry["parameter_schema"])
+        self.assertEqual(entry["preset_count"], 6)
+        presets = self.client.get("/api/composer/components/fireworks/presets").get_json()["presets"]
+        self.assertEqual(next(item for item in presets if item["preset_id"] == "rainbow-palm")["presentation"]["background_gain"], 0)
 
 if __name__ == "__main__":
     unittest.main()

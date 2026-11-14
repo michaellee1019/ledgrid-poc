@@ -1,4 +1,5 @@
 {
+  "composer": true,
   "plugin_id": "ocean_waves",
   "class": "OceanWavesAnimation",
   "icon": "🌊",

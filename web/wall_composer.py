@@ -26,7 +26,6 @@ from web.starter_looks import get_starter, list_starters
 SCHEMA = "ledgrid.scene.v2"
 DIRECTION = {"left": -1, "right": 1, "up": -1, "down": 1}
 PALETTE_NAMES = {**{key: key.title() for key in SCENE_PALETTE_IDS}, "xmas": "Christmas", "july4": "4th July"}
-WIDGET_NAMES = {"clock_overlay": "Clock", "emoji_arranger": "Message"}
 
 
 # Four slots per held chord, ordered LX, LY, RX, RY. Each setting has one
@@ -65,83 +64,21 @@ STICK_LABELS = {
     "illuminate": "Illuminate", "shadow": "Shadow", "hue_shift": "Hue shift", "refract": "Refraction",
     "widget_x": "Widget across", "widget_y": "Widget height",
 }
-# The base bank owns the main animation setting. R1 left Y adjusts rate
-# or density, and the right stick adds detail where the renderer has it.
-PRIMARY_ANIMATION_STICKS = {
-    "ascii_drop": ("fall_speed", "density"),
-    "aurora_curtains": ("glow_intensity", "curtain_density", "fold_depth"),
-    "canopy_cup": ("course_difficulty", "enemy_density", "rivalry", "powerup_rate"),
-    "cellular_tapestry": ("density", "motion", "mutation", "row_interval"),
-    "christmas_tree": ("snowfall", "tree_height", "twinkle_hz"),
-    "circadian_window": ("hour", "motion", "density", "background_level"),
-    "cloud_canyon": ("density", "motion", "background_level"),
-    "column_sequence": ("hold_seconds", "pause_seconds", "white_level"),
-    "conway_life": ("generations_per_second", "initial_density"),
-    "cyclic_reef": ("species_count", "takeover_threshold", "mutation", "grazers", "boundary_glow"),
-    "desert_wind": ("density", "motion", "background_level"),
-    "emoji": ("scale", "pulse_hz"),
-    "firefly_synchrony": ("population", "synchrony", "wandering", "pulse_softness", "coupling_radius"),
-    "fireworks": ("burst_size", "launch_cadence", "shell_population", "gravity"),
-    "fish_tank": ("fish_count", "swim_speed", "schooling", "bubbles", "weeds"),
-    "flame_burst": ("flare_size", "ignition_cadence", "ember_linger", "flicker"),
-    "flow_field_silk": ("density", "motion", "turbulence", "persistence", "background_level"),
-    "fluid_tank": ("flow_rate", "current", "bubble_lift", "surface_energy"),
-    "frostwork": ("melt_cycle", "temperature", "density", "motion", "background_level"),
-    "gif_animation": ("playback_speed",),
-    "gradient": ("drift", "motion"),
-    "lava_lamp": ("heat", "blob_count", "blob_scale", "viscosity", "turbulence"),
-    "living_ecosystem": ("density", "migration", "predator_pressure", "canopy_density", "night_life"),
-    "living_stained_glass": ("lead_width", "light_direction", "motion", "density", "background_level"),
-    "maze_chase": ("difficulty", "chase_cadence_hz"),
-    "mini_metro": ("traffic", "train_speed", "trains", "lines", "stations"),
-    "moonlit_fog_banks": ("density", "motion", "background_level"),
-    "night_train_windows": ("travel_speed", "window_glow", "star_density"),
-    "ocean_waves": ("swell", "chop", "foam", "travel"),
-    "physarum_network": ("agent_count", "branching", "diffusion", "pulse_visibility", "motion"),
-    "pinball": ("table_tick_hz", "chaos"),
-    "pixel_chase": ("pixel_count", "pixels_per_second", "tail_length", "color_cycle_speed"),
-    "pixel_quest": ("difficulty", "quest_cadence_hz"),
-    "plant_glow": ("glow_strength", "glow_radius", "breath_speed", "breath_depth", "shimmer"),
-    "quasicrystal_bloom": ("spatial_scale", "warp", "motion", "density", "background_level"),
-    "rain_on_glass": ("density", "motion", "background_level"),
-    "rainbow": ("bands", "travel"),
-    "reaction_diffusion_garden": ("growth_rate", "edge_glow", "motion", "density", "color_by_age"),
-    "snake": ("move_cadence", "snake_count", "food_count", "growth_per_food"),
-    "solid": ("glow", "breath"),
-    "sparkle": ("linger", "density", "twinkle", "night"),
-    "tetris": ("fall_rate", "tetromino_count", "bot_imperfection", "smooth_drop_strength"),
-    "tidal_bioluminescence": ("density", "motion", "background_level"),
-    "waterfall_veil": ("density", "motion", "background_level"),
-    "wave": ("frequency", "travel", "shape"),
-    "wind_in_the_reeds": ("wind", "gustiness", "stem_density", "motes", "silhouette_strength"),
-}
-MENU_CHOICE_LABELS = {
-    ("gif_animation", "gif_name"): ("Clip", lambda value: value.removesuffix(".gif").replace("-", " ").replace("_", " ")),
-    ("rainbow", "direction"): ("Direction", {-1: "Reverse", 1: "Forward"}.get),
-    ("wave", "direction"): ("Direction", {-1: "Reverse", 1: "Forward"}.get),
-}
-MENU_PARAM_LABELS = {
-    "chase_cadence_hz": "chase speed", "quest_cadence_hz": "quest speed",
-    "table_tick_hz": "table speed", "move_cadence": "moves/sec",
-    "high_density_render_fps": "dense render FPS", "smooth_drop_max_pieces": "smooth piece limit",
-    "bot_imperfection": "bot errors", "tetromino_count": "bot pieces",
-    "show_ai_targets": "AI targets", "generations_per_second": "generations/sec",
-}
-ANIMATION_SETUP_FIELDS = {
-    "pinball": ("chaos",),  # Autoplay miss rate
-    "tetris": ("tetromino_count", "bot_imperfection", "smooth_drop",
-               "smooth_drop_strength", "smooth_drop_max_pieces"),
-}
-
-
-def _parameter_bounds(component_id, parameters, key, definition):
-    low, high = definition["min"], definition["max"]
-    if component_id == "snake":
-        if key == "initial_length":
-            high = min(high, parameters["max_length"])
-        elif key == "max_length":
-            low = max(low, parameters["initial_length"])
+def _parameter_bounds(parameters, key, definition):
+    low = definition.get("ui_min", definition["min"])
+    high = definition.get("ui_max", definition["max"])
+    # A saved value outside the suggested range stays reachable.
+    low, high = min(low, parameters[key]), max(high, parameters[key])
+    if "min_parameter" in definition:
+        low = max(low, parameters[definition["min_parameter"]])
+    if "max_parameter" in definition:
+        high = min(high, parameters[definition["max_parameter"]])
     return low, high
+
+
+def _choice_labels(definition, options):
+    labels = definition.get("option_labels", {})
+    return {option: labels.get(str(option).lower(), str(option).replace("_", " ")) for option in options}
 
 
 @dataclass(frozen=True)
@@ -297,7 +234,6 @@ class WallComposer:
         self.feedback_until = 0
         self.card_since = self.clock()
         self._gallery = None
-        self._schemas = {}
         self.error = None
         self.saved_revision = 0
         self.playback_revision = 0
@@ -311,6 +247,7 @@ class WallComposer:
         self._stick_focus: dict[int, StickFocus] = {}
         self.shoulder_bank = 0
         self.momentary = False
+        self._aim = None
         self._animation_id = manager.current_animation_name
         self._animation_title = None
         self._animation_title_until = 0.0
@@ -331,6 +268,7 @@ class WallComposer:
     def close(self):
         self.pages.clear()
         self.momentary = False
+        self._aim = None
         self._stick_focus.clear()
         self.picker = None
         self.feedback = None
@@ -347,6 +285,7 @@ class WallComposer:
         return any(page.title == "Tune" for page in self.pages)
 
     def refresh_scene(self):
+        self.leave_aim()
         if self.momentary:
             self.close()
             return
@@ -412,6 +351,10 @@ class WallComposer:
             if self.clock() < self.feedback_until:
                 return self.feedback
             self.feedback = None
+        if self._aim is not None:
+            _, binding, x, y = self._aim
+            return MenuCard("Aim", binding.label, f"{x}/{y}", hint=f"{binding.button.upper()} FIRE",
+                            marker=(x, y))
         if not self.is_open:
             if self.manager.output_brightness > 0:
                 _, state = self.manager.nimbus_game()
@@ -654,6 +597,39 @@ class WallComposer:
             self._feedback("Game", str(error), error=error)
             return False
 
+    @property
+    def aiming(self):
+        return self._aim is not None
+
+    def begin_aim(self, basis, binding):
+        if self._aim is None or self._aim[0] != basis:
+            self.card_since = self.clock()
+            self._aim = (basis, binding, WIDTH // 2, HEIGHT // 2)
+
+    def leave_aim(self):
+        self._aim = None
+
+    def aim_sticks(self, motions):
+        basis, binding, x, y = self._aim
+        for motion in motions:
+            if motion.axis == 0:
+                x = max(0, min(WIDTH - 1, x + motion.steps))
+            elif motion.axis == 1:
+                y = max(0, min(HEIGHT - 1, y + 4 * motion.steps))
+        self._aim = (basis, binding, x, y)
+
+    def fire_aim(self, action_id):
+        basis, binding, x, y = self._aim
+        component_id, scene_digest = basis
+        payload = dict(component_id=component_id, scene_digest=scene_digest, kind=action_id, x=x, y=y)
+        try:
+            if self.runner.status()["phase"] == "running":
+                self._run("automation_interaction", payload, show_takeover=False)
+            else:
+                self.manager.dispatch_canonical_interaction(**payload)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            self._feedback("Aim", str(error), error=error)
+
     def tune_sticks(self, motions):
         """Apply a stick gesture and focus its setting when the HUD is open."""
         if self.is_open:
@@ -811,8 +787,7 @@ class WallComposer:
         component = scene["animation"]
         descriptor = self.catalog.require(provider=component["provider"],
                                           component_id=component["component_id"], version=component["version"])
-        preferred = PRIMARY_ANIMATION_STICKS.get(descriptor.component_id, ())
-        animation = self._numeric_stick_bindings(component, ("animation", "parameters"), preferred)
+        animation = self._numeric_stick_bindings(component, ("animation", "parameters"))
         candidates = {
             **{name: StickBinding(*fields, label=STICK_LABELS[name]) for name, fields in STICK_SCENE_FIELDS.items()},
             **{name: name for name in ("illuminate", "shadow", "hue_shift", "palette")},
@@ -834,24 +809,24 @@ class WallComposer:
 
         return tuple(candidates.get(key) for key in STICK_BANKS[bank])
 
-    def _numeric_stick_bindings(self, component, path, preferred=()):
-        schema = self._schema(component)
+    def _numeric_stick_bindings(self, component, path):
+        descriptor = self._descriptor(component)
+        schema = descriptor.parameter_schema
         parameters = component["parameters"]
         bindings = []
-        for key in dict.fromkeys((*preferred, *schema)):
-            definition = schema.get(key, {})
-            if (key not in parameters or (component["component_id"], key) in MENU_CHOICE_LABELS
-                    or key == "seed" or "fps" in key or definition.get("options")
+        for key in dict.fromkeys((*descriptor.preferred_parameters, *schema)):
+            definition = schema[key]
+            if (key not in parameters or key == "seed" or "fps" in key or definition.get("options")
+                    or definition.get("control") == "fixed"
                     or definition.get("type") not in ("int", "float")
                     or "min" not in definition or "max" not in definition):
                 continue
-            low, high = _parameter_bounds(component["component_id"], parameters, key, definition)
-            # The HUD-free steps are deliberately larger than menu increments.
-            step = (high - low) / 10
+            low, high = _parameter_bounds(parameters, key, definition)
+            if low == high:
+                continue
             integer = definition["type"] == "int"
-            step = max(1, math.ceil(step)) if integer else step
-            label = MENU_PARAM_LABELS.get(key, key.replace("_", " "))
-            bindings.append(StickBinding((*path, key), low, high, step, integer, label))
+            bindings.append(StickBinding((*path, key), low, high, definition["coarse_step"],
+                                         integer, definition["label"]))
         return bindings
 
     def _adjust_stick_binding(self, scene, binding, steps):
@@ -1002,57 +977,43 @@ class WallComposer:
         ]
 
     def _background_rows(self):
-        background = self.scene()["background"]["parameters"]
-        return [self._number("Light", background["gain"], 0, 1, .01,
-                             partial(self._edit, ("background", "parameters", "gain")))]
+        return self._parameter_rows(("background",), self.scene()["background"])
 
     def _animation_rows(self):
         return self._parameter_rows(("animation",), self.scene()["animation"])
 
-    def _schema(self, component):
-        key = component["component_id"]
-        if key not in self._schemas:
-            info = self.manager.plugin_loader.get_plugin_info(key) or {}
-            self._schemas[key] = info.get("parameters", {})
-        return self._schemas[key]
+    def _descriptor(self, component):
+        return self.catalog.require(provider=component["provider"], component_id=component["component_id"],
+                                    version=component["version"])
 
     def _parameter_rows(self, path, component):
         rows = []
-        schema = self._schema(component)
+        descriptor = self._descriptor(component)
+        schema = descriptor.parameter_schema
         params = component["parameters"]
-        component_id = component["component_id"]
-        preferred = PRIMARY_ANIMATION_STICKS.get(component_id, ())
-        order = dict.fromkeys((*preferred, *params))
+        order = dict.fromkeys((*descriptor.preferred_parameters, *params))
         player_state = self.manager.nimbus_game()[1] if path == ("animation",) else None
-        autoplay = ANIMATION_SETUP_FIELDS.get(component_id, ()) if player_state == "paused" else ()
-        for key in sorted(order, key=lambda key: key == "seed" or "fps" in key or key in autoplay):
-            definition = schema.get(key)
-            if definition is None or key not in params:
+        for key in sorted(order, key=lambda key: key == "seed" or "fps" in key
+                          or (player_state == "paused" and schema[key].get("autoplay_only", False))):
+            definition = schema[key]
+            if key not in params:
                 continue
             value = params[key]
-            name = MENU_PARAM_LABELS.get(key, key.replace("_", " "))
-            if (component_id, key) == ("snake", "background"):
-                rows.append(Row(name, "Black", hint="FIXED"))
+            name = definition.get("label", key.replace("_", " "))
+            if definition.get("control") == "fixed":
+                rows.append(Row(name, _choice_labels(definition, (value,))[value], hint="FIXED"))
                 continue
             setter = partial(self._edit, (*path, "parameters", key))
             kind = definition.get("type")
             options = definition.get("options")
-            choice_labels = MENU_CHOICE_LABELS.get((component_id, key))
-            if choice_labels:
-                name, labels = choice_labels
-                options = options or (-1, 1)
-                rows.append(self._choice(name, value, tuple(options), setter, select=len(options) > 8,
-                                         labels={option: labels(option) for option in options}))
-                continue
             if options:
-                rows.append(self._choice(name, value, tuple(options), setter, select=len(options) > 8))
+                labels = _choice_labels(definition, options) if definition.get("option_labels") else None
+                rows.append(self._choice(name, value, options, setter, labels=labels, select=len(options) > 8))
             elif kind == "bool":
                 rows.append(self._choice(name, value, (False, True), setter))
             elif kind in ("int", "float"):
-                low, high = _parameter_bounds(component_id, params, key, definition)
-                span = high - low
-                step = definition.get("step") or (1 if kind == "int" or span > 30 else .01 if span <= 2 else .1)
-                row = self._number(name, value, low, high, step, setter, integer=kind == "int")
+                low, high = _parameter_bounds(params, key, definition)
+                row = self._number(name, value, low, high, definition["step"], setter, integer=kind == "int")
                 if kind == "int" and high - low > 200:
                     row.select = partial(self._integer_picker, name, low, high, setter)
                 rows.append(row)
@@ -1061,9 +1022,10 @@ class WallComposer:
             elif kind == "color":
                 rows.append(Row(name, str(value), select=partial(self._color_picker, name, value, setter)))
             elif kind == "str":
-                limit = 64 if key == "text" else 48
-                rows.append(Row(name, value, select=partial(self._text_picker, name, value, limit,
-                                                            setter, key == "text")))
+                rows.append(Row(name, value, select=partial(
+                    self._text_picker, name, value, definition.get("max_length", 48),
+                    setter, definition.get("control") == "emoji_text",
+                )))
         return rows
 
     def _choice(self, name, value, options, setter, *, labels=None, swatches=(), select=False):
@@ -1164,7 +1126,7 @@ class WallComposer:
             if descriptor.role.value != "widget":
                 continue
             component_id = descriptor.component_id
-            name = WIDGET_NAMES.get(component_id, component_id.replace("_", " ").title())
+            name = descriptor.name
             widgets = [widget for widget in scene["widgets"]
                        if widget["component"]["component_id"] == component_id]
             if widgets:
@@ -1188,8 +1150,9 @@ class WallComposer:
                           "provider": descriptor.provider.value, "role": "widget",
                           "parameters": descriptor.default_parameters()},
             "visible": True,
-            "placement": {"mode": "manual", "strip_translation": 0,
-                          "led_translation": -8 if component_id == "clock_overlay" else 0},
+            "placement": dict(descriptor.default_placement) or {
+                "mode": "manual", "strip_translation": 0, "led_translation": 0,
+            },
         })
         self._set_scene(scene, edit=True)
         self._open_widget(name, widget_id)

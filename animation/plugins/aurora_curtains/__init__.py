@@ -52,6 +52,8 @@ SEMANTIC_PALETTES: Mapping[str, PaletteRoles] = MappingProxyType({
 
 class AuroraCurtainsAnimation(AnimationBase):
     """Overlapping analytic light curtains for the opaque background layer."""
+    PREFERRED_PARAMETERS = ('glow_intensity', 'curtain_density', 'fold_depth')
+
 
     ANIMATION_NAME = "Aurora Curtains"
     ANIMATION_DESCRIPTION = "Slow semantic-palette curtains folding through a dark sky"
@@ -130,7 +132,8 @@ class AuroraCurtainsAnimation(AnimationBase):
         """Resolve a complete semantic role palette with a stable fallback."""
         return SEMANTIC_PALETTES.get(str(palette_id), SEMANTIC_PALETTES["neutral"])
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         """Expose only component-local artistic controls and source cadence."""
         return {
             "curtain_density": {

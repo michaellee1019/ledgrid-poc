@@ -46,6 +46,8 @@ class _Train:
 
 
 class MiniMetroAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('traffic', 'train_speed', 'trains', 'lines', 'stations')
+
     ANIMATION_NAME = "Mini Metro"
     ANIMATION_DESCRIPTION = "Octilinear subway lines, geometric stations, and shuttling trains"
     ANIMATION_AUTHOR = "LED Grid Team"
@@ -120,13 +122,14 @@ class MiniMetroAnimation(AnimationBase):
     def palette_roles(cls, palette_id: str) -> Mapping[str, tuple[float, float, float]]:
         return cls.SEMANTIC_PALETTES.get(str(palette_id), cls.SEMANTIC_PALETTES["neutral"])
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
-            "stations": {"type": "int", "min": self.MIN_STATIONS, "max": self.MAX_STATIONS, "default": 9,
+            "stations": {"type": "int", "min": cls.MIN_STATIONS, "max": cls.MAX_STATIONS, "default": 9,
                          "description": "How many geometric stations sit on the map."},
-            "lines": {"type": "int", "min": self.MIN_LINES, "max": self.MAX_LINES, "default": 3,
+            "lines": {"type": "int", "min": cls.MIN_LINES, "max": cls.MAX_LINES, "default": 3,
                       "description": "How many colored octilinear routes run."},
-            "trains": {"type": "int", "min": self.MIN_TRAINS, "max": self.MAX_TRAINS, "default": 4,
+            "trains": {"type": "int", "min": cls.MIN_TRAINS, "max": cls.MAX_TRAINS, "default": 4,
                        "description": "How many trains shuttle the network."},
             "traffic": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.55,
                         "description": "How quickly passengers appear at stations."},

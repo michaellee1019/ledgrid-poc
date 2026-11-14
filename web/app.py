@@ -106,7 +106,7 @@ from web.composer_component_editor import editor_catalog
 from web.live_scene_state import LiveSceneStale, LiveSceneState
 from web.composer_library_state import ComposerLibraryState, ComposerLibraryStateError
 from web.composer_playlist_store import ComposerPlaylistStore, ComposerPlaylistStoreError
-from web.composer_content import composer_presets, gallery_entries
+from web.composer_content import component_entry, composer_presets, gallery_entries
 from web.scene_look_store import SceneLookStore, SceneLookStoreError
 from web.starter_looks import get_starter, list_starters
 from web.working_draft_store import WorkingDraftStore, WorkingDraftError
@@ -1532,20 +1532,20 @@ class AnimationWebInterface:
             payload = request.get_json(silent=True) or {}
             try:
                 kind, x, y, strength = self._validated_interaction_payload(payload)
-                composer = self.composer_live.snapshot(include_current_scene=True)
-                if composer['current'] is not None:
-                    if not (composer['running'] and composer['armed'] and composer['observed'] == composer['current']):
-                        raise ValueError('Composer interaction requires a live observed scene')
-                    canonical = self._composer_recovery_scene(composer['current_scene'])
-                    component_id = canonical.scene['animation']['component_id']
-                    if component_id not in {"lava_lamp", "flame_burst", "fluid_tank", "pinball", "cellular_tapestry", "frostwork", "reaction_diffusion_garden", "wind_in_the_reeds"}:
-                        raise ValueError('the published Composer animation does not accept primary interaction')
-                    if kind != 'primary':
-                        raise ValueError("interaction 'primary' is required by the published Composer animation")
-                    if not self.composer_preview.dispatch_animation_interaction(canonical, kind, x, y, strength):
-                        raise ValueError('the published Composer animation rejected that interaction')
-                    return jsonify({'success': True, 'accepted': True, 'component_id': component_id,
-                                    'basis': canonical.identity.to_dict()})
+                with self.composer_live.publication_lock:
+                    composer = self.composer_live.snapshot(include_current_scene=True)
+                    if composer['current'] is not None:
+                        if not (composer['running'] and composer['armed'] and composer['observed'] == composer['current']):
+                            raise ValueError('Composer interaction requires a live observed scene')
+                        canonical = self._composer_recovery_scene(composer['current_scene'])
+                        component_id = canonical.scene['animation']['component_id']
+                        if (payload.get('component_id', component_id) != component_id
+                                or payload.get('scene_digest', canonical.identity.digest) != canonical.identity.digest):
+                            raise ValueError('Active Scene or animation component changed')
+                        if not self.composer_preview.dispatch_animation_interaction(canonical, kind, x, y, strength):
+                            raise ValueError('the published Composer animation rejected that interaction')
+                        return jsonify({'success': True, 'accepted': True, 'component_id': component_id,
+                                        'basis': canonical.identity.to_dict()})
                 raw_status = self.control_channel.read_status() or {}
                 layout = self._sync_preview_layout_from_status(raw_status)
                 self._validate_interaction_bounds(x, y, layout)
@@ -1638,16 +1638,14 @@ class AnimationWebInterface:
         records = []
         for descriptor in self.composer_catalog.descriptors:
             component_id = descriptor.component_id
-            source_id = 'solid' if component_id == 'solid_background' else component_id
-            source = dict(discovered_by_id.get(source_id, {}))
-            source.update(plugin_id=component_id, provider='python', role=descriptor.role.value,
-                          name='Solid background' if component_id == 'solid_background' else source.get('name', component_id.replace('_', ' ').title()),
-                          defaults=descriptor.default_parameters())
-            if component_id == 'solid_background':
-                source['parameter_schema'] = {
-                    'gain': {'type': 'float', 'min': 0, 'max': 1, 'default': .62},
-                    'seed': {'type': 'int', 'min': 0, 'max': 999999, 'default': 4201},
-                }
+            source = dict(discovered_by_id.get(descriptor.package_id, {}))
+            source.update(
+                plugin_id=component_id, provider=descriptor.provider.value, role=descriptor.role.value,
+                name=descriptor.name, description=descriptor.description,
+                defaults=descriptor.default_parameters(), parameter_schema=descriptor.controls(),
+                input_capability=descriptor.input_capability.public(),
+            )
+            if component_id != descriptor.package_id:
                 source['entrypoint'] = ''
             records.append(source)
         return self._scene_v1_component_roles(decorate_catalog(records))
@@ -1660,6 +1658,7 @@ class AnimationWebInterface:
             'schema_version': 1,
             'catalog_digest': digest,
             'entries': entries,
+            'components': [component_entry(descriptor) for descriptor in self.composer_catalog.descriptors],
         }
 
     @staticmethod
@@ -1821,32 +1820,7 @@ class AnimationWebInterface:
 
             schema = raw.get('parameter_schema')
             schema = json.loads(json.dumps(schema)) if isinstance(schema, dict) else {}
-            if descriptor is not None:
-                # Parameter membership and defaults are part of the same
-                # canonical descriptor contract as provider and role.  Keep
-                # the mature loader's UI annotations, but exclude retired
-                # legacy globals and replace any stale schema defaults.
-                defaults = descriptor.default_parameters()
-                schema = {
-                    name: definition
-                    for name, definition in schema.items()
-                    if name in defaults
-                }
-                for name, value in defaults.items():
-                    definition = schema.get(name)
-                    if isinstance(definition, dict):
-                        definition['default'] = json.loads(json.dumps(value))
-            else:
-                declared_defaults = raw.get('defaults')
-                defaults = (
-                    json.loads(json.dumps(declared_defaults))
-                    if isinstance(declared_defaults, dict)
-                    else {
-                        name: definition.get('default')
-                        for name, definition in schema.items()
-                        if isinstance(definition, dict) and 'default' in definition
-                    }
-                )
+            defaults = descriptor.default_parameters() if descriptor is not None else raw.get('defaults', {})
             if canonical_animation:
                 vibe_capabilities = []
                 if descriptor.palette_policy.value == 'semantic':
@@ -1854,13 +1828,7 @@ class AnimationWebInterface:
                 if descriptor.timing_policy.value == 'scaled_context':
                     vibe_capabilities.append('tempo')
             else:
-                vibe_capabilities = json.loads(json.dumps(
-                    raw.get('vibe_capabilities') or []
-                ))
-            if provider == 'python':
-                for name in LEGACY_PLANT_MASK_PATH_PARAMETERS:
-                    schema.pop(name, None)
-                    defaults.pop(name, None)
+                vibe_capabilities = json.loads(json.dumps(raw.get('vibe_capabilities') or []))
             entrypoint = str(raw.get('entrypoint') or '')
             class_name = (
                 entrypoint.rsplit(':', 1)[-1]
@@ -1872,7 +1840,7 @@ class AnimationWebInterface:
                 r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*',
                 entrypoint,
             ))
-            if provider == 'python' and python_entrypoint_ready and plugin_id != 'solid_background':
+            if provider == 'python' and python_entrypoint_ready:
                 runtime = {
                     'kind': 'python',
                     'supported': True,
@@ -1953,6 +1921,7 @@ class AnimationWebInterface:
                 'role': browser_role,
                 'icon': str(raw.get('icon') or '✦'),
                 'parameter_schema': schema,
+                'input_capability': raw.get('input_capability', {}),
                 'defaults': defaults,
                 'presets': preset_records,
                 'browser_runtime': runtime,
@@ -2294,9 +2263,7 @@ class AnimationWebInterface:
         plugin_id = descriptor['plugin_id']
         provider = descriptor['provider']
         self._reject_retired_browser_composer_params(provider, params)
-        error = self._validate_animation_params(plugin_id, params)
-        if error:
-            raise ValueError(error)
+        self._require_current_component_preset_params(plugin_id, provider, params)
         return {
             'kind': 'component_preset',
             'draft': {

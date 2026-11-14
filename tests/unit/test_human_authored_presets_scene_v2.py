@@ -139,16 +139,13 @@ class HumanAuthoredPresetSceneV2Tests(unittest.TestCase):
                 self.assertEqual(checked.status_code, 200, checked.get_json())
 
     def test_avalanche_factory_controls_preserve_performance_parameters(self) -> None:
-        script = (ROOT / "web" / "static" / "js" / "composer_slice.js").read_text(
-            encoding="utf-8"
-        )
-        for control_id in (
-            "tetrisPieces", "tetrisFallRate", "tetrisRisk", "tetrisSmoothDrop",
-        ):
-            self.assertIn(control_id, script)
-        self.assertIn("tetrisParameters(next.animation.parameters)", script)
-        self.assertIn("smooth_drop_max_pieces: 32", script)
-        self.assertIn("high_density_render_fps: 150", script)
+        gallery = self.client.get("/api/composer/gallery").get_json()["entries"]
+        entry = next(item for item in gallery if item["component_id"] == "tetris")
+        self.assertTrue({"tetromino_count", "fall_rate", "bot_imperfection", "smooth_drop"} <= set(entry["parameter_schema"]))
+        preset = self.interface.composer_presets.choice("tetris", "avalanche-factory")["parameters"]
+        self.assertEqual(preset["smooth_drop_max_pieces"], 16)
+        self.assertEqual(preset["high_density_render_fps"], 90)
+        self.assertGreaterEqual(entry["parameter_schema"]["high_density_render_fps"]["max"], 150)
 
     def test_legacy_aliases_on_disk_never_reenter_the_current_catalog(self) -> None:
         with TemporaryDirectory() as directory:

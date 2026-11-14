@@ -2,6 +2,12 @@
 from animation.libraries.procedural_longform import LongformSceneBase
 
 class CircadianWindowAnimation(LongformSceneBase):
+    PREFERRED_PARAMETERS = ('hour', 'motion', 'density', 'background_level')
+    PARAMETER_CONTROLS = {
+        'hour': {'unit': 'h'},
+        'time_offset': {'unit': 'h'},
+    }
+
     ANIMATION_NAME = "Circadian Window"
     ANIMATION_DESCRIPTION = "An all-day procedural sky moving through dawn, daylight, and night"
     ANIMATION_AUTHOR = "LED Grid Team"
@@ -20,7 +26,8 @@ class CircadianWindowAnimation(LongformSceneBase):
     def scene_defaults(self):
         return {"hour": -1.0, "time_offset": 0.0, "time_scale": 1.0}
 
-    def scene_schema(self):
+    @classmethod
+    def scene_schema(cls):
         return {
             "hour": {"type":"float","min":-1.0,"max":23.999,"default":-1.0,"description":"Fixed local hour; -1 uses the clock"},
             "time_offset": {"type":"float","min":-12.0,"max":14.0,"default":0.0,"description":"Local clock offset in hours"},

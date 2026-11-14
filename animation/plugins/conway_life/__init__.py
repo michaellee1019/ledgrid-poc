@@ -36,6 +36,11 @@ def _dirty_ranges(previous: np.ndarray, current: np.ndarray) -> tuple[tuple[int,
 
 class ConwayLifeAnimation(AnimationBase):
     """Bounded-cadence B/S cellular life in canonical premultiplied RGBA8."""
+    PREFERRED_PARAMETERS = ('generations_per_second', 'initial_density')
+    PARAMETER_CONTROLS = {
+        'generations_per_second': {'label': 'generations/sec', 'unit': 'Hz'},
+    }
+
 
     ANIMATION_NAME = "Conway Life Overlay"
     ANIMATION_DESCRIPTION = "A seeded Life field composed over the canonical Scene v2 background"
@@ -108,7 +113,8 @@ class ConwayLifeAnimation(AnimationBase):
     def palette_roles(cls, palette_id: str) -> Mapping[str, tuple[float, float, float]]:
         return _SEMANTIC_PALETTES.get(str(palette_id), _SEMANTIC_PALETTES["neutral"])
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 1971, "description": "Deterministic initial-world seed"},
             "rule": {"type": "str", "options": ["B3/S23", "B36/S23"], "default": "B3/S23", "description": "Life birth/survival rule"},

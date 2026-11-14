@@ -8,6 +8,8 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class LivingStainedGlassAnimation(CadencedSculpture):
+    PREFERRED_PARAMETERS = ('lead_width', 'light_direction', 'motion', 'density', 'background_level')
+
     ANIMATION_NAME="Living Stained Glass"
     ANIMATION_DESCRIPTION="Broad colored panes drift gently while their lead topology heals"
     PLANT_MODIFIER_SUPPORT=frozenset(("refract",))
@@ -43,7 +45,8 @@ class LivingStainedGlassAnimation(CadencedSculpture):
         self.seeds=np.column_stack((self.rng.uniform(-1,1,n),self.rng.uniform(-1,1,n))).astype(np.float32)
         self.seed_phase=self.rng.uniform(0,6.283,n).astype(np.float32)
 
-    def get_parameter_schema(self):
+    @classmethod
+    def get_parameter_schema(cls):
         s=super().get_parameter_schema(); s.update({
             "lead_width":{"type":"float","min":0.05,"max":1,"default":0.3,"description":"Dark lead seam thickness"},
             "light_direction":{"type":"float","min":-1,"max":1,"default":0.4,"description":"Direction of passing transmitted light"},

@@ -54,6 +54,11 @@ class _Spark:
 
 class FireworksAnimation(AnimationBase):
     """A bounded show that takes the current settings at each launch."""
+    PREFERRED_PARAMETERS = ('burst_size', 'launch_cadence', 'shell_population', 'gravity')
+    PARAMETER_CONTROLS = {
+        'launch_cadence': {'unit': '1/s'},
+    }
+
 
     ANIMATION_NAME = "Fireworks"
     ANIMATION_DESCRIPTION = "An immediate, playful aerial-shell instrument"
@@ -102,12 +107,13 @@ class FireworksAnimation(AnimationBase):
     def component_descriptor(cls) -> ComponentDescriptor:
         return cls.COMPONENT_DESCRIPTOR
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "launch_cadence": {"type": "float", "min": .1, "max": 4., "default": 1.15, "description": "How often a new shell launches"},
             "shell_population": {"type": "int", "min": 12, "max": 120, "default": 54, "description": "Sparks in each aerial shell"},
             "burst_size": {"type": "float", "min": .08, "max": .65, "default": .29, "description": "Shell radius and launch reach"},
-            "burst_style": {"type": "str", "options": list(self.STYLES), "default": "mixed", "description": "Shape of the next shell"},
+            "burst_style": {"type": "str", "options": list(cls.STYLES), "default": "mixed", "description": "Shape of the next shell"},
             "gravity": {"type": "float", "min": 0., "max": 1.5, "default": .38, "description": "How quickly embers fall"},
             "trails": {"type": "float", "min": .1, "max": 1., "default": .72, "description": "How long glowing trails linger"},
             "crackle": {"type": "float", "min": 0., "max": 1., "default": .24, "description": "Chance of a shell breaking into crackles"},

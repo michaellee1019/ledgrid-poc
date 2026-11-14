@@ -4,6 +4,8 @@ from animation.libraries.procedural_atmospheres import ProceduralAtmosphereBase
 
 
 class WaterfallVeilAnimation(ProceduralAtmosphereBase):
+    PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+
     ANIMATION_NAME = "Waterfall Veil"
     ANIMATION_DESCRIPTION = "Fine streams descend through slate ledges and break into luminous mist"
     ANIMATION_AUTHOR = "LED Grid Team"

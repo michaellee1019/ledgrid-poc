@@ -146,6 +146,9 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class ReactionDiffusionGardenAnimation(CadencedSculpture):
+    PREFERRED_PARAMETERS = ('growth_rate', 'edge_glow', 'motion', 'density', 'color_by_age')
+    POINT_ACTION_LABELS = {'primary': 'Seed chemistry'}
+
     ANIMATION_NAME="Reaction-Diffusion Garden"; ANIMATION_DESCRIPTION="Luminous chemistry grows coral, spots, and fingerprints"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="reaction_diffusion_garden"; SOURCE_FPS=20.; REGIMES={"coral":(.0545,.062),"spots":(.035,.065),"fingerprints":(.037,.060)}
     INTERACTION_TYPES=frozenset(("primary",))
@@ -209,8 +212,9 @@ class ReactionDiffusionGardenAnimation(CadencedSculpture):
         x,y=center
         self.u[x-1:x+2,y-1:y+2]=.2;self.v[x-1:x+2,y-1:y+2]=.9
         self._primary_interactions_applied+=1
-    def get_parameter_schema(self):
-        s=super().get_parameter_schema();s.update({"morphology":{"type":"str","options":list(self.REGIMES),"default":"coral","description":"Reaction-front character"},"growth_rate":{"type":"float","min":.25,"max":2.,"default":1.,"description":"Chemistry growth rate"},"seeding_mode":{"type":"str","options":["scattered","column","center"],"default":"scattered","description":"Initial reaction seed"},"edge_glow":{"type":"float","min":0.,"max":1.5,"default":.65,"description":"Luminous front edge"},"color_by_age":{"type":"float","min":0.,"max":1.,"default":.6,"description":"Pattern-history coloring"},"perturbation_interval":{"type":"float","min":8.,"max":120.,"default":24.,"description":"Bounded reseed interval"}});return s
+    @classmethod
+    def get_parameter_schema(cls):
+        s=super().get_parameter_schema();s.update({"morphology":{"type":"str","options":list(cls.REGIMES),"default":"coral","description":"Reaction-front character"},"growth_rate":{"type":"float","min":.25,"max":2.,"default":1.,"description":"Chemistry growth rate"},"seeding_mode":{"type":"str","options":["scattered","column","center"],"default":"scattered","description":"Initial reaction seed"},"edge_glow":{"type":"float","min":0.,"max":1.5,"default":.65,"description":"Luminous front edge"},"color_by_age":{"type":"float","min":0.,"max":1.,"default":.6,"description":"Pattern-history coloring"},"perturbation_interval":{"type":"float","min":8.,"max":120.,"default":24.,"description":"Bounded reseed interval"}});return s
     @classmethod
     def _validate_local_parameters(cls,v):
         super()._validate_local_parameters(v)

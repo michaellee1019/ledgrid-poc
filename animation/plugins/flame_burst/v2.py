@@ -14,6 +14,13 @@ from animation.core.presentation_contracts import OverlayFrame, ResolvedScene
 
 
 class FlameBurstAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('flare_size', 'ignition_cadence', 'ember_linger', 'flicker')
+    PARAMETER_CONTROLS = {
+        'ignition_cadence': {'unit': '1/s'},
+    }
+    POINT_ACTION_LABELS = {'primary': 'Ignite flare'}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}  # Hold L1 + R1 to aim.
+
     ANIMATION_NAME = "Flame Burst"; ANIMATION_DESCRIPTION = "A tactile ignition instrument with warm expanding flame shells"
     ANIMATION_AUTHOR = "LED Grid Team"; ANIMATION_VERSION = "2.0"
     COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "flame_burst", 1, "python", "animation"
@@ -34,7 +41,8 @@ class FlameBurstAnimation(AnimationBase):
 
     @classmethod
     def component_descriptor(cls) -> ComponentDescriptor: return cls.COMPONENT_DESCRIPTOR
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {"ignition_cadence":{"type":"float","min":.12,"max":4.,"default":.9,"description":"How often the instrument lights a new burst"}, "flare_size":{"type":"float","min":.12,"max":.9,"default":.42,"description":"Reach of each expanding flame shell"}, "ember_linger":{"type":"float","min":.08,"max":1.,"default":.45,"description":"How long the warm ember trail remains"}, "flicker":{"type":"float","min":0.,"max":1.,"default":.35,"description":"Texture and shimmer in the shell"}, "seed":{"type":"int","min":0,"max":999999,"default":6201,"description":"Repeatable ignition sequence"}}
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
         candidate = self._normalized_parameters({**self.params, **dict(new_params)}); changed_seed = candidate["seed"] != self.params["seed"]; self.params = candidate

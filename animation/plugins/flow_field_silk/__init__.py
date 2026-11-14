@@ -8,6 +8,8 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class FlowFieldSilkAnimation(CadencedSculpture):
+    PREFERRED_PARAMETERS = ('density', 'motion', 'turbulence', 'persistence', 'background_level')
+
     ANIMATION_NAME = "Flow-Field Silk"
     ANIMATION_DESCRIPTION = "Fine advected threads braid and fray in a slow underwater vector field"
     # Refraction is deliberately presentation-only: the provider supplies the
@@ -46,7 +48,8 @@ class FlowFieldSilkAnimation(CadencedSculpture):
         heads = np.column_stack((self.rng.uniform(0, self._shape[0], n), self.rng.uniform(0, self._shape[1], n)))
         self.filaments = np.repeat(heads[:, None, :], length, axis=1).astype(np.float32)
 
-    def get_parameter_schema(self):
+    @classmethod
+    def get_parameter_schema(cls):
         s=super().get_parameter_schema(); s.update({
             "turbulence":{"type":"float","min":0,"max":1,"default":0.35,"description":"Curl-field complexity"},
             "persistence":{"type":"float","min":0.1,"max":1,"default":0.8,"description":"Visible filament trail length"},

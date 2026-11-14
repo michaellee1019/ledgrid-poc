@@ -143,25 +143,11 @@ class ExistingAnimationPresetSceneV2Tests(unittest.TestCase):
             self.assertEqual(recovered_preview["frame"]["pixels"], preview.get_json()["frame"]["pixels"])
 
     def test_desktop_cards_use_component_catalogs_and_preserve_firefly_seed_and_coupling(self) -> None:
-        script = (ROOT / "web" / "static" / "js" / "composer_slice.js").read_text(encoding="utf-8")
-        css = (ROOT / "web" / "static" / "css" / "composer_slice.css").read_text(encoding="utf-8")
-        self.assertIn("loadExistingComponentPresets", script)
-        for component_id in EXPECTED_IDS:
-            self.assertIn(f"'{component_id}'", script)
-        self.assertIn("fireflyParameters = (existing = {}) => ({...existing", script)
-        self.assertIn("fireflyParameters(next.animation.parameters)", script)
-        self.assertIn("syncComponentPresetUI", script)
-        self.assertIn("target.hidden = !visible; target.inert = !visible", script)
-        self.assertIn(".operation-row[hidden] { display: none !important; }", css)
-        self.assertIn("aria-pressed", script)
-        self.assertIn("Custom remix", script)
-        for component_id in ("aurora_curtains", "firefly_synchrony", "tetris"):
-            self.assertIn(component_id, script)
-        for component_id, target in (("maze_chase", "mazePresetCards"), ("pinball", "pinballPresetCards"), ("pixel_quest", "questPresetCards")):
-            self.assertIn(component_id, script)
-            self.assertIn(target, script)
-        self.assertNotIn("components/aurora_curtains/looks", script)
-
+        gallery = {entry["component_id"]: entry for entry in self.client.get("/api/composer/gallery").get_json()["entries"]}
+        self.assertTrue(set(EXPECTED_IDS) <= set(gallery))
+        firefly = gallery["firefly_synchrony"]
+        self.assertTrue({"seed", "coupling_radius"} <= set(firefly["parameter_schema"]))
+        self.assertEqual(firefly["preset_count"], len(EXPECTED_IDS["firefly_synchrony"]))
 
 if __name__ == "__main__":
     unittest.main()

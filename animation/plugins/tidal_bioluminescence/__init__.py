@@ -4,6 +4,8 @@ from animation.libraries.procedural_atmospheres import ProceduralAtmosphereBase
 
 
 class TidalBioluminescenceAnimation(ProceduralAtmosphereBase):
+    PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+
     ANIMATION_NAME = "Tidal Bioluminescence"
     ANIMATION_DESCRIPTION = "Slow swells disturb sparse plankton into curling cyan wakes"
     ANIMATION_AUTHOR = "LED Grid Team"

@@ -11,6 +11,8 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class LivingEcosystemAnimation(CadencedSculpture):
+    PREFERRED_PARAMETERS = ('density', 'migration', 'predator_pressure', 'canopy_density', 'night_life')
+
     ANIMATION_NAME = "Living Ecosystem"
     ANIMATION_DESCRIPTION = "Migrating herds cross a growing wetland beneath a living canopy"
     ANIMATION_AUTHOR = "LED Grid Team"
@@ -111,7 +113,8 @@ class LivingEcosystemAnimation(CadencedSculpture):
 
     def reset_simulation(self): super().reset_simulation(); self._init_world()
 
-    def get_parameter_schema(self):
+    @classmethod
+    def get_parameter_schema(cls):
         schema = super().get_parameter_schema(); schema.update({
             "migration": {"type":"float", "min":0., "max":1., "default":.55, "description":"How decisively herds cross the habitat"},
             "predator_pressure": {"type":"float", "min":0., "max":1., "default":.38, "description":"Visible hunter pressure around herds"},

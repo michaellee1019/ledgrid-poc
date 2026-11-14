@@ -9,6 +9,8 @@ from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
 
 class NightTrainWindowsAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('travel_speed', 'window_glow', 'star_density')
+
     ANIMATION_NAME, ANIMATION_DESCRIPTION, ANIMATION_AUTHOR, ANIMATION_VERSION = "Night Train Windows", "Moonlit terrain and warm towns slip past the carriage", "LED Grid Team", "2.0"
     COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "night_train_windows",1,"python","animation"
     FRAME_FORMAT,TIMING_POLICY,PALETTE_POLICY="rgb_uint8_strip_major","scaled_context","semantic"
@@ -33,7 +35,8 @@ class NightTrainWindowsAnimation(AnimationBase):
             out[name]=float(v)
         if isinstance(out["seed"],bool) or not isinstance(out["seed"],int) or not 0<=out["seed"]<=999999:raise ValueError("seed must be an integer from 0 to 999999")
         return out
-    def get_parameter_schema(self):return {"route":{"type":"str","options":list(self.ROUTES),"default":"sleeper","description":"Night route narrative"},"travel_speed":{"type":"float","min":.25,"max":3,"default":1,"description":"Parallax travel pace"},"window_glow":{"type":"float","min":.1,"max":1,"default":.65,"description":"Warm carriage-window glow"},"star_density":{"type":"float","min":.05,"max":1,"default":.35,"description":"Visible star count"},"seed":{"type":"int","min":0,"max":999999,"default":1984,"description":"Repeatable landscape"}}
+    @classmethod
+    def get_parameter_schema(cls):return {"route":{"type":"str","options":list(cls.ROUTES),"default":"sleeper","description":"Night route narrative"},"travel_speed":{"type":"float","min":.25,"max":3,"default":1,"description":"Parallax travel pace"},"window_glow":{"type":"float","min":.1,"max":1,"default":.65,"description":"Warm carriage-window glow"},"star_density":{"type":"float","min":.05,"max":1,"default":.35,"description":"Visible star count"},"seed":{"type":"int","min":0,"max":999999,"default":1984,"description":"Repeatable landscape"}}
     def update_parameters(self,new_params):self.params=self._normalized_parameters({**self.params,**dict(new_params)});self._key=None
     def on_presentation_context_changed(self,old,new):
         del old

@@ -36,7 +36,7 @@
   context.append(titleAndState, originalSave);
   const navigation = document.createElement('div'); navigation.className = 'editor-group-navigation';
   const jump = document.createElement('select'); jump.id = 'editorControlGroup'; jump.setAttribute('aria-label', 'Jump to controls');
-  [['look', 'Basics'], ['animation', 'Animation'], ['plants', 'Plants'], ['widgets', 'Clock & message'], ['background', 'Background']].forEach(([id, name]) => jump.append(new Option(name, id)));
+  [['look', 'Basics'], ['animation', 'Animation'], ['plants', 'Plants'], ['widgets', 'Widgets'], ['background', 'Background']].forEach(([id, name]) => jump.append(new Option(name, id)));
   const inspect = button('Scene details'); inspect.setAttribute('aria-haspopup', 'dialog'); inspect.setAttribute('aria-controls', details.id);
   navigation.append(jump, inspect); save.replaceChildren(context, navigation, feedbackNode);
   save.classList.add('compact-editor-context');
@@ -72,7 +72,7 @@
       return [...new Set([...Object.keys(current), ...Object.keys(baseline)])].flatMap((key) => changedRows(current[key], baseline[key], [...path, key]));
     }
     if (path[0] === 'widgets' && Array.isArray(current) && Array.isArray(baseline)) {
-      return [{label: 'Clock & message', current: widgetSummary(current), baseline: widgetSummary(baseline)}];
+      return [{label: 'Widgets', current: widgetSummary(current), baseline: widgetSummary(baseline)}];
     }
     const key = path.join('.');
     const labels = {'look.presentation_brightness': 'Scene brightness', 'look.pace': 'Scene speed', 'look.palette_id': 'Palette', 'plants.effects.active': 'Plant lighting', 'plants.effects.strengths.illuminate': 'Illuminate strength', 'plants.effects.strengths.shadow': 'Shadow strength', 'plants.effects.strengths.hue_shift': 'Hue shift strength', 'animation.component_id': 'Animation'};
@@ -83,8 +83,13 @@
   function widgetSummary(widgets) {
     if (!widgets.length) return 'None';
     return widgets.map((widget) => {
-      const clock = widget.component?.component_id === 'clock_overlay';
-      return `${clock ? 'Clock' : 'Message'} ${widget.visible === false ? 'hidden' : 'shown'}, across ${widget.placement?.strip_translation ?? 0}, down ${widget.placement?.led_translation ?? 0}${Object.entries(widget.component?.parameters || {}).map(([key, value]) => `, ${({format_24h: '24-hour time', show_seconds: 'Seconds', clock_offset_minutes: 'Time offset (minutes)'})[key] || words(key)} ${valueText(value)}`).join('')}`;
+      const ref = widget.component;
+      const name = window.ComposerEditorContext.componentName(ref) || widget.id;
+      const position = widget.placement?.mode === 'auto' ? 'automatically placed'
+        : `across ${widget.placement?.strip_translation ?? 0}, down ${widget.placement?.led_translation ?? 0}`;
+      const parameters = Object.entries(ref?.parameters || {}).map(([key, value]) =>
+        `${window.ComposerEditorContext.parameterLabel(ref, key)} ${valueText(value)}`);
+      return [`${name} ${widget.visible === false ? 'hidden' : 'shown'}`, position, ...parameters].join(', ');
     }).join('; ');
   }
   const valueText = (value) => value == null ? 'None' : typeof value === 'boolean' ? (value ? 'On' : 'Off') : typeof value === 'object' ? JSON.stringify(value) : String(value);

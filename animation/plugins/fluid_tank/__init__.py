@@ -13,6 +13,9 @@ from animation.core.presentation_contracts import ResolvedScene
 
 
 class FluidTankAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('flow_rate', 'current', 'bubble_lift', 'surface_energy')
+    POINT_ACTION_LABELS = {'primary': 'Splash tank'}
+
     ANIMATION_NAME = "Fluid Tank"; ANIMATION_DESCRIPTION = "A compact water-flow instrument with bubbles and energetic surface ripples"
     ANIMATION_AUTHOR = "LED Grid Team"; ANIMATION_VERSION = "2.0"
     COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "fluid_tank", 1, "python", "animation"
@@ -29,7 +32,8 @@ class FluidTankAnimation(AnimationBase):
         self._last_tick:int|None=None; self._last_render_key:tuple[Any,...]|None=None; self._presentation_context:ResolvedScene|None=None; self._rng=np.random.default_rng(self.params["seed"]); self._phase=0.; self._pulses:list[tuple[float,float]]=[]; self._manual_events=0; self._last_manual_tick=-9999
     @classmethod
     def component_descriptor(cls)->ComponentDescriptor:return cls.COMPONENT_DESCRIPTOR
-    def get_parameter_schema(self)->dict[str,dict[str,Any]]:
+    @classmethod
+    def get_parameter_schema(cls)->dict[str,dict[str,Any]]:
         return {"flow_rate":{"type":"float","min":.1,"max":2.,"default":.72,"description":"Fill and pour cadence"},"current":{"type":"float","min":0.,"max":1.,"default":.35,"description":"Sideways flow across the tank"},"bubble_lift":{"type":"float","min":0.,"max":1.,"default":.42,"description":"Column of rising bubbles"},"surface_energy":{"type":"float","min":0.,"max":1.,"default":.38,"description":"Ripple and foam response"},"seed":{"type":"int","min":0,"max":999999,"default":6211,"description":"Repeatable water rhythm"}}
     def update_parameters(self,new_params:Mapping[str,Any])->None:
         candidate=self._normalized_parameters({**self.params,**dict(new_params)}); reset=candidate["seed"]!=self.params["seed"]; self.params=candidate

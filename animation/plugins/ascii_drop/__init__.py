@@ -14,6 +14,8 @@ from animation.core.presentation_contracts import ResolvedScene
 
 
 class AsciiDropAnimation(AnimationBase):
+    PREFERRED_PARAMETERS = ('fall_speed', 'density')
+
     ANIMATION_NAME = "ASCII Drop"
     ANIMATION_DESCRIPTION = "Falling pixel glyphs with a tiny terminal story"
     ANIMATION_AUTHOR = "LED Grid Team"
@@ -55,8 +57,9 @@ class AsciiDropAnimation(AnimationBase):
         if isinstance(result["seed"], bool) or not isinstance(result["seed"], int) or not 0 <= result["seed"] <= 999999: raise ValueError("seed must be an integer from 0 to 999999")
         return result
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
-        return {"phrase": {"type": "str", "default": "HELLO", "description": "Tiny phrase repeated in the rain"}, "story": {"type": "str", "options": list(self.STORIES), "default": "terminal", "description": "Pixel-story color language"}, "fall_speed": {"type": "float", "min": 2, "max": 36, "default": 13, "description": "Glyph fall pace"}, "density": {"type": "float", "min": .08, "max": 1, "default": .45, "description": "How full the terminal rain feels"}, "seed": {"type": "int", "min": 0, "max": 999999, "default": 8088, "description": "Repeatable stream arrangement"}}
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
+        return {"phrase": {"type": "str", "default": "HELLO", "description": "Tiny phrase repeated in the rain"}, "story": {"type": "str", "options": list(cls.STORIES), "default": "terminal", "description": "Pixel-story color language"}, "fall_speed": {"type": "float", "min": 2, "max": 36, "default": 13, "description": "Glyph fall pace"}, "density": {"type": "float", "min": .08, "max": 1, "default": .45, "description": "How full the terminal rain feels"}, "seed": {"type": "int", "min": 0, "max": 999999, "default": 8088, "description": "Repeatable stream arrangement"}}
 
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
         self.params = self._normalized_parameters({**self.params, **dict(new_params)}); self._key = None

@@ -22,10 +22,6 @@
     ['widgets', document.querySelector('[aria-labelledby="widgets-title"]')],
     ['plants', document.querySelector('[aria-labelledby="plants-title"]')],
     ['look', document.querySelector('[aria-labelledby="look-title"]')],
-    ['snake', document.querySelector('[aria-labelledby="snake-title"]')],
-    ['canopy', document.querySelector('[aria-labelledby="canopy-title"]')],
-    ['reef', document.querySelector('[aria-labelledby="reef-title"]')],
-    ['arcade-trio', document.querySelector('[aria-labelledby="arcade-trio-title"]')],
     ['operations', document.querySelector('.operations-pane')],
   ].filter(([, panel]) => panel);
   const panelIds = new Set(panels.map(([id]) => id));

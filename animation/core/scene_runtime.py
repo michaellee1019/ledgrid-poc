@@ -7,7 +7,8 @@ premultiplied-RGBA foreground transport before final RGB output.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from collections.abc import Mapping
 import hashlib
 import math
@@ -17,7 +18,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 from animation.core.base import RenderedFrame
-from animation.core.component_catalog import AlphaBehavior, ComponentCatalog, ComponentDescriptor, PalettePolicy
+from animation.core.component_catalog import AlphaBehavior, ComponentCatalog, ComponentDescriptor, ComponentInput, PalettePolicy
 from animation.core.compositing import BaseFrame, HostSceneCompositor, OverlayFrame, PlacedOverlay
 from animation.core.presentation_contracts import NEUTRAL_PLANT_INPUTS, ResolvedScene
 from animation.core.plant_awareness import (
@@ -79,7 +80,6 @@ PlantInputResolver = Callable[[Mapping[str, Any], ComponentDescriptor], Mapping[
 PlantOptics = Callable[[np.ndarray, Mapping[str, Any]], np.ndarray]
 WidgetPlacementResolver = Callable[[Mapping[str, Any], int, int, int], tuple[int, int]]
 WidgetSafeGeometry = Callable[[Mapping[str, Any], int, int], np.ndarray]
-WallTimeConsumer = Callable[[Any], None]
 
 
 @dataclass
@@ -89,6 +89,7 @@ class _ComponentSlot:
     parameters: Mapping[str, Any]
     plane_revision: int = 0
     opaque_pixels: np.ndarray | None = None
+    descriptor: ComponentDescriptor = field(kw_only=True)
 
 
 class CanonicalSceneRuntime:
@@ -107,7 +108,6 @@ class CanonicalSceneRuntime:
         plant_optics: Optional[PlantOptics] = None,
         widget_placement_resolver: Optional[WidgetPlacementResolver] = None,
         widget_safe_geometry: Optional[WidgetSafeGeometry] = None,
-        wall_time_consumer: Optional[WallTimeConsumer] = None,
         master_brightness: float = 1.0,
     ) -> None:
         if not isinstance(catalog, ComponentCatalog):
@@ -116,7 +116,8 @@ class CanonicalSceneRuntime:
         self.catalog = catalog
         self.strip_count, self.leds_per_strip = self._controller_geometry(controller)
         self._compositor = HostSceneCompositor(self.strip_count, self.leds_per_strip)
-        self._background_renderer = background_renderer or self._black_background
+        self._background_renderer = background_renderer
+        self._background: _ComponentSlot | None = None
         self._animation_factory = animation_factory or self._default_component_factory
         self._widget_factory = widget_factory or self._default_component_factory
         self._plant_input_resolver = plant_input_resolver or self._neutral_plant_inputs
@@ -126,7 +127,6 @@ class CanonicalSceneRuntime:
         # placements use installation authority rather than scene data.
         self._widget_placement_resolver = widget_placement_resolver
         self._widget_safe_geometry = widget_safe_geometry or self._all_safe_widget_geometry
-        self._wall_time_consumer = wall_time_consumer
         self._master_brightness = self._factor(master_brightness, "master_brightness")
         self._animation: _ComponentSlot | None = None
         self._player_state = "ready"
@@ -191,10 +191,11 @@ class CanonicalSceneRuntime:
 
     activate_scene = activate
 
+    def input_capability(self) -> ComponentInput:
+        return self._animation.descriptor.input_capability if self._animation else ComponentInput()
+
     def game_player_state(self) -> str | None:
-        if self._animation is not None and hasattr(self._animation.instance, "handle_player_button"):
-            return self._player_state
-        return None
+        return self._player_state if self.input_capability().mode == "player" else None
 
     def dispatch_game_input(self, action: str) -> bool:
         state = self.game_player_state()
@@ -217,7 +218,13 @@ class CanonicalSceneRuntime:
             self._player_state = "ready"
             self._rebase_animation_phase = state == "paused"
             game.set_player_control(False)
-        elif state == "playing" and action not in ("pause", "disconnect"):
+        elif state == "playing":
+            release = action.startswith("release-")
+            button = action.removeprefix("release-")
+            binding = next((item for item in self.input_capability().actions.values()
+                            if not item.position and item.button == button), None)
+            if binding is None or (release and not binding.release):
+                return False
             game.handle_player_button(action)
         else:
             return False
@@ -234,8 +241,8 @@ class CanonicalSceneRuntime:
         if self._canonical is None or self._animation is None:
             raise CanonicalSceneRuntimeError("no canonical Scene v2 has been activated")
         animation = self._animation.instance
-        supported = getattr(animation, "INTERACTION_TYPES", frozenset())
-        if kind not in supported:
+        action = self.input_capability().actions.get(kind)
+        if action is None or not action.position:
             raise CanonicalSceneRuntimeError(f"interaction {kind!r} is not supported")
         values = (x, y, strength)
         if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) for value in values):
@@ -245,10 +252,7 @@ class CanonicalSceneRuntime:
             raise CanonicalSceneRuntimeError("interaction coordinates are outside the animation grid")
         if not 0.0 < strength_value <= 1.0:
             raise CanonicalSceneRuntimeError("interaction strength must be from 0 (exclusive) to 1")
-        handler = getattr(animation, "handle_interaction", None)
-        if not callable(handler):
-            raise CanonicalSceneRuntimeError("animation does not implement interaction handling")
-        return bool(handler(kind, x_value, y_value, strength_value))
+        return bool(animation.handle_interaction(kind, x_value, y_value, strength_value))
 
     def render(self, monotonic_elapsed: float) -> RuntimeFrame:
         """Render an already-active scene at an elapsed monotonic time.
@@ -270,22 +274,28 @@ class CanonicalSceneRuntime:
             raise CanonicalSceneRuntimeError("no canonical Scene v2 has been activated")
         if canonical.identity != presentation.canonical.identity:
             raise CanonicalSceneRuntimeError("presentation context does not match the active canonical Scene v2")
-        if self._wall_time_consumer is not None:
-            self._wall_time_consumer(presentation.wall_time)
+        wall_time = presentation.wall_time
+        if wall_time is not None and (not isinstance(wall_time, datetime) or wall_time.utcoffset() is None):
+            raise CanonicalSceneRuntimeError("Scene wall_time must be a timezone-aware datetime")
         elapsed = presentation.monotonic_elapsed
         if self._last_elapsed is not None and elapsed < self._last_elapsed:
             self._phase_offset = 0.0
         self._last_elapsed = elapsed
         scene = canonical.scene
         bg_context = self._context(canonical, self._descriptor(scene["background"]), scene["background"]["parameters"], elapsed)
-        background = self._background_renderer(bg_context, self._frame_count)
+        if self._background_renderer is not None:
+            background = self._background_renderer(bg_context, self._frame_count)
+        elif self._background is not None:
+            background = self._background.instance.render_background(bg_context, self._frame_count)
+        else:
+            background = self._black_background(bg_context, self._frame_count)
         if not isinstance(background, BaseFrame):
             raise CanonicalSceneRuntimeError("host background renderer must return BaseFrame")
         self._require_geometry(background.pixels, 3, "host background")
 
         assert self._animation is not None
         animation_descriptor = self._descriptor(scene["animation"])
-        animation_context = self._context(canonical, animation_descriptor, self._animation.parameters, elapsed)
+        animation_context = self._context(canonical, animation_descriptor, self._animation.parameters, elapsed, wall_time)
         # Only the game clock stops. Widgets and the background keep their own
         # clocks, and the paused board can still repaint for Look changes.
         hold_phase = self._player_state == "paused" or self._rebase_animation_phase
@@ -304,7 +314,7 @@ class CanonicalSceneRuntime:
             if not widget["visible"]:
                 continue
             descriptor, slot = self._descriptor(widget["component"]), self._widgets[widget["id"]]
-            context = self._context(canonical, descriptor, slot.parameters, elapsed)
+            context = self._context(canonical, descriptor, slot.parameters, elapsed, wall_time)
             plane = self._render_plane(slot, descriptor, context)
             placement = self._placement(widget, index, plane, scene["plants"], reserved_widgets)
             placements[widget["id"]] = placement
@@ -336,6 +346,12 @@ class CanonicalSceneRuntime:
                             widget_placements=MappingProxyType(placements))
 
     def _sync_slots(self, scene: Mapping[str, Any], *, live_tune: bool = False) -> None:
+        background = self._descriptor(scene["background"])
+        background_slot = None
+        if self._background_renderer is None and background.factory is not None:
+            background_slot = self._candidate_slot(
+                self._background, background, scene["background"]["parameters"], self._default_component_factory,
+            )
         component = scene["animation"]
         descriptor = self._descriptor(component)
         widgets: dict[str, _ComponentSlot] = {}
@@ -359,6 +375,7 @@ class CanonicalSceneRuntime:
                 self._animation_phase_offset = 0.0
                 self._rebase_animation_phase = False
         self._animation = animation
+        self._background = background_slot
         self._widgets = widgets
 
     def _candidate_slot(self, current: _ComponentSlot | None, descriptor: ComponentDescriptor,
@@ -370,15 +387,18 @@ class CanonicalSceneRuntime:
             if current.parameters == frozen:
                 return current
             if live_tune and current.parameters.keys() == frozen.keys():
-                supported = getattr(current.instance, "LIVE_TUNABLE_PARAMETERS", frozenset())
+                supported = descriptor.live_parameters if descriptor.factory is not None else getattr(
+                    current.instance, "LIVE_TUNABLE_PARAMETERS", frozenset(),
+                )
                 changes = {name: value for name, value in frozen.items() if current.parameters[name] != value}
                 if changes.keys() <= supported:
                     current.instance.update_parameters(changes)
                     current.parameters = frozen
                     return current
-        return _ComponentSlot(key, factory(descriptor, self.controller, frozen), frozen)
+        return _ComponentSlot(key, factory(descriptor, self.controller, frozen), frozen, descriptor=descriptor)
 
-    def _context(self, canonical: CanonicalScene, descriptor: ComponentDescriptor, parameters: Mapping[str, Any], elapsed: float) -> ResolvedScene:
+    def _context(self, canonical: CanonicalScene, descriptor: ComponentDescriptor, parameters: Mapping[str, Any], elapsed: float,
+                 wall_time: datetime | None = None) -> ResolvedScene:
         input_names = (
             descriptor.optional_simulation_inputs + descriptor.required_simulation_inputs
         )
@@ -435,7 +455,7 @@ class CanonicalSceneRuntime:
             _freeze_mapping(canonical.scene), canonical.canonical_bytes,
             canonical.identity.digest, descriptor, parameters, palette,
             max(0.0, elapsed * float(canonical.scene["look"]["pace"]) + self._phase_offset),
-            _freeze_mapping(plant_inputs), geometry_contact,
+            _freeze_mapping(plant_inputs), geometry_contact, wall_time=wall_time,
         )
 
     def _render_plane(self, slot: _ComponentSlot, descriptor: ComponentDescriptor, context: ResolvedScene) -> OverlayFrame:
@@ -494,31 +514,9 @@ class CanonicalSceneRuntime:
 
     @staticmethod
     def _default_component_factory(descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
-        if descriptor.component_id == "aurora_curtains":
-            from animation.plugins.aurora_curtains import AuroraCurtainsAnimation
-            return AuroraCurtainsAnimation(controller, parameters)
-        if descriptor.component_id == "conway_life":
-            from animation.plugins.conway_life import ConwayLifeAnimation
-            return ConwayLifeAnimation(controller, parameters)
-        if descriptor.component_id == "tetris":
-            from animation.plugins.tetris import TetrisAnimation
-            return TetrisAnimation(controller, parameters)
-        if descriptor.component_id == "ascii_drop":
-            from animation.plugins.ascii_drop import AsciiDropAnimation
-            return AsciiDropAnimation(controller, parameters)
-        if descriptor.component_id == "emoji":
-            from animation.plugins.emoji import EmojiAnimation
-            return EmojiAnimation(controller, parameters)
-        if descriptor.component_id == "christmas_tree":
-            from animation.plugins.christmas_tree import ChristmasTreeAnimation
-            return ChristmasTreeAnimation(controller, parameters)
-        if descriptor.component_id == "night_train_windows":
-            from animation.plugins.night_train_windows import NightTrainWindowsAnimation
-            return NightTrainWindowsAnimation(controller, parameters)
-        if descriptor.component_id == "clock_overlay":
-            from animation.plugins.clock_overlay import ClockOverlayAnimation
-            return ClockOverlayAnimation(controller, parameters)
-        raise CanonicalSceneRuntimeError(f"no runtime factory is registered for {descriptor.component_id}")
+        if descriptor.factory is None:
+            raise CanonicalSceneRuntimeError(f"no runtime factory is registered for {descriptor.component_id}")
+        return descriptor.factory(controller, parameters)
 
     def _black_background(self, context: ResolvedScene, frame_count: int) -> BaseFrame:
         del context, frame_count

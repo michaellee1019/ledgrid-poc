@@ -224,7 +224,11 @@ def test_menu_handoff_preserves_fresh_presses_and_clears_repeats(controller):
         if action == "pause":
             state[0] = "paused"
 
-    manager = SimpleNamespace(nimbus_game=lambda: (game, state[0]), is_running=True, current_animation_name="tetris",
+    from animation.core.composer_catalog import current_component_catalog
+
+    capability = current_component_catalog().require(provider="python", component_id="tetris", version=1).input_capability
+    game = SimpleNamespace(input_capability=lambda: capability)
+    manager = SimpleNamespace(nimbus_game=lambda: (game, state[0]), nimbus_point_input=lambda: None, is_running=True,
                               output_brightness=80, dispatch_game_input=dispatch)
     def poll():
         poll_wall_composer(manager, reader, menu)

@@ -30,6 +30,13 @@ def _dirty_ranges(previous: np.ndarray, current: np.ndarray) -> tuple[tuple[int,
 
 class EmojiArrangerAnimation(AnimationBase):
     """A deterministic, transparent, semantic-palette Emoji Message plane."""
+    COMPOSER_NAME = "Message"
+    PARAMETER_CONTROLS = {
+        'scroll_speed': {'unit': 'px/s'},
+        'pulse_speed': {'unit': 'Hz'},
+        'text': {'control': 'emoji_text', 'max_length': 64},
+    }
+
 
     ANIMATION_NAME = "Emoji Message"
     ANIMATION_DESCRIPTION = "A compact scrolling emoji message composed over the current scene"
@@ -80,7 +87,8 @@ class EmojiArrangerAnimation(AnimationBase):
     def component_descriptor(cls) -> ComponentDescriptor:
         return cls.COMPONENT_DESCRIPTOR
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "text": {"type": "str", "default": "HI🔥", "description": "Letters, numbers, spaces, and supported emoji"},
             "x_offset": {"type": "int", "min": -137, "max": 137, "default": 8, "description": "Horizontal message position"},

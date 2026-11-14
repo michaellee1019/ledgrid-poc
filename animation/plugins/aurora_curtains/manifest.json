@@ -1,4 +1,5 @@
 {
+  "composer": true,
   "plugin_id": "aurora_curtains",
   "class": "AuroraCurtainsAnimation",
   "icon": "🌌",

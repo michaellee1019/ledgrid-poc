@@ -22,6 +22,12 @@ from animation.core.presentation_contracts import ResolvedScene, TimingAdapter
 
 class ColumnSequenceAnimation(AnimationBase):
     """FOR TESTING DO NOT REMOVE. Sequential one-column mapping flash."""
+    PREFERRED_PARAMETERS = ('hold_seconds', 'pause_seconds', 'white_level')
+    PARAMETER_CONTROLS = {
+        'hold_seconds': {'unit': 's'},
+        'pause_seconds': {'unit': 's'},
+    }
+
 
     ANIMATION_NAME = "Column Sequence"
     ANIMATION_DESCRIPTION = (
@@ -72,7 +78,8 @@ class ColumnSequenceAnimation(AnimationBase):
             result[name] = float(value)
         return result
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "hold_seconds": {"type": "float", "min": 0.1, "max": 10.0, "default": 1.0, "description": "Seconds the current column stays white"},
             "pause_seconds": {"type": "float", "min": 0.0, "max": 10.0, "default": 1.0, "description": "Seconds of all-black between columns"},

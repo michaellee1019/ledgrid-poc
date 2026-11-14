@@ -19,6 +19,11 @@ class CyclicReefAnimation(AnimationBase):
     The simulation owns only species and channel state. Scene v2 owns palette,
     final brightness, plant optics, and the global pace multiplier.
     """
+    PREFERRED_PARAMETERS = ('species_count', 'takeover_threshold', 'mutation', 'grazers', 'boundary_glow')
+    PARAMETER_CONTROLS = {
+        'mutation': {'step': 0.001},
+    }
+
 
     ANIMATION_NAME = "Cyclic Reef"
     ANIMATION_DESCRIPTION = "A living coral instrument of competing species and grazing channels"
@@ -69,14 +74,15 @@ class CyclicReefAnimation(AnimationBase):
     def component_descriptor(cls) -> ComponentDescriptor:
         return cls.COMPONENT_DESCRIPTOR
 
-    def get_parameter_schema(self) -> dict[str, dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "species_count": {"type": "int", "min": 3, "max": 8, "default": 5, "description": "Number of competing coral species."},
             "takeover_threshold": {"type": "int", "min": 1, "max": 5, "default": 2, "description": "Neighbor pressure needed for the next species to take over."},
             "mutation": {"type": "float", "min": 0.0, "max": .02, "default": .002, "description": "Rare mutation that prevents a settled colony."},
-            "grazers": {"type": "int", "min": 0, "max": self.MAX_GRAZERS, "default": 8, "description": "Mobile grazers that cut temporary dark channels."},
+            "grazers": {"type": "int", "min": 0, "max": cls.MAX_GRAZERS, "default": 8, "description": "Mobile grazers that cut temporary dark channels."},
             "boundary_glow": {"type": "float", "min": 0.0, "max": 1.0, "default": .55, "description": "Luminous emphasis at species boundaries."},
-            "topology": {"type": "str", "options": list(self.TOPOLOGIES), "default": "wrap", "description": "Whether coral flows through the wall edges or meets a closed reef edge."},
+            "topology": {"type": "str", "options": list(cls.TOPOLOGIES), "default": "wrap", "description": "Whether coral flows through the wall edges or meets a closed reef edge."},
             "pace": {"type": "float", "min": .25, "max": 2.0, "default": 1.0, "description": "Local colony change cadence."},
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 13100, "description": "Repeatable colony starting arrangement."},
         }

@@ -1,4 +1,5 @@
 {
+  "composer": true,
   "plugin_id": "fish_tank",
   "class": "FishTankAnimation",
   "icon": "🐠",

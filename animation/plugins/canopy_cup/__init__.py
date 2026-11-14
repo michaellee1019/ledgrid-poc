@@ -118,6 +118,14 @@ class PowerOrb:
 
 class CanopyCupAnimation(AnimationBase):
     """A deterministic, opaque Scene v2 race through a magical plant tower."""
+    PREFERRED_PARAMETERS = ('course_difficulty', 'enemy_density', 'rivalry', 'powerup_rate')
+    PLAYER_BUTTONS = {
+        'left': ('Steer left', True, True),
+        'right': ('Steer right', True, True),
+        'a': ('Jump', False),
+        'b': ('Power-up', False),
+    }
+
 
     ANIMATION_NAME = "Canopy Cup: Impossible Ascent"
     ANIMATION_DESCRIPTION = (
@@ -275,11 +283,12 @@ class CanopyCupAnimation(AnimationBase):
     def component_descriptor(cls) -> ComponentDescriptor:
         return cls.COMPONENT_DESCRIPTOR
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         return {
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 4242,
                      "description": "Repeatable world seed"},
-            "world_theme": {"type": "str", "default": "tournament", "options": list(self.THEMES),
+            "world_theme": {"type": "str", "default": "tournament", "options": list(cls.THEMES),
                             "description": "Course world; tournament rotates through every realm"},
             "qualifying_heats": {"type": "int", "min": 2, "max": 7, "default": 7,
                                  "description": "Race length before the championship"},
