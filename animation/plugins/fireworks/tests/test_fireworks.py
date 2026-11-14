@@ -35,6 +35,18 @@ class FireworksAnimationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "non-local parameters"):
                 FireworksAnimation(self.controller, {alias: 1})
 
+    def test_manual_only_cadence_starts_empty_even_after_a_seed_reset(self) -> None:
+        for reseed in (False, True):
+            with self.subTest(reseed=reseed):
+                animation = FireworksAnimation(self.controller, {"launch_cadence": 0})
+                if reseed:
+                    animation.update_parameters({"seed": 44})
+                animation.generate_frame(0, 0)
+                animation.update_parameters({"launch_cadence": .1})
+                animation.generate_frame(1 / 24, 1)
+                self.assertEqual(animation.get_runtime_stats()["active_rockets"], 0)
+                self.assertAlmostEqual(animation._launch_phase, .1 / 24)
+
     def test_rainbow_palette_keeps_each_shell_color_without_changing_the_show(self) -> None:
         animation = FireworksAnimation(
             self.controller,

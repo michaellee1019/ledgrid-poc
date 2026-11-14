@@ -5,6 +5,7 @@ from __future__ import annotations
 import colorsys
 import math
 from dataclasses import dataclass
+from threading import Lock
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -13,6 +14,7 @@ import numpy as np
 from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import OverlayFrame, ResolvedScene
+from animation.libraries.point_pulse import AimedPoint
 from animation.libraries.scene_palettes import HOLIDAY_TRIPLES, nearest_stop_color
 
 
@@ -55,6 +57,13 @@ class _Spark:
 class FireworksAnimation(AnimationBase):
     """A bounded show that takes the current settings at each launch."""
     PREFERRED_PARAMETERS = ('burst_size', 'launch_cadence', 'shell_population', 'gravity')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Launch a shell"}
+    POINT_ACTION_AXES = {"primary": ("x",)}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    LIVE_TUNABLE_PARAMETERS = frozenset({
+        "launch_cadence", "shell_population", "burst_size", "burst_style", "gravity", "trails", "crackle", "twinkle",
+    })
     PARAMETER_CONTROLS = {
         'launch_cadence': {'unit': '1/s'},
     }
@@ -69,6 +78,7 @@ class FireworksAnimation(AnimationBase):
     CAPABILITIES = frozenset({"semantic_palette_roles", "scaled_context", "effect_intent"})
     PLANT_MODIFIER_SUPPORT = frozenset()
     SIM_HZ, MAX_CATCH_UP_STEPS, MAX_SPARKS = 24.0, 16, 720
+    MAX_ROCKETS = 5
     STYLES = ("mixed", "ring", "willow", "palm", "burst")
     DEFAULTS = MappingProxyType({"launch_cadence": 1.15, "shell_population": 54, "burst_size": .29, "burst_style": "mixed", "gravity": .38, "trails": .72, "crackle": .24, "twinkle": .35, "seed": 1776})
     LIVE_TUNABLE_PARAMETERS = frozenset(DEFAULTS) - {"seed"}
@@ -101,7 +111,11 @@ class FireworksAnimation(AnimationBase):
         self._last_tick: int | None = None; self._last_render_key: tuple[Any, ...] | None = None
         self._rng = np.random.default_rng(self.params["seed"])
         self._rockets: list[_Rocket] = []; self._sparks: list[_Spark] = []
-        self._launch_phase, self._burst_count = 1.0, 0
+        self._launch_phase = float(self.params["launch_cadence"] > 0)
+        self._burst_count = 0
+        self._launch_lock = Lock()
+        self._pending_launch: tuple[AimedPoint, _ShellSettings] | None = None
+        self._manual_launch_count = 0
 
     @classmethod
     def component_descriptor(cls) -> ComponentDescriptor:
@@ -110,7 +124,7 @@ class FireworksAnimation(AnimationBase):
     @classmethod
     def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
-            "launch_cadence": {"type": "float", "min": .1, "max": 4., "default": 1.15, "description": "How often a new shell launches"},
+            "launch_cadence": {"type": "float", "min": 0., "max": 4., "default": 1.15, "description": "Automatic shells per Scene second, zero is manual only"},
             "shell_population": {"type": "int", "min": 12, "max": 120, "default": 54, "description": "Sparks in each aerial shell"},
             "burst_size": {"type": "float", "min": .08, "max": .65, "default": .29, "description": "Shell radius and launch reach"},
             "burst_style": {"type": "str", "options": list(cls.STYLES), "default": "mixed", "description": "Shape of the next shell"},
@@ -132,6 +146,8 @@ class FireworksAnimation(AnimationBase):
         if candidate == self.params:
             return
         reseed = candidate["seed"] != self.params["seed"]
+        if candidate["launch_cadence"] == 0:
+            self._launch_phase = 0.0
         self._shell_settings = self._settings(candidate)
         self.params = candidate
         if reseed:
@@ -158,6 +174,16 @@ class FireworksAnimation(AnimationBase):
     def render_resolved_scene(self, context: ResolvedScene) -> OverlayFrame:
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
+
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        if point is None:
+            return False
+        with self._launch_lock:
+            if self._pending_launch is not None or len(self._rockets) >= self.MAX_ROCKETS:
+                return False
+            self._pending_launch = (point, self._shell_settings)
+        return True
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> OverlayFrame:
         del frame_count
@@ -186,20 +212,41 @@ class FireworksAnimation(AnimationBase):
     def semantic_snapshot(self) -> Mapping[str, Any]:
         return MappingProxyType({"seed": self.params["seed"], "tick": self._last_tick, "rockets": tuple((round(r.x, 4), round(r.y, 4), round(r.target, 4)) for r in self._rockets), "sparks": len(self._sparks), "bursts": self._burst_count})
 
+    def get_runtime_stats(self) -> dict[str, Any]:
+        return {"active_rockets": len(self._rockets), "active_sparks": len(self._sparks),
+                "manual_launches": self._manual_launch_count}
+
     def cadence_snapshot(self) -> Mapping[str, Any]:
         return MappingProxyType({"simulation_hz": self.SIM_HZ, "tick": self._last_tick, "bursts": self._burst_count})
 
     def _reset_show(self) -> None:
         self._rng = np.random.default_rng(self.params["seed"]); self._rockets.clear(); self._sparks.clear(); self._trail.fill(0.)
         self._long_trail.fill(0.)
-        self._launch_phase, self._burst_count, self._last_tick = 1., 0, None
+        self._launch_phase = float(self.params["launch_cadence"] > 0)
+        self._burst_count, self._last_tick = 0, None
+        with self._launch_lock:
+            self._pending_launch = None
+        self._manual_launch_count = 0
 
     def _step(self, dt: float) -> None:
         self._trail *= 0.816 ** (60.0 * dt)
         self._long_trail *= 0.96 ** (60.0 * dt)
-        self._launch_phase += dt * float(self.params["launch_cadence"])
+        cadence = float(self.params["launch_cadence"])
+        if cadence > 0:
+            self._launch_phase += dt * cadence
+        else:
+            self._launch_phase = 0.0
+        if self._pending_launch is not None:
+            with self._launch_lock:
+                pending, self._pending_launch = self._pending_launch, None
+                if len(self._rockets) < self.MAX_ROCKETS:
+                    point, manual = pending
+                    x = point.x / max(1, self.width - 1)
+                    self._rockets.append(_Rocket(x, 1.04, 0.0, -(0.72 + manual.burst_size * .38),
+                                                 .36, float(self._rng.random()), manual))
+                    self._manual_launch_count += 1
         settings = self._shell_settings
-        while self._launch_phase >= 1. and len(self._rockets) < 5:
+        while self._launch_phase >= 1. and len(self._rockets) < self.MAX_ROCKETS:
             self._launch_phase -= 1.
             launch_speed = 0.72 + settings.burst_size * 0.38
             self._rockets.append(_Rocket(
@@ -207,6 +254,9 @@ class FireworksAnimation(AnimationBase):
                 float(self._rng.uniform(-.025, .025)), -launch_speed,
                 float(self._rng.uniform(.18, .54)), float(self._rng.random()), settings,
             ))
+        if self._manual_launch_count and self._launch_phase >= 1.0:
+            # A full manual volley must not bank several automatic shells.
+            self._launch_phase = 1.0
         rising: list[_Rocket] = []
         for rocket in self._rockets:
             settings = rocket.settings
@@ -345,7 +395,7 @@ class FireworksAnimation(AnimationBase):
         if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 999999: raise ValueError("seed must be an integer from 0 to 999999")
         if isinstance(population, bool) or not isinstance(population, int) or not 12 <= population <= 120: raise ValueError("shell_population must be an integer from 12 to 120")
         if result["burst_style"] not in cls.STYLES: raise ValueError(f"burst_style must be one of {list(cls.STYLES)!r}")
-        for name, minimum, maximum in (("launch_cadence", .1, 4.), ("burst_size", .08, .65), ("gravity", 0., 1.5), ("trails", .1, 1.), ("crackle", 0., 1.), ("twinkle", 0., 1.)):
+        for name, minimum, maximum in (("launch_cadence", 0., 4.), ("burst_size", .08, .65), ("gravity", 0., 1.5), ("trails", .1, 1.), ("crackle", 0., 1.), ("twinkle", 0., 1.)):
             value = result[name]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not minimum <= float(value) <= maximum: raise ValueError(f"{name} must be a finite number from {minimum} to {maximum}")
             result[name] = float(value)

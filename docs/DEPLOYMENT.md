@@ -199,6 +199,10 @@ Restart, Play/pause, Step, and Next. Column Sequence uses Previous, Hold/free,
 and Next. These actions apply to the current session and leave saved settings
 intact. The HUD shows the selected action before you press A.
 
+In Fireworks, aim the launch column and press A to send one shell. Set Launch
+cadence to zero for a manual show. Tune's Burst style and shell settings apply
+to the next launch.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu

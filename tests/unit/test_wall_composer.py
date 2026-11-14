@@ -1264,6 +1264,50 @@ def test_media_accent_matches_direct_input_and_zero_endpoint(instrument, compone
         np.testing.assert_array_equal(zero, second)
 
 
+def test_fireworks_manual_launch_is_aimed_bounded_and_keeps_shell_settings(instrument):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 1
+    scene["animation"].update(component_id="fireworks", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    cadence = next(row for row in menu._animation_rows() if row.name == "launch cadence")
+    cadence.adjust(-1, steps=1000)
+    assert manager._canonical_receiver_runtime is runtime
+    assert manager.get_scene_state()["animation"]["parameters"]["launch_cadence"] == 0
+    canonical = manager._canonical_receiver_scene
+    expected = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    actual = runtime._runtime._animation.instance
+    for elapsed in (0, .25, .5):
+        frame = ScenePresentationContext(canonical, elapsed)
+        assert not runtime.render(frame).foreground.pixels.any()
+        expected.render(frame)
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, StickMotion(0, 9, 3), StickMotion(1, 9, 3), ChordPress("a", 3))
+    assert menu.card().marker == (25, 69)
+    assert expected.dispatch_animation_interaction(canonical, "primary", 25, 69)
+    assert not expected.dispatch_animation_interaction(canonical, "primary", 25, 69)
+    frame = ScenePresentationContext(canonical, .55)
+    np.testing.assert_array_equal(runtime.render(frame).pixels, expected.render(frame).pixels)
+    assert len(actual._rockets) == 1 and actual._manual_launch_count == 1
+    rocket = actual._rockets[0]
+    assert rocket.x == 25 / 32 and rocket.settings.shell_population == 54
+    scene = manager.get_scene_state()
+    scene["animation"]["parameters"].update(shell_population=120, burst_style="palm", crackle=1)
+    manager._scene_v2_monotonic_elapsed = lambda: .55
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    assert actual._rockets[0] is rocket and rocket.settings.shell_population == 54
+    for tick in range(14, 150):
+        inputs(manager, gamepad, menu, ChordPress("a", 3))
+        rendered = runtime.render(ScenePresentationContext(manager._canonical_receiver_scene, tick / 24))
+        assert len(actual._rockets) <= 5 and len(actual._sparks) <= 720
+        assert np.all(rendered.foreground.pixels[:, :3] <= rendered.foreground.pixels[:, 3:4])
+    assert actual._launch_phase == 0
+    assert 5 < actual._manual_launch_count < 130
+
+
 def test_reaction_diffusion_manual_reseed_and_initial_density(instrument):
     manager, _owner, _runner, _gamepad, menu = instrument
     scene = starter()
