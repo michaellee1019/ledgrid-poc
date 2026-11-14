@@ -180,6 +180,12 @@ of day for three Scene seconds. Aim at the rightmost column and press A to
 return immediately to the selected clock or fixed hour. The clock offset
 appears in clock mode, and the day rate appears in fixed-hour mode.
 
+In Gradient, Rainbow, Wave, Sparkle, Quasicrystal Bloom, and Living Stained
+Glass, aim and press A to add a temporary color, phase, or light accent.
+Rainbow and Wave offer Still alongside Forward and Reverse. Set Sparkle
+Density to zero to keep only manually triggered clusters. Solid has a dark
+setting at Glow zero and uses Tune for its breathing rate.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu

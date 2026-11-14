@@ -4,11 +4,16 @@ from functools import lru_cache
 import numpy as np
 
 from animation.core.plant_awareness import INSTALLATION_GEOMETRY_CONTACT_INPUT
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class LivingStainedGlassAnimation(CadencedSculpture):
     PREFERRED_PARAMETERS = ('lead_width', 'light_direction', 'motion', 'density', 'background_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Sweep transmitted light"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    PARAMETER_CONTROLS = {"light_direction": {"step": .025, "coarse_step": .05}}
 
     ANIMATION_NAME="Living Stained Glass"
     ANIMATION_DESCRIPTION="Broad colored panes drift gently while their lead topology heals"
@@ -22,6 +27,11 @@ class LivingStainedGlassAnimation(CadencedSculpture):
         super().__init__(controller,config); self._init_panes()
         self._lead_cache = None
         self._geometry_identity = None
+        self._pulse = PointPulse(1.15)
+
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, *self._shape)
+        return point is not None and self._pulse.trigger(point)
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -125,7 +135,9 @@ class LivingStainedGlassAnimation(CadencedSculpture):
         return rgb * (1.0 - lead * 0.82) + self.palette()[2] * light
 
     def generate_frame(self,time_elapsed,frame_count):
-        tick,cached=self.begin_frame(time_elapsed)
+        point, progress = self._pulse.sample(self.source_tick(time_elapsed) / self.SOURCE_FPS)
+        key = (point, progress) if point is not None else ()
+        tick,cached=self.begin_frame(time_elapsed, extras=key)
         if cached:return cached
         t=tick/self.SOURCE_FPS*float(self.params["motion"])
         sx=self.seeds[:,0]+.035*np.sin(t*.08+self.seed_phase); sy=self.seeds[:,1]+.025*np.cos(t*.065+self.seed_phase*1.3)
@@ -133,7 +145,12 @@ class LivingStainedGlassAnimation(CadencedSculpture):
         nearest=np.argmin(d,axis=2); sorted_d=np.partition(d,1,axis=2)
         seam=np.clip((sorted_d[...,1]-sorted_d[...,0])*45/(.2+float(self.params["lead_width"])),0,1)
         cloud=.68+.18*np.sin(self._x*2+self._y*float(self.params["light_direction"])*2+t*.12)
+        if point is not None:
+            x = 2.0 * point.x / max(1, self._shape[0] - 1) - 1.0
+            y = 2.0 * point.y / max(1, self._shape[1] - 1) - 1.0
+            light = np.maximum(1.0 - np.hypot(self._x - x - .35 * progress, (self._y - y) * .6) / .6, 0.0)
+            cloud += light * .65 * point.strength * (1.0 - progress)
         pane=(.42+.46*((nearest*0.61803398875)%1))*cloud*seam
         rgb=self._apply_edge_leadwork(self.colorize(np.clip(pane,0,1),1-seam))
         self.pane_ids=nearest
-        return self.finish_frame(tick,rgb.astype(np.float32))
+        return self.finish_frame(tick,rgb.astype(np.float32), extras=key)

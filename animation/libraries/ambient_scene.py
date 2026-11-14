@@ -7,6 +7,7 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 from animation.libraries.scene_palettes import HOLIDAY_TRIPLES, hsv_to_rgb_field
 
 class AmbientSceneAnimation(AnimationBase):
@@ -27,6 +28,7 @@ class AmbientSceneAnimation(AnimationBase):
     SIMULATION_HZ = 24.0
     SPARKLE_BASELINE_HZ = 24.0
     MAX_CATCH_UP_TICKS = 10
+    POINT_PULSE_SECONDS = 0.0
     PALETTES = MappingProxyType({
         "neutral": ((4.,11.,19.),(32.,164.,148.),(186.,255.,220.)),
         "mist": ((3.,8.,22.),(61.,146.,220.),(236.,245.,255.)),
@@ -43,6 +45,7 @@ class AmbientSceneAnimation(AnimationBase):
         self._x = np.linspace(0.,1.,self.width,dtype=np.float32)[:,None]; self._y = np.linspace(0.,1.,self.height,dtype=np.float32)[None,:]
         seed=int(self.params.get("seed",6101)); self._rng=np.random.default_rng(seed); self._hue_rng=np.random.default_rng(seed+1)
         self._spark=np.zeros((self.width,self.height),dtype=np.float32); self._spark_hue=np.zeros((self.width,self.height),dtype=np.float32)
+        self._pulse = PointPulse(self.POINT_PULSE_SECONDS) if self.POINT_PULSE_SECONDS else None
     @classmethod
     def component_descriptor(cls):
         return ComponentDescriptor(component_id=cls.COMPONENT_ID,version=1,provider="python",role="animation",timing_policy="scaled_context",alpha_behavior="opaque",palette_policy="semantic",plant_capabilities=("effect_intent",),fidelity_exceptions=(),defaults=cls.DEFAULTS)
@@ -72,11 +75,23 @@ class AmbientSceneAnimation(AnimationBase):
         self._context=new
     def set_presentation_context(self, context): self.on_presentation_context_changed(self._context,context)
     def render_resolved_scene(self, context): self.set_presentation_context(context); return self.generate_frame(context.phase_time,self.frame_count)
+
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        if self._pulse is None:
+            return False
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        return point is not None and self._pulse.trigger(point)
+
     def generate_frame(self,time_elapsed,frame_count):
         del frame_count; context=self._context; p=self._normalized_parameters(context.parameters if context else self.params); palette_id=str(context.palette["palette_id"]) if context else "neutral"; t=max(0.,float(context.phase_time if context else time_elapsed)); self.params=p
         tick=int(t*self.SIMULATION_HZ); key=(tick,palette_id,tuple(p.items()))
+        point, progress = self._pulse.sample(tick / self.SIMULATION_HZ) if self._pulse is not None else (None, 0.0)
+        if point is not None:
+            key += (point, progress)
         if key==self._last_key: return RenderedFrame(self._pixels,changed=False,dirty_ranges=())
         field=self._field(t,p,tick)
+        if point is not None:
+            field = self.point_field(field, t, p, point, progress)
         if self.STYLE=="sparkle" and palette_id=="rainbow":
             gain=np.clip(self._spark*(.55+.45*float(p["twinkle"])),0.,1.)
             rgb=hsv_to_rgb_field(self._spark_hue,0.92,gain)
@@ -87,8 +102,21 @@ class AmbientSceneAnimation(AnimationBase):
         else:
             low,primary,accent=(np.asarray(item,dtype=np.float32) for item in self.PALETTES.get(palette_id,self.PALETTES["neutral"]))
             rgb=low+(primary-low)*field[...,None]+(accent-primary)*np.square(field[...,None])*.62
+        rgb = self.presentation_rgb(rgb, p)
+        if point is not None:
+            rgb = self.point_rgb(rgb, palette_id, point, progress)
         self._pixels[:]=np.clip(rgb,0,255).astype(np.uint8).reshape((-1,3)); self._last_key=key
         return RenderedFrame(self._pixels,changed=True)
+
+    def point_field(self, field, t, params, point, progress):
+        return field
+
+    def point_rgb(self, rgb, palette_id, point, progress):
+        return rgb
+
+    def presentation_rgb(self, rgb, params):
+        return rgb
+
     def _field(self,t,p,tick):
         if self.STYLE=="gradient":
             base=self._y if p["direction"]=="vertical" else self._x if p["direction"]=="horizontal" else (self._x+self._y)*.5; return np.broadcast_to(np.clip(base+(.5-.5*np.cos(t*p["drift"]*math.tau))*p["motion"],0.,1.),(self.width,self.height))

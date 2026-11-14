@@ -126,18 +126,18 @@ class CadencedSculpture(AnimationBase, ABC):
     def reset_simulation(self): self._last_sim_tick = -1
     def source_tick(self, time_elapsed: float) -> int: return max(0, int(max(0., float(time_elapsed)) * self.SOURCE_FPS + 1.e-9))
 
-    def begin_frame(self, time_elapsed: float):
-        tick = self.source_tick(time_elapsed); key = (tick, self._revision, self._palette_id())
+    def begin_frame(self, time_elapsed: float, *, extras=()):
+        tick = self.source_tick(time_elapsed); key = (tick, self._revision, self._palette_id(), *extras)
         if key == self._render_key and self._cached_pixels is not None: return tick, self.rendered_frame(self._cached_pixels, changed=False)
         return tick, None
 
-    def finish_frame(self, tick: int, logical_rgb: np.ndarray):
+    def finish_frame(self, tick: int, logical_rgb: np.ndarray, *, extras=()):
         frame = self.next_frame_buffer(clear=False); level = float(self.params["background_level"])
         if level:
             palette = CadencedSculpture.palette(self); logical_rgb += (palette[1] * .10 + palette[2] * .04) * level
         np.clip(logical_rgb, 0., 255., out=logical_rgb)
         np.copyto(frame, np.ascontiguousarray(logical_rgb).reshape((-1, 3)), casting="unsafe")
-        self._cached_pixels = frame; self._render_key = (tick, self._revision, self._palette_id())
+        self._cached_pixels = frame; self._render_key = (tick, self._revision, self._palette_id(), *extras)
         return self.rendered_frame(frame)
 
     def advance_bounded(self, tick: int, callback, max_steps: int = 12):

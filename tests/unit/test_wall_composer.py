@@ -966,6 +966,82 @@ def test_circadian_returns_to_clock_on_the_same_frozen_frame(instrument):
     assert manager.get_scene_state() == canonical.scene
 
 
+@pytest.mark.parametrize(("component_id", "aim"), [
+    ("gradient", (16, 77)), ("rainbow", (16, 69)), ("wave", (16, 77)),
+    ("sparkle", (16, 77)), ("quasicrystal_bloom", (16, 77)), ("living_stained_glass", (16, 77)),
+])
+def test_color_accent_matches_direct_input_and_leaves_ambient_state(instrument, component_id, aim):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 1
+    scene["animation"].update(component_id=component_id, parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime, canonical = manager._canonical_receiver_runtime, manager._canonical_receiver_scene
+    wall_time = datetime.fromisoformat("2026-11-13T02:00:00-05:00")
+    direct = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    untouched = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    for index in range(31):
+        frame = ScenePresentationContext(canonical, index / 150, wall_time)
+        runtime.render(frame)
+        direct.render(frame)
+        untouched.render(frame)
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, StickMotion(1, 2, 3))
+    assert menu.card().marker == aim
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert direct.dispatch_animation_interaction(canonical, "primary", *aim)
+    assert not direct.dispatch_animation_interaction(canonical, "primary", *aim)
+    had_accent = False
+    for index in range(30, 245):
+        frame = ScenePresentationContext(canonical, index / 150, wall_time)
+        pixels = runtime.render(frame).pixels.copy()
+        np.testing.assert_array_equal(pixels, direct.render(frame).pixels)
+        baseline = untouched.render(frame).pixels
+        if index < 103:
+            had_accent |= not np.array_equal(pixels, baseline)
+        if index == 244:
+            np.testing.assert_array_equal(pixels, baseline)
+    assert had_accent
+    assert manager.get_scene_state() == canonical.scene
+    assert manager._canonical_receiver_runtime is runtime
+    actual = runtime._runtime._animation.instance
+    baseline = untouched._runtime._animation.instance
+    if component_id == "sparkle":
+        assert actual.semantic_snapshot() == baseline.semantic_snapshot()
+        assert actual._rng.bit_generator.state == baseline._rng.bit_generator.state
+        assert actual._hue_rng.bit_generator.state == baseline._hue_rng.bit_generator.state
+    if component_id == "living_stained_glass":
+        np.testing.assert_array_equal(actual.pane_ids, baseline.pane_ids)
+        np.testing.assert_array_equal(actual.seeds, baseline.seeds)
+
+
+def test_solid_darkness_sparkle_manual_only_and_still_directions(instrument):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    _manager, _owner, _runner, _gamepad, menu = instrument
+    scene = starter()
+    scene["look"].update(palette_id="rainbow", pace=1)
+    for component_id, parameters in (("solid", {"glow": 0}), ("sparkle", {"density": 0, "night": 0}),
+                                     ("rainbow", {"direction": 0}), ("wave", {"direction": 0})):
+        scene["animation"].update(component_id=component_id, parameters=parameters)
+        canonical = normalize_composer_scene({"origin": "composer", "scene": scene}, menu.catalog)
+        runtime = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+        start = runtime.render(ScenePresentationContext(canonical, 0)).foreground.pixels.copy()
+        later = runtime.render(ScenePresentationContext(canonical, 1)).foreground.pixels.copy()
+        np.testing.assert_array_equal(start, later)
+        if component_id in ("solid", "sparkle"):
+            assert not later[:, :3].any()
+        if component_id == "sparkle":
+            assert runtime.dispatch_animation_interaction(canonical, "primary", 0, 0)
+            burst = runtime.render(ScenePresentationContext(canonical, 1)).foreground.pixels
+            assert 0 < np.count_nonzero(burst[:, :3].any(axis=1)) <= 6
+        if component_id in ("rainbow", "wave"):
+            direction = next(row for row in menu._parameter_rows(("animation",), canonical.scene["animation"]) if row.name == "direction")
+            assert direction.value == "Still"
+
+
 def test_reaction_diffusion_manual_reseed_and_initial_density(instrument):
     manager, _owner, _runner, _gamepad, menu = instrument
     scene = starter()
@@ -1092,8 +1168,9 @@ def test_menu_covers_all_catalog_parameter_definitions(instrument):
             names.remove("Fixed time rate")
         assert {row.name for row in fields} == names
         for field in fields:
-            if component_id == "snake" and field.name == "background":
-                assert field.value == "Black" and field.hint == "FIXED"
+            if any(definition["label"] == field.name and definition.get("control") == "fixed"
+                   for definition in component["parameter_schema"].values()):
+                assert field.value and field.hint == "FIXED"
             else:
                 assert field.adjust or field.select, (component_id, field)
     for descriptor in menu.catalog.descriptors:
