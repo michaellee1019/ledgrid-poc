@@ -785,6 +785,103 @@ def test_growing_pattern_aim_reaches_existing_runtime(instrument, component_id, 
     assert manager.get_scene_state() == canonical.scene
 
 
+@pytest.mark.parametrize("component_id", [
+    "ocean_waves", "rain_on_glass", "waterfall_veil", "tidal_bioluminescence", "plant_glow",
+])
+def test_weather_pulse_tracks_nimbus_aim_and_expires(instrument, component_id):
+    from web.composer_final_preview import InstalledFinalSceneRuntime, installed_plant_geometry
+
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 1.0
+    scene["animation"].update(component_id=component_id, parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    canonical = manager._canonical_receiver_scene
+    fixed_time = datetime.fromisoformat("2026-11-13T19:00:00-05:00")
+    initial = ScenePresentationContext(canonical, 0, fixed_time)
+    runtime.render(initial)
+    direct = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    direct.render(initial)
+    untouched = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    base = untouched.render(initial).pixels.copy()
+    x, y = 16, 69
+    other_globes = None
+    if component_id == "plant_glow":
+        geometry = installed_plant_geometry(ROOT)
+        named_regions = geometry.globe_region_masks.values()
+        target = next(region for region in named_regions if region.any())
+        x, y = map(int, np.argwhere(target).mean(axis=0))
+        y = 69 + 4 * round((y - 69) / 4)
+        other_globes = geometry.globes & ~target
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, StickMotion(0, x - 16, 3), StickMotion(1, (y - 69) // 4, 3))
+    assert menu.card().marker == (x, y)
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert direct.dispatch_animation_interaction(canonical, "primary", x, y)
+    assert not direct.dispatch_animation_interaction(canonical, "primary", x, y)
+    for step in range(25):
+        frame = ScenePresentationContext(canonical, step / 20, fixed_time)
+        actual = runtime.render(frame)
+        np.testing.assert_array_equal(actual.pixels, direct.render(frame).pixels)
+        ambient = untouched.render(frame)
+        overlay = actual.foreground.pixels
+        assert np.all(overlay[:, :3] <= overlay[:, 3:4])
+        if step == 0:
+            changed = np.any(actual.pixels != base, axis=1).reshape(33, 138)
+            assert np.any(changed[max(0, x - 4):x + 5, max(0, y - 4):y + 5])
+            if other_globes is not None:
+                assert not changed[other_globes].any()
+        elif step == 24:
+            np.testing.assert_array_equal(actual.pixels, ambient.pixels)
+    assert manager._canonical_receiver_runtime is runtime
+    assert manager.get_scene_state() == canonical.scene
+
+
+def test_tidal_scene_edits_retain_active_wake(instrument):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, _owner, _runner, _gamepad, _menu = instrument
+    scene = starter()
+    scene["animation"].update(component_id="tidal_bioluminescence", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    canonical = manager._canonical_receiver_scene
+    fixed_time = datetime.fromisoformat("2026-11-13T19:00:00-05:00")
+    assert runtime.dispatch_animation_interaction(canonical, "primary", 16, 69)
+    runtime.render(ScenePresentationContext(canonical, 0, fixed_time))
+    scene = manager.get_scene_state()
+    scene["animation"]["parameters"].update(mood="ember", background="luminous", seed=4502)
+    manager._scene_v2_monotonic_elapsed = lambda: 0.0
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    assert manager._canonical_receiver_runtime is runtime
+    edited = ScenePresentationContext(manager._canonical_receiver_scene, .2, fixed_time)
+    fresh = InstalledFinalSceneRuntime(manager.scene_v2_component_catalog(), ROOT)
+    # The seed edit restarts seeded advection at the next frame in both renders.
+    actual = runtime.render(edited).pixels.reshape(33, 138, 3)
+    expected = fresh.render(edited).pixels.reshape(33, 138, 3)
+    assert np.any(actual[11:22, 62:77] != expected[11:22, 62:77])
+    np.testing.assert_array_equal(actual[:10], expected[:10])
+
+
+def test_plant_glow_nimbus_reports_missing_geometry(instrument, monkeypatch):
+    from animation.core.plant_awareness import InstallationGeometryContact
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, _owner, _runner, gamepad, menu = instrument
+    missing = InstallationGeometryContact.unavailable(33, 138, status="missing calibration")
+    monkeypatch.setattr(InstalledFinalSceneRuntime, "_installation_geometry", lambda self: missing.geometry)
+    monkeypatch.setattr(manager, "get_installation_profile_runtime_view", lambda: None)
+    scene = starter()
+    scene["animation"].update(component_id="plant_glow", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    before = manager.get_scene_state()
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, StickMotion(0, 1, 3), ChordPress("a", 3))
+    assert menu.card().value == "No plant calibration"
+    assert manager.get_scene_state() == before
+
+
 def test_reaction_diffusion_manual_reseed_and_initial_density(instrument):
     manager, _owner, _runner, _gamepad, menu = instrument
     scene = starter()

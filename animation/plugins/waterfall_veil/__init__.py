@@ -5,6 +5,10 @@ from animation.libraries.procedural_atmospheres import ProceduralAtmosphereBase
 
 class WaterfallVeilAnimation(ProceduralAtmosphereBase):
     PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Splash the veil"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    POINT_PULSE_SECONDS = .7
 
     ANIMATION_NAME = "Waterfall Veil"
     ANIMATION_DESCRIPTION = "Fine streams descend through slate ledges and break into luminous mist"

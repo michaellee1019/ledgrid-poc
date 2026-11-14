@@ -12,6 +12,7 @@ from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.presentation_contracts import OverlayFrame, ResolvedScene
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 
 
 MOOD_PALETTES: Mapping[str, Mapping[str, tuple[float, float, float]]] = {
@@ -99,6 +100,7 @@ class ProceduralAtmosphereBase(AnimationBase):
     # component-specific composition review accepts a change.
     PREMULTIPLIED_RGBA = False
     FRAME_FORMAT = "rgb_uint8_strip_major"
+    POINT_PULSE_SECONDS = 0.0
 
     def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
         super().__init__(controller, config)
@@ -130,6 +132,7 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._last_presentation_key = None
         self._last_elapsed = None
         self._simulation_time = 0.0
+        self._pulse = PointPulse(self.POINT_PULSE_SECONDS) if self.POINT_PULSE_SECONDS else None
         self._reset_seeded_state()
         self._presentation_context: ResolvedScene | None = None
 
@@ -252,10 +255,19 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._last_source_tick = None
         self._last_presentation_key = None
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        if self._pulse is None:
+            return False
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        return point is not None and self._pulse.trigger(point)
+
     def generate_frame(self, time_elapsed: float, frame_count: int):
         fps = float(np.clip(self.params.get("source_fps", 30.0), 20.0, 40.0))
         tick = int(max(0.0, float(time_elapsed)) * fps + 1.0e-7)
         presentation_key = self._presentation_key(tick)
+        point, age = self._pulse.sample(tick / fps) if self._pulse is not None else (None, 0.0)
+        if point is not None:
+            presentation_key += (point, age)
         same_source_tick = self._last_source_tick == tick and self._cached_frame is not None
         if same_source_tick and self._last_presentation_key == presentation_key:
             if self.PREMULTIPLIED_RGBA:
@@ -272,6 +284,8 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._last_source_tick = tick
         self._last_presentation_key = presentation_key
         self._render_scene(self._simulation_time)
+        if point is not None:
+            self._paint_pulse(point, age)
         if not self.PREMULTIPLIED_RGBA:
             self._apply_background()
         self._apply_plant_modifiers()
@@ -299,6 +313,26 @@ class ProceduralAtmosphereBase(AnimationBase):
     def _presentation_key(self, tick: int) -> tuple[Any, ...]:
         """Name every presentation input that can refresh a cached source tick."""
         return tick, self._semantic_palette_id(), str(self.params.get("mood", self.DEFAULT_MOOD))
+
+    def _paint_pulse(self, point: AimedPoint, age: float) -> None:
+        dx = self._x * (self.width - 1) - point.x
+        dy = self._y * (self.height - 1) - point.y
+        if self.SCENE == "rain":
+            # Logical y grows up the wall. The drop moves down and leaves a trail above.
+            dy = dy + 18.0 * age
+            shape = np.maximum(1.0 - abs(dx) / 2.4, 0.0) * np.maximum(1.0 - abs(dy) / 2.8, 0.0)
+            shape += np.maximum(1.0 - abs(dx) / 1.4, 0.0) * np.maximum(1.0 - dy / 12.0, 0.0) * (dy >= 0) * .35
+        elif self.SCENE == "waterfall":
+            rise = 7.0 * age * (1.0 - age)
+            shape = np.maximum(1.0 - abs(dx) / (2.5 + 6.0 * age), 0.0)
+            shape = shape * np.maximum(1.0 - abs(dy - rise) / (3.5 + 5.0 * age), 0.0)
+        else:  # Tidal wake
+            radius = np.hypot(dx, dy * .75)
+            shape = np.maximum(1.0 - abs(radius - 8.0 * age) / 2.8, 0.0)
+        light = np.clip(shape * ((1.0 - age) * point.strength), 0.0, 1.0)
+        self._rgb += light[..., None] * self._palette()[2] * 1.25
+        if self.PREMULTIPLIED_RGBA:
+            np.maximum(self._coverage, light * .86, out=self._coverage)
 
     def _semantic_palette_id(self) -> str | None:
         if not self.SCENE_SEMANTIC_PALETTE or self._presentation_context is None:

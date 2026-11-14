@@ -5,6 +5,11 @@ from animation.libraries.procedural_atmospheres import ProceduralAtmosphereBase
 
 class TidalBioluminescenceAnimation(ProceduralAtmosphereBase):
     PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Stir a glowing wake"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    POINT_PULSE_SECONDS = .9
+    LIVE_TUNABLE_PARAMETERS = frozenset({"motion", "density", "mood", "background", "background_level", "seed"})
 
     ANIMATION_NAME = "Tidal Bioluminescence"
     ANIMATION_DESCRIPTION = "Slow swells disturb sparse plankton into curling cyan wakes"

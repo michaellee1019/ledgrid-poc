@@ -167,6 +167,12 @@ and Growth 1.4 retain visible chemistry at 33×138. Combining both legal maxima
 can clear the field. At a local pace of
 1×, Cyclic Reef evolves at 12 generations per Scene second.
 
+Aim and press A for an Ocean Waves ripple, a Rain on Glass drop, a Waterfall
+Veil splash, or a Tidal Bioluminescence wake. Ocean Waves Travel can be set
+to zero for still surf. In Plant Glow, aim within four pixels of a calibrated
+globe or foliage patch to pulse that target. The HUD reports when the
+calibration or an aimable target is missing.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu

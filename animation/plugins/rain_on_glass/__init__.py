@@ -5,6 +5,10 @@ from animation.libraries.procedural_atmospheres import ProceduralAtmosphereBase
 
 class RainOnGlassAnimation(ProceduralAtmosphereBase):
     PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Release a drop"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    POINT_PULSE_SECONDS = .65
 
     ANIMATION_NAME = "Rain on Glass"
     ANIMATION_DESCRIPTION = "Refractive beads descend through a dim moonlit or city-lit window"

@@ -14,6 +14,7 @@ from animation.core.compositing import OverlayFrame, coverage_dirty_union
 from animation.core.plant_awareness import INSTALLATION_GEOMETRY_CONTACT_INPUT
 from animation.core.presentation_contracts import ResolvedScene
 from animation.libraries.mask_effects import build_halo_weights
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 
 
 class PlantGlowAnimation(AnimationBase):
@@ -24,7 +25,10 @@ class PlantGlowAnimation(AnimationBase):
     persists calibration geometry.
     """
     PREFERRED_PARAMETERS = ('glow_strength', 'glow_radius', 'breath_speed', 'breath_depth', 'shimmer')
-
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Pulse plant light"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    PARAMETER_CONTROLS = {"breath_speed": {"step": .02, "unit": "Hz"}}
 
     ANIMATION_NAME = "Plant Glow"
     ANIMATION_DESCRIPTION = "Breathing semantic light traces the wall's foliage and rooting globes"
@@ -125,6 +129,11 @@ class PlantGlowAnimation(AnimationBase):
         self._globe_core = np.zeros(self.get_pixel_count(), dtype=np.bool_)
         self._foliage_halo = np.zeros(self.get_pixel_count(), dtype=np.float32)
         self._globe_halo = np.zeros(self.get_pixel_count(), dtype=np.float32)
+        self._pulse = PointPulse(.8)
+        self._pulse_target_key = None
+        self._pulse_target = None
+        self._columns = np.arange(self.width)[:, None]
+        self._rows = np.arange(self.height)[None, :]
         self._phase = (
             np.arange(self.get_pixel_count(), dtype=np.float32) * np.float32(2.3999632)
         ) % np.float32(math.tau)
@@ -233,6 +242,61 @@ class PlantGlowAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        if point is None:
+            return False
+        context = self._presentation_context
+        contact = None if context is None else context.installation_geometry
+        if contact is None or not contact.available or contact.foliage.shape != (self.width, self.height):
+            raise ValueError("No plant calibration")
+        if not (contact.geometry.foliage_count or contact.geometry.globe_count):
+            raise ValueError("No calibrated plants")
+        if self._target(point, contact) is None:
+            raise ValueError("Aim near a plant")
+        return self._pulse.trigger(point)
+
+    def _target(self, point, contact):
+        if contact is None or not contact.available or contact.foliage.shape != (self.width, self.height):
+            return None
+        distance = (self._columns - point.x) ** 2 + (self._rows - point.y) ** 2
+        globes = contact.exact_globe_cores
+        foliage = contact.foliage & ~globes
+        nearby = (globes | foliage) & (distance <= 16)
+        if not nearby.any():
+            return None
+        anchor = np.unravel_index(np.argmin(np.where(nearby, distance, np.inf)), distance.shape)
+        role = "globe" if globes[anchor] else "foliage"
+        if role == "globe":
+            for region in contact.named_globe_regions.values():
+                if region[anchor]:
+                    return region & globes, role
+        distance = (self._columns - anchor[0]) ** 2 + (self._rows - anchor[1]) ** 2
+        return (globes if role == "globe" else foliage) & (distance <= 36), role
+
+    def _paint_pulse(self, output, point, progress, palette, contact, geometry_key):
+        key = point, geometry_key
+        if key != self._pulse_target_key:
+            target = self._target(point, contact)
+            self._pulse_target = None
+            if target is not None:
+                mask, role = target
+                core, halo = build_halo_weights(
+                    np.flatnonzero(mask), self.width, self.height,
+                    self.params["glow_radius"], self.params["glow_falloff"],
+                )
+                # Exclude other calibrated cores even where presentation halos intersect.
+                halo[self._foliage_core | self._globe_core] = 0
+                self._pulse_target = core, halo, role
+            self._pulse_target_key = key
+        if self._pulse_target is None:
+            return
+        core, halo, role = self._pulse_target
+        amount = (1.0 - progress) * point.strength * self.params[f"{role}_intensity"]
+        self._composite_layer(output, palette[f"{role}_halo"], halo * amount * self.params["glow_strength"])
+        highlight = tuple((channel + 255) // 2 for channel in palette[role])
+        self._composite_layer(output, highlight, core * amount)
+
     def _ensure_geometry(self, context: ResolvedScene | None) -> tuple[Any, ...]:
         contact = None if context is None else context.installation_geometry
         contact_identity = None if contact is None else contact.identity
@@ -297,7 +361,10 @@ class PlantGlowAnimation(AnimationBase):
         self.params = self._normalized_parameters(parameters)
         geometry_key = self._ensure_geometry(context)
         tick = int(math.floor(phase_time * self.SOURCE_FPS + 1.0e-9))
+        point, progress = self._pulse.sample(tick / self.SOURCE_FPS)
         key = (tick, palette_id, tuple(self.params.items()), geometry_key)
+        if point is not None:
+            key += (point, progress)
         if key == self._last_key:
             return OverlayFrame(
                 self._last_pixels, revision=self._revision,
@@ -333,6 +400,8 @@ class PlantGlowAnimation(AnimationBase):
             output, palette["globe"],
             self._globe_core.astype(np.float32) * globe_breath * globe_intensity,
         )
+        if point is not None and context is not None:
+            self._paint_pulse(output, point, progress, palette, context.installation_geometry, geometry_key)
 
         dirty = coverage_dirty_union(self._last_pixels, output)
         changed = bool(dirty)

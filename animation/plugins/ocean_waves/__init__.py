@@ -11,11 +11,15 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 from animation.libraries.scene_palettes import HOLIDAY_TRIPLES, hsv_to_rgb_field
 
 
 class OceanWavesAnimation(AnimationBase):
     PREFERRED_PARAMETERS = ('swell', 'chop', 'foam', 'travel')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Raise a ripple"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
 
     ANIMATION_NAME = "Ocean Waves"
     ANIMATION_DESCRIPTION = "Rolling ocean swells with foam crests traveling down the wall"
@@ -78,6 +82,7 @@ class OceanWavesAnimation(AnimationBase):
         self._presentation_context: ResolvedScene | None = None
         self._last_render_key: tuple[Any, ...] | None = None
         self._last_tick: int | None = None
+        self._pulse = PointPulse(.8)
         self._seed_phases()
 
     @classmethod
@@ -97,7 +102,7 @@ class OceanWavesAnimation(AnimationBase):
                      "description": "Wind-chop roughness on the water."},
             "foam": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.55,
                      "description": "Whitecap foam on the wave faces."},
-            "travel": {"type": "float", "min": 0.2, "max": 2.0, "default": 0.9,
+            "travel": {"type": "float", "min": 0.0, "max": 2.0, "default": 0.9,
                        "description": "How quickly the swells roll down the wall."},
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 3301,
                      "description": "Repeatable swell layout seed."},
@@ -129,6 +134,10 @@ class OceanWavesAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        return point is not None and self._pulse.trigger(point)
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
         del frame_count
         if self._presentation_context is None:
@@ -145,12 +154,27 @@ class OceanWavesAnimation(AnimationBase):
             self.params = candidate
         tick = int(math.floor(phase_time * self.SIM_HZ + 1.0e-9))
         self._last_tick = tick
+        point, age = self._pulse.sample(tick / self.SIM_HZ)
         key = (tick, palette_id, tuple(self.params.items()), tuple(self._phase.tolist()))
+        if point is not None:
+            key += (point, age)
         if key == self._last_render_key:
             return RenderedFrame(self._pixels, changed=False, dirty_ranges=())
         self._paint(palette_id, tick / self.SIM_HZ)
+        if point is not None:
+            self._paint_ripple(point, age, palette_id)
         self._last_render_key = key
         return RenderedFrame(self._pixels, changed=True)
+
+    def _paint_ripple(self, point: AimedPoint, age: float, palette_id: str) -> None:
+        dx = self._x * (self.width - 1) - point.x
+        dy = self._y * (self.height - 1) - point.y
+        radius = np.hypot(dx, dy * .65)
+        crest = np.maximum(1.0 - abs(radius - 9.0 * age) / 2.0, 0.0)
+        amount = crest[..., None] * ((1.0 - age) * .8 * point.strength)
+        logical = self._pixels.reshape(self.width, self.height, 3)
+        foam = np.asarray(self.palette_roles(palette_id)["foam"], dtype=np.float32)
+        logical[:] = logical * (1.0 - amount) + foam * amount
 
     def semantic_snapshot(self) -> Mapping[str, Any]:
         return MappingProxyType({
@@ -225,7 +249,7 @@ class OceanWavesAnimation(AnimationBase):
         if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 999999:
             raise ValueError("seed must be an integer from 0 to 999999")
         for name, low, high in (
-            ("swell", 0.15, 1.0), ("chop", 0.0, 1.0), ("foam", 0.0, 1.0), ("travel", 0.2, 2.0),
+            ("swell", 0.15, 1.0), ("chop", 0.0, 1.0), ("foam", 0.0, 1.0), ("travel", 0.0, 2.0),
         ):
             value = result[name]
             if (
