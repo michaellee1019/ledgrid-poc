@@ -11,11 +11,15 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 
 
 class FireflySynchronyAnimation(AnimationBase):
     """A calm, semantic-palette meadow of locally synchronising fireflies."""
     PREFERRED_PARAMETERS = ('population', 'synchrony', 'wandering', 'pulse_softness', 'coupling_radius')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Nudge nearby fireflies"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
 
 
     ANIMATION_NAME = "Firefly Meadow"
@@ -62,6 +66,8 @@ class FireflySynchronyAnimation(AnimationBase):
         self._last_tick: int | None = None
         self._last_render_key: tuple[Any, ...] | None = None
         self._revision = 0
+        self._pulse = PointPulse(.55)
+        self._applied_pulse = None
         self._initialize_simulation()
 
     @classmethod
@@ -108,6 +114,10 @@ class FireflySynchronyAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        return point is not None and self._pulse.trigger(point)
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
         del frame_count
         if self._presentation_context is None:
@@ -131,9 +141,22 @@ class FireflySynchronyAnimation(AnimationBase):
                 self._simulate_step(1.0 / self.SIM_HZ)
                 self._last_tick += 1
         key = (self._last_tick, palette_id, tuple(self.params.items()))
+        point, progress = self._pulse.sample(tick / self.SIM_HZ)
+        if point is not None:
+            key += (point, progress)
+            if point is not self._applied_pulse:
+                radius = float(self.params["coupling_radius"])
+                depth = self.height - 1 - point.y
+                influence = np.clip(1.0 - np.hypot(self.x - point.x, self.y - depth) / radius, 0, 1)
+                self.phase = np.mod(self.phase + .9 * point.strength * influence, math.tau)
+                self._applied_pulse = point
         if key == self._last_render_key:
             return RenderedFrame(self._pixels, changed=False, dirty_ranges=())
         self._paint(palette_id)
+        if point is not None:
+            canvas = self._pixels.reshape(self.width, self.height, 3)
+            pulse = np.asarray(self.palette_roles(palette_id)["firefly"]) * point.strength * (1.0 - progress) * .65
+            canvas[point.x, point.y] = np.maximum(canvas[point.x, point.y], pulse)
         self._last_render_key = key
         self._revision += 1
         return RenderedFrame(self._pixels, changed=True)

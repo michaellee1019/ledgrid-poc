@@ -186,6 +186,12 @@ Rainbow and Wave offer Still alongside Forward and Reverse. Set Sparkle
 Density to zero to keep only manually triggered clusters. Solid has a dark
 setting at Glow zero and uses Tune for its breathing rate.
 
+Use the same gesture to feed nearby fish, extend one train stop at the
+nearest Mini Metro station, or nudge nearby fireflies. Flow-Field Silk bends
+threads through a short-lived vortex. Living Ecosystem and Physarum accept
+one temporary resource point at a time. Physarum rejects points in calibrated
+globe cores. Controller status reports the effective herd and agent counts.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu

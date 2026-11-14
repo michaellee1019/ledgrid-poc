@@ -1042,6 +1042,90 @@ def test_solid_darkness_sparkle_manual_only_and_still_directions(instrument):
             assert direction.value == "Still"
 
 
+@pytest.mark.parametrize("component_id", [
+    "fish_tank", "mini_metro", "firefly_synchrony", "flow_field_silk", "living_ecosystem", "physarum_network",
+])
+def test_swarm_aim_changes_simulation_and_matches_direct_input(instrument, component_id):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 1.0
+    scene["animation"].update(component_id=component_id, parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime, canonical = manager._canonical_receiver_runtime, manager._canonical_receiver_scene
+    direct = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    untouched = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    wall_time = datetime.fromisoformat("2026-11-13T02:00:00-05:00")
+    for index in range(31):
+        frame = ScenePresentationContext(canonical, index / 150, wall_time)
+        runtime.render(frame)
+        direct.render(frame)
+        untouched.render(frame)
+    animation = runtime._runtime._animation.instance
+    ambient = untouched._runtime._animation.instance
+    if component_id == "mini_metro":
+        train = animation.trains[0]
+        station, position = animation.line_stops[train.line][0]
+        tx, ty = animation.station_xy[station]
+        x = int(tx)
+        y = 69 + 4 * round((137 - int(ty) - 69) / 4)
+        for instance in (animation, ambient, direct._runtime._animation.instance):
+            instance.trains[0].last_stop = station
+            instance.trains[0].pos = float(position)
+            instance.trains[0].dwell = .25
+    else:
+        x, y = 16, 69
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, StickMotion(0, x - 16, 3), StickMotion(1, (y - 69) // 4, 3))
+    assert menu.card().marker == (x, y)
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert direct.dispatch_animation_interaction(canonical, "primary", x, y)
+    assert not direct.dispatch_animation_interaction(canonical, "primary", x, y)
+    changed = False
+    for index in range(30, 125):
+        frame = ScenePresentationContext(canonical, index / 150, wall_time)
+        actual = runtime.render(frame).pixels.copy()
+        np.testing.assert_array_equal(actual, direct.render(frame).pixels)
+        changed |= not np.array_equal(actual, untouched.render(frame).pixels)
+    assert changed
+    semantic = {
+        "fish_tank": "angle", "mini_metro": "trains", "firefly_synchrony": "phase",
+        "flow_field_silk": "filaments", "living_ecosystem": "herd", "physarum_network": "trail",
+    }[component_id]
+    if component_id == "mini_metro":
+        assert animation._held_station == station and animation._used_hold
+        assert animation.semantic_snapshot() != ambient.semantic_snapshot()
+        assert all(len(queue) <= animation.MAX_WAIT for queue in animation.waiting)
+        assert all(len(train.cargo) <= animation.MAX_CARGO for train in animation.trains)
+    else:
+        assert not np.array_equal(getattr(animation, semantic), getattr(ambient, semantic))
+    if component_id == "living_ecosystem":
+        assert manager.get_current_status()["animation_stats"]["herd_count"] == len(animation.herd)
+    elif component_id == "physarum_network":
+        assert manager.get_current_status()["animation_stats"]["agent_count"] == len(animation.x)
+    assert manager.get_scene_state() == canonical.scene
+    assert manager._canonical_receiver_runtime is runtime
+
+
+def test_physarum_rejects_nutrient_in_globe_even_without_habitat(instrument):
+    from web.composer_final_preview import InstalledFinalSceneRuntime, installed_plant_geometry
+
+    _manager, _owner, _runner, _gamepad, menu = instrument
+    scene = starter()
+    scene["plants"]["effects"] = {"version": 1, "active": [], "strengths": {}}
+    scene["animation"].update(component_id="physarum_network", parameters={"agent_count": 1800, "density": 2})
+    canonical = normalize_composer_scene({"origin": "composer", "scene": scene}, menu.catalog)
+    runtime = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    runtime.render(ScenePresentationContext(canonical, 0))
+    geometry = installed_plant_geometry(ROOT)
+    globe = tuple(map(int, np.argwhere(geometry.globes)[0]))
+    assert not runtime.dispatch_animation_interaction(canonical, "primary", *globe)
+    assert runtime._runtime._animation.instance.get_runtime_stats()["agent_count"] == 1800
+    free = tuple(map(int, np.argwhere(~geometry.obstacle)[0]))
+    assert runtime.dispatch_animation_interaction(canonical, "primary", *free)
+
+
 def test_reaction_diffusion_manual_reseed_and_initial_density(instrument):
     manager, _owner, _runner, _gamepad, menu = instrument
     scene = starter()

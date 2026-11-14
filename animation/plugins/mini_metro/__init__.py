@@ -13,6 +13,7 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 from animation.libraries.scene_palettes import HOLIDAY_STOPS
 
 
@@ -47,6 +48,9 @@ class _Train:
 
 class MiniMetroAnimation(AnimationBase):
     PREFERRED_PARAMETERS = ('traffic', 'train_speed', 'trains', 'lines', 'stations')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Hold the nearest station"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
 
     ANIMATION_NAME = "Mini Metro"
     ANIMATION_DESCRIPTION = "Octilinear subway lines, geometric stations, and shuttling trains"
@@ -112,6 +116,10 @@ class MiniMetroAnimation(AnimationBase):
         self._presentation_context: ResolvedScene | None = None
         self._last_tick: int | None = None
         self._last_render_key: tuple[Any, ...] | None = None
+        self._hold = PointPulse(2.4)
+        self._held_point = None
+        self._held_station = None
+        self._used_hold = False
         self._initialize_simulation()
 
     @classmethod
@@ -165,6 +173,22 @@ class MiniMetroAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        return point is not None and self._hold.trigger(point)
+
+    def _station_hold(self, tick):
+        point, progress = self._hold.sample(tick / self.SIM_HZ)
+        if point is None:
+            return None, 0.0
+        if point is not self._held_point:
+            dx = self.station_xy[:, 0] - point.x
+            dy = self.station_xy[:, 1] - (self.height - 1 - point.y)
+            self._held_station = int(np.argmin(dx * dx + dy * dy))
+            self._held_point = point
+            self._used_hold = False
+        return self._held_station, (1.0 - progress) * point.strength
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
         del frame_count
         if self._presentation_context is None:
@@ -188,9 +212,12 @@ class MiniMetroAnimation(AnimationBase):
                 self._simulate_step(1.0 / self.SIM_HZ)
                 self._last_tick += 1
         key = (self._last_tick, palette_id, tuple(self.params.items()))
+        station, remaining = self._station_hold(self._last_tick)
+        if station is not None:
+            key += (station, remaining)
         if key == self._last_render_key:
             return RenderedFrame(self._pixels, changed=False, dirty_ranges=())
-        self._paint(palette_id)
+        self._paint(palette_id, station, remaining)
         self._last_render_key = key
         return RenderedFrame(self._pixels, changed=True)
 
@@ -230,6 +257,7 @@ class MiniMetroAnimation(AnimationBase):
         self._delivered = 0
         self._last_tick = None
         self._last_render_key = None
+        self._held_point = None
 
     def _place_stations(self, rng: np.random.Generator, count: int) -> np.ndarray:
         margin_x = 2 if self.width > 6 else 0
@@ -338,6 +366,7 @@ class MiniMetroAnimation(AnimationBase):
     def _simulate_step(self, dt: float) -> None:
         traffic = float(self.params["traffic"])
         speed = 22.0 * float(self.params["train_speed"])
+        held, remaining = self._station_hold(self._last_tick + 1)
         for station, queue in enumerate(self.waiting):
             if len(queue) >= self.MAX_WAIT or traffic <= 0.0:
                 continue
@@ -351,6 +380,9 @@ class MiniMetroAnimation(AnimationBase):
             if last <= 0.0:
                 continue
             if train.dwell > 0.0:
+                if train.last_stop == held and not self._used_hold:
+                    train.dwell += .65 * remaining
+                    self._used_hold = True
                 train.dwell = max(0.0, train.dwell - dt)
                 continue
             old = train.pos
@@ -361,6 +393,9 @@ class MiniMetroAnimation(AnimationBase):
                 train.pos = float(index)
                 self._exchange(train, station)
                 train.dwell = self.DWELL_SECONDS
+                if station == held and not self._used_hold:
+                    train.dwell += .65 * remaining
+                    self._used_hold = True
                 train.last_stop = station
                 continue
             if train.pos >= last:
@@ -411,7 +446,7 @@ class MiniMetroAnimation(AnimationBase):
                 remaining.append(passenger)
         self.waiting[station] = remaining
 
-    def _paint(self, palette_id: str) -> None:
+    def _paint(self, palette_id: str, held=None, remaining=0.0) -> None:
         palette = self.palette_roles(palette_id)
         paper = np.asarray(palette["paper"], dtype=np.float32)
         river = np.asarray(palette["river"], dtype=np.float32)
@@ -427,7 +462,8 @@ class MiniMetroAnimation(AnimationBase):
                 if 0 <= col < self.width and 0 <= row < self.height:
                     canvas[col, row] = dim
         for index in range(int(self.station_xy.shape[0])):
-            self._stamp_station(canvas, index, station_color)
+            shade = station_color + (255.0 - station_color) * remaining * .8 if index == held else station_color
+            self._stamp_station(canvas, index, shade)
             self._stamp_passengers(canvas, index, station_color)
         for train in self.trains:
             self._stamp_train(canvas, train, palette_id, station_color)

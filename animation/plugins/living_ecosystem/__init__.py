@@ -6,12 +6,17 @@ from functools import lru_cache
 import numpy as np
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.plant_awareness import InstallationGeometryContact, PlantModifierState
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 
 from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class LivingEcosystemAnimation(CadencedSculpture):
     PREFERRED_PARAMETERS = ('density', 'migration', 'predator_pressure', 'canopy_density', 'night_life')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Drop a local resource"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    LIVE_TUNABLE_PARAMETERS = frozenset({"motion", "migration", "mutation", "night_life", "background_level"})
 
     ANIMATION_NAME = "Living Ecosystem"
     ANIMATION_DESCRIPTION = "Migrating herds cross a growing wetland beneath a living canopy"
@@ -28,6 +33,7 @@ class LivingEcosystemAnimation(CadencedSculpture):
     LEGACY_PRESET_KEYS = frozenset(("lifecycle_minutes", "day_length_seconds", "creature_density", "predator_ratio", "tree_density", "creature_size", "mutation_rate", "grass_regrowth", "predation_pressure", "pack_cohesion", "palette", "night_brightness", "glow_strength", "firefly_density", "water_shimmer", "color_saturation", "color_value", "output_gamma", "render_fps", "simulation_hz", "show_water"))
 
     def __init__(self, controller, config=None):
+        self._resource = PointPulse(2.0)
         super().__init__(controller, config); self._init_world()
         self._geometry_foliage = np.zeros(self._shape, dtype=bool)
         self._geometry_clearance = np.zeros(self._shape, dtype=bool)
@@ -129,11 +135,22 @@ class LivingEcosystemAnimation(CadencedSculpture):
         for key, low, high in (("migration",0.,1.), ("predator_pressure",0.,1.), ("canopy_density",.1,1.), ("mutation",0.,.5), ("night_life",0.,1.)):
             if not low <= float(values[key]) <= high: raise ValueError(f"{key} is out of range")
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, *self._shape)
+        if point is not None and not self._geometry_cores[point.x, point.y]:
+            return self._resource.trigger(point)
+        return False
+
     def _step(self, tick):
         self._activate_geometry(tick)
         phase = tick * (.012 + self.params["motion"] * .025)
         target = np.arctan2(np.sin(self.herd[:, 1] * .06 + phase), np.cos(self.herd[:, 0] * .11 - phase))
         self.heading += np.sin(target - self.heading) * (.09 + .19 * self.params["migration"])
+        point, progress = self._resource.sample(tick / self.SOURCE_FPS)
+        if point is not None and not self._geometry_cores[point.x, point.y]:
+            dx, dy = point.x - self.herd[:, 0], point.y - self.herd[:, 1]
+            influence = np.clip(1.0 - np.hypot(dx, dy) / 24.0, 0, 1)
+            self.heading += np.sin(np.arctan2(dy, dx) - self.heading) * influence * .55 * point.strength * (1 - progress)
         if self._geometry_strength:
             ix = np.mod(np.rint(self.herd[:, 0]).astype(int), self._shape[0])
             iy = np.mod(np.rint(self.herd[:, 1]).astype(int), self._shape[1])
@@ -167,9 +184,13 @@ class LivingEcosystemAnimation(CadencedSculpture):
         self.season = (self.season + .0015 + self.params["motion"] * .002) % 1.
 
     def generate_frame(self, time_elapsed, frame_count):
-        tick, cached = self.begin_frame(time_elapsed)
+        tick = self.source_tick(time_elapsed)
+        if tick != self._last_sim_tick:
+            self.advance_bounded(tick, self._step, 10)
+        point, progress = self._resource.sample(tick / self.SOURCE_FPS)
+        extras = (point, progress) if point is not None else ()
+        tick, cached = self.begin_frame(time_elapsed, extras=extras)
         if cached: return cached
-        self.advance_bounded(tick, self._step, 10)
         x, y = self._x, self._y; river = np.exp(-np.square((x - .18 * np.sin(y * 4 + tick*.02)) / .20))
         field = np.clip(.18 + .28*np.sin(y*4 + self.season*math.tau) + .16*np.cos(x*6-y*2), 0., 1.)
         value = np.maximum(field, river * .62)
@@ -178,8 +199,13 @@ class LivingEcosystemAnimation(CadencedSculpture):
         herd_x, herd_y = np.clip(np.rint(self.herd).astype(np.intp), 0, pixel_limits).T
         hunter_x, hunter_y = np.clip(np.rint(self.hunters).astype(np.intp), 0, pixel_limits).T
         accent[herd_x, herd_y] = 1.
+        if point is not None and not self._geometry_cores[point.x, point.y]:
+            accent[point.x, point.y] = max(accent[point.x, point.y], .95 * point.strength * (1.0 - progress))
         value[hunter_x, hunter_y] = 1.
         fireflies = np.maximum(0., np.sin(x*31 + y*17 + tick*.17))**28 * self.params["night_life"]
-        return self.finish_frame(tick, self.colorize(value, np.maximum(accent, fireflies)))
+        return self.finish_frame(tick, self.colorize(value, np.maximum(accent, fireflies)), extras=extras)
+
+    def get_runtime_stats(self):
+        return {"herd_count": len(self.herd), "hunter_count": len(self.hunters), "tree_count": len(self.trees)}
 
     def logical_state(self): return self.herd.tobytes(), self.hunters.tobytes(), round(self.season, 6)

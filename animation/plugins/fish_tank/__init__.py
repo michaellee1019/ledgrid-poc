@@ -12,6 +12,7 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 from animation.libraries.scene_palettes import holiday_stop
 
 
@@ -20,6 +21,9 @@ _HUE_GOLDEN = np.float32(0.6180339887)
 
 class FishTankAnimation(AnimationBase):
     PREFERRED_PARAMETERS = ('fish_count', 'swim_speed', 'schooling', 'bubbles', 'weeds')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Feed nearby fish"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
 
     ANIMATION_NAME = "Fish Tank"
     ANIMATION_DESCRIPTION = "A tall aquarium of swimming fish, swaying weeds, and rising bubbles"
@@ -105,6 +109,7 @@ class FishTankAnimation(AnimationBase):
         self._presentation_context: ResolvedScene | None = None
         self._last_tick: int | None = None
         self._last_render_key: tuple[Any, ...] | None = None
+        self._food = PointPulse(2.5)
         self._initialize_simulation()
 
     @classmethod
@@ -158,6 +163,13 @@ class FishTankAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        if point is None:
+            return False
+        depth = int(np.clip(self.height - 1 - point.y, self._water_top() + 1, self._water_bottom() - 1))
+        return self._food.trigger(AimedPoint(point.x, depth, point.strength))
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
         del frame_count
         if self._presentation_context is None:
@@ -181,9 +193,12 @@ class FishTankAnimation(AnimationBase):
                 self._simulate_step(1.0 / self.SIM_HZ)
                 self._last_tick += 1
         key = (self._last_tick, palette_id, tuple(self.params.items()))
+        food, progress = self._food.sample(self._last_tick / self.SIM_HZ)
+        if food is not None:
+            key += (food, progress)
         if key == self._last_render_key:
             return RenderedFrame(self._pixels, changed=False, dirty_ranges=())
-        self._paint(palette_id, phase_time)
+        self._paint(palette_id, phase_time, food, progress)
         self._last_render_key = key
         return RenderedFrame(self._pixels, changed=True)
 
@@ -256,6 +271,12 @@ class FishTankAnimation(AnimationBase):
         wander = self._rng.normal(0.0, 0.18 * (1.15 - schooling), count).astype(np.float32)
         self.phase = np.mod(self.phase + dt * (8.0 + self.speed * 0.35), math.tau)
         self.angle = self.angle + wander * dt * 6.0 + 0.35 * np.sin(self.phase) * dt
+        food, progress = self._food.sample((self._last_tick + 1) / self.SIM_HZ)
+        if food is not None:
+            dx, dy = food.x - self.x, (food.y - self.y) / .42
+            reach = np.clip(1.0 - np.hypot(dx, dy * .42) / 19.0, 0, 1)
+            bearing = np.arctan2(dy, dx)
+            self.angle += np.sin(bearing - self.angle) * reach * food.strength * (1.0 - progress) * .38
         vx = np.cos(self.angle) * self.speed * swim
         vy = np.sin(self.angle) * self.speed * swim * 0.42
         self.x = self.x + vx * dt
@@ -278,7 +299,7 @@ class FishTankAnimation(AnimationBase):
             self.bubble_y[reset] = float(self.height - 1) - self._rng.uniform(0.0, 4.0, int(np.count_nonzero(reset)))
             self.bubble_x[reset] = self._rng.uniform(0.0, self.width, int(np.count_nonzero(reset)))
 
-    def _paint(self, palette_id: str, phase_time: float) -> None:
+    def _paint(self, palette_id: str, phase_time: float, food=None, progress=0.0) -> None:
         palette = self.palette_roles(palette_id)
         deep, shallow, gravel, weed, fish, highlight = (
             np.asarray(palette[name], dtype=np.float32)
@@ -296,6 +317,12 @@ class FishTankAnimation(AnimationBase):
         surface = np.clip(1.0 - self._ys / 4.0, 0.0, 1.0)
         water = water + highlight * ((0.14 * caustic * (1.0 - depth) + 0.22 * surface)[..., None])
         canvas[:] = water
+        if food is not None:
+            pellet = highlight * food.strength * (1.0 - progress)
+            for dx, dy in ((0, 0), (-1, 3), (1, 5)):
+                col = max(0, min(self.width - 1, food.x + dx))
+                row = min(int(self._water_bottom()) - 1, food.y + dy + int(4 * progress))
+                canvas[col, row] = np.maximum(canvas[col, row], pellet)
         gravel_rows = self.GRAVEL_ROWS
         gravel_view = canvas[:, self.height - gravel_rows:]
         pebble = 0.45 + 0.55 * self._gravel

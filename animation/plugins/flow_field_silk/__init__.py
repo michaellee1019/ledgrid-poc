@@ -4,11 +4,15 @@ from functools import lru_cache
 import numpy as np
 
 from animation.core.plant_awareness import INSTALLATION_GEOMETRY_CONTACT_INPUT
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
 class FlowFieldSilkAnimation(CadencedSculpture):
     PREFERRED_PARAMETERS = ('density', 'motion', 'turbulence', 'persistence', 'background_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Bend threads into a vortex"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
 
     ANIMATION_NAME = "Flow-Field Silk"
     ANIMATION_DESCRIPTION = "Fine advected threads braid and fray in a slow underwater vector field"
@@ -24,6 +28,11 @@ class FlowFieldSilkAnimation(CadencedSculpture):
         super().__init__(controller, config); self._init_threads()
         self._edge_cache = None
         self._geometry_identity = None
+        self._vortex = PointPulse(1.6)
+
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, *self._shape)
+        return point is not None and self._vortex.trigger(point)
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -71,6 +80,14 @@ class FlowFieldSilkAnimation(CadencedSculpture):
         phase=tick*.018*float(self.params["motion"]); turb=float(self.params["turbulence"])
         vx=np.sin(y*.75+phase)+turb*np.cos(x*1.7-phase*.6)
         vy=.8+0.6*np.cos(x*.8-phase)+turb*np.sin(y*1.3+phase)
+        point, progress = self._vortex.sample(tick / self.SOURCE_FPS)
+        if point is not None:
+            dx, dy = p[:, 0] - point.x, p[:, 1] - point.y
+            distance = np.hypot(dx, dy)
+            curl = np.clip(1.0 - distance / 18.0, 0, 1) / np.maximum(2.0, distance)
+            curl *= 2.2 * point.strength * (1.0 - progress)
+            vx -= dy * curl
+            vy += dx * curl
         p[:,0]=(p[:,0]+vx*.16*(.3+float(self.params["motion"])))%self._shape[0]
         p[:,1]=(p[:,1]+vy*.16*(.3+float(self.params["motion"])))%self._shape[1]
 
@@ -141,12 +158,18 @@ class FlowFieldSilkAnimation(CadencedSculpture):
         return rgb * (1.0 - blend) + rgb[sample_x, sample_y] * blend
 
     def generate_frame(self,time_elapsed,frame_count):
-        tick,cached=self.begin_frame(time_elapsed)
+        tick = self.source_tick(time_elapsed)
+        if tick != self._last_sim_tick:
+            self.advance_bounded(tick, self._step)
+        point, progress = self._vortex.sample(tick / self.SOURCE_FPS)
+        extras = (point, progress) if point is not None else ()
+        tick,cached=self.begin_frame(time_elapsed, extras=extras)
         if cached:return cached
-        self.advance_bounded(tick,self._step)
         value=np.zeros(self._shape,np.float32); accent=np.zeros_like(value)
         keep=max(3,int(self.filaments.shape[1]*float(self.params["persistence"])))
         for age in range(keep):
             pts=self.filaments[:,age]; ix=np.clip(pts[:,0].astype(int),0,self._shape[0]-1); iy=np.clip(pts[:,1].astype(int),0,self._shape[1]-1)
             np.maximum.at(value,(ix,iy),(1-age/keep)*.9); np.maximum.at(accent,(ix,iy),(1-age/keep)*.6)
-        return self.finish_frame(tick,self._apply_edge_refraction(self.colorize(value,accent)))
+        if point is not None:
+            accent[point.x, point.y] = max(accent[point.x, point.y], .75 * point.strength * (1.0 - progress))
+        return self.finish_frame(tick,self._apply_edge_refraction(self.colorize(value,accent)), extras=extras)

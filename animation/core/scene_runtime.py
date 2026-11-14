@@ -159,6 +159,12 @@ class CanonicalSceneRuntime:
     def active_scene(self) -> CanonicalScene | None:
         return self._canonical
 
+    def animation_stats(self) -> dict[str, Any]:
+        if self._animation is None:
+            return {}
+        read = getattr(self._animation.instance, "get_runtime_stats", None)
+        return read() if callable(read) else {}
+
     @property
     def desired_identity(self) -> SceneIdentity | None:
         return None if self._canonical is None else self._canonical.identity

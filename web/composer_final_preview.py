@@ -148,6 +148,10 @@ class InstalledFinalSceneRuntime:
         with self._lock:
             return self._runtime.game_player_state()
 
+    def animation_stats(self) -> dict[str, Any]:
+        with self._lock:
+            return self._runtime.animation_stats()
+
     def dispatch_game_input(self, action: str) -> bool:
         with self._lock:
             return self._runtime.dispatch_game_input(action)

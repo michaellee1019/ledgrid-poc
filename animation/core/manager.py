@@ -1339,6 +1339,11 @@ class AnimationManager(CanonicalReceiverSceneMixin):
         stats = self.controller.get_stats() if hasattr(self.controller, 'get_stats') else {}
         animation_info = self.current_animation.get_info() if self.current_animation else None
         runtime_stats = self.current_animation.get_runtime_stats() if self.current_animation else {}
+        if self.is_running and self._canonical_host_full_mode:
+            with self._scene_lock:
+                runtime = self._canonical_receiver_runtime
+                if runtime is not None:
+                    runtime_stats = runtime.animation_stats()
         status = {
             'is_running': self.is_running, 'mode': 'scene' if self.is_running and self._scene_mode and not self._scene_compatibility_mode else 'animation' if self.is_running else 'idle',
             'current_animation': self.current_animation_name if self.is_running else None,

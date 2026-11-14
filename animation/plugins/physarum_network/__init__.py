@@ -8,6 +8,7 @@ import numpy as np
 
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.plant_awareness import InstallationGeometryContact, PlantModifierState
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 from animation.libraries.procedural_living import ProceduralLivingBase
 
 SEMANTIC_PALETTE_ROLES = ("background_low", "primary", "accent")
@@ -149,6 +150,10 @@ from animation.libraries.procedural_sculptures import CadencedSculpture
 
 class PhysarumNetworkAnimation(CadencedSculpture):
     PREFERRED_PARAMETERS = ('agent_count', 'branching', 'diffusion', 'pulse_visibility', 'motion')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Place a local nutrient"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    LIVE_TUNABLE_PARAMETERS = frozenset({"motion", "branching", "diffusion", "pulse_visibility", "background_level"})
 
     ANIMATION_NAME="Physarum Network"; ANIMATION_DESCRIPTION="Explorer agents reinforce luminous nutrient routes"; ANIMATION_AUTHOR="LED Grid Team"; ANIMATION_VERSION="2.0"
     COMPONENT_ID="physarum_network"; SOURCE_FPS=24.; MAX_AGENTS=1800
@@ -158,6 +163,7 @@ class PhysarumNetworkAnimation(CadencedSculpture):
     LEGACY_PRESET_KEYS=frozenset(("render_fps","simulation_hz"))
     def __init__(self,controller,config=None):
         super().__init__(controller,config); self._init_network()
+        self._manual_nutrient = PointPulse(2.25)
         self._geometry_foliage=np.zeros(self._shape,dtype=bool);self._geometry_clearance=np.zeros(self._shape,dtype=bool);self._geometry_cores=np.zeros(self._shape,dtype=bool)
         self._nutrient_habitat=np.zeros(self._shape,dtype=np.float32);self._geometry_identity=None;self._geometry_strength=0.;self._pending_geometry=None;self._geometry_activation_tick=0
     @classmethod
@@ -196,9 +202,32 @@ class PhysarumNetworkAnimation(CadencedSculpture):
         for key,lo,hi in (("branching",.1,1.5),("diffusion",.1,.9),("pulse_visibility",0.,1.)):
             if not lo<=float(v[key])<=hi: raise ValueError(f"{key} is out of range")
         if v["nutrient_layout"] not in {"constellation","ladder","rings"}: raise ValueError("nutrient_layout is invalid")
+    def _nutrient_allowed(self, point):
+        context = self._presentation_context
+        contact = None if context is None else context.installation_geometry
+        return not (contact is not None and contact.available and contact.geometry.foliage.shape == self._shape
+                    and contact.exact_globe_cores[point.x, point.y])
+
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, *self._shape)
+        if point is not None and self._nutrient_allowed(point):
+            return self._manual_nutrient.trigger(point)
+        return False
+
+    def _nutrient_at_tick(self, tick):
+        point, progress = self._manual_nutrient.sample(tick / self.SOURCE_FPS)
+        if point is not None and not self._nutrient_allowed(point):
+            return None, 0.0
+        return point, progress
+
     def _step(self,tick):
         self._activate_geometry(tick)
         self.heading+=(self.rng.random(self.heading.size)-.5)*self.params["branching"]*.12
+        point, progress = self._nutrient_at_tick(tick)
+        if point is not None:
+            dx, dy = point.x - self.x, point.y - self.y
+            influence = np.clip(1.0 - np.hypot(dx, dy) / 14.0, 0, 1)
+            self.heading += np.sin(np.arctan2(dy, dx) - self.heading) * .32 * point.strength * influence * (1.0 - progress)
         old_x,old_y=self.x.copy(),self.y.copy();next_x=np.mod(self.x+np.cos(self.heading)*(.18+self.params["motion"]*.24),self._shape[0]);next_y=np.mod(self.y+np.sin(self.heading)*(.18+self.params["motion"]*.24),self._shape[1])
         if self._geometry_strength:
             hit=self._geometry_cores[np.rint(next_x).astype(int)%self._shape[0],np.rint(next_y).astype(int)%self._shape[1]];next_x[hit],next_y[hit]=old_x[hit],old_y[hit];self.heading[hit]+=np.pi*.67
@@ -206,10 +235,22 @@ class PhysarumNetworkAnimation(CadencedSculpture):
         if self._geometry_strength:self.trail+=self._nutrient_habitat*(.0025*self._geometry_strength)
         d=self.params["diffusion"]*.2; self.trail=(self.trail*(1-d)+d*(np.roll(self.trail,1,0)+np.roll(self.trail,-1,0)+np.roll(self.trail,1,1)+np.roll(self.trail,-1,1))/4)*.989
         for nx,ny in self.nutrients: self.trail[int(nx)%self._shape[0],int(ny)%self._shape[1]]+=.16
+        if point is not None:
+            self.trail[point.x, point.y] += .24 * point.strength * (1.0 - progress)
         np.clip(self.trail,0,1.5,out=self.trail)
     def generate_frame(self,time_elapsed,frame_count):
-        tick,cached=self.begin_frame(time_elapsed)
+        tick = self.source_tick(time_elapsed)
+        if tick != self._last_sim_tick:
+            self.advance_bounded(tick, self._step, 12)
+        point, progress = self._nutrient_at_tick(tick)
+        extras = (point, progress) if point is not None else ()
+        tick,cached=self.begin_frame(time_elapsed, extras=extras)
         if cached:return cached
-        self.advance_bounded(tick,self._step,12); value=np.clip(self.trail,0,1); pulse=np.maximum(0.,np.sin(tick*.11+value*11))*self.params["pulse_visibility"]
-        return self.finish_frame(tick,self.colorize(value,np.clip(value-.36+pulse*.4,0,1)))
+        value=np.clip(self.trail,0,1); pulse=np.maximum(0.,np.sin(tick*.11+value*11))*self.params["pulse_visibility"]
+        accent = np.clip(value-.36+pulse*.4,0,1)
+        if point is not None:
+            accent[point.x, point.y] = max(accent[point.x, point.y], .9 * point.strength * (1.0 - progress))
+        return self.finish_frame(tick,self.colorize(value,accent), extras=extras)
+    def get_runtime_stats(self):
+        return {"agent_count": len(self.x), "nutrient_count": len(self.nutrients)}
     def logical_state(self): return self.x.tobytes(),self.y.tobytes(),self.heading.tobytes(),self.trail.tobytes()
