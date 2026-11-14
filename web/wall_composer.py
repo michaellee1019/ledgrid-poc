@@ -1025,7 +1025,7 @@ class WallComposer:
         descriptor = self._descriptor(component)
         schema = descriptor.parameter_schema
         params = component["parameters"]
-        order = dict.fromkeys((*descriptor.preferred_parameters, *params))
+        order = dict.fromkeys((*descriptor.preferred_parameters, *schema))
         player_state = self.manager.nimbus_game()[1] if path == ("animation",) else None
         for key in sorted(order, key=lambda key: key == "seed" or "fps" in key
                           or (player_state == "paused" and schema[key].get("autoplay_only", False))):
@@ -1047,7 +1047,8 @@ class WallComposer:
                 rows.append(self._choice(name, value, (False, True), setter))
             elif kind in ("int", "float"):
                 low, high = _parameter_bounds(params, key, definition)
-                row = self._number(name, value, low, high, definition["step"], setter, integer=kind == "int")
+                row = self._number(name, value, low, high, definition["step"], setter,
+                                   integer=kind == "int", repeat_step=definition.get("repeat_step"))
                 if kind == "int" and high - low > 200:
                     row.select = partial(self._integer_picker, name, low, high, setter)
                 rows.append(row)
@@ -1083,9 +1084,10 @@ class WallComposer:
         self.pages[-1].index = options.index(value) if value in options else 0
 
     @staticmethod
-    def _number(name, value, low, high, step, setter, *, integer=False):
+    def _number(name, value, low, high, step, setter, *, integer=False, repeat_step=None):
         def adjust(direction, *, steps):
-            next_value = max(low, min(high, round(float(value) + direction * step * steps, 6)))
+            amount = repeat_step if steps > 1 and repeat_step is not None else step * steps
+            next_value = max(low, min(high, round(float(value) + direction * amount, 6)))
             if next_value != value:
                 setter(int(next_value) if integer else next_value)
 

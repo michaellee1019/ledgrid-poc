@@ -32,9 +32,11 @@ class EmojiArrangerAnimation(AnimationBase):
     """A deterministic, transparent, semantic-palette Emoji Message plane."""
     COMPOSER_NAME = "Message"
     PARAMETER_CONTROLS = {
-        'scroll_speed': {'unit': 'px/s'},
+        'scroll_speed': {'unit': 'px/s', 'step': .05, 'coarse_step': 1},
         'pulse_speed': {'unit': 'Hz'},
         'text': {'control': 'emoji_text', 'max_length': 64},
+        'x_offset': {'label': 'Text along strip'},
+        'y_offset': {'label': 'Text across strips'},
     }
 
 
@@ -91,8 +93,8 @@ class EmojiArrangerAnimation(AnimationBase):
     def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "text": {"type": "str", "default": "HI🔥", "description": "Letters, numbers, spaces, and supported emoji"},
-            "x_offset": {"type": "int", "min": -137, "max": 137, "default": 8, "description": "Horizontal message position"},
-            "y_offset": {"type": "int", "min": -32, "max": 32, "default": 3, "description": "Vertical message position"},
+            "x_offset": {"type": "int", "min": -137, "max": 137, "default": 8, "description": "Text offset along each strip, before Widget placement"},
+            "y_offset": {"type": "int", "min": -32, "max": 32, "default": 3, "description": "Text offset across strips, before Widget placement"},
             "char_spacing": {"type": "int", "min": 0, "max": 8, "default": 1, "description": "Space between glyphs"},
             "line_spacing": {"type": "int", "min": 0, "max": 8, "default": 1, "description": "Space between wrapped lines"},
             "scroll_speed": {"type": "float", "min": 0.0, "max": 24.0, "default": 0.0, "description": "Message scroll pixels per scaled second"},

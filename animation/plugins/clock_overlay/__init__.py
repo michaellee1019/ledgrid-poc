@@ -35,7 +35,8 @@ class ClockOverlayAnimation(AnimationBase):
     COMPOSER_NAME = "Clock"
     DEFAULT_WIDGET_PLACEMENT = {"mode": "manual", "strip_translation": 0, "led_translation": -8}
     PARAMETER_CONTROLS = {
-        'clock_offset_minutes': {'unit': 'min'},
+        'clock_offset_minutes': {'label': 'Clock offset', 'unit': 'min', 'step': 1,
+                                 'coarse_step': 60, 'repeat_step': 60},
         'format_24h': {'label': 'Clock format', 'options': [False, True], 'option_labels': {'false': '12-hour', 'true': '24-hour'}},
     }
 

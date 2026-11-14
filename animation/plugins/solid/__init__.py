@@ -31,7 +31,8 @@ class SolidColorAnimation(AmbientSceneAnimation):
             parameter_schema={
                 "gain": {"type": "float", "min": 0, "max": 1, "default": .62,
                          "step": .05, "label": "Background light"},
-                "seed": {"type": "int", "min": 0, "max": 999999, "default": 4201, "step": 1},
+                "seed": {"type": "int", "min": 0, "max": 999999, "default": 4201, "step": 1,
+                         "label": "Stored seed", "control": "fixed"},
             },
             name="Solid background", description="A steady semantic wash behind the Animation.",
             parameter_normalizer=cls._normalize_background, preserve_parameter_encoding=True,

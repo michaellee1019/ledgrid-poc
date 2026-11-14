@@ -1,5 +1,6 @@
 """Exercise the shared Nimbus menu, real Scene output, and local ownership."""
 
+from copy import deepcopy
 from datetime import datetime
 from functools import partial
 import multiprocessing
@@ -1762,6 +1763,81 @@ def test_widget_text_position_and_save_as(instrument):
     assert saved == manager.get_scene_state()
     assert "output" not in saved
     assert manager.output_brightness == 80
+
+
+def test_scene_support_metadata_round_trips_widgets_and_background(instrument):
+    manager, _owner, _runner, _gamepad, menu = instrument
+    scene = starter("aurora_clock")
+    clock = scene["widgets"][0]
+    clock["component"]["parameters"]["color"] = [10, 22, 47]
+    scene["background"]["parameters"]["seed"] = 999999
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    seed = next(row for row in menu._background_rows() if row.name == "Stored seed")
+    assert seed.value == "999999" and not seed.adjust
+    message_descriptor = menu.catalog.require(provider="python", component_id="emoji_arranger", version=1)
+    menu._add_widget("Message", message_descriptor)
+    current = manager.get_scene_state()
+    clock, message = current["widgets"]
+    widget_path = ("widgets", 0, "component")
+    clock_rows = {row.name: row for row in menu._parameter_rows(widget_path, clock["component"])}
+    clock_rows["Clock offset"].adjust(1, steps=1)
+    updated = manager.get_scene_state()["widgets"][0]["component"]
+    assert updated["parameters"]["clock_offset_minutes"] == 1
+    offset = next(row for row in menu._parameter_rows(widget_path, updated) if row.name == "Clock offset")
+    offset.adjust(1, steps=5)
+    assert manager.get_scene_state()["widgets"][0]["component"]["parameters"]["clock_offset_minutes"] == 61
+    message_rows = {row.name: row for row in menu._parameter_rows(("widgets", 1, "component"), message["component"])}
+    assert {"Text along strip", "Text across strips"} <= message_rows.keys()
+    message_rows["scroll speed"].adjust(1, steps=1)
+    saved = manager.get_scene_state()
+    assert saved["widgets"][1]["component"]["parameters"]["scroll_speed"] == .05
+    assert saved["widgets"][1]["placement"] == message["placement"]
+    assert saved["background"]["parameters"]["seed"] == 999999
+    assert saved["look"]["presentation_brightness"] == scene["look"]["presentation_brightness"]
+    assert manager.output_brightness == 80
+
+
+def test_wall_clock_and_message_advance_while_game_is_paused(instrument):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter("aurora_clock")
+    scene["look"]["pace"] = 1
+    scene["animation"].update(component_id="snake", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    message = menu.catalog.require(provider="python", component_id="emoji_arranger", version=1)
+    menu._add_widget("Message", message)
+    saved = manager.get_scene_state()
+    saved["widgets"][1]["component"]["parameters"]["scroll_speed"] = 2
+    assert handle_command(manager, "start_scene", {"scene": saved})
+    menu.close()
+    gamepad.shoulder_bank = 0
+    inputs(manager, gamepad, menu, "a")
+    runtime, state = manager.nimbus_game()
+    assert state == "playing"
+    canonical = manager._canonical_receiver_scene
+    wall_time = datetime.fromisoformat("2026-11-13T20:15:05-05:00")
+    runtime.render(ScenePresentationContext(canonical, 0, wall_time))
+    inputs(manager, gamepad, menu, "menu")
+    assert manager.nimbus_game()[1] == "paused"
+    first = runtime.render(ScenePresentationContext(canonical, 1, wall_time)).pixels.copy()
+    slot = runtime._runtime._animation.instance
+    board = slot.semantic_snapshot()
+    next_clock = datetime.fromisoformat("2026-11-13T20:15:07-05:00")
+    second = runtime.render(ScenePresentationContext(canonical, 4, next_clock)).pixels.copy()
+    assert not np.array_equal(first, second) and slot.semantic_snapshot() == board
+    assert all(widget.descriptor.input_capability.mode == "none" for widget in runtime._runtime._widgets.values())
+    for widget in runtime._runtime._widgets.values():
+        assert widget.instance._revision >= 2
+    for luminance in (0, .54, 1):
+        variants = []
+        for seed in (0, 999999):
+            candidate = deepcopy(canonical.scene)
+            candidate["background"]["parameters"].update(gain=luminance, seed=seed)
+            variants.append(normalize_composer_scene({"origin": "composer", "scene": candidate}, menu.catalog))
+        frames = [InstalledFinalSceneRuntime(menu.catalog, ROOT).render(ScenePresentationContext(candidate, 0, wall_time)).pixels
+                  for candidate in variants]
+        np.testing.assert_array_equal(*frames)
 
 
 def test_playlist_takes_over_only_on_manual_change_and_stop_retains_entry(instrument):

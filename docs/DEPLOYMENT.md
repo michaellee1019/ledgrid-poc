@@ -214,6 +214,12 @@ drive Dustline. Hold left or right to steer, press A for nitro, and hold B
 to brake. The authored race colors stay with the track, while Scene brightness
 and calibrated plant effects are applied by the host.
 
+Clock Widget offset moves by a minute per press or by an hour on a held
+Nimbus direction or browser slider. Message scroll has fine low-speed steps.
+Message text offsets position the glyphs within the Widget, and Widget
+placement moves the whole layer. Solid Background gain is independent of the
+Scene and wall brightness controls.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu
