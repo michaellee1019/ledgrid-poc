@@ -21,6 +21,9 @@ from animation.core.plant_awareness import (
     INSTALLATION_GEOMETRY_CONTACT_INPUT,
     InstallationGeometryContact,
     PlantMaskCache,
+    paint_plant_fire,
+    spark_ignition_points_from_animation,
+    spark_points_from_pixels,
 )
 from animation.core.scene_runtime import (
     CanonicalSceneRuntime, CanonicalSceneRuntimeError, RuntimeFrame, ScenePresentationContext,
@@ -85,6 +88,9 @@ class InstalledFinalSceneRuntime:
             plant_optics=self._plant_optics,
             widget_safe_geometry=self._widget_safe_geometry,
         )
+        self._optics_elapsed = 0.0
+        self._fire_last_elapsed = 0.0
+        self._fire_heat: np.ndarray | None = None
         self._active_digest: str | None = None
         self._lock = RLock()
 
@@ -95,9 +101,12 @@ class InstalledFinalSceneRuntime:
             raise TypeError("presentation must be a ScenePresentationContext")
         with self._lock:
             canonical = presentation.canonical
+            self._optics_elapsed = presentation.monotonic_elapsed
             if canonical.identity.digest != self._active_digest:
                 self._runtime.activate(canonical)
                 self._active_digest = canonical.identity.digest
+                self._fire_heat = None
+                self._fire_last_elapsed = self._optics_elapsed
             return self._runtime.render_presentation(presentation)
 
 
@@ -106,6 +115,11 @@ class InstalledFinalSceneRuntime:
         with self._lock:
             self._runtime.tune(canonical, elapsed)
             self._active_digest = canonical.identity.digest
+
+    def close(self) -> None:
+        with self._lock:
+            self._runtime.close()
+            self._active_digest = None
 
     def set_installation_profile(
         self, view: InstallationProfileRuntimeView | None
@@ -214,7 +228,41 @@ class InstalledFinalSceneRuntime:
             foliage = output[geometry.foliage_flat].copy()
             output[geometry.foliage_flat, 0] = np.rint(foliage[:, 0] * (1.0 - amount) + foliage[:, 2] * amount)
             output[geometry.foliage_flat, 2] = np.rint(foliage[:, 2] * (1.0 - amount) + foliage[:, 1] * amount)
+        fire = float(strengths.get("fire", 0.0))
+        if fire:
+            if self._fire_heat is None:
+                self._fire_heat = np.zeros(int(self.controller.total_leds), dtype=np.float32)
+                self._fire_last_elapsed = self._optics_elapsed
+            elapsed = float(self._optics_elapsed)
+            dt = elapsed - self._fire_last_elapsed
+            if dt < 0.0:
+                self._fire_heat.fill(0.0)
+                dt = 0.0
+            self._fire_last_elapsed = elapsed
+            paint_plant_fire(
+                output, geometry, fire,
+                heat=self._fire_heat,
+                sparks=self._spark_ignition_points(output),
+                dt=min(dt, 1.0),
+                strip_count=int(self.controller.strip_count),
+                leds_per_strip=int(self.controller.leds_per_strip),
+            )
+        else:
+            self._fire_heat = None
         return output
+
+    def _spark_ignition_points(self, pixels: np.ndarray) -> np.ndarray:
+        slot = getattr(self._runtime, "_animation", None)
+        instance = None if slot is None else getattr(slot, "instance", None)
+        points = spark_ignition_points_from_animation(instance)
+        if points is not None:
+            return points
+        return spark_points_from_pixels(
+            pixels,
+            strip_count=int(self.controller.strip_count),
+            leds_per_strip=int(self.controller.leds_per_strip),
+        )
+
 
 
 class ComposerFinalPreview(InstalledFinalSceneRuntime):

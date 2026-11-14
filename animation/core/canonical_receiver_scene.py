@@ -25,16 +25,22 @@ class CanonicalReceiverSceneMixin:
             self.scene_v2_component_catalog(), Path(__file__).resolve().parents[2],
             controller=self.controller)
         runtime.set_installation_profile(self.get_installation_profile_runtime_view())
-        runtime.render(ScenePresentationContext(canonical, 0.0, datetime.now().astimezone()))
+        try:
+            runtime.render(ScenePresentationContext(canonical, 0.0, datetime.now().astimezone()))
+        except Exception:
+            runtime.close()
+            raise
         return canonical, runtime
 
     def preflight_scene(self, payload, **_unused):
         if isinstance(payload, dict) and payload.get('schema') == 'ledgrid.scene.v2':
-            self._prepare_canonical_receiver_scene(payload)
+            _, runtime = self._prepare_canonical_receiver_scene(payload)
+            runtime.close()
         else:
             self._resolve_scene_state(payload)
 
     def start_canonical_scene(self, payload, *, enter_player=False):
+        runtime = None
         if enter_player:
             # A failed game preflight must leave the current scene playing.
             try:
@@ -42,6 +48,8 @@ class CanonicalReceiverSceneMixin:
                 if not runtime.dispatch_game_input("play"):
                     raise RuntimeError('Player controls are unavailable')
             except Exception as exc:
+                if runtime is not None:
+                    runtime.close()
                 raise ValueError(f'Player mode could not be prepared: {exc}') from exc
         self._requested_scene = deepcopy(payload)
         self._playback_error = None
@@ -67,6 +75,8 @@ class CanonicalReceiverSceneMixin:
             self._launch_animation_loop()
             return True
         except Exception as exc:
+            if runtime is not None:
+                runtime.close()
             self._playback_error = str(exc)
             self.is_running = False
             self.stop_event.set()

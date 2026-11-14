@@ -1,10 +1,26 @@
 {
+  "composer": true,
   "plugin_id": "nj_transit_bus",
   "class": "NjTransitBusAnimation",
   "icon": "🚌",
-  "gallery": "show",
-  "preview": {
-    "capture_seconds": [0, 0.25, 0.5, 1, 2, 4],
-    "simulation_fps": 8
+  "gallery": "test",
+  "provider": "python",
+  "role": "widget",
+  "frame_format": "rgba_uint8_premultiplied_strip_major",
+  "timing": "wall_clock",
+  "cadence": "semantic_time_boundary_cached",
+  "alpha_behavior": "premultiplied_rgba",
+  "palette_policy": "semantic",
+  "palette_roles": ["message", "highlight"],
+  "plant_capabilities": ["effect_intent"],
+  "fidelity_exceptions": [],
+  "component": {
+    "provider": "python",
+    "role": "widget",
+    "timing": "wall_clock",
+    "alpha_behavior": "premultiplied_rgba",
+    "palette_policy": "semantic",
+    "plant_capabilities": ["effect_intent"],
+    "fidelity_exceptions": []
   }
 }

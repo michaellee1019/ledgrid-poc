@@ -58,8 +58,11 @@ class ComposerPresetCatalogBoundaryTests(unittest.TestCase):
 
     def test_membership_freezes_the_current_component_and_preset_packet(self) -> None:
         catalog = ComponentPresetCatalog(ROOT, current_component_catalog())
-        self.assertEqual(len(catalog._membership), 47)
-        self.assertEqual(sum(len(entry["preset_ids"]) for entry in catalog._membership.values()), 270)
+        self.assertEqual(len(catalog._membership), 51)
+        self.assertEqual(sum(len(entry["preset_ids"]) for entry in catalog._membership.values()), 281)
+        self.assertEqual(catalog._membership["campfire"]["preset_ids"], ["ember-pit", "night", "quiet", "roaring"])
+        self.assertEqual(catalog._membership["cribbage_leaderboard"]["preset_ids"], ["game-night"])
+        self.assertEqual(catalog._membership["nj_transit_bus"]["preset_ids"], ["willow-to-pabt"])
         self.assertEqual(catalog._membership["clock_overlay"]["preset_ids"], [
             "local-12-hour", "precision-seconds", "remote-team-plus-six",
         ])

@@ -24,6 +24,7 @@ from animation.core.presentation_contracts import NEUTRAL_PLANT_INPUTS, Resolved
 from animation.core.plant_awareness import (
     INSTALLATION_GEOMETRY_CONTACT_INPUT,
     InstallationGeometryContact,
+    plant_optics_are_time_varying,
 )
 from animation.core.widget_placement import (
     WidgetPlacementResolution, resolve_widget_placement, translated_widget_coverage,
@@ -338,7 +339,8 @@ class CanonicalSceneRuntime:
         foreground = self._compositor.aggregate_foreground()
         pipeline_signature = (scene["plants"], scene["look"]["presentation_brightness"], self._master_brightness)
         pipeline_changed = pipeline_signature != self._last_pipeline_signature
-        changed = composed.changed or pipeline_changed or self._last_output is None
+        optics_animated = plant_optics_are_time_varying(scene["plants"])
+        changed = composed.changed or pipeline_changed or optics_animated or self._last_output is None
         if changed:
             final = self._validated_rgb(self._plant_optics(composed.pixels, scene["plants"]), "plant optics")
             np.multiply(final, float(scene["look"]["presentation_brightness"]), out=self._scale_work)
@@ -352,10 +354,27 @@ class CanonicalSceneRuntime:
         assert self._last_output is not None
         self._frame_count += 1
         return RuntimeFrame(self._last_output, canonical.identity, changed,
-                            composed.dirty_ranges if changed and not pipeline_changed else None, foreground,
+                            composed.dirty_ranges if changed and not (pipeline_changed or optics_animated) else None, foreground,
                             widget_placements=MappingProxyType(placements))
 
+    def close(self) -> None:
+        """Release configured hardware sources when playback or preview ends."""
+        self._close_replaced_slots((self._background, self._animation, *self._widgets.values()), ())
+        self._background = self._animation = None
+        self._widgets.clear()
+        self._canonical = None
+
+    @staticmethod
+    def _close_replaced_slots(previous, retained) -> None:
+        retained_instances = {id(slot.instance) for slot in retained if slot is not None}
+        for slot in previous:
+            if slot is not None and id(slot.instance) not in retained_instances:
+                cleanup = getattr(slot.instance, "cleanup", None)
+                if callable(cleanup):
+                    cleanup()
+
     def _sync_slots(self, scene: Mapping[str, Any], *, live_tune: bool = False) -> None:
+        previous = (self._background, self._animation, *self._widgets.values())
         background = self._descriptor(scene["background"])
         background_slot = None
         if self._background_renderer is None and background.factory is not None:
@@ -387,6 +406,7 @@ class CanonicalSceneRuntime:
         self._animation = animation
         self._background = background_slot
         self._widgets = widgets
+        self._close_replaced_slots(previous, (background_slot, animation, *widgets.values()))
 
     def _candidate_slot(self, current: _ComponentSlot | None, descriptor: ComponentDescriptor,
                         parameters: Mapping[str, Any], factory: ComponentFactory,

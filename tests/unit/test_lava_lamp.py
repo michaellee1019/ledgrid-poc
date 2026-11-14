@@ -372,7 +372,17 @@ class LavaLampSceneV2Tests(unittest.TestCase):
         portal.set_presentation_context(self._resolved("portal")); portal._step(.01)
         self._place_in_named_bowl(portal, first, "top_left")
         portal.cooldown[first] = 0.0
+        rest = float(portal.radius[first])
         portal._apply_plant_dynamics(first, .01)
+        self.assertTrue(portal.warping[first])
+        self.assertLess(float(portal.radius[first]), rest)
+        self.assertEqual(portal.get_runtime_stats()["portal_transfers"], 0)
+        for _ in range(200):
+            if not portal.warping[first]:
+                break
+            portal._advance_warp(first, .01)
+        self.assertFalse(portal.warping[first])
+        self.assertAlmostEqual(float(portal.radius[first]), rest)
         self.assertEqual(portal.get_runtime_stats()["portal_transfers"], 1)
         expected = portal._region_centers["top_right"]
         self.assertAlmostEqual(float(portal.x[first]), expected[0])

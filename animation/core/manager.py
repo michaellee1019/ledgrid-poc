@@ -962,6 +962,8 @@ class AnimationManager(CanonicalReceiverSceneMixin):
 
 
     def _clear_scene_state(self) -> None:
+        if self._canonical_receiver_runtime is not None:
+            self._canonical_receiver_runtime.close()
         self._canonical_receiver_scene = None
         self._canonical_receiver_runtime = None
         self._canonical_host_full_mode = False

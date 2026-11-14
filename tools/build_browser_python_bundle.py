@@ -248,6 +248,7 @@ def source_mapping(repo_root: Path) -> Dict[str, Path]:
         "animation/plugins/__init__.py": repo_root / "animation/plugins/__init__.py",
         "drivers/__init__.py": repo_root / "drivers/__init__.py",
         "drivers/led_layout.py": repo_root / "drivers/led_layout.py",
+        "drivers/wall_roles.py": repo_root / "drivers/wall_roles.py",
         "config/webcam_pixel_map.json": repo_root / "config/webcam_pixel_map.json",
         "ledgrid_browser_runtime.py": browser_sources / "runtime.py",
     }

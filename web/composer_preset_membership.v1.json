@@ -22,6 +22,16 @@
         "solar-morning"
       ]
     },
+    "campfire": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "ember-pit",
+        "night",
+        "quiet",
+        "roaring"
+      ]
+    },
     "canopy_cup": {
       "provider": "python",
       "component_version": 1,
@@ -115,6 +125,13 @@
         "r-pentomino-laboratory",
         "solar-embers",
         "synthwave-sunset"
+      ]
+    },
+    "cribbage_leaderboard": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": [
+        "game-night"
       ]
     },
     "cyclic_reef": {
@@ -330,6 +347,11 @@
         "quiet-sleeper",
         "synthwave-commuter"
       ]
+    },
+    "nj_transit_bus": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": ["willow-to-pabt"]
     },
     "ocean_waves": {
       "provider": "python",

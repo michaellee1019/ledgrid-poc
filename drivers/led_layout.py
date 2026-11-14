@@ -19,7 +19,7 @@ DeviceMapEntry = Tuple[int, int]
 # Physical LTR is SPI1 CE1, SPI1 CE0, SPI0 CE1 reversed, SPI0 CE0 reversed,
 # SPI0 CE3. V6 SPI1 CE0 is GPIO22 (header pin 15); CE1 is GPIO17 (pin 11).
 # The populated third-HAT module is SJ_SPI0_CE3 on GPIO6 (pin 31). SJ_SPI0_CE2
-# on GPIO5 (pin 29) is the empty socket and is not a logical receiver.
+# on GPIO5 (pin 29) is the cribbage score bridge and is outside the LED routes.
 WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (1, 0),
     (1, 1),
@@ -27,6 +27,8 @@ WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (0, 1),
     (0, 3),
 )
+
+SCORE_BRIDGE_SPI: DeviceMapEntry = (0, 2)
 
 # One-PCB 16-column canvas is the left HAT: SPI1 CE0/CE1.
 HAT_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (

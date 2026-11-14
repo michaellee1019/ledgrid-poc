@@ -252,10 +252,13 @@ def reconcile_wall_menu(manager, gamepad, menu, prior_revision, *, scheduled=Fal
 def run_controller_mode(args):
     from drivers.multi_device import MultiDeviceLEDController
     from drivers.nimbus_gamepad import NimbusGamepad
+    from drivers.wall_roles import assign_score_bridge
     from animation.core.wall_menu_frame import WallMenuFrame
     from web.wall_composer import WallComposer
     from functools import partial
     num_devices = hardware_receiver_count(args.strips, args.leds_per_strip)
+    if num_devices == 5:
+        assign_score_bridge()
     saved=load_saved_state(state_path=Path(args.saved_state_file),presets_dir=Path(args.presets_dir))
     controller=MultiDeviceLEDController(num_devices=num_devices,strip_count=args.strips,
         leds_per_strip=args.leds_per_strip,device_map=hardware_device_map(num_devices),

@@ -94,6 +94,7 @@
     {id: 'illuminate', label: 'Illuminate', enabled: '#plantIlluminateEnabled', strength: '#plantIlluminateStrength', value: '#plantIlluminateValue'},
     {id: 'shadow', label: 'Shadow', enabled: '#plantShadowEnabled', strength: '#plantShadowStrength', value: '#plantShadowValue'},
     {id: 'hue_shift', label: 'Hue shift', enabled: '#plantHueShiftEnabled', strength: '#plantHueShiftStrength', value: '#plantHueShiftValue'},
+    {id: 'fire', label: 'On fire', enabled: '#plantFireEnabled', strength: '#plantFireStrength', value: '#plantFireValue'},
   ]);
   const plantOpticIds = new Set(plantOptics.map(({id}) => id));
   function sameLocalParameters(left, right) {
