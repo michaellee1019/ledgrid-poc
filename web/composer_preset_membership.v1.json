@@ -296,6 +296,11 @@
         "nightmare-tunnel"
       ]
     },
+    "baja_rally": {
+      "provider": "python",
+      "component_version": 1,
+      "preset_ids": ["canyon-clean", "frontier-grid", "night-coast", "scrub-country", "spine-charge"]
+    },
     "mini_metro": {
       "provider": "python",
       "component_version": 1,

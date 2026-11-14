@@ -209,6 +209,11 @@ the inner pieces. Pixel Quest shows attack readiness and whether 5 MP is
 available for B Magic. Canopy Cup uses held left or right to steer, A to jump,
 and B for a charged glide in the air.
 
+Baja Rally is available in Browse with its five shipped presets. Press A to
+drive Dustline. Hold left or right to steer, press A for nitro, and hold B
+to brake. The authored race colors stay with the track, while Scene brightness
+and calibrated plant effects are applied by the host.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu

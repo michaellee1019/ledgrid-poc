@@ -3,6 +3,16 @@
   "class": "BajaRallyAnimation",
   "icon": "🛻",
   "gallery": "show",
+  "composer": true,
+  "component": {
+    "provider": "python",
+    "role": "animation",
+    "timing": "scaled_context",
+    "alpha_behavior": "opaque",
+    "palette_policy": "preserve",
+    "plant_capabilities": ["effect_intent", "simulation_inputs"],
+    "fidelity_exceptions": ["authored_media_colors"]
+  },
   "preview": {
     "capture_seconds": [0, 1.2, 3, 6, 10, 16, 24, 36],
     "simulation_fps": 30

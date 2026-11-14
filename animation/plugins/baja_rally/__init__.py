@@ -12,11 +12,15 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
 from animation import AnimationBase
+from animation.core.component_catalog import ComponentDescriptor
+from animation.core.plant_awareness import InstallationGeometryContact, PlantModifierState
+from animation.core.presentation_contracts import ResolvedScene
 
 
 Color = Tuple[int, int, int]
@@ -100,6 +104,17 @@ class BajaRallyAnimation(AnimationBase):
     )
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
+    COMPONENT_ID = "baja_rally"
+    PREFERRED_PARAMETERS = ("race_speed", "difficulty", "traffic", "cup")
+    PARAMETER_CONTROLS = {"race_speed": {"unit": "×"}}
+    PLAYER_BUTTONS = {
+        "left": ("Steer left", True, True), "right": ("Steer right", True, True),
+        "a": ("Nitro boost", False), "b": ("Brake", False, True),
+    }
+    DEFAULTS = MappingProxyType({"race_speed": 1.0, "render_fps": 40.0, "seed": 1993,
+                                 "cup": "series", "biome": "rotation", "time_of_day": "day",
+                                 "difficulty": 1.0, "traffic": .65, "show_hud": True})
+    LIVE_TUNABLE_PARAMETERS = frozenset({"race_speed", "render_fps", "time_of_day", "difficulty", "show_hud"})
     PLANT_MODIFIER_SUPPORT = frozenset(("obstacle", "hazard", "illuminate"))
 
     SIM_DT = 1.0 / 30.0
@@ -236,14 +251,62 @@ class BajaRallyAnimation(AnimationBase):
         self.consumed: set = set()
         self.trucks: List[Truck] = []
         self.course: Course
+        self._scene_context: ResolvedScene | None = None
+        self._scene_plant_state = PlantModifierState.empty()
+        self._player_control = False
+        self._steering: set[str] = set()
+        self._braking = False
+        self._boost_requested = False
         self._refresh_plant_geometry(force=True)
         self._start_leg(0)
 
-    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+    @classmethod
+    def component_descriptor(cls):
+        return ComponentDescriptor(
+            component_id=cls.COMPONENT_ID, version=1, provider="python", role="animation",
+            timing_policy="scaled_context", alpha_behavior="opaque", palette_policy="preserve",
+            plant_capabilities=("effect_intent", "simulation_inputs"),
+            fidelity_exceptions=("authored_media_colors",),
+            optional_simulation_inputs=("installation_geometry_contact",),
+            defaults=cls.DEFAULTS, parameter_normalizer=cls._normalized_parameters,
+        )
+
+    @classmethod
+    def _normalized_parameters(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        historical = {"speed", "brightness", "plant_aware", "plant_modifiers"}
+        unknown = values.keys() - cls.DEFAULTS.keys() - historical
+        if unknown:
+            raise ValueError(f"Unknown Baja Rally settings: {sorted(unknown)}")
+        result = {**cls.DEFAULTS, **{key: value for key, value in values.items() if key not in historical}}
+        if "speed" in values:
+            result["race_speed"] = values["speed"]
+        if "plant_modifiers" in values:
+            PlantModifierState.from_payload(values["plant_modifiers"])
+        if "plant_aware" in values and type(values["plant_aware"]) is not bool:
+            raise ValueError("Invalid Baja Rally plant_aware")
+        schema = cls.get_parameter_schema()
+        for name, value in result.items():
+            definition = schema[name]
+            kind = definition["type"]
+            if kind == "str":
+                valid = value in definition["options"]
+            elif kind == "bool":
+                valid = type(value) is bool
+            else:
+                value_types = (int,) if kind == "int" else (int, float)
+                valid = type(value) in value_types and definition["min"] <= value <= definition["max"]
+            if not valid:
+                raise ValueError(f"Invalid Baja Rally {name}")
+        return result
+
+    @classmethod
+    def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema.update({
             "speed": {"type": "float", "min": 0.35, "max": 2.5, "default": 1.0,
                       "description": "Race clock multiplier"},
+            "race_speed": {"type": "float", "min": .35, "max": 2.5, "default": 1.0,
+                           "description": "Race clock multiplier"},
             "render_fps": {"type": "float", "min": 24.0, "max": 60.0, "default": 40.0,
                            "description": "Maximum visual refresh rate"},
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 1993,
@@ -252,9 +315,9 @@ class BajaRallyAnimation(AnimationBase):
                     "options": ["series", "frontier", "coast", "spine"],
                     "description": "Championship rotation or one repeating cup"},
             "biome": {"type": "str", "default": "rotation",
-                      "options": ["rotation", *self.BIOMES],
+                      "options": ["rotation", *cls.BIOMES],
                       "description": "Surface family. Rotation follows the leg"},
-            "time_of_day": {"type": "str", "default": "day", "options": list(self.TIMES_OF_DAY),
+            "time_of_day": {"type": "str", "default": "day", "options": list(cls.TIMES_OF_DAY),
                             "description": "Sky, headlight, and terrain light"},
             "difficulty": {"type": "float", "min": 0.5, "max": 1.5, "default": 1.0,
                            "description": "Rival pace and hazard density"},
@@ -286,6 +349,48 @@ class BajaRallyAnimation(AnimationBase):
             self._reset_series()
         self._last_render_tick = None
         self.last_rendered_frame = None
+
+    def set_presentation_context(self, context: ResolvedScene) -> None:
+        if context.descriptor.component_id != self.COMPONENT_ID:
+            raise ValueError("Baja Rally received another component's context")
+        previous = self._scene_context
+        self._scene_context = context
+        plants_changed = previous is None or previous.canonical_scene["plants"] != context.canonical_scene["plants"]
+        if plants_changed:
+            self._scene_plant_state = PlantModifierState.from_payload(context.canonical_scene["plants"]["effects"])
+        before = previous.installation_geometry if previous is not None else None
+        if plants_changed or before is not context.installation_geometry:
+            self._refresh_plant_geometry()
+            self._last_render_tick = None
+
+    def render_resolved_scene(self, context: ResolvedScene):
+        self.set_presentation_context(context)
+        if any(context.parameters[key] != self.params.get(key) for key in self.DEFAULTS):
+            structure = {key for key in ("seed", "cup", "biome", "traffic") if context.parameters[key] != self.params.get(key)}
+            self.update_parameters(dict(context.parameters))
+            if structure and "seed" not in structure:
+                self._reset_series()
+        return self.generate_frame(context.phase_time, self.frame_count)
+
+    def set_player_control(self, enabled: bool) -> None:
+        self._player_control = enabled
+        self.set_player_paused(True)
+
+    def set_player_paused(self, paused: bool) -> None:
+        if paused:
+            self._steering.clear()
+            self._braking = False
+            self._boost_requested = False
+
+    def handle_player_button(self, button: str) -> None:
+        if button in ("left", "right"):
+            self._steering.add(button)
+        elif button in ("release-left", "release-right"):
+            self._steering.discard(button.removeprefix("release-"))
+        elif button == "a" and self.phase == "race":
+            self._boost_requested = True
+        elif button in ("b", "release-b"):
+            self._braking = button == "b"
 
     def _reset_series(self) -> None:
         self.loop_index = 0
@@ -430,7 +535,8 @@ class BajaRallyAnimation(AnimationBase):
         self._render()
         frame = self.next_frame_buffer(clear=False)
         frame.reshape(self.width, self.height, 3)[:] = self._canvas[::-1].transpose(1, 0, 2)
-        self.apply_brightness_array(frame, out=frame)
+        if self._scene_context is None:
+            self.apply_brightness_array(frame, out=frame)
         self.last_rendered_frame = frame
         return self.rendered_frame(frame, changed=True)
 
@@ -440,7 +546,8 @@ class BajaRallyAnimation(AnimationBase):
         else:
             raw_delta = max(0.0, time_elapsed - self.last_elapsed)
         self.last_elapsed = time_elapsed
-        scaled = raw_delta * max(0.05, float(self.params.get("speed", 1.0)))
+        speed_key = "race_speed" if self._scene_context is not None else "speed"
+        scaled = raw_delta * max(0.05, float(self.params.get(speed_key, 1.0)))
         accepted = min(self.MAX_CATCHUP, scaled)
         self.dropped_catchup_seconds += max(0.0, scaled - accepted)
         self.accumulator += accepted
@@ -488,6 +595,7 @@ class BajaRallyAnimation(AnimationBase):
         return hero_done or everyone or timed_out
 
     def _drive(self, truck: Truck, dt: float, road: Optional[RoadSlice]) -> None:
+        manual = self._player_control and truck.index == 0
         truck.contact_lock = max(0.0, truck.contact_lock - dt)
         if truck.airborne > 0.0:
             truck.airborne = max(0.0, truck.airborne - dt)
@@ -505,19 +613,29 @@ class BajaRallyAnimation(AnimationBase):
             truck.nitro = max(0.0, truck.nitro - 0.08 * dt)
         else:
             truck.nitro = min(1.0, truck.nitro + (0.055 + 0.028 * truck.nitro_tank) * dt)
-            if self._wants_nitro(truck, delta):
+            boost = (self._boost_requested and truck.nitro >= .34 and not truck.dnf and truck.airborne <= 0.0
+                     if manual else self._wants_nitro(truck, delta))
+            if boost:
                 truck.boosting = 1.05 + 0.12 * truck.nitro_tank
                 truck.nitro = max(0.0, truck.nitro - 0.34)
                 truck.nitro_uses += 1
+        if manual:
+            self._boost_requested = False
         target = self._target_speed(truck, delta, grip)
         if self._drafting(truck):
             target *= 1.06
+        if manual and self._braking:
+            target *= .35
         accel = 9.0 + truck.engine * 1.4
         if truck.speed < target:
             truck.speed = min(target, truck.speed + accel * dt)
         else:
             truck.speed = max(target, truck.speed - 16.0 * dt)
-        desired = self._desired_lane(truck, delta)
+        if manual:
+            turn = int("right" in self._steering) - int("left" in self._steering)
+            desired = truck.lane if turn == 0 else .88 * turn
+        else:
+            desired = self._desired_lane(truck, delta)
         if road is not None:
             desired = self._plant_lane(truck, desired, road)
         rate = (1.45 + truck.tires * 0.32) * (0.65 + 0.35 * truck.skill)
@@ -877,19 +995,26 @@ class BajaRallyAnimation(AnimationBase):
         return int(np.count_nonzero(mask[y0:y1, x0:x1]))
 
     def _obstacle_strength(self) -> float:
+        if self._scene_context is not None:
+            return self._scene_plant_state.strength("obstacle")
         return self.plant_modifier_strength("obstacle")
 
     def _hazard_strength(self) -> float:
+        if self._scene_context is not None:
+            return self._scene_plant_state.strength("hazard")
         return self.plant_modifier_strength("hazard")
 
     def _refresh_plant_geometry(self, force: bool = False) -> None:
         obstacle = self._obstacle_strength()
         hazard = self._hazard_strength()
-        illuminate = self.plant_modifier_strength("illuminate")
+        contact = self._scene_context.installation_geometry if self._scene_context is not None else None
+        installed = isinstance(contact, InstallationGeometryContact) and contact.available
+        illuminate = self.plant_modifier_strength("illuminate") if self._scene_context is None else 0.0
         key = (
             round(obstacle, 4), round(hazard, 4), round(illuminate, 4),
             self.width, self.height, self.params.get("plant_clearance"),
             self.params.get("plant_mask_path"), self.params.get("plant_globe_mask_path"),
+            (contact.identity, contact.available, contact.status) if contact is not None else None,
         )
         if not force and key == self._plant_key:
             return
@@ -903,7 +1028,12 @@ class BajaRallyAnimation(AnimationBase):
         if max(obstacle, hazard, illuminate) <= 0.0:
             return
         radius = int(round(int(self.params.get("plant_clearance", 1)) * max(obstacle, 0.0)))
-        masks = self.get_plant_masks(radius if obstacle > 0.0 else 0)
+        if self._scene_context is not None:
+            if not installed:
+                return
+            masks = contact.geometry
+        else:
+            masks = self.get_plant_masks(radius if obstacle > 0.0 else 0)
         if obstacle > 0.0:
             self._core_canvas[:] = masks.obstacle.T[::-1]
             self._clearance_canvas[:] = masks.clearance.T[::-1]
@@ -962,6 +1092,7 @@ class BajaRallyAnimation(AnimationBase):
             },
             "plant_obstacle": round(self._obstacle_strength(), 3),
             "plant_hazard": round(self._hazard_strength(), 3),
+            "manual_driver": self._player_control,
         }
 
     def _display_rank(self) -> List[int]:
@@ -979,7 +1110,8 @@ class BajaRallyAnimation(AnimationBase):
         self._paint_checker(road)
         self._paint_hazards(road)
         self._paint_trucks(road)
-        self._paint_plants()
+        if self._scene_context is None:
+            self._paint_plants()
         if bool(self.params.get("show_hud", True)):
             self._paint_hud()
         if self.phase == "podium":

@@ -1627,6 +1627,46 @@ def test_tetris_hud_tuning_keeps_the_paused_board(instrument):
     assert manager.nimbus_game() == (runtime, "paused")
 
 
+def test_baja_uses_the_catalog_presets_and_clears_controls_on_pause(instrument):
+    manager, _owner, _runner, gamepad, menu = instrument
+    item = next(item for item in gallery_entries(menu.catalog, menu.presets) if item["component_id"] == "baja_rally")
+    assert len(menu.presets.choices("baja_rally")) == 5
+    preset = next(preset for preset in menu.presets.choices("baja_rally") if preset["preset_id"] == "spine-charge")
+    assert preset["parameters"]["race_speed"] == 1.6 and "brightness" not in preset["parameters"]
+    scene = menu._with_animation(item, preset)
+    scene["look"]["pace"] = 1
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime, state = manager.nimbus_game()
+    canonical = manager._canonical_receiver_scene
+    game = runtime._runtime._animation.instance
+    assert state == "ready"
+    inputs(manager, gamepad, menu, "a")
+    inputs(manager, gamepad, menu, "right")
+    for step in range(1, 90):
+        runtime.render(ScenePresentationContext(canonical, step / 60))
+    assert game.hero.lane > .2 and game.hero.progress > 0
+    inputs(manager, gamepad, menu, "release-right", "a", "b")
+    for step in range(90, 110):
+        runtime.render(ScenePresentationContext(canonical, step / 60))
+    assert game.hero.nitro_uses == 1 and game._braking
+    assert game._steering == set()
+    inputs(manager, gamepad, menu, "left", "menu")
+    assert manager.nimbus_game() == (runtime, "paused")
+    assert not game._steering and not game._braking and not game._boost_requested
+    before = game.logical_state()
+    runtime.render(ScenePresentationContext(canonical, 50))
+    assert game.logical_state() == before
+    focus(menu, "Controls")
+    menu.press("a")
+    focus(menu, "Nitro boost")
+    assert menu.card().value == "A"
+    inputs(manager, gamepad, menu, "menu")
+    inputs(manager, gamepad, menu, "a")
+    runtime.render(ScenePresentationContext(canonical, 51))
+    assert game.logical_state() == before
+    assert manager.get_scene_state() == canonical.scene
+
+
 def test_tetris_controls_disclose_inner_release_and_no_input_bleed(instrument):
     manager, _owner, _runner, gamepad, menu = instrument
     assert handle_command(manager, "start_scene", {"scene": starter("human_avalanche_factory")})
