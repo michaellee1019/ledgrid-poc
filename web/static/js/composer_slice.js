@@ -406,6 +406,11 @@
     let lastValue;
     function sync(nextParameters, force = false) {
       const value = nextParameters[name] ?? defaultValue;
+      const condition = spec.visible_when;
+      if (condition) {
+        const reference = nextParameters[condition.parameter];
+        label.hidden = !(reference >= (condition.at_least ?? -Infinity) && reference < (condition.below ?? Infinity));
+      }
       if (control.type === 'number') setNumberBounds(control, spec, nextParameters);
       if (force || !sameLocalParameters(lastValue, value)) {
         if (control.type === 'checkbox') control.checked = Boolean(value);

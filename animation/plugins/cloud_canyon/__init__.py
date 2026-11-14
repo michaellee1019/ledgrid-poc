@@ -5,6 +5,10 @@ from animation.libraries.procedural_atmospheres import ProceduralAtmosphereBase
 
 class CloudCanyonAnimation(ProceduralAtmosphereBase):
     PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Light a cloud break"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    POINT_PULSE_SECONDS = 1.1
 
     ANIMATION_NAME = "Cloud Canyon"
     ANIMATION_DESCRIPTION = "Billowing cloud banks occlude broad shafts leaking through a tall canyon"

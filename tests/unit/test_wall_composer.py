@@ -882,6 +882,90 @@ def test_plant_glow_nimbus_reports_missing_geometry(instrument, monkeypatch):
     assert manager.get_scene_state() == before
 
 
+@pytest.mark.parametrize(("component_id", "seconds", "aim"), [
+    ("aurora_curtains", .85, (16, 77)), ("cloud_canyon", 1.1, (16, 77)),
+    ("desert_wind", 1, (16, 77)), ("moonlit_fog_banks", 1.2, (16, 77)),
+    ("night_train_windows", 1.15, (16, 69)), ("circadian_window", 3, (16, 69)),
+])
+def test_atmospheric_accent_expiration_and_direct_input_parity(instrument, component_id, seconds, aim):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 1.0
+    scene["animation"].update(component_id=component_id, parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    canonical = manager._canonical_receiver_scene
+    wall_time = datetime.fromisoformat("2026-11-13T02:00:00-05:00")
+    initial = ScenePresentationContext(canonical, 0, wall_time)
+    runtime.render(initial)
+    direct = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    direct.render(initial)
+    untouched = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    base = untouched.render(initial).pixels.copy()
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, StickMotion(1, 2, 3))
+    assert menu.card().marker == aim
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert direct.dispatch_animation_interaction(canonical, "primary", *aim)
+    received = []
+    for elapsed in (0, .1, .2, .3, seconds / 2, seconds + .15):
+        frame = ScenePresentationContext(canonical, elapsed, wall_time)
+        actual = runtime.render(frame).pixels.copy()
+        np.testing.assert_array_equal(actual, direct.render(frame).pixels)
+        ambient = untouched.render(frame).pixels
+        received.append(not np.array_equal(actual, ambient))
+    assert any(received[:-1])
+    assert not received[-1]
+    assert manager.get_scene_state() == canonical.scene
+    assert manager._canonical_receiver_runtime is runtime
+    if component_id == "circadian_window":
+        assert runtime._runtime._animation.instance.semantic_snapshot()["circadian_hour"] == 2.0
+        np.testing.assert_array_equal(base, untouched.render(initial).pixels)
+
+
+def test_circadian_hud_discloses_clock_and_fixed_controls(instrument):
+    manager, _owner, _runner, _gamepad, menu = instrument
+    scene = starter()
+    scene["animation"].update(component_id="circadian_window", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    rows = {row.name: row for row in menu._animation_rows()}
+    assert "Clock offset" in rows and "Fixed time rate" not in rows
+    clock = menu._numeric_stick_bindings(manager.get_scene_state()["animation"], ("animation", "parameters"))
+    offset_slot = next(index for index, binding in enumerate(clock) if binding and binding.label == "Clock offset")
+    rows["Fixed hour or clock (-1)"].adjust(1, steps=4)
+    assert manager.get_scene_state()["animation"]["parameters"]["hour"] == 0
+    rows = {row.name: row for row in menu._animation_rows()}
+    assert "Clock offset" not in rows and "Fixed time rate" in rows
+    fixed = menu._numeric_stick_bindings(manager.get_scene_state()["animation"], ("animation", "parameters"))
+    rate_slot = next(index for index, binding in enumerate(fixed) if binding and binding.label == "Fixed time rate")
+    assert len(fixed) == len(clock)
+    assert fixed[offset_slot] is None and clock[rate_slot] is None
+
+
+def test_circadian_returns_to_clock_on_the_same_frozen_frame(instrument):
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 0
+    scene["animation"].update(component_id="circadian_window", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    canonical = manager._canonical_receiver_scene
+    wall_time = datetime.fromisoformat("2026-11-13T02:00:00-05:00")
+    frame = ScenePresentationContext(canonical, 0, wall_time)
+    renderer = runtime._runtime._animation.instance
+    renderer._circadian_hour = 2.0
+    renderer._last_key = None
+    ambient = runtime.render(frame).pixels.copy()
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert not np.array_equal(runtime.render(frame).pixels, ambient)
+    inputs(manager, gamepad, menu, StickMotion(0, 16, 3), ChordPress("a", 3))
+    np.testing.assert_array_equal(runtime.render(frame).pixels, ambient)
+    assert manager.get_scene_state() == canonical.scene
+
+
 def test_reaction_diffusion_manual_reseed_and_initial_density(instrument):
     manager, _owner, _runner, _gamepad, menu = instrument
     scene = starter()
@@ -1003,8 +1087,9 @@ def test_menu_covers_all_catalog_parameter_definitions(instrument):
         params = component["parameters"]
         fields = menu._parameter_rows(("animation",), component)
         assert set(component["preferred_parameters"]) <= set(params)
-        assert len(fields) == len(params)
         names = {definition["label"] for definition in component["parameter_schema"].values()}
+        if component_id == "circadian_window":
+            names.remove("Fixed time rate")
         assert {row.name for row in fields} == names
         for field in fields:
             if component_id == "snake" and field.name == "background":

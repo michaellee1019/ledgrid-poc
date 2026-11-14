@@ -3,6 +3,10 @@ from animation.libraries.procedural_longform import LongformSceneBase
 
 class MoonlitFogBanksAnimation(LongformSceneBase):
     PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Part the fog"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    POINT_PULSE_SECONDS = 1.2
 
     ANIMATION_NAME = "Moonlit Fog Banks"
     ANIMATION_DESCRIPTION = "Slow fog banks reveal a hidden moon above dark ridges"

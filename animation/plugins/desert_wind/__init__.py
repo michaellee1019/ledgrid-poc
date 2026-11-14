@@ -3,6 +3,10 @@ from animation.libraries.procedural_longform import LongformSceneBase
 
 class DesertWindAnimation(LongformSceneBase):
     PREFERRED_PARAMETERS = ('density', 'motion', 'background_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Sweep a sand gust"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    POINT_PULSE_SECONDS = 1.0
 
     ANIMATION_NAME = "Desert Wind"
     ANIMATION_DESCRIPTION = "Layered dunes erode slowly while grains skim luminous crests"

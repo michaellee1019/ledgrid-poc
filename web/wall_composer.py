@@ -76,6 +76,14 @@ def _parameter_bounds(parameters, key, definition):
     return low, high
 
 
+def _parameter_visible(parameters, definition):
+    condition = definition.get("visible_when")
+    if not condition:
+        return True
+    value = parameters[condition["parameter"]]
+    return condition.get("at_least", -math.inf) <= value < condition.get("below", math.inf)
+
+
 def _choice_labels(definition, options):
     labels = definition.get("option_labels", {})
     return {option: labels.get(str(option).lower(), str(option).replace("_", " ")) for option in options}
@@ -825,6 +833,9 @@ class WallComposer:
             low, high = _parameter_bounds(parameters, key, definition)
             if low == high:
                 continue
+            if not _parameter_visible(parameters, definition):
+                bindings.append(None)
+                continue
             integer = definition["type"] == "int"
             bindings.append(StickBinding((*path, key), low, high, definition["coarse_step"],
                                          integer, definition["label"]))
@@ -1004,7 +1015,7 @@ class WallComposer:
         for key in sorted(order, key=lambda key: key == "seed" or "fps" in key
                           or (player_state == "paused" and schema[key].get("autoplay_only", False))):
             definition = schema[key]
-            if key not in params:
+            if key not in params or not _parameter_visible(params, definition):
                 continue
             value = params[key]
             name = definition.get("label", key.replace("_", " "))

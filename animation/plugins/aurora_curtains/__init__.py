@@ -11,6 +11,7 @@ import numpy as np
 from animation.core.base import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 from animation.libraries.scene_palettes import HOLIDAY_ROLE_PALETTES, hsv_to_rgb_field
 
 
@@ -51,6 +52,10 @@ SEMANTIC_PALETTES: Mapping[str, PaletteRoles] = MappingProxyType({
 
 
 class AuroraCurtainsAnimation(AnimationBase):
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Send a curtain shimmer"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+
     """Overlapping analytic light curtains for the opaque background layer."""
     SUGGESTED_SCENE_PACE = 4.0
     PREFERRED_PARAMETERS = ('glow_intensity', 'curtain_density', 'fold_depth')
@@ -121,6 +126,7 @@ class AuroraCurtainsAnimation(AnimationBase):
         self._active_source_fps = float(self.params["source_fps"])
         self._presentation_context: Optional[ResolvedScene] = None
         self._event_count = 0
+        self._pulse = PointPulse(.85)
         self._seed_state()
 
     @classmethod
@@ -219,6 +225,10 @@ class AuroraCurtainsAnimation(AnimationBase):
             parameters=self.params,
         )
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        return point is not None and self._pulse.trigger(point)
+
     def semantic_snapshot(self) -> Mapping[str, Any]:
         """Stable proof surface for state/RNG/event parity tests."""
         return MappingProxyType({
@@ -274,6 +284,9 @@ class AuroraCurtainsAnimation(AnimationBase):
             tick, palette_id, local["curtain_density"], local["fold_depth"],
             local["glow_intensity"], local["source_fps"], local["seed"],
         )
+        point, progress = self._pulse.sample(tick / source_fps)
+        if point is not None:
+            key += (point, progress)
         if self._cached_key == key and self._cached_frame is not None:
             return self.rendered_frame(self._cached_frame, changed=False)
 
@@ -281,7 +294,15 @@ class AuroraCurtainsAnimation(AnimationBase):
         # component speed factor appears here, so pace is applied exactly once.
         quantized_time = tick / source_fps
         self._paint_curtains(quantized_time, local)
-        self._paint_palette(self.palette_roles(palette_id), float(local["glow_intensity"]), palette_id)
+        roles = self.palette_roles(palette_id)
+        self._paint_palette(roles, float(local["glow_intensity"]), palette_id)
+        if point is not None:
+            dx = self._x * (self.width - 1) - point.x
+            dy = self._y * (self.height - 1) - point.y - 16 * progress
+            shimmer = np.maximum(1.0 - abs(dx) / 3.0, 0.0) * np.maximum(1.0 - abs(dy) / 12, 0.0)
+            shimmer *= (1.0 - progress) * point.strength * np.clip(self._field * 5.0, .25, 1.0)
+            self._rgb += shimmer[..., None] * np.asarray(roles["accent"], dtype=np.float32) * .6
+            np.clip(self._rgb, 0.0, 255.0, out=self._rgb)
         frame = self.next_frame_buffer(clear=False)
         np.copyto(frame, self._rgb.reshape((-1, 3)), casting="unsafe")
         self._cached_frame = frame

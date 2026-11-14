@@ -326,6 +326,9 @@ class ProceduralAtmosphereBase(AnimationBase):
             rise = 7.0 * age * (1.0 - age)
             shape = np.maximum(1.0 - abs(dx) / (2.5 + 6.0 * age), 0.0)
             shape = shape * np.maximum(1.0 - abs(dy - rise) / (3.5 + 5.0 * age), 0.0)
+        elif self.SCENE == "cloud":
+            radius = np.hypot(dx, dy * .55)
+            shape = np.maximum(1.0 - radius / (5.5 + 2.5 * age), 0.0) ** 2
         else:  # Tidal wake
             radius = np.hypot(dx, dy * .75)
             shape = np.maximum(1.0 - abs(radius - 8.0 * age) / 2.8, 0.0)

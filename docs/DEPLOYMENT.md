@@ -173,6 +173,13 @@ to zero for still surf. In Plant Glow, aim within four pixels of a calibrated
 globe or foliage patch to pulse that target. The HUD reports when the
 calibration or an aimable target is missing.
 
+The same aim chord adds an accent to Aurora Curtains, Cloud Canyon, Desert
+Wind, Moonlit Fog Banks, and Night Train Windows. The train's Travel speed
+can be set to zero. In Circadian Window, aim across the wall to preview a time
+of day for three Scene seconds. Aim at the rightmost column and press A to
+return immediately to the selected clock or fixed hour. The clock offset
+appears in clock mode, and the day rate appears in fixed-hour mode.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu

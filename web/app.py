@@ -115,7 +115,7 @@ from web.working_draft_store import WorkingDraftStore, WorkingDraftError
 from web.composer_final_preview import ComposerFinalPreview, current_component_catalog
 
 
-COMPOSER_SHELL_VERSION = "composer-shell-v38"
+COMPOSER_SHELL_VERSION = "composer-shell-v39"
 CANONICAL_BROWSER_SCENE_SCHEMA = "ledgrid.browser-scene-v2"
 
 PAINTER_MASK_TYPES = (

@@ -13,6 +13,7 @@ from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 
 PALETTES = {
     "moonlit": ((2, 5, 13), (25, 43, 68), (142, 169, 184)),
@@ -71,6 +72,7 @@ class LongformSceneBase(AnimationBase):
     PLANT_MODIFIER_SUPPORT = frozenset({"illuminate", "shadow", "refract"})
     COMPONENT_ID = ""
     COMPONENT_DEFAULTS: Mapping[str, Any] = MappingProxyType({})
+    POINT_PULSE_SECONDS = 0.0
     # Reviewed renderers opt in individually.  The unrelated longform family
     # retains its authored direct-palette output until it receives its own
     # accepted Scene v2 review.
@@ -103,6 +105,7 @@ class LongformSceneBase(AnimationBase):
         self._cached = None
         self._last_tick = None
         self._last_key = None
+        self._pulse = PointPulse(self.POINT_PULSE_SECONDS) if self.POINT_PULSE_SECONDS else None
         # Circadian samples host time once per source tick.  A same-tick Scene
         # palette refresh is presentation-only and must reuse this value.
         self._circadian_hour: float | None = None
@@ -199,7 +202,7 @@ class LongformSceneBase(AnimationBase):
                                  "description": "Strength of the ambient background"},
             "render_fps": {"type": "int", "min": 5, "max": 40, "default": 24,
                            "description": "Source render cadence"},
-            "seed": {"type": "int", "min": 0, "max": 2147483647, "default": 1729,
+            "seed": {"type": "int", "min": 0, "max": 2147483647, "default": cls.COMPONENT_DEFAULTS.get("seed", 1729),
                      "description": "Deterministic scene seed"},
         })
         schema.update(cls.scene_schema())
@@ -220,10 +223,19 @@ class LongformSceneBase(AnimationBase):
             self._circadian_hour = None
         self._last_key = None
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        if self._pulse is None:
+            return False
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        return point is not None and self._pulse.trigger(point)
+
     def generate_frame(self, time_elapsed: float, frame_count: int):
         fps = max(5, min(40, int(self.params.get("render_fps", 24))))
         tick = int(max(0.0, float(time_elapsed)) * fps)
         key = self._visual_key()
+        point, progress = self._pulse.sample(tick / fps) if self._pulse is not None else (None, 0.0)
+        if point is not None:
+            key += (point, progress)
         if self._cached is not None and tick == self._last_tick and key == self._last_key:
             return self.rendered_frame(self._cached, changed=False)
 
@@ -232,7 +244,7 @@ class LongformSceneBase(AnimationBase):
         density = min(1.0, max(0.0, float(self.params.get("density", 0.5))))
         if self.SCENE == "circadian" and (self._last_tick != tick or self._circadian_hour is None):
             self._circadian_hour = self._current_hour(t)
-        self.render_scene(t, motion, density)
+        self.render_scene(t, motion, density, point, progress)
         self._apply_background()
         self._apply_plant_presentation(t)
         brightness = min(1.0, max(0.0, float(self.params.get("brightness", 0.42))))
@@ -313,32 +325,41 @@ class LongformSceneBase(AnimationBase):
         vertical = (.62 + .38 * (1.0 - self._y))[..., None]
         self._rgb += color * vertical * (.16 * strength)
 
-    def render_scene(self, t: float, motion: float, density: float):
+    def render_scene(self, t: float, motion: float, density: float, point=None, progress=0.0):
         if self.SCENE == "fog":
-            self._render_fog(t, motion, density)
+            self._render_fog(t, motion, density, point, progress)
         elif self.SCENE == "desert":
-            self._render_desert(t, motion, density)
+            self._render_desert(t, motion, density, point, progress)
         elif self.SCENE == "circadian":
-            self._render_circadian(t, motion, density)
+            hour = 24.0 * point.x / max(1, self.width - 1) if point is not None else None
+            self._render_circadian(t, motion, density, hour)
         else:
             self._render_train(t, motion, density)
 
-    def _render_fog(self, t: float, motion: float, density: float):
+    def _render_fog(self, t: float, motion: float, density: float, point, progress):
         drift = t * (0.008 + 0.045 * motion)
         fog = (0.42 + 0.18 * np.sin(2 * np.pi * (self._y * 2.2 - drift) + self._phases[0])
                + self._x * 0.0)
         fog += 0.12 * np.sin(2 * np.pi * (self._x * 1.4 + self._y * 0.7 + drift * 0.6) + self._phases[1])
         fog += 0.07 * np.sin(2 * np.pi * (self._x * 3.1 - self._y * 1.6 - drift * 1.4) + self._phases[2])
         fog = np.clip((fog - (0.48 - density * 0.22)) * 1.35, 0.0, 1.0)
+        opening = None
+        if point is not None:
+            dx = self._x * (self.width - 1) - point.x
+            dy = self._y * (self.height - 1) - point.y
+            opening = np.maximum(1.0 - np.hypot(dx, dy * .65) / 9.0, 0.0) * point.strength * (1.0 - progress)
+            fog *= 1.0 - opening
         moon_x = 0.68 + 0.08 * np.sin(t * 0.006)
         moon_y = 0.18 + 0.04 * np.cos(t * 0.004)
         halo = np.exp(-((self._x - moon_x) ** 2 / 0.035 + (self._y - moon_y) ** 2 / 0.018))
         ridge = np.clip((self._y - (0.73 + 0.08 * np.sin(self._x * 9 + self._phases[3]))) * 25, 0, 1)
         value = 0.04 + fog * (0.18 + 0.34 * halo) + halo * 0.38
+        if opening is not None:
+            value += .19 * opening
         value *= 1.0 - ridge * 0.88
         self.colorize(value, halo * (1.0 - fog))
 
-    def _render_desert(self, t: float, motion: float, density: float):
+    def _render_desert(self, t: float, motion: float, density: float, point, progress):
         drift = t * (0.004 + motion * 0.025)
         dune1 = 0.68 + 0.08 * np.sin(self._x * 8.0 + drift + self._phases[0])
         dune2 = 0.82 + 0.05 * np.sin(self._x * 13.0 - drift * 0.7 + self._phases[1])
@@ -348,6 +369,12 @@ class LongformSceneBase(AnimationBase):
         haze = (1.0 - self._y) * (0.08 + 0.08 * np.sin(self._x * 3 + drift))
         grains = np.sin((self._x * 73 - self._y * 19 + drift * 35 + self._phases[2]) * 2 * np.pi)
         grains = (grains > (0.995 - density * 0.025)).astype(np.float32) * crest
+        if point is not None:
+            dx = self._x * (self.width - 1) - point.x - 6.0 * progress
+            dy = self._y * (self.height - 1) - point.y
+            gust = np.maximum(1.0 - abs(dx) / 7.0, 0.0) * np.maximum(1.0 - abs(dy) / 6.0, 0.0)
+            texture = .35 + .65 * np.sin(dx * 2.6 + dy * 1.7 - progress * 8.0) ** 4
+            grains += gust * texture * point.strength * (1.0 - progress)
         value = 0.025 + haze + body1 * 0.28 + body2 * 0.18 + crest * 0.34 + grains * 0.42
         self.colorize(value, crest * 0.4 + grains)
 
@@ -371,8 +398,9 @@ class LongformSceneBase(AnimationBase):
             np.asarray((240, 104, 53), dtype=np.float32),
         )
 
-    def _render_circadian(self, t: float, motion: float, density: float):
-        hour = self._circadian_hour if self._circadian_hour is not None else self._current_hour(t)
+    def _render_circadian(self, t: float, motion: float, density: float, hour=None):
+        if hour is None:
+            hour = self._circadian_hour if self._circadian_hour is not None else self._current_hour(t)
         sun = max(0.0, np.sin((hour - 6.0) / 12.0 * np.pi))
         twilight = max(0.0, np.sin((hour - 4.5) / 15.0 * np.pi))
         horizon = np.exp(-((self._y - 0.73) / 0.25) ** 2)

@@ -24,21 +24,27 @@ class PointPulse:
     def __init__(self, duration: float):
         self.duration = duration
         self._lock = Lock()
-        self._pending: AimedPoint | None = None
+        self._pending: tuple[AimedPoint | None] | None = None
         self._active: AimedPoint | None = None
         self._start = 0.0
 
     def trigger(self, point: AimedPoint) -> bool:
+        return self._queue(point)
+
+    def clear(self) -> bool:
+        return self._queue(None)
+
+    def _queue(self, point: AimedPoint | None) -> bool:
         with self._lock:
-            if self._pending is not None:
+            if self._pending is not None and point is not None:
                 return False
-            self._pending = point
+            self._pending = (point,)
         return True
 
     def sample(self, phase_time: float) -> tuple[AimedPoint | None, float]:
         if self._pending is not None:
             with self._lock:
-                self._active, self._pending = self._pending, None
+                (self._active,), self._pending = self._pending, None
             self._start = phase_time
         age = phase_time - self._start
         if age < 0 or age >= self.duration:

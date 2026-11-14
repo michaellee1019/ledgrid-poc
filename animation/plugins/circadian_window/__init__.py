@@ -1,11 +1,20 @@
 """Time-aware procedural sky with deterministic fixed-hour mode."""
 from animation.libraries.procedural_longform import LongformSceneBase
+from animation.libraries.point_pulse import AimedPoint
 
 class CircadianWindowAnimation(LongformSceneBase):
     PREFERRED_PARAMETERS = ('hour', 'motion', 'density', 'background_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Preview time or reset at far right"}
+    POINT_ACTION_AXES = {"primary": ("x",)}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    POINT_PULSE_SECONDS = 3.0
     PARAMETER_CONTROLS = {
-        'hour': {'unit': 'h'},
-        'time_offset': {'unit': 'h'},
+        'hour': {'label': 'Fixed hour or clock (-1)', 'unit': 'h', 'step': .25},
+        'time_offset': {'label': 'Clock offset', 'unit': 'h', 'step': .25,
+                        'visible_when': {'parameter': 'hour', 'below': 0}},
+        'time_scale': {'label': 'Fixed time rate', 'unit': '×', 'step': 60, 'coarse_step': 300,
+                       'visible_when': {'parameter': 'hour', 'at_least': 0}},
     }
 
     ANIMATION_NAME = "Circadian Window"
@@ -36,3 +45,11 @@ class CircadianWindowAnimation(LongformSceneBase):
 
     def scene_key(self):
         return (float(self.params.get("hour",-1)), float(self.params.get("time_offset",0)), float(self.params.get("time_scale",1)))
+
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        if point is None:
+            return False
+        if point.x == self.width - 1:
+            return self._pulse.clear()
+        return self._pulse.trigger(point)
