@@ -6,7 +6,10 @@ Loads animated GIFs from disk and plays them on the LED wall.
 """
 
 from pathlib import Path
+from bisect import bisect_right
+from itertools import accumulate
 import math
+from threading import Lock
 from types import MappingProxyType
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
@@ -15,6 +18,7 @@ from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.compositing import OverlayFrame, coverage_dirty_union
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.point_pulse import AimedPoint
 
 try:
     from PIL import Image, ImageSequence
@@ -33,6 +37,12 @@ class GifAnimation(AnimationBase):
     """Play pre-rendered animated GIF files."""
     SUGGESTED_SCENE_PACE = 4.0
     PREFERRED_PARAMETERS = ("gif_name", "playback_speed", "fit_mode", "flip_y")
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "GIF transport"}
+    POINT_ACTION_AXES = {"primary": ("x",)}
+    POINT_ACTION_ZONES = {"primary": ("Previous", "Restart", "Play/pause", "Step", "Next")}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    LIVE_TUNABLE_PARAMETERS = frozenset({"playback_speed"})
     PARAMETER_CONTROLS = {
         'playback_speed': {'unit': '×'},
         "gif_name": {"label": "Clip"},
@@ -94,6 +104,16 @@ class GifAnimation(AnimationBase):
         self._last_pixels = np.zeros((self.get_pixel_count(), 4), dtype=np.uint8)
         self._revision = 0
         self._presentation_context: ResolvedScene | None = None
+        self._control_lock = Lock()
+        self._pending_control: str | None = None
+        self._media_phase = 0.0
+        self._phase_anchor = 0.0
+        self._elapsed_anchor = 0.0
+        self._last_elapsed = 0.0
+        self._last_speed = self.params["playback_speed"]
+        self._paused = False
+        self._frame_ends: tuple[float, ...] = ()
+        self._loop_time = 0.0
 
         self._load_selected_gif()
 
@@ -101,6 +121,8 @@ class GifAnimation(AnimationBase):
         super().start()
         self._current_frame_index = 0
         self._last_output_key = None
+        self._media_phase = self._phase_anchor = self._elapsed_anchor = self._last_elapsed = 0.0
+        self._paused = False
 
     @classmethod
     def component_descriptor(cls) -> ComponentDescriptor:
@@ -137,6 +159,8 @@ class GifAnimation(AnimationBase):
         self.params = normalized
         self._last_output_key = None
         if reload_required:
+            self._last_speed = normalized["playback_speed"]
+            self._phase_anchor = self._elapsed_anchor = 0.0
             self._load_selected_gif()
 
     def on_presentation_context_changed(self, old_context, new_context) -> None:
@@ -156,6 +180,45 @@ class GifAnimation(AnimationBase):
             self.update_parameters(context.parameters)
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
+
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        width, height = self.get_strip_info()
+        point = AimedPoint.from_input(kind, x, y, strength, width, height)
+        if point is None:
+            return False
+        with self._control_lock:
+            if self._pending_control is not None:
+                return False
+            zones = self.POINT_ACTION_ZONES[kind]
+            self._pending_control = zones[len(zones) * point.x // width]
+        return True
+
+    def _use_control(self, control):
+        if control == "Play/pause":
+            self._paused = not self._paused
+        elif control == "Restart":
+            self._media_phase = 0.0
+        elif control == "Step":
+            self._paused = True
+            next_frame = (self._frame_index() + 1) % len(self._frames)
+            self._media_phase = 0.0 if next_frame == 0 else self._frame_ends[next_frame - 1]
+        elif control in ("Previous", "Next"):
+            clips = self._list_gif_files()
+            current = self._loaded_gif_path
+            if current in clips and len(clips) > 1:
+                next_clip = clips[(clips.index(current) + (1 if control == "Next" else -1)) % len(clips)]
+                try:
+                    frames, durations = self._decode_gif(next_clip)
+                except (OSError, ValueError) as error:
+                    self._load_error = f"Failed to decode {next_clip.name}: {error}"
+                    return
+                if frames:
+                    self._media_phase = 0.0
+                    self._install_clip(next_clip, frames, durations)
+
+    def _frame_index(self):
+        position = self._media_phase % self._loop_time
+        return min(len(self._frames) - 1, bisect_right(self._frame_ends, position))
 
     @classmethod
     def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
@@ -193,6 +256,7 @@ class GifAnimation(AnimationBase):
             "available_gifs": [p.name for p in available],
             "frame_count": len(self._frames),
             "current_frame_index": self._current_frame_index,
+            "paused": self._paused,
             "load_error": self._load_error,
         }
 
@@ -206,15 +270,21 @@ class GifAnimation(AnimationBase):
             elapsed = self._presentation_context.phase_time
         else:
             elapsed = max(0.0, float(time_elapsed))
-        loop_time = sum(self._durations_sec)
-        position = (elapsed * self.params["playback_speed"]) % loop_time
-        cumulative = 0.0
-        index = len(self._frames) - 1
-        for candidate, duration in enumerate(self._durations_sec):
-            cumulative += duration
-            if position < cumulative:
-                index = candidate
-                break
+        speed = self.params["playback_speed"]
+        if elapsed < self._last_elapsed:
+            self._phase_anchor = self._elapsed_anchor = 0.0
+        if not self._paused:
+            self._media_phase = self._phase_anchor + (elapsed - self._elapsed_anchor) * self._last_speed
+        if speed != self._last_speed:
+            self._phase_anchor, self._elapsed_anchor = self._media_phase, elapsed
+            self._last_speed = speed
+        self._last_elapsed = elapsed
+        if self._pending_control is not None:
+            with self._control_lock:
+                control, self._pending_control = self._pending_control, None
+            self._use_control(control)
+            self._phase_anchor, self._elapsed_anchor = self._media_phase, elapsed
+        index = self._frame_index()
         self._current_frame_index = index
         output_key = (self._loaded_gif_path, index)
         if output_key == self._last_output_key:
@@ -263,9 +333,16 @@ class GifAnimation(AnimationBase):
             self._load_error = f"Decoded GIF has no frames: {selected.name}"
             return
 
+        self._install_clip(selected, frames, durations)
+
+    def _install_clip(self, path, frames, durations):
         self._frames = [np.asarray(frame, dtype=np.uint8) for frame in frames]
         self._durations_sec = durations
-        self._loaded_gif_path = selected
+        self._frame_ends = tuple(accumulate(durations))
+        self._loop_time = sum(durations)
+        self._loaded_gif_path = path
+        self._last_output_key = None
+        self._load_error = None
 
     @classmethod
     def _list_gif_files(cls, directory: Optional[Path] = None) -> List[Path]:

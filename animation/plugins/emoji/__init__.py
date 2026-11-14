@@ -8,9 +8,14 @@ from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene
 from animation.libraries.pixel_art import EMOJI_PATTERNS
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 
 class EmojiAnimation(AnimationBase):
     PREFERRED_PARAMETERS = ('scale', 'pulse_hz')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Give the face a beat"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
+    PARAMETER_CONTROLS = {'pulse_hz': {'step': .025, 'unit': 'Hz'}, 'seed': {'control': 'fixed'}}
 
     ANIMATION_NAME, ANIMATION_DESCRIPTION, ANIMATION_AUTHOR, ANIMATION_VERSION = "Emoji", "A breathing pixel face, not a text message", "LED Grid Team", "2.0"
     COMPONENT_ID, COMPONENT_VERSION, PROVIDER, ROLE = "emoji", 1, "python", "animation"
@@ -22,6 +27,7 @@ class EmojiAnimation(AnimationBase):
     _MOOD = {"golden": ((3, 7, 18), (255, 202, 45), (230, 60, 70)), "neon": ((8, 1, 24), (78, 245, 238), (255, 46, 205)), "rose": ((20, 1, 10), (255, 105, 158), (255, 235, 245)), "ice": ((1, 12, 25), (118, 210, 255), (240, 250, 255))}
     def __init__(self, controller: Any, config: Mapping[str, Any] | None = None):
         self._authored_config=dict(config or {}); super().__init__(controller, self._authored_config); self.default_params=dict(self.DEFAULTS); self.params=self._normalized_parameters(self._authored_config); self.width,self.height=self.get_strip_info(); self._pixels=np.zeros((self.get_pixel_count(),3),dtype=np.uint8); self._context=None; self._key=None
+        self._pulse = PointPulse(.6)
     @classmethod
     def component_descriptor(cls): return cls.COMPONENT_DESCRIPTOR
     @classmethod
@@ -31,14 +37,14 @@ class EmojiAnimation(AnimationBase):
         result=dict(cls.DEFAULTS); result.update(values)
         if result["face"] not in cls.FACES: raise ValueError(f"face must be one of {cls.FACES!r}")
         if result["mood"] not in cls.MOODS: raise ValueError(f"mood must be one of {cls.MOODS!r}")
-        for name,lo,hi in (("pulse_hz",.1,3.),("scale",.55,1.8)):
+        for name,lo,hi in (("pulse_hz",0.,3.),("scale",.55,1.8)):
             value=result[name]
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(float(value)) or not lo<=float(value)<=hi: raise ValueError(f"{name} must be a finite number from {lo} to {hi}")
             result[name]=float(value)
         if isinstance(result["seed"],bool) or not isinstance(result["seed"],int) or not 0<=result["seed"]<=999999: raise ValueError("seed must be an integer from 0 to 999999")
         return result
     @classmethod
-    def get_parameter_schema(cls): return {"face":{"type":"str","options":list(cls.FACES),"default":"smile","description":"Pixel face type"},"mood":{"type":"str","options":list(cls.MOODS),"default":"golden","description":"Emotion and local colors"},"pulse_hz":{"type":"float","min":.1,"max":3,"default":.8,"description":"Breathing tempo"},"scale":{"type":"float","min":.55,"max":1.8,"default":1,"description":"Face scale"},"seed":{"type":"int","min":0,"max":999999,"default":2026,"description":"Repeatable sparkle phase"}}
+    def get_parameter_schema(cls): return {"face":{"type":"str","options":list(cls.FACES),"default":"smile","description":"Pixel face type"},"mood":{"type":"str","options":list(cls.MOODS),"default":"golden","description":"Emotion and local colors"},"pulse_hz":{"type":"float","min":0.,"max":3,"default":.8,"description":"Breathing tempo, zero is steady"},"scale":{"type":"float","min":.55,"max":1.8,"default":1,"description":"Face scale"},"seed":{"type":"int","min":0,"max":999999,"default":2026,"description":"Legacy layout seed"}}
     def update_parameters(self,new_params): self.params=self._normalized_parameters({**self.params,**dict(new_params)}); self._key=None
     def on_presentation_context_changed(self,old,new):
         del old
@@ -46,9 +52,17 @@ class EmojiAnimation(AnimationBase):
         self._context=new
     def set_presentation_context(self,context): self.on_presentation_context_changed(self._context,context)
     def render_resolved_scene(self,context): self.set_presentation_context(context); return self.generate_frame(context.phase_time,self.frame_count)
+
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        return point is not None and self._pulse.trigger(point)
+
     def generate_frame(self,time_elapsed,frame_count):
         del frame_count
         params=self._normalized_parameters(self._context.parameters if self._context else self.params); phase=max(0.,float(self._context.phase_time if self._context else time_elapsed)); palette=str(self._context.palette["palette_id"]) if self._context else "neutral"; phase_tick=round(phase*20); key=(phase_tick,palette,tuple(params.items()))
+        point, progress = self._pulse.sample(phase_tick / 20)
+        if point is not None:
+            key += (point, progress)
         if key==self._key:return RenderedFrame(self._pixels,changed=False,dirty_ranges=())
         # The cache identity is a 20 Hz phase tick, so paint from that same
         # quantized phase.  Otherwise the first request in a tick bucket would
@@ -56,6 +70,8 @@ class EmojiAnimation(AnimationBase):
         phase=phase_tick/20
         bg,primary,accent=self._MOOD[params["mood"]]; tint={"neutral":(1,1,1),"mist":(.72,.9,1),"spectrum":(1,.6,1),"ember":(1,.62,.35),"rainbow":(1,.72,.42)}.get(palette,(1,1,1)); canvas=self._pixels.reshape(self.width,self.height,3)[:,::-1]; canvas[:]=bg
         pattern=EMOJI_PATTERNS["heart" if params["face"]=="heart" else "smile"]; h,w=len(pattern),len(pattern[0]); unit=max(1,int(min(self.width/(w+3),self.height/(h+10))*params["scale"])); left=(self.width-w*unit)//2; bottom=(self.height-h*unit)//2; pulse=.72+.28*(.5+.5*math.sin(phase*math.tau*params["pulse_hz"]));
+        if point is not None:
+            pulse += .3 * (1.0 - progress) * point.strength
         for row,line in enumerate(pattern):
             for col,cell in enumerate(line):
                 if cell==".":continue

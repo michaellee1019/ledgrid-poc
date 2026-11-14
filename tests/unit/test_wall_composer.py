@@ -1126,6 +1126,144 @@ def test_physarum_rejects_nutrient_in_globe_even_without_habitat(instrument):
     assert runtime.dispatch_animation_interaction(canonical, "primary", *free)
 
 
+def test_gif_transport_uses_variable_durations_preserves_speed_phase_and_scene(instrument, monkeypatch):
+    manager, _owner, _runner, gamepad, menu = instrument
+    renderer_type = menu.catalog.require(provider="python", component_id="gif_animation", version=1).factory
+    calls = []
+
+    def decode(self, path):
+        calls.append(path.name)
+        frames = [np.full((33 * 138, 4), value, dtype=np.uint8) for value in (20, 60, 100)]
+        return frames, [.1, .3, .7]
+
+    monkeypatch.setattr(renderer_type, "_decode_gif", decode)
+    scene = starter()
+    scene["look"]["pace"] = 1
+    scene["animation"].update(component_id="gif_animation", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    renderer = runtime._runtime._animation.instance
+    canonical = manager._canonical_receiver_scene
+
+    def frame(elapsed):
+        result = runtime.render(ScenePresentationContext(manager._canonical_receiver_scene, elapsed))
+        return int(result.foreground.pixels[0, 0])
+
+    gamepad.shoulder_bank = 3
+    assert frame(.09) == 20 and frame(.2) == 60
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert menu.card().value == "Play/pause"
+    assert frame(.2) == frame(2) == 60 and renderer._paused
+    inputs(manager, gamepad, menu, StickMotion(0, 8, 3), ChordPress("a", 3))
+    assert menu.card().value == "Step"
+    assert frame(2) == frame(3) == 100
+    inputs(manager, gamepad, menu, StickMotion(0, -13, 3), ChordPress("a", 3))
+    assert menu.card().value == "Restart"
+    assert frame(3) == 20
+    inputs(manager, gamepad, menu, StickMotion(0, 5, 3), ChordPress("a", 3))
+    assert frame(3) == 20 and not renderer._paused
+    assert frame(3.2) == 60
+    assert calls == [canonical.scene["animation"]["parameters"]["gif_name"]]
+
+    scene = manager.get_scene_state()
+    scene["animation"]["parameters"]["playback_speed"] = 2
+    manager._scene_v2_monotonic_elapsed = lambda: 3.2
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    assert manager._canonical_receiver_runtime is runtime
+    assert frame(3.2) == 60 and frame(3.32) == 100
+    assert len(calls) == 1
+    inputs(manager, gamepad, menu, StickMotion(0, 16, 3), ChordPress("a", 3))
+    assert menu.card().value == "Next"
+    assert frame(3.33) == 20 and len(calls) == 2 and calls[0] != calls[1]
+    inputs(manager, gamepad, menu, StickMotion(0, -32, 3), ChordPress("a", 3))
+    assert menu.card().value == "Previous"
+    assert frame(3.34) == 20 and calls[-1] == calls[0]
+    assert manager.get_scene_state() == scene
+
+
+def test_column_inspection_steps_and_resumes_from_held_column(instrument):
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 1
+    scene["animation"].update(component_id="column_sequence", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime, canonical = manager._canonical_receiver_runtime, manager._canonical_receiver_scene
+    renderer = runtime._runtime._animation.instance
+
+    def column(elapsed):
+        runtime.render(ScenePresentationContext(canonical, elapsed))
+        return renderer.cadence_snapshot()["active_column"]
+
+    assert column(0) == 0 and column(1.5) is None
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert menu.card().value == "Hold/free" and column(12) == column(49) == 6
+    inputs(manager, gamepad, menu, StickMotion(0, 16, 3), ChordPress("a", 3))
+    assert menu.card().value == "Next" and column(50) == 7
+    inputs(manager, gamepad, menu, ChordPress("a", 3))
+    assert column(51) == 8
+    inputs(manager, gamepad, menu, StickMotion(0, -32, 3), ChordPress("a", 3))
+    assert menu.card().value == "Previous" and column(52) == 7
+    inputs(manager, gamepad, menu, StickMotion(0, 16, 3), ChordPress("a", 3))
+    assert column(53) == 7 and column(54.4) is None and column(55.1) == 8
+    manager.set_output_brightness(0)
+    inputs(manager, gamepad, menu, StickMotion(0, 16, 3), ChordPress("a", 3))
+    assert manager.output_brightness == manager.controller.current_brightness == 0
+    assert not menu.aiming and renderer._pending_control is None
+    assert manager.get_scene_state() == canonical.scene
+
+
+@pytest.mark.parametrize(("component_id", "field", "y"), [
+    ("ascii_drop", "fall_speed", 69), ("emoji", "pulse_hz", 69),
+    ("christmas_tree", "twinkle_hz", 53), ("pixel_chase", "pixels_per_second", 69),
+])
+def test_media_accent_matches_direct_input_and_zero_endpoint(instrument, component_id, field, y):
+    from web.composer_final_preview import InstalledFinalSceneRuntime
+
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 1
+    scene["animation"].update(component_id=component_id, parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime, canonical = manager._canonical_receiver_runtime, manager._canonical_receiver_scene
+    direct = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    untouched = InstalledFinalSceneRuntime(menu.catalog, ROOT)
+    initial = ScenePresentationContext(canonical, 0)
+    for renderer in (runtime, direct, untouched):
+        renderer.render(initial)
+    gamepad.shoulder_bank = 3
+    inputs(manager, gamepad, menu, StickMotion(1, (y - 69) // 4, 3), ChordPress("a", 3))
+    assert direct.dispatch_animation_interaction(canonical, "primary", 16, y)
+    changed = False
+    for t in (0, .1, .25, .45, .65, 1, 1.5):
+        frame = ScenePresentationContext(canonical, t)
+        actual = runtime.render(frame).pixels.copy()
+        np.testing.assert_array_equal(actual, direct.render(frame).pixels)
+        ambient = untouched.render(frame).pixels
+        changed |= not np.array_equal(actual, ambient)
+        if t == 1.5:
+            np.testing.assert_array_equal(actual, ambient)
+    assert changed
+    stopped = manager.get_scene_state()
+    stopped["animation"]["parameters"][field] = 0
+    if component_id == "pixel_chase":
+        stopped["animation"]["parameters"]["color_cycle_speed"] = 0
+    assert handle_command(manager, "start_scene", {"scene": stopped})
+    runtime, canonical = manager._canonical_receiver_runtime, manager._canonical_receiver_scene
+    zero = runtime.render(ScenePresentationContext(canonical, 0)).foreground.pixels.copy()
+    elapsed = .05 if component_id == "christmas_tree" else .1
+    second = runtime.render(ScenePresentationContext(canonical, elapsed)).foreground.pixels
+    if component_id == "christmas_tree":
+        # Compare ornaments below the star. Snow can still move with steady ornaments.
+        for image in (zero, second):
+            snow = np.all(image[:, :3] == (150, 205, 255), axis=1)
+            image[snow, :3] = 0
+        cover = zero[:, :3].any(axis=1) & second[:, :3].any(axis=1)
+        np.testing.assert_array_equal(zero[cover], second[cover])
+    else:
+        np.testing.assert_array_equal(zero, second)
+
+
 def test_reaction_diffusion_manual_reseed_and_initial_density(instrument):
     manager, _owner, _runner, _gamepad, menu = instrument
     scene = starter()

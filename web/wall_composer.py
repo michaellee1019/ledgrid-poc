@@ -361,6 +361,10 @@ class WallComposer:
             self.feedback = None
         if self._aim is not None:
             _, binding, x, y = self._aim
+            if binding.horizontal_zones:
+                zone = binding.horizontal_zones[x * len(binding.horizontal_zones) // WIDTH]
+                return MenuCard("Aim", binding.label, zone, hint=f"{binding.button.upper()} APPLY",
+                                marker=(x, y))
             coordinates = f"{x}/{y}" if "y" in binding.position_axes else str(x)
             return MenuCard("Aim", binding.label, coordinates, hint=f"{binding.button.upper()} APPLY",
                             marker=(x, y))

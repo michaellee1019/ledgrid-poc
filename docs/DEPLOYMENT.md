@@ -192,6 +192,13 @@ threads through a short-lived vortex. Living Ecosystem and Physarum accept
 one temporary resource point at a time. Physarum rejects points in calibrated
 globe cores. Controller status reports the effective herd and agent counts.
 
+ASCII Drop releases a column of terminal marks, Emoji adds a beat, and
+Christmas Tree shimmers nearby ornaments. Pixel Chase briefly reverses along
+its existing path. GIF Animation divides the aim cursor into Previous,
+Restart, Play/pause, Step, and Next. Column Sequence uses Previous, Hold/free,
+and Next. These actions apply to the current session and leave saved settings
+intact. The HUD shows the selected action before you press A.
+
 Playback starts saved playlists and controls output brightness, target FPS, and
 power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu

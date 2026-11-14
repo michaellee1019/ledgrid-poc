@@ -10,6 +10,7 @@ left-to-right strip order on the installed 33-column wall.
 from __future__ import annotations
 
 import math
+from threading import Lock
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -18,11 +19,17 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.presentation_contracts import ResolvedScene, TimingAdapter
+from animation.libraries.point_pulse import AimedPoint
 
 
 class ColumnSequenceAnimation(AnimationBase):
     """FOR TESTING DO NOT REMOVE. Sequential one-column mapping flash."""
     PREFERRED_PARAMETERS = ('hold_seconds', 'pause_seconds', 'white_level')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Column inspect"}
+    POINT_ACTION_AXES = {"primary": ("x",)}
+    POINT_ACTION_ZONES = {"primary": ("Previous", "Hold/free", "Next")}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
     PARAMETER_CONTROLS = {
         'hold_seconds': {'unit': 's'},
         'pause_seconds': {'unit': 's'},
@@ -58,6 +65,11 @@ class ColumnSequenceAnimation(AnimationBase):
         self._context: ResolvedScene | None = None
         self._last_key: tuple[Any, ...] | None = None
         self._active_column: int | None = None
+        self._held_column: int | None = None
+        self._elapsed_origin = 0.0
+        self._column_origin = 0
+        self._pending_control: int | None = None
+        self._control_lock = Lock()
 
     @classmethod
     def component_descriptor(cls) -> ComponentDescriptor:
@@ -103,6 +115,17 @@ class ColumnSequenceAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        width, height = self.get_strip_info()
+        point = AimedPoint.from_input(kind, x, y, strength, width, height)
+        if point is None:
+            return False
+        with self._control_lock:
+            if self._pending_control is not None:
+                return False
+            self._pending_control = len(self.POINT_ACTION_ZONES[kind]) * point.x // width - 1
+        return True
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
         del frame_count
         context = self._context
@@ -112,10 +135,25 @@ class ColumnSequenceAnimation(AnimationBase):
         hold = params["hold_seconds"]
         pause = params["pause_seconds"]
         cycle = max(0.001, hold + pause)
-        strips = int(self.controller.strip_count)
+        strips = max(1, int(self.controller.strip_count))
         leds = int(self.controller.leds_per_strip)
-        column = int(elapsed / cycle) % max(1, strips)
-        active = column if (elapsed % cycle) < hold else None
+        adjusted = max(0.0, elapsed - self._elapsed_origin)
+        column = (self._column_origin + int(adjusted / cycle)) % strips
+        if self._pending_control is not None:
+            with self._control_lock:
+                control, self._pending_control = self._pending_control, None
+            if control == 0 and self._held_column is not None:
+                self._elapsed_origin = elapsed
+                self._column_origin = self._held_column
+                column, self._held_column = self._held_column, None
+                adjusted = 0.0
+            else:
+                selected = column if self._held_column is None else self._held_column
+                self._held_column = (selected + control) % strips
+        if self._held_column is not None:
+            column = active = self._held_column
+        else:
+            active = column if (adjusted % cycle) < hold else None
         level = max(0, min(255, int(round(255.0 * params["white_level"]))))
         key = (column, active, level, strips, leds)
         if key == self._last_key:

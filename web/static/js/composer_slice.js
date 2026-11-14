@@ -493,7 +493,10 @@
     const pointAction = positionedAction(entry)?.[1];
     if (pointAction) {
       const gesture = document.createElement('p');
-      gesture.className = 'status-line'; gesture.textContent = `Tap the live preview to ${pointAction.label.toLocaleLowerCase()}.`;
+      gesture.className = 'status-line';
+      gesture.textContent = pointAction.horizontal_zones
+        ? `Tap the live preview. Left to right: ${pointAction.horizontal_zones.join(' · ')}.`
+        : `Tap the live preview to ${pointAction.label.toLocaleLowerCase()}.`;
       host.append(gesture);
     }
     if (entry.input_capability?.mode === 'player' && entry.component_id === 'tetris') {

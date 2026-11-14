@@ -85,6 +85,7 @@ class ComponentAction:
     position: bool = False
     position_axes: tuple[str, ...] = ("x", "y")
     chord: int | None = None
+    horizontal_zones: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.label or not self.position_axes or set(self.position_axes) - {"x", "y"}:
@@ -93,13 +94,21 @@ class ComponentAction:
             not self.position or self.button is None or not 1 <= self.chord < 16
         ):
             raise ValueError("Invalid component action declaration")
+        zones = tuple(self.horizontal_zones)
+        if zones and (not self.position or self.position_axes != ("x",) or len(zones) < 2
+                      or any(not isinstance(zone, str) or not zone for zone in zones)):
+            raise ValueError("Invalid horizontal action zones")
+        object.__setattr__(self, "horizontal_zones", zones)
 
     def public(self) -> dict[str, Any]:
-        return {
+        result = {
             "label": self.label, "button": self.button, "release": self.release,
             "repeat": self.repeat, "position": self.position, "chord": self.chord,
             "position_axes": list(self.position_axes) if self.position else [],
         }
+        if self.horizontal_zones:
+            result["horizontal_zones"] = list(self.horizontal_zones)
+        return result
 
 
 @dataclass(frozen=True)
@@ -296,12 +305,14 @@ def component_definition(
     point_bindings = getattr(implementation, "NIMBUS_POINT_BINDINGS", {})
     point_labels = getattr(implementation, "POINT_ACTION_LABELS", {})
     point_axes = getattr(implementation, "POINT_ACTION_AXES", {})
+    point_zones = getattr(implementation, "POINT_ACTION_ZONES", {})
     actions = {}
     for name in sorted(implementation.INTERACTION_TYPES):
         button, chord = point_bindings.get(name, (None, None))
         actions[name] = ComponentAction(
             point_labels.get(name, name.capitalize()), button, position=True,
             position_axes=point_axes.get(name, ("x", "y")), chord=chord,
+            horizontal_zones=point_zones.get(name, ()),
         )
     player_buttons = getattr(implementation, "PLAYER_BUTTONS", {})
     for button, (label, repeat, *release) in player_buttons.items():

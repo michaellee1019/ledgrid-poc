@@ -12,13 +12,17 @@ from animation import AnimationBase
 from animation.core.component_catalog import ComponentDescriptor
 from animation.core.compositing import OverlayFrame, coverage_dirty_union
 from animation.core.presentation_contracts import ResolvedScene
+from animation.libraries.point_pulse import AimedPoint, PointPulse
 
 
 class PixelChaseAnimation(AnimationBase):
     """Evenly spaced heads traverse the complete physical LED path."""
     PREFERRED_PARAMETERS = ('pixel_count', 'pixels_per_second', 'tail_length', 'color_cycle_speed')
+    INTERACTION_TYPES = frozenset({"primary"})
+    POINT_ACTION_LABELS = {"primary": "Reverse the chase briefly"}
+    NIMBUS_POINT_BINDINGS = {"primary": ("a", 3)}
     PARAMETER_CONTROLS = {
-        'pixels_per_second': {'unit': 'px/s'},
+        'pixels_per_second': {'unit': 'px/s', 'step': .5, 'coarse_step': 12},
     }
 
 
@@ -54,6 +58,7 @@ class PixelChaseAnimation(AnimationBase):
         self._last_head_pixels = np.empty(0, dtype=np.int32)
         self._revision = 0
         self._presentation_context: ResolvedScene | None = None
+        self._pulse = PointPulse(.9)
 
     @classmethod
     def component_descriptor(cls) -> ComponentDescriptor: return cls.COMPONENT_DESCRIPTOR
@@ -63,7 +68,7 @@ class PixelChaseAnimation(AnimationBase):
         supplied = dict(values); unknown = sorted(set(supplied) - set(cls.DEFAULTS))
         if unknown: raise ValueError(f"Pixel Chase does not accept non-local parameters: {unknown!r}")
         result = dict(cls.DEFAULTS); result.update(supplied)
-        for name, low, high in (("pixels_per_second", .5, 1000.), ("color_cycle_speed", 0., 4.)):
+        for name, low, high in (("pixels_per_second", 0., 1000.), ("color_cycle_speed", 0., 4.)):
             value = result[name]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not low <= float(value) <= high: raise ValueError(f"{name} must be a finite number from {low} to {high}")
             result[name] = float(value)
@@ -76,7 +81,7 @@ class PixelChaseAnimation(AnimationBase):
     @classmethod
     def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
-            "pixels_per_second": {"type": "float", "min": .5, "max": 1000., "default": 120., "description": "Physical LEDs travelled per scaled second"},
+            "pixels_per_second": {"type": "float", "min": 0., "max": 1000., "default": 120., "description": "Physical LEDs per Scene second, zero holds the heads"},
             "pixel_count": {"type": "int", "min": 1, "max": 32, "default": 3, "description": "Evenly spaced chase heads"},
             "tail_style": {"type": "str", "options": list(cls.TAIL_STYLES), "default": "fade", "description": "Trailing light falloff"},
             "tail_length": {"type": "int", "min": 0, "max": 32, "default": 4, "description": "LEDs behind each head"},
@@ -96,20 +101,30 @@ class PixelChaseAnimation(AnimationBase):
     def set_presentation_context(self, context: ResolvedScene) -> None: self.on_presentation_context_changed(self._presentation_context, context)
     def render_resolved_scene(self, context: ResolvedScene) -> OverlayFrame: self.set_presentation_context(context); return self.generate_frame(context.phase_time, self.frame_count)
 
+    def handle_interaction(self, kind, x, y, strength=1.0):
+        point = AimedPoint.from_input(kind, x, y, strength, self.width, self.height)
+        return point is not None and self._pulse.trigger(point)
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> OverlayFrame:
         del frame_count
         if self._presentation_context is None: phase_time, palette_id, parameters = max(0., float(time_elapsed)), "neutral", self.params
         else: phase_time, palette_id, parameters = max(0., float(self._presentation_context.phase_time)), str(self._presentation_context.palette["palette_id"]), self._presentation_context.parameters
         self.params = self._normalized_parameters(parameters)
-        step = int(math.floor(phase_time * self.params["pixels_per_second"] + 1.e-9)); cycle_tick = int(math.floor(phase_time * self.params["color_cycle_speed"] * 60. + 1.e-9))
-        key = (step, cycle_tick, palette_id, tuple(self.params.items()))
+        point, progress = self._pulse.sample(phase_time)
+        heading = -1 if point is not None and progress < .5 else 1
+        if point is not None:
+            phase_time_for_heads = phase_time - 2 * self._pulse.duration * min(progress, 1.0 - progress)
+        else:
+            phase_time_for_heads = phase_time
+        step = int(math.floor(phase_time_for_heads * self.params["pixels_per_second"] + 1.e-9)); cycle_tick = int(math.floor(phase_time * self.params["color_cycle_speed"] * 60. + 1.e-9))
+        key = (step, cycle_tick, palette_id, tuple(self.params.items()), heading)
         if key == self._last_key: return OverlayFrame(self._last_pixels, revision=self._revision, changed=False, dirty_ranges=())
         output = self._buffers[1] if self._last_pixels is self._buffers[0] else self._buffers[0]
-        self._paint(output, step, cycle_tick, palette_id); dirty = coverage_dirty_union(self._last_pixels, output)
+        self._paint(output, step, cycle_tick, palette_id, heading); dirty = coverage_dirty_union(self._last_pixels, output)
         self._last_pixels, self._last_key = output, key; self._revision += 1
         return OverlayFrame(output, revision=self._revision, changed=True, dirty_ranges=dirty)
 
-    def _paint(self, output: np.ndarray, step: int, cycle_tick: int, palette_id: str) -> None:
+    def _paint(self, output: np.ndarray, step: int, cycle_tick: int, palette_id: str, heading=1) -> None:
         output.fill(0); path_size = self._path.size
         heads = np.asarray([(step + index * path_size // self.params["pixel_count"]) % path_size for index in range(self.params["pixel_count"])], dtype=np.int32)
         self._last_head_pixels = self._path[heads]
@@ -117,7 +132,7 @@ class PixelChaseAnimation(AnimationBase):
         else:
             offsets = np.arange(self.params["tail_length"] + 1, dtype=np.int32)
             alpha = np.full(offsets.size, 255, dtype=np.uint8) if self.params["tail_style"] == "solid" else np.rint(255 * (1. - offsets / (self.params["tail_length"] + 1))).astype(np.uint8)
-        indices = self._path[(heads[:, None] - offsets[None, :]) % path_size]
+        indices = self._path[(heads[:, None] - heading * offsets[None, :]) % path_size]
         colors = np.stack([self._semantic_color(palette_id, cycle_tick, number) for number in range(heads.size)]).astype(np.uint16)
         alpha16 = alpha.astype(np.uint16)
         if np.unique(indices).size == indices.size:
