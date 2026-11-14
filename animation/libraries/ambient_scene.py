@@ -95,15 +95,22 @@ class AmbientSceneAnimation(AnimationBase):
         if self.STYLE=="rainbow": return .5+.5*np.sin((self._y*p["bands"]+self._x*.35+t*p["travel"]*p["direction"])*math.tau)
         if self.STYLE=="solid": return np.full((self.width,self.height),p["glow"]*(.62+.38*(.5+.5*math.sin(t*p["breath"]*math.tau))))
         if self.STYLE=="sparkle":
-            if self._last_tick is None: self._last_tick=tick
-            baseline=float(self.SPARKLE_BASELINE_HZ); hz=float(self.SIMULATION_HZ)
-            decay=(.55+.4*p["linger"])**(baseline/hz); spawn=min(1., p["density"]*.08*(baseline/hz))
-            while self._last_tick<min(tick,self._last_tick+self.MAX_CATCH_UP_TICKS):
-                born=self._rng.random(self._spark.shape)<spawn; self._spark*=decay
-                count=int(np.count_nonzero(born))
-                if count: self._spark_hue[born]=self._hue_rng.random(count,dtype=np.float32)
-                self._spark[born]=1.; self._last_tick+=1
-            return np.clip(p["night"]+self._spark*(.55+.45*p["twinkle"]),0.,1.)
+            if self._last_tick is None or tick < self._last_tick:
+                self._last_tick = tick
+            baseline = float(self.SPARKLE_BASELINE_HZ)
+            hz = float(self.SIMULATION_HZ)
+            decay = (.55 + .4 * p["linger"]) ** (baseline / hz)
+            spawn = min(1., p["density"] * .08 * (baseline / hz))
+            steps = min(tick - self._last_tick, self.MAX_CATCH_UP_TICKS)
+            for _ in range(steps):
+                born = self._rng.random(self._spark.shape) < spawn
+                self._spark *= decay
+                count = int(np.count_nonzero(born))
+                if count:
+                    self._spark_hue[born] = self._hue_rng.random(count, dtype=np.float32)
+                self._spark[born] = 1.
+            self._last_tick = tick
+            return np.clip(p["night"] + self._spark * (.55 + .45 * p["twinkle"]), 0., 1.)
         axis=self._y if p["axis"]=="vertical" else self._x if p["axis"]=="horizontal" else (self._x+self._y)*.5; return np.broadcast_to(np.clip(.5+.5*np.sin((axis*p["frequency"]+t*p["travel"]*p["direction"])*math.tau)*p["shape"],0.,1.),(self.width,self.height))
     def cadence_snapshot(self): return MappingProxyType({"simulation_hz":float(self.SIMULATION_HZ),"tick":self._last_tick})
     def semantic_snapshot(self):

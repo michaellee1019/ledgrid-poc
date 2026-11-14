@@ -14,6 +14,7 @@ from animation.core.installation_profile_topology import INSTALLED_INSTALLATION_
 from ipc.control_channel import FileControlChannel
 from ipc.controller_frame_snapshot import ControllerFrameSnapshot
 from ipc.playlist_runtime import PlaylistRunner, normalize_playlist_command
+from ipc.scene_contract import is_scene_pace_edit
 from ipc.runtime_control import (ControllerCommandConflictError, controller_activation_coordinator,
     start_scene as _start_scene, normalize_managed_scene, update_scene_component as _update_scene_component,
     restore_display_state as _restore_display_state, normalize_automation_device_state)
@@ -41,6 +42,20 @@ def apply_global_settings(manager, settings):
         manager.set_plant_modifiers(settings['plant_modifiers'])
     if settings.get('vibe') is not None:
         manager.set_vibe(settings['vibe'])
+
+def apply_scene_command(manager, data):
+    """Apply a complete Scene, preserving phase for edits to pace alone."""
+    settings = data.get('global_settings') or {}
+    requested = normalize_managed_scene(manager, data.get('scene'))
+    apply_global_settings(manager, settings)
+    if settings.get('output', {}).get('power') is False:
+        manager._requested_scene = requested
+        return manager.stop_animation()
+    if (manager.is_running and requested.get('schema') == 'ledgrid.scene.v2'
+            and is_scene_pace_edit(manager.get_scene_state(), requested)):
+        return manager.tune_canonical_scene(requested)
+    return _start_scene(manager, requested)
+
 
 def handle_command(manager, action, data, *, gamepad=None):
     coordinator=controller_activation_coordinator(manager)
@@ -78,13 +93,8 @@ def handle_command(manager, action, data, *, gamepad=None):
             if state.get('power') is True and not manager.is_running:
                 return _start_scene(manager, selected)
             return True
-        if action=='start_scene':
-            settings=data.get('global_settings') or {}
-            apply_global_settings(manager,settings)
-            if settings.get('output',{}).get('power') is False:
-                requested=normalize_managed_scene(manager,data.get('scene'))
-                manager._requested_scene=requested
-                return manager.stop_animation()
+        if action == 'start_scene':
+            return apply_scene_command(manager, data)
         return _dispatch_legacy_command(manager,action,data,selected_scene=coordinator.selected_scene)
 
 def controller_status_payload(manager, release_id=None, **_unused):
@@ -458,13 +468,6 @@ def _dispatch_legacy_command(
         config = data.get('config') or {}
         print(f"▶️  Start requested: {animation}")
         return manager.start_animation(animation, config, preset=data.get('preset'))
-    elif action == 'start_scene':
-        print("▶️  Scene start requested")
-        try:
-            return _start_scene(manager, data.get("scene"))
-        except (TypeError, ValueError) as exc:
-            print(f"⚠️ Invalid scene: {exc}")
-            return False
     elif action == 'update_scene_component':
         try:
             return _update_scene_component(

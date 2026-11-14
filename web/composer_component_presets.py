@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 from animation.core.component_catalog import ComponentCatalog
 from animation.core.plant_awareness import PlantModifierState
+from ipc.scene_contract import MAX_SCENE_PACE
 
 
 _MEMBERSHIP_PATH = Path(__file__).with_name("composer_preset_membership.v1.json")
@@ -80,7 +81,7 @@ def _fireworks_presentation(
         palette_id = look["palette_id"]
         if not isinstance(palette_id, str) or palette_id not in _FIREWORKS_PALETTES:
             raise ValueError(f"Preset {preset_id} has invalid presentation")
-        if not _finite_range(look["pace"], 0.0, 2.0) or not _finite_range(look["presentation_brightness"], 0.0, 2.0):
+        if not _finite_range(look["pace"], 0.0, MAX_SCENE_PACE) or not _finite_range(look["presentation_brightness"], 0.0, 2.0):
             raise ValueError(f"Preset {preset_id} has invalid presentation")
         presentation["look"] = {
             "palette_id": palette_id,

@@ -24,6 +24,7 @@ def component_entry(descriptor: ComponentDescriptor) -> dict[str, Any]:
         "parameters": descriptor.default_parameters(),
         "parameter_schema": descriptor.controls(),
         "preferred_parameters": list(descriptor.preferred_parameters),
+        "suggested_scene_pace": descriptor.suggested_scene_pace,
         "input_capability": descriptor.input_capability.public(),
         "default_placement": dict(descriptor.default_placement),
         "available": True,

@@ -40,6 +40,9 @@ input, select, textarea { min-width: 0; min-height: 1.9rem; padding: .34rem .42r
 .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr)); gap: .42rem; }
 .primary-control-grid, .advanced-control-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); align-items: start; gap: .42rem; }
 .scene-speed-control, .target-fps-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .28rem .45rem; }
+.scene-speed-control > input { grid-column: 1 / -1; }
+.scene-speed-control label { min-width: 0; }
+.scene-speed-control input[type="number"] { font-variant-numeric: tabular-nums; }
 .scene-speed-control > span, .target-fps-control > span { grid-column: 1 / -1; color: #b6c7c9; font-size: .69rem; line-height: 1.25; }
 .scene-speed-control input, .target-fps-control input { width: 100%; min-height: 1.5rem; padding: 0; accent-color: #83d7c5; }
 .scene-speed-control output, .target-fps-control output, .actual-fps output { color: #b9e9dc; font-variant-numeric: tabular-nums; text-align: right; }

@@ -56,7 +56,12 @@
     <section class="control-workspace" aria-label="Scene control workspace" tabindex="-1">
     <section class="global-scene-controls inspector" aria-labelledby="global-scene-controls-title" data-panel-id="global-scene">
       <div class="pane-heading"><div><p class="eyebrow">Global scene</p><h2 id="global-scene-controls-title">Motion</h2></div><button id="resetSceneSpeed" class="button text" type="button">Reset</button></div>
-      <label class="scene-speed-control" for="sceneSpeed">Speed <input id="sceneSpeed" type="range" min=".1" max="2" step=".05" value=".7" aria-describedby="sceneSpeedValue"><output id="sceneSpeedValue">0.70×</output></label>
+      <div class="scene-speed-control">
+        <label for="sceneSpeed">Speed</label><output id="sceneSpeedValue">0.70×</output>
+        <input id="sceneSpeed" type="range" min="0" max="{{ scene_pace_max }}" step="{{ scene_pace_step }}" value=".7" aria-describedby="sceneSpeedValue">
+        <label for="sceneSpeedExact">Exact speed <input id="sceneSpeedExact" type="number" min="0" max="{{ scene_pace_max }}" step="any" value=".7" inputmode="decimal"></label>
+        <button id="freezeSceneSpeed" class="button text" type="button">Freeze motion</button>
+      </div>
       <label class="target-fps-control" for="targetFps">Target FPS <input id="targetFps" type="range" min="1" max="200" step="1" value="200" aria-describedby="targetFpsValue"><output id="targetFpsValue">200 FPS</output></label>
       <p class="actual-fps" aria-label="Measured output frame rate"><span>Actual FPS</span><output id="actualFps">Measuring…</output></p>
     </section>

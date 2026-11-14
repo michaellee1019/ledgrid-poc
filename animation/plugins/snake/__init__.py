@@ -45,6 +45,7 @@ class SnakeAgent:
 
 class SnakeAnimation(AnimationBase):
     """Self-playing Snake with only local Scene v2 creative controls."""
+    SUGGESTED_SCENE_PACE = 4.0
     PREFERRED_PARAMETERS = ('move_cadence', 'snake_count', 'food_count', 'growth_per_food')
     PARAMETER_CONTROLS = {
         'move_cadence': {'label': 'moves/sec', 'unit': 'Hz'},

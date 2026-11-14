@@ -219,7 +219,7 @@ function environment({save,run}){
         for element_id in ("sceneSpeed", "targetFps", "liveAction", "scenePreview"):
             self.assertEqual(self.html.count(f'id="{element_id}"'), 1)
         self.assertIn('width="33" height="138"', self.html)
-        self.assertIn("pace: number('#sceneSpeed')", self.script)
+        self.assertIn("pace: scenePace()", self.script)
         self.assertIn("wireLiveRange($('#sceneSpeed'), (event) => { syncSceneSpeed(number('#sceneSpeed')); edit(event); })", self.script)
         self.assertIn("aspect-ratio: 33 / 138", self.css)
 

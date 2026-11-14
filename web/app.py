@@ -99,6 +99,8 @@ from ipc.scene_contract import (
     validate_bounded_browser_json,
     LocalSceneAdapter,
     SceneContractError,
+    MAX_SCENE_PACE,
+    SCENE_PACE_STEP,
     normalize_composer_scene,
 )
 from animation.core.scene_runtime import CanonicalSceneRuntimeError
@@ -223,6 +225,7 @@ class AnimationWebInterface:
         self._composer_opened_look_id: str | None = None
         self._composer_recovery_generation = 0
         self.composer_preview = ComposerFinalPreview(self.composer_catalog, self.project_root)
+        self.composer_explicit_preview = ComposerFinalPreview(self.composer_catalog, self.project_root)
         if self.local_mode:
             self.generated_preview_dir = (
                 self.project_root / "run_state" / "mac_animation_previews"
@@ -857,6 +860,8 @@ class AnimationWebInterface:
                 'composer.html',
                 shell_version=COMPOSER_SHELL_VERSION,
                 local_mode=self.local_mode,
+                scene_pace_max=MAX_SCENE_PACE,
+                scene_pace_step=SCENE_PACE_STEP,
             )
 
         @self.app.route('/composer-service-worker.js')
@@ -1644,6 +1649,7 @@ class AnimationWebInterface:
                 name=descriptor.name, description=descriptor.description,
                 defaults=descriptor.default_parameters(), parameter_schema=descriptor.controls(),
                 input_capability=descriptor.input_capability.public(),
+                suggested_scene_pace=descriptor.suggested_scene_pace,
             )
             if component_id != descriptor.package_id:
                 source['entrypoint'] = ''
@@ -1922,6 +1928,7 @@ class AnimationWebInterface:
                 'icon': str(raw.get('icon') or '✦'),
                 'parameter_schema': schema,
                 'input_capability': raw.get('input_capability', {}),
+                'suggested_scene_pace': raw.get('suggested_scene_pace'),
                 'defaults': defaults,
                 'presets': preset_records,
                 'browser_runtime': runtime,
@@ -2855,7 +2862,9 @@ class AnimationWebInterface:
                 raise SceneContractError('preview wall_time must include a timezone')
         else:
             raise SceneContractError('preview wall_time must be ISO-8601')
-        frame = self.composer_preview.render(canonical, float(elapsed), wall_time)
+        interactive = 'monotonic_elapsed' not in preview
+        runtime = self.composer_preview if interactive else self.composer_explicit_preview
+        frame = runtime.render(canonical, float(elapsed), wall_time, continuous=interactive)
         return {
             'basis': frame.basis.to_dict(),
             'frame': {
@@ -3377,6 +3386,7 @@ class AnimationWebInterface:
                         lambda: None,
                     )()
                     self.composer_preview.set_installation_profile(selected_view)
+                    self.composer_explicit_preview.set_installation_profile(selected_view)
         return led_info
 
     def _status_payload(self, decode_frame: bool = False) -> Dict[str, Any]:

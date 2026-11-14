@@ -31,6 +31,7 @@ COMPAT_GIF_DIRECTORY = "assets/gifs"
 
 class GifAnimation(AnimationBase):
     """Play pre-rendered animated GIF files."""
+    SUGGESTED_SCENE_PACE = 4.0
     PREFERRED_PARAMETERS = ("gif_name", "playback_speed", "fit_mode", "flip_y")
     PARAMETER_CONTROLS = {
         'playback_speed': {'unit': '×'},

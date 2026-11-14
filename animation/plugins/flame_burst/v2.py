@@ -14,6 +14,7 @@ from animation.core.presentation_contracts import OverlayFrame, ResolvedScene
 
 
 class FlameBurstAnimation(AnimationBase):
+    SUGGESTED_SCENE_PACE = 4.0
     PREFERRED_PARAMETERS = ('flare_size', 'ignition_cadence', 'ember_linger', 'flicker')
     PARAMETER_CONTROLS = {
         'ignition_cadence': {'unit': '1/s'},

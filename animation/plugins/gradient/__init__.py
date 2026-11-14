@@ -2,6 +2,7 @@
 from types import MappingProxyType
 from animation.libraries.ambient_scene import AmbientSceneAnimation
 class GradientAnimation(AmbientSceneAnimation):
+    SUGGESTED_SCENE_PACE = 6.0
     PREFERRED_PARAMETERS = ('drift', 'motion')
 
     ANIMATION_NAME="Gradient"; ANIMATION_DESCRIPTION="A drifting semantic color field"; ANIMATION_VERSION="2.0"; COMPONENT_ID="gradient"; STYLE="gradient"

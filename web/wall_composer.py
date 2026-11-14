@@ -15,7 +15,7 @@ from animation.core.wall_menu_frame import HEIGHT, PRESET_COLUMNS, STICK_AXES, W
 from animation.libraries.pixel_art import EMOJI_PATTERNS
 from animation.libraries.scene_palettes import SCENE_PALETTE_IDS
 from ipc.playlist_runtime import PLAYLIST_COMMAND_SCHEMA, PLAYLIST_VERSION
-from ipc.scene_contract import normalize_composer_scene
+from ipc.scene_contract import MAX_SCENE_PACE, SCENE_PACE_STEP, normalize_composer_scene
 from web.composer_content import composer_presets, gallery_entries
 from web.composer_playlist_store import ComposerPlaylistStore
 from web.numbered_preset_store import PRESET_COUNT, NumberedPresetStore
@@ -49,7 +49,7 @@ STICK_BANKS = (
     (25, 26, 27, 28),                                # All four
 )
 STICK_SCENE_FIELDS = {
-    "pace": (("look", "pace"), 0, 2, .05),
+    "pace": (("look", "pace"), 0, MAX_SCENE_PACE, SCENE_PACE_STEP),
     "light": (("look", "presentation_brightness"), .1, 2, .05),
     "background": (("background", "parameters", "gain"), 0, 1, .05),
 }
@@ -966,7 +966,7 @@ class WallComposer:
             self._choice("Palette", palette, SCENE_PALETTE_IDS,
                          partial(self._edit, ("look", "palette_id")),
                          labels=PALETTE_NAMES, swatches=tuple(map(rgb, PALETTE_SWATCHES.get(palette, ())))),
-            self._number("Speed", look["pace"], 0, 2, .05, partial(self._edit, ("look", "pace"))),
+            self._speed_row(look["pace"]),
             self._number("Scene light", look["presentation_brightness"], 0, 2, .01,
                          partial(self._edit, ("look", "presentation_brightness"))),
             Row("Background", select=partial(self._push, "Backlight", self._background_rows)),
@@ -975,6 +975,13 @@ class WallComposer:
             Row("Plants", select=partial(self._push, "Plants", self._plant_rows)),
             Row("Save Look", select=self._save_picker),
         ]
+
+    def _speed_row(self, pace):
+        setter = partial(self._edit, ("look", "pace"))
+        row = self._number("Speed", pace, 0, MAX_SCENE_PACE, SCENE_PACE_STEP, setter)
+        row.select = partial(setter, 0 if pace > 0 else 1)
+        row.hint = "A FREEZE" if pace > 0 else "A 1X"
+        return row
 
     def _background_rows(self):
         return self._parameter_rows(("background",), self.scene()["background"])

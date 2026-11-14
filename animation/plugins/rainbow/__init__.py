@@ -2,6 +2,7 @@
 from types import MappingProxyType
 from animation.libraries.ambient_scene import AmbientSceneAnimation
 class RainbowAnimation(AmbientSceneAnimation):
+    SUGGESTED_SCENE_PACE = 6.0
     PREFERRED_PARAMETERS = ('bands', 'travel')
     PARAMETER_CONTROLS = {
         'direction': {'option_labels': {'-1': 'Reverse', '1': 'Forward'}},

@@ -52,10 +52,20 @@
     return body;
   }
   const number = (id) => Number($(id).value);
-  function syncSceneSpeed(value) {
+  function syncSceneSpeed(value, animation = state.scene?.animation) {
     const pace = Number(value);
-    $('#sceneSpeed').value = String(pace);
-    $('#sceneSpeedValue').textContent = `${pace.toFixed(2)}×`;
+    const range = $('#sceneSpeed');
+    const exact = $('#sceneSpeedExact');
+    const suggested = componentDescriptor(animation)?.suggested_scene_pace ?? 2;
+    range.max = Math.min(Number(exact.max), Math.max(pace, suggested));
+    range.value = String(pace);
+    exact.value = String(pace);
+    exact.dataset.authored = String(pace);
+    exact.removeAttribute('aria-invalid');
+    $('#sceneSpeedValue').textContent = pace === 0 ? 'Frozen' : `${pace.toFixed(2)}×`;
+  }
+  function scenePace() {
+    return Number($('#sceneSpeedExact').dataset.authored ?? DEFAULT_SCENE_PACE);
   }
   const DEFAULT_TARGET_FPS = 200;
   function boundedTargetFps(value) { return Math.max(1, Math.min(200, Math.round(Number(value) || DEFAULT_TARGET_FPS))); }
@@ -287,7 +297,7 @@
       background: defaultComponent('background', 'solid_background'),
       animation: defaultComponent('animation', 'aurora_curtains'),
       widgets: [], plants: {effects: {version: 1, active: [], strengths: {}}},
-      look: {palette_id: $('#previewPalette').value, pace: number('#sceneSpeed'), presentation_brightness: number('#sceneLuminance')},
+      look: {palette_id: $('#previewPalette').value, pace: scenePace(), presentation_brightness: number('#sceneLuminance')},
     };
   }
   function componentOption(entry) {
@@ -649,14 +659,14 @@
     applyPlantOptics(next);
     next.look = {
       palette_id: $('#previewPalette').value,
-      pace: number('#sceneSpeed'),
+      pace: scenePace(),
       presentation_brightness: number('#sceneLuminance'),
     };
     return next;
   }
   function syncScenePresentation(scene) {
     $('#previewPalette').value = scene.look?.palette_id ?? 'mist';
-    syncSceneSpeed(scene.look?.pace ?? DEFAULT_SCENE_PACE);
+    syncSceneSpeed(scene.look?.pace ?? DEFAULT_SCENE_PACE, scene.animation);
     $('#sceneLuminance').value = scene.look?.presentation_brightness ?? .82;
     const plantEffects = scene.plants?.effects || {};
     const activeOptics = new Set(plantEffects.active || []);
@@ -833,6 +843,7 @@
         entries.set(key, {...entries.get(key), ...entry});
       });
       state.components = entries;
+      syncSceneSpeed(state.scene?.look.pace ?? DEFAULT_SCENE_PACE);
       installComponentChoices();
       syncComponentEditors();
       renderGallery();
@@ -965,7 +976,7 @@
       }},
       look: {
         palette_id: paletteForVibe[vibeId] || 'neutral',
-        pace: Math.max(0, Math.min(2, Number(observation?.animation_speed_scale || speedBaseline) / speedBaseline)),
+        pace: Math.max(0, Math.min(Number($('#sceneSpeedExact').max), Number(observation?.animation_speed_scale ?? speedBaseline) / speedBaseline)),
         presentation_brightness: Math.max(0, Math.min(2, Number(observation?.brightness ?? 128) / 255)),
       },
     };
@@ -1852,6 +1863,31 @@
       });
     });
     wireLiveRange($('#sceneSpeed'), (event) => { syncSceneSpeed(number('#sceneSpeed')); edit(event); });
+    $('#sceneSpeedExact').addEventListener('change', (event) => {
+      const input = event.target;
+      if (input.value === '' || !input.validity.valid) {
+        input.setAttribute('aria-invalid', 'true');
+        return;
+      }
+      syncSceneSpeed(input.valueAsNumber);
+      edit(event);
+    });
+    $('#sceneSpeedExact').addEventListener('keydown', (event) => {
+      if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      const input = event.target;
+      const direction = event.key === 'ArrowUp' ? 1 : -1;
+      const step = Number($('#sceneSpeed').step) * direction;
+      const typed = input.valueAsNumber;
+      const current = input.validity.valid && Number.isFinite(typed) ? typed : scenePace();
+      const pace = Number((current + step).toFixed(6));
+      syncSceneSpeed(Math.max(Number(input.min), Math.min(Number(input.max), pace)));
+      edit(event);
+    });
+    $('#sceneSpeedExact').addEventListener('blur', (event) => {
+      if (event.target.getAttribute('aria-invalid') === 'true') syncSceneSpeed(state.scene?.look.pace ?? DEFAULT_SCENE_PACE);
+    });
+    $('#freezeSceneSpeed').addEventListener('click', () => { syncSceneSpeed(0); edit(); });
     wireLiveRange($('#targetFps'), (event) => { syncTargetFps($('#targetFps').value); edit(event); });
     $('#resetSceneSpeed').addEventListener('click', () => { syncSceneSpeed(DEFAULT_SCENE_PACE); edit({target: $('#sceneSpeed')}); });
     plantOptics.forEach(wirePlantOptic);

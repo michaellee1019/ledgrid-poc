@@ -142,7 +142,10 @@ held axis to center after changing banks. Palette changes once per flick.
 
 The base bank owns the main animation setting. R1 has secondary animation
 controls, L1 has backlight, and L2 has the first Widget. R1 + R2 puts overall
-speed on right-stick Up and Down. Each setting belongs to one bank. Empty
+speed on right-stick Up and Down. Tune → Speed accepts 0–10× in 0.05×
+steps. On the Speed row, A freezes scene motion and A again sets 1×.
+Composer offers the same exact range and shorter slider ranges where fast
+motion skips visible updates. Each setting belongs to one bank. Empty
 slots and settings absent from the current scene show dim dashes.
 Fireworks uses burst size in the base bank and trails, launch rate, sparks per
 burst, and gravity with R1. Changes to a shell's settings apply at launch.

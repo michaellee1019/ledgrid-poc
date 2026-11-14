@@ -129,6 +129,28 @@ class ComposerRuntimePreviewTests(unittest.TestCase):
 
 
 
+    def test_interactive_preview_freezes_without_affecting_explicit_time(self) -> None:
+        scene = get_starter("aurora")["scene"]
+        scene["animation"].update(component_id="gradient", parameters={})
+        scene["look"]["pace"] = 0
+        explicit = _request(scene, elapsed=42.0)
+        expected = self.client.post("/api/composer/preview", json=explicit).get_json()["frame"]["pixels"]
+
+        def render(elapsed):
+            with patch("web.app.time.monotonic", return_value=elapsed):
+                response = self.client.post("/api/composer/preview", json={"origin": "composer", "scene": scene})
+            self.assertEqual(response.status_code, 200, response.get_json())
+            return response.get_json()["frame"]["pixels"]
+
+        scene["look"]["pace"] = 4
+        initial = render(40)
+        scene["look"]["pace"] = 0
+        frozen = render(41)
+        self.assertNotEqual(frozen, initial)
+        response = self.client.post("/api/composer/preview", json=explicit)
+        self.assertEqual(response.get_json()["frame"]["pixels"], expected)
+        self.assertEqual(render(80), frozen)
+
     def test_clock_offset_changes_preview_time_without_advancing_the_scene(self) -> None:
         for format_24h, seconds, offset in ((True, True, 360), (False, False, 360),
                                             (True, False, -720), (False, True, 840)):

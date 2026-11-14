@@ -146,6 +146,7 @@ class ComponentDescriptor:
     input_capability: ComponentInput = field(default_factory=ComponentInput)
     default_placement: Mapping[str, Any] = field(default_factory=dict)
     live_parameters: frozenset[str] = frozenset()
+    suggested_scene_pace: float = 2.0
     factory: Callable[[Any, Mapping[str, Any]], Any] | None = field(
         default=None, compare=False, repr=False
     )
@@ -303,6 +304,7 @@ def component_definition(
         name=getattr(implementation, "COMPOSER_NAME", implementation.ANIMATION_NAME),
         description=implementation.ANIMATION_DESCRIPTION,
         parameter_schema=controls, preferred_parameters=preferred, live_parameters=live,
+        suggested_scene_pace=getattr(implementation, "SUGGESTED_SCENE_PACE", 2.0),
         parameter_normalizer=descriptor.parameter_normalizer or normalizer,
         preserve_parameter_encoding=descriptor.parameter_normalizer is None,
         input_capability=ComponentInput(mode, actions),

@@ -156,6 +156,10 @@ class CanonicalSceneRuntime:
         return strips, leds
 
     @property
+    def active_scene(self) -> CanonicalScene | None:
+        return self._canonical
+
+    @property
     def desired_identity(self) -> SceneIdentity | None:
         return None if self._canonical is None else self._canonical.identity
 

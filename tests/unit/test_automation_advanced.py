@@ -28,7 +28,7 @@ def apply(interface, manager, channel, patch):
 
 
 @pytest.mark.parametrize('patch', [
-    {'look': {'pace': 0}}, {'look': {'pace': 2}},
+    {'look': {'pace': 0}}, {'look': {'pace': 2}}, {'look': {'pace': 10}},
     {'look': {'presentation_brightness': 0}}, {'look': {'presentation_brightness': 2}},
     {'look': {'palette_id': 'neutral'}}, {'look': {'palette_id': 'mist'}},
     {'look': {'palette_id': 'ember'}}, {'look': {'palette_id': 'spectrum'}},
@@ -61,7 +61,7 @@ def test_common_scene_controls_bounds_and_unrelated_fields(content_wall, patch):
 
 
 @pytest.mark.parametrize('patch', [
-    {}, {'unknown': 1}, {'look': {}}, {'look': {'pace': -1}}, {'look': {'pace': 2.1}},
+    {}, {'unknown': 1}, {'look': {}}, {'look': {'pace': -1}}, {'look': {'pace': 10.1}},
     {'look': {'pace': True}}, {'look': {'presentation_brightness': float('nan')}},
     {'look': {'presentation_brightness': 3}}, {'look': {'palette_id': 'unknown'}},
     {'background_brightness': -.1}, {'background_brightness': 1.1},

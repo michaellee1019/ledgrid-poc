@@ -19,6 +19,10 @@ from animation.core.plant_awareness import PlantModifierState
 from ipc.scene_schema import SCENE_V2_REVISION, SCENE_V2_SCHEMA
 
 
+MAX_SCENE_PACE = 10.0
+SCENE_PACE_STEP = 0.05
+
+
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _STABLE_ID = re.compile(r"^[a-z][a-z0-9_]*(?:[.-][a-z0-9_]*)*$")
 _LEGACY_KEYS = frozenset({
@@ -80,6 +84,16 @@ def normalize_composer_scene(request: Mapping[str, Any], catalog: ComponentCatal
         canonical_bytes=bytes_value,
         identity=SceneIdentity(SCENE_V2_REVISION, hashlib.sha256(bytes_value).hexdigest()),
     )
+
+
+def is_scene_pace_edit(previous: Mapping[str, Any] | None, candidate: Mapping[str, Any]) -> bool:
+    """Identify a pace-only edit that can keep the current renderer and phase."""
+    if previous is None or previous.get("schema") != SCENE_V2_SCHEMA or candidate.get("schema") != SCENE_V2_SCHEMA:
+        return False
+    before, after = previous["look"], candidate["look"]
+    return before["pace"] != after["pace"] and candidate == {
+        **previous, "look": {**before, "pace": after["pace"]},
+    }
 
 
 def _normalize_scene(scene: Mapping[str, Any], catalog: ComponentCatalog) -> dict[str, Any]:
@@ -209,14 +223,14 @@ def _normalize_look(value: Any) -> dict[str, Any]:
         raise SceneContractError("look palette_id must be a non-empty string")
     return {
         "palette_id": value["palette_id"],
-        "pace": _factor(value["pace"], "look pace"),
+        "pace": _factor(value["pace"], "look pace", maximum=MAX_SCENE_PACE),
         "presentation_brightness": _factor(value["presentation_brightness"], "look presentation_brightness"),
     }
 
 
-def _factor(value: Any, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0.0 <= float(value) <= 2.0:
-        raise SceneContractError(f"{name} must be a finite number from 0 to 2")
+def _factor(value: Any, name: str, *, maximum: float = 2.0) -> float:
+    if type(value) not in (int, float) or not 0.0 <= value <= maximum:
+        raise SceneContractError(f"{name} must be a finite number from 0 to {maximum:g}")
     return float(value)
 
 

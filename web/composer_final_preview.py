@@ -26,7 +26,7 @@ from animation.core.scene_runtime import (
     CanonicalSceneRuntime, CanonicalSceneRuntimeError, RuntimeFrame, ScenePresentationContext,
 )
 from animation.core.composer_catalog import current_component_catalog
-from ipc.scene_contract import CanonicalScene
+from ipc.scene_contract import CanonicalScene, is_scene_pace_edit
 
 
 @dataclass
@@ -216,8 +216,14 @@ class InstalledFinalSceneRuntime:
 class ComposerFinalPreview(InstalledFinalSceneRuntime):
     """Inert Composer adapter over the shared installed-final host runtime."""
 
-    def render(self, canonical: CanonicalScene, elapsed: float, wall_time: datetime) -> RuntimeFrame:
-        return super().render(ScenePresentationContext(canonical, elapsed, wall_time))
+    def render(
+        self, canonical: CanonicalScene, elapsed: float, wall_time: datetime, *, continuous: bool = False,
+    ) -> RuntimeFrame:
+        with self._lock:
+            previous = self._runtime.active_scene
+            if continuous and is_scene_pace_edit(previous.scene if previous else None, canonical.scene):
+                self.update_canonical_scene(canonical, elapsed)
+            return super().render(ScenePresentationContext(canonical, elapsed, wall_time))
 
 
 __all__ = [

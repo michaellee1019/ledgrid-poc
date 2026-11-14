@@ -1,16 +1,15 @@
 """Validated Scene patches and active-renderer gestures for automation clients."""
 from copy import deepcopy
-import math
 
 from animation.core.plant_awareness import PLANT_MODIFIER_IDS
-from ipc.scene_contract import canonical_json_sha256, validate_bounded_browser_json
+from ipc.scene_contract import MAX_SCENE_PACE, canonical_json_sha256, validate_bounded_browser_json
 from web.automation_api import AutomationError
 
 PALETTES = ('neutral', 'mist', 'ember', 'spectrum', 'rainbow', 'xmas', 'fall', 'easter', 'july4')
 
 
 def finite(value, minimum, maximum, name):
-    if type(value) not in {int, float} or not math.isfinite(value) or not minimum <= value <= maximum:
+    if type(value) not in {int, float} or not minimum <= value <= maximum:
         raise AutomationError(f'{name} must be a finite number from {minimum} to {maximum}.')
     return value
 
@@ -91,9 +90,9 @@ class AutomationAdvanced:
                 raise AutomationError('Look patch fields are invalid.')
             if 'palette_id' in look and look['palette_id'] not in PALETTES:
                 raise AutomationError('Unknown supported palette.')
-            for key in ('pace', 'presentation_brightness'):
+            for key, maximum in (('pace', MAX_SCENE_PACE), ('presentation_brightness', 2)):
                 if key in look:
-                    finite(look[key], 0, 2, key)
+                    finite(look[key], 0, maximum, key)
             scene['look'].update(look)
         if 'background_brightness' in patch:
             scene['background']['parameters']['gain'] = finite(patch['background_brightness'], 0, 1, 'background brightness')

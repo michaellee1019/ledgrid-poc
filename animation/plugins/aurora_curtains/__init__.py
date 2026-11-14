@@ -52,6 +52,7 @@ SEMANTIC_PALETTES: Mapping[str, PaletteRoles] = MappingProxyType({
 
 class AuroraCurtainsAnimation(AnimationBase):
     """Overlapping analytic light curtains for the opaque background layer."""
+    SUGGESTED_SCENE_PACE = 4.0
     PREFERRED_PARAMETERS = ('glow_intensity', 'curtain_density', 'fold_depth')
 
 

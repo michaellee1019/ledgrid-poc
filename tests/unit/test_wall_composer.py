@@ -196,12 +196,12 @@ def test_numeric_hold_updates_live_and_undoes_the_whole_gesture(instrument):
     menu.open()
     menu.press("a")
     focus(menu, "Speed")
-    assert menu.card().level == .24
+    assert menu.card().level == pytest.approx(.048)
     for button in ("right", "repeat-right", "fast-right"):
         menu.press(button)
     assert menu.card().value == "0.83"
     assert menu.card().hint == "Y UNDO"
-    assert menu.card().level == .415
+    assert menu.card().level == pytest.approx(.083)
     menu.press("y")
     assert manager.get_scene_state()["look"]["pace"] == .48
     assert menu.card().hint == "Y REDO"
@@ -708,7 +708,8 @@ def test_flame_aim_uses_logical_wall_coordinates_and_rejects_stale_basis(instrum
     assert manager._canonical_receiver_runtime is runtime
     assert manager.nimbus_game() == (None, None)
 
-    assert handle_command(manager, "start_scene", {"scene": scene | {"look": {**scene["look"], "pace": .8}}})
+    scene["look"]["palette_id"] = "ember"
+    assert handle_command(manager, "start_scene", {"scene": scene})
     component_id, scene_digest = old_basis
     with pytest.raises(ValueError, match="Active Scene"):
         manager.dispatch_canonical_interaction(component_id, scene_digest, "primary", 18, 77)
@@ -729,7 +730,7 @@ def test_invalid_catalog_parameter_cannot_change_active_runtime(instrument):
 
 
 def test_pace_changes_keep_the_current_phase(instrument):
-    manager, _owner, _runner, _gamepad, menu = instrument
+    manager, _owner, _runner, gamepad, menu = instrument
     assert handle_command(manager, "start_scene", {"scene": starter()})
     manager._scene_v2_monotonic_elapsed = lambda: 12.0
     runtime = manager._canonical_receiver_runtime._runtime
@@ -737,10 +738,51 @@ def test_pace_changes_keep_the_current_phase(instrument):
     parameters = original.scene["animation"]["parameters"]
     descriptor = runtime._descriptor(original.scene["animation"])
     old_phase = runtime._context(original, descriptor, parameters, 12).phase_time
-    menu._edit(("look", "pace"), .2)
+    menu._edit(("look", "pace"), 9.95)
     new = manager._canonical_receiver_scene
     assert runtime._context(new, descriptor, parameters, 12).phase_time == pytest.approx(old_phase)
-    assert runtime._context(new, descriptor, parameters, 14).phase_time == pytest.approx(old_phase + .4)
+    assert runtime._context(new, descriptor, parameters, 14).phase_time == pytest.approx(old_phase + 19.9)
+
+    inputs(manager, gamepad, menu, StickMotion(3, 1, 10))
+    assert manager.get_scene_state()["look"]["pace"] == 10
+    menu._speed_row(10).select()
+    frozen = manager._canonical_receiver_scene
+    assert frozen.scene["look"]["pace"] == 0
+    assert runtime._context(frozen, descriptor, parameters, 50).phase_time == pytest.approx(old_phase)
+
+    menu._speed_row(0).select()
+    assert manager.get_scene_state()["look"]["pace"] == 1
+    menu._speed_row(1).adjust(1, steps=1)
+    assert manager.get_scene_state()["look"]["pace"] == 1.05
+
+
+def test_browser_style_pace_command_keeps_runtime_and_clock(instrument):
+    manager, _owner, _runner, _gamepad, _menu = instrument
+    scene = starter()
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime = manager._canonical_receiver_runtime
+    manager._scene_v2_monotonic_elapsed = lambda: 12.0
+    scene["look"]["pace"] = 8.0
+    assert handle_command(manager, "start_scene", {"scene": scene, "global_settings": {"output": {"power": True}}})
+    assert manager._canonical_receiver_runtime is runtime
+    assert manager.get_scene_state()["look"]["pace"] == 8.0
+
+def test_high_pace_survives_numbered_and_playlist_storage(instrument):
+    _manager, _owner, runner, _gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 9.975
+    scene["look"]["presentation_brightness"] = 2
+    canonical = normalize_composer_scene({"origin": "composer", "scene": scene}, menu.catalog)
+    menu.numbered_presets.save(1, canonical)
+    assert menu.numbered_presets.load(1).identity == canonical.identity
+    assert runner._validate_scene(canonical.scene) == canonical.scene
+
+    scene["look"]["pace"] = 10.01
+    with pytest.raises(ValueError, match="look pace"):
+        normalize_composer_scene({"origin": "composer", "scene": scene}, menu.catalog)
+    scene["look"].update(pace=10, presentation_brightness=2.01)
+    with pytest.raises(ValueError, match="presentation_brightness"):
+        normalize_composer_scene({"origin": "composer", "scene": scene}, menu.catalog)
 
 
 def test_browse_defaults_and_authored_presentation(instrument):
