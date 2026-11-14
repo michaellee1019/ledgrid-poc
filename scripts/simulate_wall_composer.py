@@ -82,6 +82,7 @@ def create_simulator(data_dir):
             if request.method == "POST":
                 button = (request.get_json(silent=True) or {}).get("button")
                 if button not in ("menu", "up", "down", "left", "right", "a", "b", "y",
+                                  "release-left", "release-right", "disconnect",
                                   "repeat-left", "repeat-right", "fast-left", "fast-right"):
                     return jsonify(error="Unknown Nimbus button"), 400
                 gamepad.poll = lambda *_args, **_kwargs: (button,)
@@ -104,6 +105,7 @@ def create_simulator(data_dir):
                            mask=b64encode((geometry.foliage | geometry.globes).astype(np.uint8).tobytes()).decode(),
                            hud_height=hud_height,
                            card=card.__dict__ if card else None, menu_open=menu.is_open, error=menu.error,
+                           player_state=manager.nimbus_game()[1],
                            scene=(menu.scene() or {}).get("animation", {}).get("component_id"))
 
     return app

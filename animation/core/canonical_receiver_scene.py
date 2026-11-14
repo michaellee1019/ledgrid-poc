@@ -41,7 +41,8 @@ class CanonicalReceiverSceneMixin:
                 canonical, runtime = self._prepare_canonical_receiver_scene(payload)
                 if canonical.scene['animation']['component_id'] != 'tetris':
                     raise ValueError('Controller play requires a Tetris scene')
-                runtime.dispatch_tetris_gamepad(canonical.identity.digest, ('toggle-player',))
+                if not runtime.dispatch_game_input("play"):
+                    raise RuntimeError('Tetris player controls are unavailable')
             except Exception as exc:
                 raise ValueError(f'Tetris player mode could not be prepared: {exc}') from exc
         self._requested_scene = deepcopy(payload)
@@ -88,21 +89,20 @@ class CanonicalReceiverSceneMixin:
             self._playback_error = None
         return True
 
-    def tetris_input_target(self, *, player_only=False):
+    def nimbus_game(self):
         with self._scene_state_guard():
-            canonical = self._canonical_receiver_scene
-            if (self.is_running and self._canonical_host_full_mode and canonical is not None
-                    and canonical.scene['animation']['component_id'] == 'tetris'):
-                runtime = self._canonical_receiver_runtime
-                if not player_only or runtime.tetris_player_active():
-                    return runtime
-            return None
+            runtime = self._canonical_receiver_runtime
+            if self.is_running and self._canonical_host_full_mode and runtime is not None:
+                state = runtime.game_player_state()
+                if state is not None:
+                    return runtime, state
+            return None, None
 
-    def dispatch_tetris_input(self, actions):
+    def dispatch_game_input(self, target, action):
         with self._scene_state_guard():
-            target = self.tetris_input_target()
-            if target is not None and actions:
-                target.dispatch_tetris_gamepad(self._canonical_receiver_scene.identity.digest, actions)
+            if target is not None and target is self.nimbus_game()[0]:
+                return target.dispatch_game_input(action)
+            return False
 
     def dispatch_canonical_interaction(self, component_id, scene_digest, kind, x, y, strength=1.0):
         """Gesture only the exact active host renderer, without activating it."""

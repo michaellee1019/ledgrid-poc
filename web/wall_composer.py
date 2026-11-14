@@ -68,12 +68,80 @@ STICK_LABELS = {
 # The base bank owns the main animation setting. R1 left Y adjusts rate
 # or density, and the right stick adds detail where the renderer has it.
 PRIMARY_ANIMATION_STICKS = {
+    "ascii_drop": ("fall_speed", "density"),
     "aurora_curtains": ("glow_intensity", "curtain_density", "fold_depth"),
-    "campfire": ("heat", "sparks", "smoke", "flicker"),
+    "canopy_cup": ("course_difficulty", "enemy_density", "rivalry", "powerup_rate"),
+    "cellular_tapestry": ("density", "motion", "mutation", "row_interval"),
+    "christmas_tree": ("snowfall", "tree_height", "twinkle_hz"),
+    "circadian_window": ("hour", "motion", "density", "background_level"),
+    "cloud_canyon": ("density", "motion", "background_level"),
+    "column_sequence": ("hold_seconds", "pause_seconds", "white_level"),
+    "conway_life": ("generations_per_second", "initial_density"),
+    "cyclic_reef": ("species_count", "takeover_threshold", "mutation", "grazers", "boundary_glow"),
+    "desert_wind": ("density", "motion", "background_level"),
+    "emoji": ("scale", "pulse_hz"),
+    "firefly_synchrony": ("population", "synchrony", "wandering", "pulse_softness", "coupling_radius"),
     "fireworks": ("burst_size", "launch_cadence", "shell_population", "gravity"),
+    "fish_tank": ("fish_count", "swim_speed", "schooling", "bubbles", "weeds"),
+    "flame_burst": ("flare_size", "ignition_cadence", "ember_linger", "flicker"),
+    "flow_field_silk": ("density", "motion", "turbulence", "persistence", "background_level"),
+    "fluid_tank": ("flow_rate", "current", "bubble_lift", "surface_energy"),
+    "frostwork": ("melt_cycle", "temperature", "density", "motion", "background_level"),
+    "gif_animation": ("playback_speed",),
+    "gradient": ("drift", "motion"),
+    "lava_lamp": ("heat", "blob_count", "blob_scale", "viscosity", "turbulence"),
+    "living_ecosystem": ("density", "migration", "predator_pressure", "canopy_density", "night_life"),
+    "living_stained_glass": ("lead_width", "light_direction", "motion", "density", "background_level"),
+    "maze_chase": ("difficulty", "chase_cadence_hz"),
+    "mini_metro": ("traffic", "train_speed", "trains", "lines", "stations"),
+    "moonlit_fog_banks": ("density", "motion", "background_level"),
+    "night_train_windows": ("travel_speed", "window_glow", "star_density"),
     "ocean_waves": ("swell", "chop", "foam", "travel"),
+    "physarum_network": ("agent_count", "branching", "diffusion", "pulse_visibility", "motion"),
+    "pinball": ("table_tick_hz", "chaos"),
+    "pixel_chase": ("pixel_count", "pixels_per_second", "tail_length", "color_cycle_speed"),
+    "pixel_quest": ("difficulty", "quest_cadence_hz"),
+    "plant_glow": ("glow_strength", "glow_radius", "breath_speed", "breath_depth", "shimmer"),
+    "quasicrystal_bloom": ("spatial_scale", "warp", "motion", "density", "background_level"),
+    "rain_on_glass": ("density", "motion", "background_level"),
+    "rainbow": ("bands", "travel"),
+    "reaction_diffusion_garden": ("growth_rate", "edge_glow", "motion", "density", "color_by_age"),
+    "snake": ("move_cadence", "snake_count", "food_count", "growth_per_food"),
+    "solid": ("glow", "breath"),
     "sparkle": ("linger", "density", "twinkle", "night"),
+    "tetris": ("fall_rate", "tetromino_count", "bot_imperfection", "smooth_drop_strength"),
+    "tidal_bioluminescence": ("density", "motion", "background_level"),
+    "waterfall_veil": ("density", "motion", "background_level"),
+    "wave": ("frequency", "travel", "shape"),
+    "wind_in_the_reeds": ("wind", "gustiness", "stem_density", "motes", "silhouette_strength"),
 }
+MENU_CHOICE_LABELS = {
+    ("gif_animation", "gif_name"): ("Clip", lambda value: value.removesuffix(".gif").replace("-", " ").replace("_", " ")),
+    ("rainbow", "direction"): ("Direction", {-1: "Reverse", 1: "Forward"}.get),
+    ("wave", "direction"): ("Direction", {-1: "Reverse", 1: "Forward"}.get),
+}
+MENU_PARAM_LABELS = {
+    "chase_cadence_hz": "chase speed", "quest_cadence_hz": "quest speed",
+    "table_tick_hz": "table speed", "move_cadence": "moves/sec",
+    "high_density_render_fps": "dense render FPS", "smooth_drop_max_pieces": "smooth piece limit",
+    "bot_imperfection": "bot errors", "tetromino_count": "bot pieces",
+    "show_ai_targets": "AI targets", "generations_per_second": "generations/sec",
+}
+ANIMATION_SETUP_FIELDS = {
+    "pinball": ("chaos",),  # Autoplay miss rate
+    "tetris": ("tetromino_count", "bot_imperfection", "smooth_drop",
+               "smooth_drop_strength", "smooth_drop_max_pieces"),
+}
+
+
+def _parameter_bounds(component_id, parameters, key, definition):
+    low, high = definition["min"], definition["max"]
+    if component_id == "snake":
+        if key == "initial_length":
+            high = min(high, parameters["max_length"])
+        elif key == "max_length":
+            low = max(low, parameters["initial_length"])
+    return low, high
 
 
 @dataclass(frozen=True)
@@ -345,6 +413,12 @@ class WallComposer:
                 return self.feedback
             self.feedback = None
         if not self.is_open:
+            if self.manager.output_brightness > 0:
+                _, state = self.manager.nimbus_game()
+                if state == "paused":
+                    return MenuCard("Game", "Paused", hint="A RESUME")
+                if state == "ready":
+                    return MenuCard("Game", "A PLAY", hint="UP/DOWN")
             return None
         if self.picker:
             return self.picker.card()
@@ -368,7 +442,8 @@ class WallComposer:
             return headers
         page = self.pages[-1] if self.pages else None
         if self.feedback or self.picker or page is None or not page.stick_shortcut:
-            return (*headers, (card, int((now - self.card_since) * 4)))
+            phase = int((now - self.card_since) * 4)
+            return (*headers, (card, phase))
         sections = []
         for slot, focus in self._stick_focus.items():
             section = card
@@ -565,6 +640,20 @@ class WallComposer:
             self.error = str(error)
             return False
 
+    def play_game(self, target, state):
+        try:
+            if state == "ready" and self.runner.status()["phase"] == "running":
+                # A player taking over a scheduled Scene owns the same
+                # playback revision boundary as manual Scene edits.
+                with self.owner.legacy_mutation_guard():
+                    started = self.manager.dispatch_game_input(target, "play")
+                self.runner.advance()
+                return started
+            return self.manager.dispatch_game_input(target, "play")
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            self._feedback("Game", str(error), error=error)
+            return False
+
     def tune_sticks(self, motions):
         """Apply a stick gesture and focus its setting when the HUD is open."""
         if self.is_open:
@@ -722,8 +811,7 @@ class WallComposer:
         component = scene["animation"]
         descriptor = self.catalog.require(provider=component["provider"],
                                           component_id=component["component_id"], version=component["version"])
-        preferred = PRIMARY_ANIMATION_STICKS.get(
-            descriptor.component_id, (descriptor.intensity_parameter, "heat", "density", "burst_size", "glow"))
+        preferred = PRIMARY_ANIMATION_STICKS.get(descriptor.component_id, ())
         animation = self._numeric_stick_bindings(component, ("animation", "parameters"), preferred)
         candidates = {
             **{name: StickBinding(*fields, label=STICK_LABELS[name]) for name, fields in STICK_SCENE_FIELDS.items()},
@@ -752,16 +840,18 @@ class WallComposer:
         bindings = []
         for key in dict.fromkeys((*preferred, *schema)):
             definition = schema.get(key, {})
-            if (key not in parameters or key == "seed" or "fps" in key or definition.get("options")
+            if (key not in parameters or (component["component_id"], key) in MENU_CHOICE_LABELS
+                    or key == "seed" or "fps" in key or definition.get("options")
                     or definition.get("type") not in ("int", "float")
                     or "min" not in definition or "max" not in definition):
                 continue
-            low, high = definition["min"], definition["max"]
+            low, high = _parameter_bounds(component["component_id"], parameters, key, definition)
             # The HUD-free steps are deliberately larger than menu increments.
             step = (high - low) / 10
             integer = definition["type"] == "int"
             step = max(1, math.ceil(step)) if integer else step
-            bindings.append(StickBinding((*path, key), low, high, step, integer, key.replace("_", " ")))
+            label = MENU_PARAM_LABELS.get(key, key.replace("_", " "))
+            bindings.append(StickBinding((*path, key), low, high, step, integer, label))
         return bindings
 
     def _adjust_stick_binding(self, scene, binding, steps):
@@ -929,21 +1019,39 @@ class WallComposer:
     def _parameter_rows(self, path, component):
         rows = []
         schema = self._schema(component)
-        for key, value in component["parameters"].items():
+        params = component["parameters"]
+        component_id = component["component_id"]
+        preferred = PRIMARY_ANIMATION_STICKS.get(component_id, ())
+        order = dict.fromkeys((*preferred, *params))
+        player_state = self.manager.nimbus_game()[1] if path == ("animation",) else None
+        autoplay = ANIMATION_SETUP_FIELDS.get(component_id, ()) if player_state == "paused" else ()
+        for key in sorted(order, key=lambda key: key == "seed" or "fps" in key or key in autoplay):
             definition = schema.get(key)
-            if definition is None:
+            if definition is None or key not in params:
                 continue
-            name = key.replace("_", " ")
+            value = params[key]
+            name = MENU_PARAM_LABELS.get(key, key.replace("_", " "))
+            if (component_id, key) == ("snake", "background"):
+                rows.append(Row(name, "Black", hint="FIXED"))
+                continue
             setter = partial(self._edit, (*path, "parameters", key))
             kind = definition.get("type")
             options = definition.get("options")
+            choice_labels = MENU_CHOICE_LABELS.get((component_id, key))
+            if choice_labels:
+                name, labels = choice_labels
+                options = options or (-1, 1)
+                rows.append(self._choice(name, value, tuple(options), setter, select=len(options) > 8,
+                                         labels={option: labels(option) for option in options}))
+                continue
             if options:
-                rows.append(self._choice(name, value, tuple(options), setter))
+                rows.append(self._choice(name, value, tuple(options), setter, select=len(options) > 8))
             elif kind == "bool":
                 rows.append(self._choice(name, value, (False, True), setter))
             elif kind in ("int", "float"):
-                low, high = definition["min"], definition["max"]
-                step = definition.get("step") or (1 if kind == "int" else .01 if high - low <= 2 else .1)
+                low, high = _parameter_bounds(component_id, params, key, definition)
+                span = high - low
+                step = definition.get("step") or (1 if kind == "int" or span > 30 else .01 if span <= 2 else .1)
                 row = self._number(name, value, low, high, step, setter, integer=kind == "int")
                 if kind == "int" and high - low > 200:
                     row.select = partial(self._integer_picker, name, low, high, setter)
@@ -958,8 +1066,7 @@ class WallComposer:
                                                             setter, key == "text")))
         return rows
 
-    @staticmethod
-    def _choice(name, value, options, setter, *, labels=None, swatches=()):
+    def _choice(self, name, value, options, setter, *, labels=None, swatches=(), select=False):
         def adjust(direction, *, steps):
             index = options.index(value) if value in options else (-1 if direction > 0 else 0)
             setter(options[(index + direction) % len(options)])
@@ -967,7 +1074,17 @@ class WallComposer:
         display = {True: "On", False: "Off"}.get(value, value) if type(value) is bool else value
         if labels:
             display = labels.get(value, display)
-        return Row(name, str(display), adjust=adjust, swatches=swatches)
+        choose = partial(self._option_picker, name, value, options, setter, labels) if select else None
+        return Row(name, str(display), adjust=adjust, select=choose, swatches=swatches)
+
+    def _option_picker(self, name, value, options, setter, labels):
+        def choose(option):
+            setter(option)
+            self.pages.pop()
+        rows = [Row(str((labels or {}).get(option, option)), select=partial(choose, option), hint="A SET")
+                for option in options]
+        self._push(name, rows)
+        self.pages[-1].index = options.index(value) if value in options else 0
 
     @staticmethod
     def _number(name, value, low, high, step, setter, *, integer=False):

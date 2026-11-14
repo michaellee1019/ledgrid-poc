@@ -23,7 +23,7 @@
   <canvas width="33" height="138" aria-label="Simulated wall with 33 by 138 LEDs"></canvas>
   <section>
     <h1>Nimbus Composer</h1>
-    <p>Press M for Menu and use the arrow keys to navigate. A selects, B goes back, and Y tunes a playing choice or undoes a Tune edit. Hold Left or Right for larger numeric changes.</p>
+    <p>Press M for Menu and use the arrow keys to navigate. A selects or plays the current game; B goes back. M pauses a game and opens the HUD. Close the HUD and press A to resume.</p>
     <output aria-live="polite">Connecting to the simulator</output>
     <div class="keys" aria-label="Nimbus controls">
       <button id="up" data-button="up" aria-label="Up">↑</button>
@@ -55,6 +55,11 @@
     if (!menuOpen || button === 'up' || button === 'down') return button;
     return (elapsed >= 750 ? 'fast-' : 'repeat-') + button;
   }
+  let playerState;
+  const steering = ['left', 'right'];
+  function release(button) {
+    if (playerState === 'playing' && steering.includes(button)) pending.push('release-' + button);
+  }
   document.addEventListener('keydown', event => {
     const button = keys[event.key];
     if (!button || event.target.matches('button,input') && event.key === 'Enter') return;
@@ -62,28 +67,42 @@
     if (!event.repeat) {
       keyPressedAt.set(event.key, performance.now());
       pending.push(button);
-    } else if (directionButtons.includes(button) && keyPressedAt.has(event.key)) {
+    } else if ((menuOpen || playerState === 'playing') && directionButtons.includes(button) &&
+               keyPressedAt.has(event.key)) {
       pending.push(repeatedButton(button, performance.now() - keyPressedAt.get(event.key)));
     }
   });
-  document.addEventListener('keyup', event => keyPressedAt.delete(event.key));
-  window.addEventListener('blur', () => keyPressedAt.clear());
+  document.addEventListener('keyup', event => {
+    if (keyPressedAt.delete(event.key)) release(keys[event.key]);
+  });
+  window.addEventListener('blur', () => {
+    for (const key of keyPressedAt.keys()) release(keys[key]);
+    keyPressedAt.clear();
+  });
   document.querySelectorAll('button[data-button]').forEach(button => {
-    button.addEventListener('click', () => pending.push(button.dataset.button));
+    button.addEventListener('click', () => {
+      pending.push(button.dataset.button);
+      release(button.dataset.button);
+    });
   });
   const padButtons = {0: 'a', 1: 'b', 3: 'y', 9: 'menu', 12: 'up', 13: 'down', 14: 'left', 15: 'right'};
   let held = {};
+  let padConnected = false;
   function readGamepad(now) {
     const gamepad = Array.from(navigator.getGamepads?.() || []).find(pad => pad?.mapping === 'standard');
     if (!gamepad) {
+      if (padConnected) pending.push('disconnect');
+      padConnected = false;
       held = {};
       return;
     }
+    padConnected = true;
     for (const [index, button] of Object.entries(padButtons)) {
       if (!gamepad.buttons[index]?.pressed) {
+        if (held[button]) release(button);
         delete held[button];
       } else if (!held[button]) {
-        const repeat = directionButtons.includes(button) && (menuOpen || button !== 'up');
+        const repeat = directionButtons.includes(button) && (menuOpen || (playerState === 'playing' && button !== 'up'));
         pending.push(button);
         held[button] = {since: now, next: repeat ? now + 250 : Infinity};
       } else if (now >= held[button].next) {
@@ -100,10 +119,10 @@
                                 body: JSON.stringify({button})} : {};
       const response = await fetch('/state', options);
       const state = await response.json();
-      if (menuOpen !== state.menu_open) {
+      if (menuOpen !== state.menu_open || playerState !== state.player_state) {
         menuOpen = state.menu_open;
+        playerState = state.player_state;
         for (const press of Object.values(held)) press.next = Infinity;
-        keyPressedAt.clear();
       }
       const pixels = atob(state.pixels);
       plantCoverage ??= atob(state.mask);

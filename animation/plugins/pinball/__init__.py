@@ -156,6 +156,26 @@ class PinballAnimation(AnimationBase):
             raise ValueError("seed must be an integer from 0 to 9999")
         return result
 
+    LIVE_TUNABLE_PARAMETERS = frozenset(DEFAULTS) - {"seed"}
+    _player_control = False
+    _flip_window = 0.0
+    _player_nudge = 0
+
+    def set_player_control(self, enabled: bool) -> None:
+        self._player_control = enabled
+        self.set_player_paused(True)
+
+    def set_player_paused(self, paused: bool) -> None:
+        if paused:
+            self._flip_window = 0.0
+            self._player_nudge = 0
+
+    def handle_player_button(self, button: str) -> None:
+        if button == "a":
+            self._flip_window = .20
+        elif button in ("left", "right"):
+            self._player_nudge = -1 if button == "left" else 1
+
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
         candidate = self._normalized_parameters({**self.params, **dict(new_params)})
         if candidate == self.params:
@@ -506,6 +526,11 @@ class PinballAnimation(AnimationBase):
             return
         self._sim_time += dt
         self._drain_primary_interaction()
+        if self._player_control:
+            self._flip_window = max(0.0, self._flip_window - dt)
+            if self._player_nudge:
+                self.ball_vx = max(-65.0, min(65.0, self.ball_vx + self._player_nudge * 5.0))
+                self._player_nudge = 0
         self._event_cooldown = max(0.0, self._event_cooldown - dt)
         self._hit_flash = max(0.0, self._hit_flash - dt * 4.0)
         self._failure_flash = max(0.0, self._failure_flash - dt * 2.5)
@@ -590,19 +615,23 @@ class PinballAnimation(AnimationBase):
             self._event_cooldown = 0.09
 
         flipper_y = self.height - 16.0
-        if self.ball_y >= flipper_y and self.ball_y < self.height - 5:
-            # Autoplay flippers: a hard upward kick with aim jitter.
+        if (flipper_y <= self.ball_y < self.height - 5
+                and (not self._player_control or (self._flip_window > 0.0 and self.ball_vy > 0.0))):
             self.ball_y = flipper_y
             self.ball_vy = -self.random.uniform(72.0, 96.0)
             target_x = self.random.uniform(4.0, max(5.0, self.width - 5.0))
             self.ball_vx = (target_x - self.ball_x) * 1.1
             self._award(100, "", self.YELLOW, streak=False)
             self.bursts.append(Burst(self.ball_x, self.ball_y, self.YELLOW, life=0.3))
+            if self._player_control:
+                self._flip_window = 0.0
+                self._primary_flipper_flash = .16
 
         # A rare miss gives the failure animation real contrast.
         chaos = max(0.0, min(1.0, float(self.params.get("chaos", 0.72))))
         miss_line = self.height - 7.0
-        if self.ball_y > miss_line or (self._sim_time > 2 and self.random.random() < dt * 0.025 * chaos):
+        if self.ball_y > miss_line or (not self._player_control and self._sim_time > 2
+                                       and self.random.random() < dt * 0.025 * chaos):
             self._drain()
 
     def _award(self, points: int, label: str, color: Color, streak: bool = True):

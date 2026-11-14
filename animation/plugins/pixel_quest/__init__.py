@@ -162,6 +162,22 @@ class PixelQuestAnimation(AnimationBase):
                          "description": "Show health, magic, XP, and levels"},
         }
 
+    LIVE_TUNABLE_PARAMETERS = frozenset(DEFAULTS) - {"seed"}
+    _player_control = False
+    _player_attack: str | None = None
+
+    def set_player_control(self, enabled: bool) -> None:
+        self._player_control = enabled
+        self._player_attack = None
+
+    def set_player_paused(self, paused: bool) -> None:
+        if paused:
+            self._player_attack = None
+
+    def handle_player_button(self, button: str) -> None:
+        if self.mode in ("combat", "boss") and button in ("a", "b"):
+            self._player_attack = button
+
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
         candidate = self._normalized_parameters({**self.params, **dict(new_params)})
         if candidate == self.params:
@@ -207,6 +223,7 @@ class PixelQuestAnimation(AnimationBase):
         self.longest_run = 0.0
 
     def _reset_run(self):
+        self._player_attack = None
         self.run_number += 1
         seed = int(self.params.get("seed", 1986)) + self.run_number * 100003
         self.random.seed(seed)
@@ -276,6 +293,7 @@ class PixelQuestAnimation(AnimationBase):
         self.mode_time = 0.0
 
     def _spawn_monster(self):
+        self._player_attack = None
         is_last = self.encounter_index == len(self.encounter_thresholds) - 1
         boss = self.stage_number % 4 == 0 and is_last
         level = max(1, self.stage_number + self.encounter_index // 2 + (2 if boss else 0))
@@ -361,10 +379,18 @@ class PixelQuestAnimation(AnimationBase):
             self.mode = "travel"
             return
         self.hero_attack_timer -= dt
+        if self._player_control:
+            self.hero_attack_timer = max(0.0, self.hero_attack_timer)
         monster.attack_timer -= dt
         attacks = 0
         while self.hero_attack_timer <= 0.0 and monster.hp > 0 and attacks < 2:
-            use_magic = self.hero_mp >= 5 and (monster.boss or self.combat_turn % 3 == 2)
+            if self._player_control:
+                attack, self._player_attack = self._player_attack, None
+                if attack is None or (attack == "b" and self.hero_mp < 5):
+                    break
+                use_magic = attack == "b"
+            else:
+                use_magic = self.hero_mp >= 5 and (monster.boss or self.combat_turn % 3 == 2)
             if use_magic:
                 damage = self.hero_magic + self.random.randrange(0, 5 + self.hero_level)
                 self.hero_mp -= 5

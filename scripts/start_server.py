@@ -116,10 +116,6 @@ def process_control_command(channel, manager, command, *, last_applied_command_i
     return result
 
 
-GAME_BUTTONS = {"up": "rotate-left", "a": "rotate-right", "b": "drop", "y": "release",
-                "left": "left", "right": "right", "down": "down"}
-
-
 def nimbus_command(manager, coordinator, gamepad, action, data):
     """Run a local intent at the same revision boundary as browser commands."""
     guard = {
@@ -133,15 +129,17 @@ def nimbus_command(manager, coordinator, gamepad, action, data):
 def poll_wall_composer(manager, gamepad, menu):
     from drivers.nimbus_gamepad import StickBank, StickMotion
 
-    tetris = manager.tetris_input_target()
-    player = tetris is not None and manager.tetris_input_target(player_only=True) is not None
-    target = tetris if player and not menu.is_open else menu
+    game, player_state = manager.nimbus_game()
     active = manager.is_running and manager.output_brightness > 0
-    tuning = (menu.is_open or tetris is None) and active
+    player = player_state == "playing" and not menu.is_open
+    target = game if player else menu
+    tuning = not player and active
     browsing = not menu.is_open and not player
     track_bank = active and (menu.is_open or not player)
     buttons = gamepad.poll(target, navigating=menu.is_open,
-                           tuning_sticks=tuning, browsing=browsing, track_bank=track_bank)
+                           tuning_sticks=tuning, browsing=browsing, track_bank=track_bank,
+                           enter_player=browsing and active and game is not None,
+                           steering_releases=player and manager.current_animation_name == "canopy_cup")
     menu.shoulder_bank = gamepad.shoulder_bank
     motions = []
     for button in buttons:
@@ -158,7 +156,7 @@ def poll_wall_composer(manager, gamepad, menu):
             motions.append(button)
             continue
         if button == 'disconnect':
-            manager.dispatch_tetris_input(('disconnect',))
+            manager.dispatch_game_input(game, 'disconnect')
             menu.shoulder_bank = 0
             menu.close()
             return
@@ -166,7 +164,7 @@ def poll_wall_composer(manager, gamepad, menu):
             if menu.is_open and not menu.momentary:
                 menu.close()
             else:
-                manager.dispatch_tetris_input(('disconnect',))
+                manager.dispatch_game_input(game, 'pause')
                 menu.open()
                 try:
                     if not manager.is_running and menu.owner.selected_scene is not None:
@@ -178,20 +176,24 @@ def poll_wall_composer(manager, gamepad, menu):
                         menu._run('set_output_brightness', {'brightness': 16})
                 except (OSError, RuntimeError, TypeError, ValueError) as exc:
                     menu._feedback('Wall light', str(exc), error=exc)
-            target = menu if menu.is_open else manager.tetris_input_target(player_only=True) or menu
-            gamepad.handoff(target)
+            gamepad.handoff(menu)
             return
         if menu.is_open:
             playback_revision = menu.playback_revision
             menu.press(button)
             if not menu.is_open:
-                gamepad.handoff(manager.tetris_input_target(player_only=True) or menu)
+                game, state = manager.nimbus_game()
+                gamepad.handoff(game if state == "playing" else menu)
                 return
             if menu.playback_revision != playback_revision:
                 gamepad.discard_pending()
                 return
-        elif player and button in GAME_BUTTONS:
-            manager.dispatch_tetris_input((GAME_BUTTONS[button],))
+        elif player and (active or button.startswith("release-")):
+            manager.dispatch_game_input(game, button)
+        elif browsing and active and button == "a" and game is not None:
+            if menu.play_game(game, player_state):
+                gamepad.handoff(game)
+                return
         elif not player and active and button in ('up', 'down', 'left', 'right'):
             if menu.quick_browse(button):
                 gamepad.discard_pending()

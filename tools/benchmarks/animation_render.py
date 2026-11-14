@@ -143,7 +143,8 @@ def benchmark_case(manager, runtime, canonical, *, fps, warmup, frames, tetris_p
 
     first, first_ms = render(0)
     if tetris_player:
-        runtime.dispatch_tetris_gamepad(canonical.identity.digest, ("toggle-player",))
+        if not runtime.dispatch_game_input("play"):
+            raise ValueError("Tetris player controls are unavailable")
         runtime._runtime._animation.instance._player_time = lambda: elapsed
         first, player_ms = render(0)
         first_ms += player_ms

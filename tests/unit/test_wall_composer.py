@@ -28,7 +28,8 @@ from web.composer_final_preview import current_component_catalog, installed_plan
 from web.numbered_preset_store import PRESET_COUNT, NumberedPresetStore
 from web.scene_look_store import SceneLookStore
 from web.starter_looks import get_starter
-from web.wall_composer import STICK_BANK_COLORS, STICK_BANKS, STICK_FEEDBACK_SECONDS, WallComposer
+from web.wall_composer import (MENU_CHOICE_LABELS, MENU_PARAM_LABELS, PRIMARY_ANIMATION_STICKS,
+                               STICK_BANK_COLORS, STICK_BANKS, STICK_FEEDBACK_SECONDS, WallComposer)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -335,7 +336,7 @@ def test_dpad_browses_with_hud_closed_and_keeps_tetris_player_controls(instrumen
     before = manager.get_scene_state()
     inputs(manager, gamepad, menu, "up", "left")
     assert manager.get_scene_state() == before
-    assert manager.tetris_input_target(player_only=True) is not None
+    assert manager.nimbus_game()[1] == "playing"
 
 
 def test_hud_shoulder_stick_jumps_to_editable_binding(instrument):
@@ -673,9 +674,11 @@ def test_first_stick_edit_keeps_both_cards_visible_during_playlist_takeover(inst
     assert right.value == "46"
 
 
-def test_sticks_do_not_tune_tetris_or_wake_stopped_output(instrument):
+def test_sticks_do_not_tune_while_playing_or_wake_stopped_output(instrument):
     manager, owner, _runner, gamepad, menu = instrument
     assert handle_command(manager, "start_scene", {"scene": starter("human_avalanche_factory")})
+    inputs(manager, gamepad, menu, "a")
+    assert manager.nimbus_game()[1] == "playing"
     revision = owner.state_revision
     inputs(manager, gamepad, menu, StickMotion(1, 2))
     assert owner.state_revision == revision
@@ -732,13 +735,239 @@ def test_menu_covers_all_catalog_parameter_definitions(instrument):
     _manager, _owner, _runner, _gamepad, menu = instrument
     rows = gallery_entries(menu.catalog, menu.presets)
     assert len(rows) == len([d for d in menu.catalog.descriptors if d.role.value == "animation"])
+    assert {component["component_id"] for component in rows} == set(PRIMARY_ANIMATION_STICKS)
     for component in rows:
+        component_id = component["component_id"]
+        params = component["parameters"]
         fields = menu._parameter_rows(("animation",), component)
-        assert {row.name for row in fields} == {key.replace("_", " ") for key in component["parameters"]}, component["name"]
+        assert set(PRIMARY_ANIMATION_STICKS[component_id]) <= set(params)
+        assert len(fields) == len(params)
+        names = {MENU_CHOICE_LABELS.get((component_id, key), (
+            MENU_PARAM_LABELS.get(key, key.replace("_", " ")),))[0] for key in params}
+        assert {row.name for row in fields} == names
+        for field in fields:
+            if component_id == "snake" and field.name == "background":
+                assert field.value == "Black" and field.hint == "FIXED"
+            else:
+                assert field.adjust or field.select, (component_id, field)
     for descriptor in menu.catalog.descriptors:
         if descriptor.role.value == "widget":
             component = {"component_id": descriptor.component_id, "parameters": descriptor.default_parameters()}
             assert len(menu._parameter_rows(("widgets", 0, "component"), component)) == len(component["parameters"])
+
+
+def test_catalog_dpad_changes_validate_as_scenes(instrument, monkeypatch):
+    _manager, _owner, _runner, _gamepad, menu = instrument
+    edits = []
+    monkeypatch.setattr(menu, "_edit", lambda path, value: edits.append((path[-1], value)))
+    for item in gallery_entries(menu.catalog, menu.presets):
+        label = item["name"]
+        scene = menu._with_animation(item, None)
+        component = scene["animation"]
+        defaults = component["parameters"].copy()
+        for row in menu._parameter_rows(("animation",), component):
+            if row.adjust is None:
+                continue
+            for direction in (-1, 1):
+                for steps in (1, 5):
+                    row.adjust(direction, steps=steps)
+            assert edits, (label, row.name)
+            for key, value in edits:
+                component["parameters"] = {**defaults, key: value}
+                result = normalize_composer_scene({"origin": "composer", "scene": scene}, menu.catalog)
+                assert result.scene["animation"]["parameters"][key] == value, (label, row.name, value)
+            edits.clear()
+            component["parameters"] = defaults.copy()
+
+
+def test_gif_clip_picker_commits_through_nimbus(instrument):
+    manager, _owner, _runner, _gamepad, menu = instrument
+    scene = starter()
+    scene["animation"].update(component_id="gif_animation", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    original = manager.get_scene_state()["animation"]["parameters"]["gif_name"]
+    menu.open()
+    menu.press("a")  # Tune
+    focus(menu, "Animation")
+    menu.press("a")
+    focus(menu, "Clip")
+    menu.press("a")
+    menu.press("down")
+    menu.press("a")
+    assert menu.card().label == "Clip"
+    assert manager.get_scene_state()["animation"]["parameters"]["gif_name"] != original
+
+
+@pytest.mark.parametrize(("game_id", "stat"), [
+    ("snake", "moves"), ("maze_chase", "mode_timer"), ("pinball", "_sim_time"),
+    ("pixel_quest", "run_time"), ("canopy_cup", "simulation_time"),
+])
+def test_player_clock_pauses_across_hud_and_resumes_without_catchup(instrument, game_id, stat):
+    manager, owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 1.0
+    scene["background"]["parameters"]["gain"] = 0.0
+    scene["widgets"] = []
+    scene["animation"].update(component_id=game_id, parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime, state = manager.nimbus_game()
+    assert state == "ready"
+    instance = runtime._runtime._animation.instance
+    revision = owner.state_revision
+
+    def frame(t):
+        return runtime.render(ScenePresentationContext(manager._canonical_receiver_scene, t,
+                                                       datetime.now().astimezone())).pixels.copy()
+
+    inputs(manager, gamepad, menu, "a")
+    for i in range(1, 30):
+        image = frame(i / 60)
+    before = getattr(instance, stat)
+    inputs(manager, gamepad, menu, "menu")
+    pixels = frame(50)
+    np.testing.assert_array_equal(pixels, image)
+    assert getattr(instance, stat) == before
+    inputs(manager, gamepad, menu, "menu")
+    assert not menu.is_open and menu.card().hint == "A RESUME"
+    np.testing.assert_array_equal(frame(100), pixels)
+    inputs(manager, gamepad, menu, "a")
+    np.testing.assert_array_equal(frame(120), image)
+    assert getattr(instance, stat) == before
+    for i in range(1, 30):
+        frame(120 + i / 60)
+    assert getattr(instance, stat) != before
+    assert manager.nimbus_game() == (runtime, "playing") and owner.state_revision == revision
+
+
+@pytest.mark.parametrize("game_id", ["snake", "maze_chase", "pinball", "pixel_quest", "canopy_cup"])
+def test_nimbus_buttons_change_gameplay_through_production_frames(instrument, game_id):
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["look"]["pace"] = 1.0
+    scene["animation"].update(component_id=game_id, parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime, _ = manager.nimbus_game()
+    game = runtime._runtime._animation.instance
+    canonical = manager._canonical_receiver_scene
+    inputs(manager, gamepad, menu, "a")
+
+    def frames(start, stop):
+        for index in range(start, stop):
+            runtime.render(ScenePresentationContext(canonical, index / 60, datetime.now().astimezone()))
+
+    if game_id == "snake":
+        from animation.plugins.snake import OPPOSITE, PLAYER_DIRECTIONS
+
+        head = game.snakes[0].head
+        current = game.snakes[0].direction
+        button, direction = next((button, direction) for button, direction in PLAYER_DIRECTIONS.items()
+                                 if direction not in (current, OPPOSITE[current])
+                                 and game._advance(head, direction) not in game._occupied())
+        inputs(manager, gamepad, menu, button)
+        frames(1, 9)
+        assert game.snakes[0].head == game._advance(head, direction)
+    elif game_id == "maze_chase":
+        from animation.plugins.maze_chase import PLAYER_DIRECTIONS
+
+        player = game.player
+        game.game_state = "playing"
+        player.progress = 0.0
+        cell = player.cell
+        button, direction = next((button, direction) for button, direction in PLAYER_DIRECTIONS.items()
+                                 if direction != player.direction and direction in game._available(cell))
+        inputs(manager, gamepad, menu, button)
+        frames(1, 9)
+        assert player.cell == game._neighbor(cell, direction)
+    elif game_id == "pinball":
+        game.ball_y = game.height - 18.0
+        game.ball_vx = 0.0
+        game.ball_vy = 40.0
+        frames(1, 3)
+        assert game.ball_vy > 0
+        inputs(manager, gamepad, menu, "a")
+        frames(3, 7)
+        assert game.ball_vy < 0
+    elif game_id == "pixel_quest":
+        game._begin_stage(1)
+        game._spawn_monster()
+        monster = game.current_monster
+        frames(1, 25)
+        assert monster.hp == monster.max_hp
+        inputs(manager, gamepad, menu, "b")
+        frames(25, 31)
+        assert monster.hp < monster.max_hp and game.hero_mp == game.hero_max_mp - 5
+    else:
+        # Keep opponent collisions out of the steering/braking assertion.
+        game._start_heat(0)
+        racer = game.racers[game.PLAYER_RACER]
+        game.racers = [racer]
+        frames(1, 24)
+        assert racer.grounded
+        start_x = racer.x
+        inputs(manager, gamepad, menu, "right", "a")
+        frames(24, 39)
+        assert racer.x > start_x and racer.y < game.route_platforms[0].y - 2
+        inputs(manager, gamepad, menu, "release-right")
+        frames(39, 55)
+        assert racer.vx == pytest.approx(0.0)
+
+
+def test_tetris_hud_tuning_keeps_the_paused_board(instrument):
+    manager, _owner, _runner, gamepad, menu = instrument
+    assert handle_command(manager, "start_scene", {"scene": starter("human_avalanche_factory")})
+    inputs(manager, gamepad, menu, "a")
+    runtime, _ = manager.nimbus_game()
+    game = runtime._runtime._animation.instance
+    runtime.render(ScenePresentationContext(manager._canonical_receiver_scene, 0, datetime.now().astimezone()))
+    piece, = game.active_pieces
+    before = game._effective_drop_speed()
+    inputs(manager, gamepad, menu, "menu")
+    menu.press("a")
+    focus(menu, "Animation")
+    menu.press("a")
+    assert menu.card().label == "fall rate"
+    menu.press("right")
+    assert game.active_pieces[0] is piece
+    assert game._effective_drop_speed() > before
+    inputs(manager, gamepad, menu, "menu")
+    assert manager.nimbus_game() == (runtime, "paused")
+
+
+def test_paused_canopy_cup_repaints_for_a_palette_edit(instrument):
+    manager, _owner, _runner, gamepad, menu = instrument
+    scene = starter()
+    scene["animation"].update(component_id="canopy_cup", parameters={})
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime, _ = manager.nimbus_game()
+    game = runtime._runtime._animation.instance
+    inputs(manager, gamepad, menu, "a")
+    inputs(manager, gamepad, menu, "menu")
+    inputs(manager, gamepad, menu, "menu")
+
+    def frame(t):
+        return runtime.render(ScenePresentationContext(manager._canonical_receiver_scene, t,
+                                                       datetime.now().astimezone())).pixels.copy()
+
+    before = frame(1)
+    state = game.logical_state()
+    inputs(manager, gamepad, menu, "right")
+    assert not np.array_equal(frame(2), before)
+    assert game.logical_state() == state
+
+
+def test_nimbus_play_takes_over_the_current_playlist_game(instrument):
+    manager, _owner, runner, gamepad, menu = instrument
+    scene = starter("human_avalanche_factory")
+    definition = menu.playlists.save({"name": "Games", "entries": [
+        {"entry_id": str(uuid4()), "label": "Avalanche Factory", "duration_seconds": 30, "scene": scene},
+    ]})
+    menu._start_playlist(definition["id"])
+    runtime, _ = manager.nimbus_game()
+    before = manager.get_scene_state()
+    inputs(manager, gamepad, menu, "a")
+    assert runner.status()["phase"] == "overridden"
+    assert manager.nimbus_game() == (runtime, "playing")
+    assert manager.get_scene_state() == before
 
 
 def test_widget_text_position_and_save_as(instrument):
@@ -839,14 +1068,15 @@ def test_dark_wake_disconnect_and_tetris(instrument):
     assert manager.is_running
     assert menu.card().label == "Tune"
     menu._run("start_tetris_player", {}, close=True)
-    runtime = manager.tetris_input_target()
+    runtime, _ = manager.nimbus_game()
     game = runtime._runtime._animation.instance
     assert game.player_control
     inputs(manager, gamepad, menu, "menu", "b")
     assert menu.is_open
-    assert not game.player_control
+    assert game.player_control and manager.nimbus_game()[1] == "paused"
     inputs(manager, gamepad, menu, "disconnect")
     assert not menu.is_open
+    assert not game.player_control
 
 
 def test_overlay_is_cached_and_refreshes_idle_output(instrument):

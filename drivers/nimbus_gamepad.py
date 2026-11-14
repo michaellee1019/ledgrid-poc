@@ -135,7 +135,8 @@ class NimbusGamepad:
         self._reset_sticks()
 
     def poll(self, target: object | None, *, navigating=False,
-             tuning_sticks=False, browsing=False, track_bank=False) -> tuple[str | StickBank | StickMotion, ...]:
+             tuning_sticks=False, browsing=False, track_bank=False,
+             enter_player=False, steering_releases=False) -> tuple[str | StickBank | StickMotion, ...]:
         """Read a bounded batch, keeping held inputs within their current mode."""
         now = self._clock()
         watch_bank = navigating or track_bank
@@ -184,11 +185,19 @@ class NimbusGamepad:
             held = ("menu",) if report[12] & 1 else ()
             held += tuple(button for pressure, button in zip(report, PRESSURE_BUTTONS) if pressure)
             if target is not None and not self._discard_pending:
+                transition = None
                 if "menu" in held and "menu" not in self._held:
-                    # Menu owns its report. Leave later reports in the device
-                    # queue so the controller can read them in the new mode.
+                    transition = "menu"
+                elif enter_player and "a" in held and "a" not in self._held:
+                    transition = "a"
+                if transition is not None:
+                    # A mode switch owns its report. Read later reports in
+                    # the new mode with the current held buttons as baseline.
                     self._held = held
-                    return (*actions, "menu")
+                    return (*actions, transition)
+                if steering_releases:
+                    actions.extend("release-" + button for button in ("left", "right")
+                                   if button in self._held and button not in held)
                 repeat = MENU_REPEAT if navigating else () if browsing else GAME_REPEAT
                 self._record_edges(held, actions, now, repeat)
                 if tuning_sticks:

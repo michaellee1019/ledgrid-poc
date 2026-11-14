@@ -130,6 +130,58 @@ def test_nimbus_controls_the_live_game_and_releases_it_on_disconnect(controller,
     assert not game.player_control
 
 
+def test_nimbus_play_pause_resume_keeps_round_and_routes_fresh_reports(controller, wall_composer):
+    reader, reports, clock = controller
+    manager, menu = wall_composer
+    scene = get_starter("human_avalanche_factory")["scene"]
+    assert handle_command(manager, "start_scene", {"scene": scene})
+    runtime, _ = manager.nimbus_game()
+    canonical = manager._canonical_receiver_scene
+    game = runtime._runtime._animation.instance
+    game._player_time = lambda: clock[0]
+
+    def poll(*packets):
+        reports.extend(packets)
+        poll_wall_composer(manager, reader, menu)
+
+    def frame(elapsed):
+        clock[0] = elapsed
+        return runtime.render(ScenePresentationContext(canonical, elapsed, datetime.now().astimezone()))
+
+    poll()
+    assert menu.card().label == "A PLAY"
+    poll(report(4, 5), report(), report(3), report())  # A owns its report, even with B held
+    assert manager.nimbus_game() == (runtime, "playing")
+    frame(.01)
+    piece, = game.active_pieces
+    x = piece.x
+    poll()  # A separate Left press from the backlog now belongs to the game.
+    frame(.03)
+    assert piece.x == x - 1 and piece.meta
+    x = piece.x
+    round_elapsed = game.player_round_elapsed
+    poll(report(12, 5), report())
+    frame(20)
+    assert menu.is_open and game.player_round_elapsed == round_elapsed and piece.meta
+    poll(report(12), report())
+    assert not menu.is_open and menu.card().hint == "A RESUME"
+    assert menu.card().label == "Paused"
+    frame(40)
+    assert game.player_round_elapsed == round_elapsed
+    poll(report(4, 3), report())  # A resumes without also moving/rotating.
+    assert manager.nimbus_game() == (runtime, "playing")
+    frame(50)
+    assert game.player_round_elapsed == round_elapsed and piece.x == x
+    frame(50.025)
+    assert game.player_round_elapsed == pytest.approx(round_elapsed + .025)
+    assert manager._canonical_receiver_scene is canonical
+    poll(report(12), report())
+    poll(report(5), report())  # B closes the root HUD.
+    assert manager.nimbus_game()[1] == "paused"
+    poll(report(0), report())
+    assert manager._canonical_receiver_runtime is not runtime
+
+
 def test_reports_queued_for_another_scene_are_discarded(controller):
     reader, reports, clock = controller
     first, second = object(), object()
@@ -166,8 +218,14 @@ def test_menu_handoff_preserves_fresh_presses_and_clears_repeats(controller):
             received.append(button)
 
     menu = Menu()
-    manager = SimpleNamespace(tetris_input_target=lambda **_options: game, is_running=True,
-                              output_brightness=80, dispatch_tetris_input=lambda _actions: None)
+    state = ["playing"]
+
+    def dispatch(_game, action):
+        if action == "pause":
+            state[0] = "paused"
+
+    manager = SimpleNamespace(nimbus_game=lambda: (game, state[0]), is_running=True, current_animation_name="tetris",
+                              output_brightness=80, dispatch_game_input=dispatch)
     def poll():
         poll_wall_composer(manager, reader, menu)
 

@@ -296,14 +296,13 @@ class InstalledFinalSceneRuntime:
                 self._active_digest = canonical.identity.digest
             return self._runtime.dispatch_animation_interaction(kind, x, y, strength)
 
-    def dispatch_tetris_gamepad(self, scene_digest: str, actions: tuple[str, ...]) -> None:
+    def game_player_state(self) -> str | None:
         with self._lock:
-            if scene_digest == self._active_digest:
-                self._runtime.dispatch_tetris_gamepad(actions)
+            return self._runtime.game_player_state()
 
-    def tetris_player_active(self) -> bool:
+    def dispatch_game_input(self, action: str) -> bool:
         with self._lock:
-            return self._runtime.tetris_player_active()
+            return self._runtime.dispatch_game_input(action)
 
     def _animation_factory(self, descriptor: ComponentDescriptor, controller: Any, parameters: Mapping[str, Any]) -> Any:
         if descriptor.component_id == AuroraCurtainsAnimation.COMPONENT_ID:

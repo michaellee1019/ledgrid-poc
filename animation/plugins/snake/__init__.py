@@ -26,6 +26,8 @@ DOWN: Direction = (0, 1)
 LEFT: Direction = (-1, 0)
 DIRECTIONS = (UP, RIGHT, DOWN, LEFT)
 OPPOSITE = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
+# Snake paints directly into bottom-to-top logical strip coordinates.
+PLAYER_DIRECTIONS = {"up": DOWN, "down": UP, "left": LEFT, "right": RIGHT}
 
 
 @dataclass
@@ -81,6 +83,8 @@ class SnakeAnimation(AnimationBase):
         self._last_render_key: tuple[Any, ...] | None = None
         self._move_credit = 0.0
         self._simulation_steps = 0
+        self._player_control = False
+        self._player_turns: Deque[Direction] = deque(maxlen=2)
         self.snakes: list[SnakeAgent] = []; self.food: set[Cell] = set(); self.walls: set[Cell] = set(); self.portals: dict[Cell, Cell] = {}
         self.moves = self.food_eaten = self.deaths = 0
         self._reset_world()
@@ -106,6 +110,10 @@ class SnakeAnimation(AnimationBase):
             "glow": {"type": "float", "min": 0., "max": 1., "default": .55, "description": "Neighbor-cell glow"},
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 1976, "description": "Repeatable game world"},
         }
+
+    LIVE_TUNABLE_PARAMETERS = frozenset(DEFAULTS) - {
+        "snake_count", "initial_length", "max_length", "ruleset", "obstacles", "food_count", "seed",
+    }
 
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
         candidate = self._normalized_parameters({**self.params, **dict(new_params)})
@@ -175,6 +183,7 @@ class SnakeAnimation(AnimationBase):
         return self.moves * self.SIM_HZ / self._simulation_steps
 
     def _reset_world(self) -> None:
+        self._player_turns.clear()
         self._rng = random.Random(self.params["seed"]); self._trail.fill(0.); self._snake_palette_cache.clear(); self._last_tick = None; self._last_render_key = None; self._move_credit = 0.0; self._simulation_steps = 0; self.moves = self.food_eaten = self.deaths = 0; self.food.clear(); self._build_terrain()
         self.snakes = [SnakeAgent(hue_offset=index / self.params["snake_count"]) for index in range(self.params["snake_count"])]
         for snake in self.snakes: self._spawn_snake(snake)
@@ -254,14 +263,41 @@ class SnakeAnimation(AnimationBase):
         self._simulation_steps += 1
         self._trail *= math.exp(-self.params["trail_decay"] / self.SIM_HZ)
 
+    def set_player_control(self, enabled: bool) -> None:
+        self._player_control = enabled
+        self._player_turns.clear()
+        self._last_render_key = None
+
+    def set_player_paused(self, paused: bool) -> None:
+        if paused:
+            self._player_turns.clear()
+
+    def handle_player_button(self, button: str) -> None:
+        if button in PLAYER_DIRECTIONS and len(self._player_turns) < self._player_turns.maxlen:
+            direction = PLAYER_DIRECTIONS[button]
+            if not self._player_turns or direction != self._player_turns[-1]:
+                self._player_turns.append(direction)
+
+    def _player_direction(self, snake: SnakeAgent) -> Direction:
+        while self._player_turns:
+            direction = self._player_turns.popleft()
+            if direction not in (snake.direction, OPPOSITE[snake.direction]):
+                return direction
+        return snake.direction
+
     def _move_once(self) -> None:
         occupied = self._occupied(); plans: dict[int, Cell | None] = {}; directions: dict[int, Direction] = {}
         for index, snake in enumerate(self.snakes):
             if not snake.body:
                 snake.respawn_ticks -= 1
-                if snake.respawn_ticks <= 0: self._spawn_snake(snake)
+                if snake.respawn_ticks <= 0:
+                    self._spawn_snake(snake)
+                    if index == 0 and self._player_control:
+                        self._player_turns.clear()
                 continue
-            directions[index] = self._choose_direction(snake, occupied); plans[index] = self._advance(snake.head, directions[index])
+            directions[index] = (self._player_direction(snake) if index == 0 and self._player_control
+                                 else self._choose_direction(snake, occupied))
+            plans[index] = self._advance(snake.head, directions[index])
         heads, dead = Counter(cell for cell in plans.values() if cell is not None), set()
         for index, candidate in plans.items():
             snake = self.snakes[index]
@@ -303,7 +339,7 @@ class SnakeAnimation(AnimationBase):
         body_colors: list[RGB] = []
         head_colors: list[RGB] = []
         style = self.params["visual_style"]
-        for snake in self.snakes:
+        for snake_index, snake in enumerate(self.snakes):
             if not snake.body:
                 continue
             length = len(snake.body)
@@ -329,7 +365,7 @@ class SnakeAnimation(AnimationBase):
             body_cells.extend(reversed(snake.body))
             body_colors.extend(gradient)
             head_cells.append(snake.body[0])
-            head_colors.append(head_color)
+            head_colors.append((255, 255, 255) if self._player_control and snake_index == 0 else head_color)
         self._paint_cells(body_cells, body_colors, self.params["glow"] * .32)
         self._paint_cells(head_cells, head_colors, self.params["glow"] * .65)
         self._pixels[:] = self._canvas.reshape(self.get_pixel_count(), 3)

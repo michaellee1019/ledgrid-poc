@@ -7,7 +7,7 @@ premultiplied-RGBA foreground transport before final RGB output.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Mapping
 import hashlib
 import math
@@ -129,6 +129,10 @@ class CanonicalSceneRuntime:
         self._wall_time_consumer = wall_time_consumer
         self._master_brightness = self._factor(master_brightness, "master_brightness")
         self._animation: _ComponentSlot | None = None
+        self._player_state = "ready"
+        self._animation_phase = 0.0
+        self._animation_phase_offset = 0.0
+        self._rebase_animation_phase = False
         self._widgets: dict[str, _ComponentSlot] = {}
         self._canonical: CanonicalScene | None = None
         self._frame_count = 0
@@ -187,16 +191,37 @@ class CanonicalSceneRuntime:
 
     activate_scene = activate
 
-    def tetris_player_active(self) -> bool:
-        return (self._animation is not None and self._animation.component_key[1] == "tetris"
-                and self._animation.instance.player_control)
+    def game_player_state(self) -> str | None:
+        if self._animation is not None and hasattr(self._animation.instance, "handle_player_button"):
+            return self._player_state
+        return None
 
-    def dispatch_tetris_gamepad(self, actions: tuple[str, ...]) -> None:
-        """Apply local gamepad actions to the currently instantiated Tetris game."""
-        if self._animation is None or self._animation.component_key[1] != "tetris":
-            return
-        for action in actions:
-            self._animation.instance.handle_gamepad_action(action)
+    def dispatch_game_input(self, action: str) -> bool:
+        state = self.game_player_state()
+        if state is None:
+            return False
+        game = self._animation.instance
+        if action == "play":
+            if state == "ready":
+                game.set_player_control(True)
+            elif state == "paused":
+                self._rebase_animation_phase = True
+                game.set_player_paused(False)
+            else:
+                return False
+            self._player_state = "playing"
+        elif action == "pause" and state == "playing":
+            self._player_state = "paused"
+            game.set_player_paused(True)
+        elif action == "disconnect" and state != "ready":
+            self._player_state = "ready"
+            self._rebase_animation_phase = state == "paused"
+            game.set_player_control(False)
+        elif state == "playing" and action not in ("pause", "disconnect"):
+            game.handle_player_button(action)
+        else:
+            return False
+        return True
 
     def dispatch_animation_interaction(
         self, kind: str, x: float, y: float, strength: float = 1.0,
@@ -261,6 +286,17 @@ class CanonicalSceneRuntime:
         assert self._animation is not None
         animation_descriptor = self._descriptor(scene["animation"])
         animation_context = self._context(canonical, animation_descriptor, self._animation.parameters, elapsed)
+        # Only the game clock stops. Widgets and the background keep their own
+        # clocks, and the paused board can still repaint for Look changes.
+        hold_phase = self._player_state == "paused" or self._rebase_animation_phase
+        if hold_phase:
+            self._animation_phase_offset = self._animation_phase - animation_context.phase_time
+            self._rebase_animation_phase = False
+            animation_context = replace(animation_context, phase_time=self._animation_phase)
+        elif self._animation_phase_offset:
+            animation_context = replace(animation_context,
+                phase_time=max(0.0, animation_context.phase_time + self._animation_phase_offset))
+        self._animation_phase = animation_context.phase_time
         layers = [PlacedOverlay(self._render_plane(self._animation, animation_descriptor, animation_context))]
         placements: dict[str, WidgetPlacementResolution] = {}
         reserved_widgets = np.zeros(self.strip_count * self.leds_per_strip, dtype=np.bool_)
@@ -310,6 +346,18 @@ class CanonicalSceneRuntime:
         # Animation, whose update must validate before mutating its state.
         animation = self._candidate_slot(self._animation, descriptor, scene["animation"]["parameters"],
                                          self._animation_factory, live_tune=live_tune)
+        if animation is not self._animation:
+            if (live_tune and self._player_state in ("playing", "paused")
+                    and animation.component_key == self._animation.component_key):
+                # An explicitly changed setup (e.g. a new seed) may rebuild the
+                # board. Keep input ownership and pause across the rebuild.
+                animation.instance.set_player_control(True)
+                if self._player_state == "paused":
+                    animation.instance.set_player_paused(True)
+            else:
+                self._player_state = "ready"
+                self._animation_phase_offset = 0.0
+                self._rebase_animation_phase = False
         self._animation = animation
         self._widgets = widgets
 

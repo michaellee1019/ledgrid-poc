@@ -33,6 +33,7 @@ DOWN: Direction = (1, 0)
 RIGHT: Direction = (0, 1)
 DIRECTIONS = (UP, LEFT, DOWN, RIGHT)  # Arcade tie-breaking order.
 OPPOSITE = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
+PLAYER_DIRECTIONS = {"up": UP, "down": DOWN, "left": LEFT, "right": RIGHT}
 
 MAZE = (
     "###############",
@@ -191,6 +192,8 @@ class MazeChaseAnimation(AnimationBase):
         self.initial_pellets -= self.initial_energizers
         self.fruit_spawn = self._nearest_visible_cell((14, 7))
         self.last_elapsed: Optional[float] = None
+        self._player_control = False
+        self._requested_turn: Direction | None = None
         self.last_render_elapsed: Optional[float] = None
         self.last_rendered_frame: Optional[np.ndarray] = None
         self.score = 0
@@ -334,6 +337,8 @@ class MazeChaseAnimation(AnimationBase):
                      "description": "Repeatable frightened movement seed"},
         }
 
+    LIVE_TUNABLE_PARAMETERS = frozenset(DEFAULTS) - {"seed"}
+
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
         candidate = self._normalized_parameters({**self.params, **dict(new_params)})
         if candidate == self.params:
@@ -430,8 +435,28 @@ class MazeChaseAnimation(AnimationBase):
                     queue.append((neighbor, distance + 1))
         return limit + 1
 
+    def set_player_control(self, enabled: bool) -> None:
+        self._player_control = enabled
+        self._requested_turn = None
+
+    def set_player_paused(self, paused: bool) -> None:
+        if paused:
+            self._requested_turn = None
+
+    def handle_player_button(self, button: str) -> None:
+        if button in PLAYER_DIRECTIONS:
+            self._requested_turn = PLAYER_DIRECTIONS[button]
+
     def _choose_player_direction(self) -> Direction:
         choices = self._available(self.player.cell)
+        if self._player_control:
+            if self._requested_turn is not None and self._requested_turn in choices:
+                return self._requested_turn
+            if self.player.direction in choices:
+                return self.player.direction
+            # Keep the spawn priming path on an actual corridor. Regular
+            # movement stops against a wall until the player chooses a turn.
+            return choices[0] if choices else self.player.direction
         if len(choices) > 1 and OPPOSITE[self.player.direction] in choices:
             choices.remove(OPPOSITE[self.player.direction])
         if not choices:
@@ -570,7 +595,8 @@ class MazeChaseAnimation(AnimationBase):
 
         base_speed = min(10.0, 5.8 + self.level * 0.22)
         difficulty = max(0.0, min(1.0, float(self.params.get("difficulty", 0.82))))
-        self._move_actor(self.player, base_speed * 1.03, self._choose_player_direction, dt)
+        self._move_actor(self.player, base_speed * 1.03, self._choose_player_direction, dt,
+                         manual=self._player_control)
         for index, ghost in enumerate(self.ghosts):
             factor = 1.45 if ghost.state == "eyes" else (0.62 if ghost.state == "frightened" else 0.78 + difficulty * 0.16)
             self._move_actor(ghost, base_speed * factor,
@@ -587,14 +613,28 @@ class MazeChaseAnimation(AnimationBase):
         if remaining == 0 and self.game_state == "playing":
             self.game_state, self.state_timer = "level_clear", 1.6
 
-    def _move_actor(self, actor: Actor, cells_per_second: float, chooser, dt: float):
+    def _move_actor(self, actor: Actor, cells_per_second: float, chooser, dt: float, *, manual=False):
+        if manual:
+            if actor.progress == 0.0 and self._requested_turn in self._available(actor.cell):
+                actor.direction = self._requested_turn
+            elif actor.progress > 0.0 and self._requested_turn == OPPOSITE[actor.direction]:
+                self._reverse_actor(actor)
+            if self._neighbor(actor.cell, actor.direction) not in self.walkable:
+                return
         actor.progress += cells_per_second * dt
         while actor.progress >= 1.0:
             actor.progress -= 1.0
             actor.row, actor.col = self._neighbor(actor.cell, actor.direction)
             if actor.state == "eyes" and actor.cell == actor.spawn:
                 actor.state = "normal"
-            actor.direction = chooser()
+            if manual:
+                if self._requested_turn in self._available(actor.cell):
+                    actor.direction = self._requested_turn
+                if self._neighbor(actor.cell, actor.direction) not in self.walkable:
+                    actor.progress = 0.0
+                    return
+            else:
+                actor.direction = chooser()
 
     def _reverse_actor(self, actor: Actor):
         """Reverse cleanly even when an actor is between two tile centers."""

@@ -169,6 +169,7 @@ class CanopyCupAnimation(AnimationBase):
         ("fern", "Glimmer Fern", ((255, 234, 77), (43, 245, 116), (18, 177, 93), (43, 245, 116)), .72),
         ("ivory", "Ivory Wayfarer", ((248, 247, 222), (248, 247, 222), (235, 55, 72), (248, 247, 222)), .58),
     )
+    PLAYER_RACER = 2  # Glimmer Fern
 
     PALETTES: Dict[str, Dict[str, Color]] = {
         "emerald_gully": {
@@ -317,6 +318,33 @@ class CanopyCupAnimation(AnimationBase):
             raise ValueError("show_hud must be a boolean")
         return result
 
+    LIVE_TUNABLE_PARAMETERS = frozenset(DEFAULTS) - {"seed"}
+    _player_control = False
+    _player_steer = 0
+    _player_jump = False
+    _player_power = False
+
+    def set_player_control(self, enabled: bool) -> None:
+        self._player_control = enabled
+        self.set_player_paused(True)
+        self._last_render_tick = None
+
+    def set_player_paused(self, paused: bool) -> None:
+        if paused:
+            self._player_steer = 0
+            self._player_jump = self._player_power = False
+
+    def handle_player_button(self, button: str) -> None:
+        if button in ("left", "right"):
+            self._player_steer = -1 if button == "left" else 1
+        elif (button, self._player_steer) in (("release-left", -1), ("release-right", 1)):
+            self._player_steer = 0
+        elif self.phase == "race":
+            if button == "a":
+                self._player_jump = True
+            elif button == "b":
+                self._player_power = True
+
     def update_parameters(self, new_params: Mapping[str, Any]) -> None:
         candidate = self._normalized_parameters({**self.params, **dict(new_params)})
         seed_changed = candidate["seed"] != self.params["seed"]
@@ -334,12 +362,13 @@ class CanopyCupAnimation(AnimationBase):
         self.last_rendered_frame = None
 
     def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
-        del old
         descriptor = new.descriptor
         if (descriptor.component_id, descriptor.version, descriptor.provider.value, descriptor.role.value) != (self.COMPONENT_ID, self.COMPONENT_VERSION, self.PROVIDER, self.ROLE):
             raise ValueError("Canopy Cup received a context for another component")
         if new.palette is None or not isinstance(new.palette.get("palette_id"), str):
             raise ValueError("Canopy Cup requires a semantic Scene v2 palette")
+        if old is not None and old.palette != new.palette:
+            self._last_render_tick = None
         self._presentation_context = new
 
     def set_presentation_context(self, context: ResolvedScene) -> None:
@@ -371,6 +400,7 @@ class CanopyCupAnimation(AnimationBase):
             self._last_render_tick = None
 
     def _start_heat(self, index: int) -> None:
+        self._player_jump = self._player_power = False
         self.heat_index = index
         self.phase = "race"
         self.phase_time = 0.0
@@ -683,10 +713,11 @@ class CanopyCupAnimation(AnimationBase):
             + comeback_bonus + late_surge * 5.0
         )
         acceleration = 42.0 + racer.risk * 14.0
-        desired = max(-max_speed, min(max_speed, delta_x * 3.0))
+        manual = self._player_control and racer.index == self.PLAYER_RACER
+        desired = self._player_steer * max_speed if manual else max(-max_speed, min(max_speed, delta_x * 3.0))
         racer.vx += max(-acceleration * dt, min(acceleration * dt, desired - racer.vx))
 
-        final_pull = self.heat_time > 40.0
+        final_pull = not manual and self.heat_time > 40.0
         if final_pull:
             finish = self.route_platforms[-1]
             finish_x = finish.current_x(self.simulation_time) + finish.width * .5 - 1.0
@@ -695,7 +726,7 @@ class CanopyCupAnimation(AnimationBase):
             racer.vy = min(racer.vy, -34.0)
             racer.comeback = max(racer.comeback, .25)
 
-        if self.heat_time > 34.0 and racer.stuck_time > 1.0 and racer.comeback <= 0.0:
+        if not manual and self.heat_time > 34.0 and racer.stuck_time > 1.0 and racer.comeback <= 0.0:
             # A visible owner-only leaf staircase is the bounded anti-stall
             # fallback.  It preserves continuous motion and collisions while
             # making the final minute of every heat resolve decisively.
@@ -712,8 +743,17 @@ class CanopyCupAnimation(AnimationBase):
             racer.comeback = 4.0
             racer.stuck_time = 0.0
 
-        self._maybe_use_ability(racer, target, delta_x)
-        if racer.grounded and racer.jump_delay <= 0.0:
+        jump = not manual or self._player_jump
+        use_power = self._player_power
+        if manual and use_power and not racer.grounded and racer.power > 0 and racer.ability_cooldown <= 0.0:
+            self._activate_ability(racer, "glide")
+        elif not manual or use_power:
+            self._maybe_use_ability(racer, target, delta_x)
+        if manual:
+            self._player_power = False
+        if jump and racer.grounded and racer.jump_delay <= 0.0:
+            if manual:
+                self._player_jump = False
             racer.vy = -(30.5 + racer.risk * 1.7 + racer.form_bonus * 8.0
                          + (4.5 if racer.comeback > 0.0 else 0.0)
                          + late_surge * 9.0)
@@ -727,7 +767,7 @@ class CanopyCupAnimation(AnimationBase):
             gravity = max(4.0, gravity - late_surge * 8.0)
             racer.invulnerable = max(racer.invulnerable, self.PHYSICS_DT * 2.0)
         if racer.key == "fern" and racer.vy > 3.0 and (racer.ability_time > 0.0 or racer.power > 0):
-            if racer.ability_time <= 0.0 and racer.power > 0 and racer.ability_cooldown <= 0.0:
+            if not manual and racer.ability_time <= 0.0 and racer.power > 0 and racer.ability_cooldown <= 0.0:
                 self._activate_ability(racer, "glide")
             if racer.ability_time > 0.0:
                 gravity = 14.0
@@ -741,7 +781,7 @@ class CanopyCupAnimation(AnimationBase):
             racer.stuck_time = 0.0
         else:
             racer.stuck_time += dt
-        if racer.stuck_time > 3.4 or racer.y > self.height + 4:
+        if (not manual and racer.stuck_time > 3.4) or racer.y > self.height + 4:
             self._rescue_racer(racer)
         if racer.y <= self.finish_y - .2 or racer.route_index >= len(self.route_platforms) - 1:
             racer.finished = True
@@ -1214,6 +1254,8 @@ class CanopyCupAnimation(AnimationBase):
             self._pixel(x + 1, y, colors[1])
             self._pixel(x, y + 1, colors[2])
             self._pixel(x + 1, y + 1, colors[3])
+            if self._player_control and racer.index == self.PLAYER_RACER:
+                self._pixel(x, y - 1, (255, 255, 255))
             if racer.glide:
                 self._pixel(x - 1, y, (102, 255, 186), additive=True)
                 self._pixel(x + 2, y, (102, 255, 186), additive=True)

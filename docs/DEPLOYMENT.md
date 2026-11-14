@@ -92,14 +92,18 @@ immediately replaces the selected slot. Each slot stores the complete Scene,
 including widgets and plant effects. The Pi keeps them in
 `data/run_state/numbered_presets/`.
 
-Tune applies changes immediately. Y undoes the last edit or held adjustment.
+Tune applies changes immediately. **Tune → Animation** puts the current
+animation's main settings first, with seed and frame-rate settings at the end.
+Use Left and Right on a choice, or press A to open a long list such as GIF
+clips. Y undoes the last edit or held adjustment.
 Press Y again to redo it. In the character picker, A inserts the focused
 character, Y finishes, and B cancels. Save Look adds a named Scene to the
 Composer library.
 
 With the HUD closed, D-pad Up and Down cycle through the animation gallery.
 The new animation name appears at the top for one second. Left and Right
-change the palette. The D-pad controls the game during a Tetris round.
+change the palette. When the current animation has a player mode, the wall
+shows **A PLAY**.
 
 Hold a combination of L1, R1, L2, and R2 to open the temporary tuning HUD.
 Four cards show left-stick vertical, left-stick horizontal, right-stick
@@ -150,12 +154,26 @@ power. A manual edit takes over from a running playlist. With the Pi powered,
 Menu resumes the selected Scene if output is off. If brightness is zero, Menu
 raises it to 16/255.
 
-Choose Tetris under Playback or use `/play/tetris`. The web Play button requires
-a connected Nimbus and a matching controller revision. In a round, D-pad
-left/right move, Down soft drops, Up and A rotate, B hard drops, and Y releases
-the inner pieces. The countdown starts at 15 seconds. Each cleared row adds
-five seconds, up to 40 seconds total. Menu or disconnect ends player mode and
-returns the current Tetris Scene to autoplay.
+Press A with the HUD closed to take control of the current game. Press Menu
+to pause and open Composer. Close the HUD with Menu or B: the game stays
+paused and shows **PAUSED / A RESUME**. Up and Down browse as usual; choosing
+another animation leaves the round. Press A to continue the same round.
+Edits to game setup, such as a new seed or course layout, can rebuild the board
+while keeping it paused. Disconnect returns the current game to autoplay.
+
+| Game | Controls while playing |
+| --- | --- |
+| Tetris | Left/Right move, Down soft drops, Up/A rotate, B hard drops, Y releases the inner pieces |
+| Snake | D-pad steers the snake with the white head |
+| Maze Chase | D-pad steers the hero; a turn is buffered until the next open tile |
+| Pinball | A fires the flipper as the ball reaches the bottom, Left/Right nudge |
+| Pixel Quest | A attacks, B spends magic during combat |
+| Canopy Cup | Left/Right steer Fern, A jumps, B uses a charged ability |
+
+You can also start a Tetris sprint under Playback or at `/play/tetris`. The
+web Play button requires a connected Nimbus and a matching controller
+revision. The countdown starts at 15 seconds. Each cleared row adds five
+seconds, up to 40 seconds total.
 
 To review the menu without the wall, run
 `.venv/bin/python scripts/simulate_wall_composer.py` and open

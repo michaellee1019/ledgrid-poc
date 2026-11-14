@@ -274,6 +274,7 @@ class TetrisAnimation(AnimationBase):
         self.input_lock = threading.Lock()
         self.input_piece_index = 0
         self.player_control = False
+        self.player_paused = False
         self.player_round_elapsed = 0.0
         self.player_round_deadline = PLAYER_ROUND_SECONDS
         self.player_restart_in = 0.0
@@ -370,6 +371,8 @@ class TetrisAnimation(AnimationBase):
             },
         }
 
+    LIVE_TUNABLE_PARAMETERS = frozenset(DEFAULTS) - {"seed"}
+
     def update_parameters(self, params: Mapping[str, Any]):
         normalized = self._normalized_parameters({**self.params, **dict(params)})
         if normalized == self.params:
@@ -400,7 +403,9 @@ class TetrisAnimation(AnimationBase):
     def render_resolved_scene(self, context: ResolvedScene) -> Any:
         self.set_presentation_context(context)
         self.update_parameters(context.parameters)
-        elapsed = self._player_time() if self.player_control else context.phase_time
+        elapsed = context.phase_time
+        if self.player_control:
+            elapsed = (self.last_elapsed or 0.0) if self.player_paused else self._player_time()
         return self.generate_frame(elapsed, self.frame_count)
 
     @staticmethod
@@ -491,7 +496,8 @@ class TetrisAnimation(AnimationBase):
             delta = min(MAX_SIMULATION_DELTA, max(0.0, time_elapsed - self.last_elapsed))
             self.last_elapsed = time_elapsed
 
-        self._update_game(delta)
+        if not self.player_paused:
+            self._update_game(delta)
 
         if self.player_control:
             self._render_player_board(frame)
@@ -573,6 +579,7 @@ class TetrisAnimation(AnimationBase):
         if enabled == self.player_control:
             return
         self.player_control = enabled
+        self.player_paused = False
         self.board_width = self.num_strips
         self.board_height = self.leds_per_strip
         if enabled:
@@ -590,12 +597,25 @@ class TetrisAnimation(AnimationBase):
         self.last_render_elapsed = None
         self.next_render_elapsed = None
 
+    def set_player_paused(self, paused: bool) -> None:
+        self.player_paused = paused
+        with self.input_lock:
+            self.input_queue.clear()
+        if not paused:
+            self.last_elapsed = None
+            self.last_render_elapsed = None
+            self.next_render_elapsed = None
+
+    def handle_player_button(self, button: str) -> None:
+        action = {"up": "rotate-left", "a": "rotate-right", "b": "drop", "y": "release"}.get(button, button)
+        self.handle_gamepad_action(action)
+
     def handle_gamepad_action(self, action: str) -> None:
         if action == "toggle-player":
             self.set_player_control(not self.player_control)
         elif action == "disconnect":
             self.set_player_control(False)
-        elif self.player_control and not self.player_restart_in:
+        elif self.player_control and not self.player_paused and not self.player_restart_in:
             self.handle_input(action)
 
     def _reset_player_clock(self) -> None:
@@ -775,7 +795,7 @@ class TetrisAnimation(AnimationBase):
             fall_seconds = PLAYER_INITIAL_FALL_SECONDS - progress * (
                 PLAYER_INITIAL_FALL_SECONDS - PLAYER_FASTEST_FALL_SECONDS
             )
-            return self.board_height / fall_seconds
+            return self.board_height / fall_seconds * (float(self.params["fall_rate"]) / self.DEFAULTS["fall_rate"])
         # Preserve the original pace at normal density, then reduce per-piece
         # work so total movement does not grow linearly into the hundreds.
         density_scale = max(1.0, sqrt(self.tetromino_count / 8.0))
