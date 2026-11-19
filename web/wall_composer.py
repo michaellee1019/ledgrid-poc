@@ -925,20 +925,23 @@ class WallComposer:
         parent[path[-1]] = value
         self._set_scene(scene, edit=True)
 
+    def _push_browse(self, title, rows):
+        self._push(title, sorted(rows, key=lambda row: row.name.casefold()))
+
     def _browse(self):
-        self._push("Browse", [Row("Looks", select=self._looks), Row("Starters", select=self._starters),
-                              Row("Animate", select=self._animations)])
+        self._push_browse("Browse", [Row("Looks", select=self._looks), Row("Starters", select=self._starters),
+                                    Row("Animate", select=self._animations)])
 
     def _looks(self):
-        self._push("Looks", [Row(item["name"], select=partial(self._play_look, item["id"]), hint="A PLAY")
-                             for item in self.looks.list()])
+        self._push_browse("Looks", [Row(item["name"], select=partial(self._play_look, item["id"]), hint="A PLAY")
+                                   for item in self.looks.list()])
 
     def _play_look(self, look_id):
         self._play_scene(self.looks.get(look_id)["scene"])
 
     def _starters(self):
-        self._push("Starters", [Row(item["name"], select=partial(self._play_starter, item["id"]), hint="A PLAY")
-                                for item in list_starters()])
+        self._push_browse("Starters", [Row(item["name"], select=partial(self._play_starter, item["id"]), hint="A PLAY")
+                                      for item in list_starters()])
 
     def _play_starter(self, starter_id):
         self._play_scene(get_starter(starter_id)["scene"])
@@ -961,7 +964,7 @@ class WallComposer:
         rows = [Row("Default", select=partial(self._play_animation, item, None), hint="A PLAY")]
         for choice in self.presets.operator_choices(item["component_id"], self.presets_dir):
             rows.append(Row(choice["name"], select=partial(self._play_animation, item, choice), hint="A PLAY"))
-        self._push(item["name"], rows)
+        self._push_browse(item["name"], rows)
 
     def _play_animation(self, item, preset):
         self._play_scene(self._with_animation(item, preset))
