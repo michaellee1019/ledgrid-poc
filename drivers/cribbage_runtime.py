@@ -1,6 +1,11 @@
 """Controller-process ownership and visible startup failures for Scorebot."""
 import json
 import os
+from pathlib import Path
+
+
+def scorebot_data_root(control_file):
+    return Path(os.environ.get("LEDGRID_DATA_DIR", Path(control_file).resolve().parent.parent))
 
 
 class UnavailableSession:

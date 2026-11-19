@@ -614,3 +614,32 @@ def test_all_local_host_can_disable_ble_and_missing_identity_is_visible(tmp_path
     assert "unavailable" in unavailable.status()["error"]
     assert json.loads((tmp_path / "run_state/cribbage.json").read_text())["scores"][0] == 9
     unavailable.close()
+
+
+def test_first_deployment_relative_control_path_uses_personal_data_root(tmp_path, native, monkeypatch):
+    from drivers.cribbage_runtime import ScorebotHost, scorebot_data_root
+    from tools.deployment.deploy_target import DATA_DIRECTORIES, link_data
+    app, data = tmp_path / "app", tmp_path / "data"
+    app.mkdir()
+    (app / "config").mkdir()
+    for name in DATA_DIRECTORIES:
+        (data / name).mkdir(parents=True)
+    link_data(tmp_path, app, data)
+    identity = {"node": 0x10203040, "mac": "12:34:56:78:9A:BC", "adapter": "hci0"}
+    (data / "config/scorebot_identity.json").write_text(json.dumps(identity))
+    assert not (app / "config/scorebot_identity.json").exists()
+    monkeypatch.chdir(app)
+    monkeypatch.delenv("LEDGRID_DATA_DIR", raising=False)
+    assert scorebot_data_root("run_state/control.json") == data
+    monkeypatch.setenv("LEDGRID_DATA_DIR", str(data))
+    assert scorebot_data_root("unrelated/control.json") == data
+    real_session = CribbageSession
+    monkeypatch.setattr(authority, "CribbageSession", lambda path, identity: real_session(path, library=native, identity=identity))
+    monkeypatch.setenv("SCOREBOT_BLE", "0")
+    host = ScorebotHost(scorebot_data_root("run_state/control.json"))
+    try:
+        assert not host.status()["error"]
+        start_local(host.session)
+        assert (data / "run_state/cribbage.json").is_file()
+    finally:
+        host.close()

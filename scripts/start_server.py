@@ -252,7 +252,7 @@ def reconcile_wall_menu(manager, gamepad, menu, prior_revision, *, scheduled=Fal
 def run_controller_mode(args):
     from drivers.multi_device import MultiDeviceLEDController
     from drivers.nimbus_gamepad import NimbusGamepad
-    from drivers.cribbage_runtime import ScorebotHost
+    from drivers.cribbage_runtime import ScorebotHost, scorebot_data_root
     from animation.core.wall_menu_frame import WallMenuFrame
     from web.wall_composer import WallComposer
     from functools import partial
@@ -261,7 +261,7 @@ def run_controller_mode(args):
     controller=MultiDeviceLEDController(num_devices=num_devices,strip_count=args.strips,
         leds_per_strip=args.leds_per_strip,device_map=hardware_device_map(num_devices),
         debug=args.controller_debug,speed=args.spi_speed)
-    cribbage = ScorebotHost(Path(args.control_file).parent.parent)
+    cribbage = ScorebotHost(scorebot_data_root(args.control_file))
     controller.cribbage_session = cribbage.session
     controller.configure()
     apply_production_stagger(controller)
