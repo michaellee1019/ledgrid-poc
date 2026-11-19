@@ -185,7 +185,11 @@ dialog li { margin: .5rem 0; }
 /* Bounded workspaces keep navigation, preview and playback within reach. */
 [hidden] { display: none !important; }
 .composer { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: .65rem; height: 100dvh; overflow: hidden; }
-.workspace-header { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.workspace-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; }
+.wall-brightness-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .15rem .5rem; width: min(100%, 16rem); }
+.wall-brightness-control input, .wall-brightness-control p { grid-column: 1 / -1; margin: 0; }
+.wall-brightness-control input { min-height: 32px; }
+.wall-brightness-control output, .wall-brightness-control p { font-size: .75rem; color: #b6c7c9; }
 .workspace-header h1 { font-size: 1.25rem; }
 .workspace-header p { color: #b6c7c9; }
 .workspace-nav, .browse-tabs { display: flex; flex-wrap: wrap; gap: .35rem; }

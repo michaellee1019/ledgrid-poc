@@ -1,3 +1,67 @@
+// Master output light is independent of the authored scene and its undo history.
+(() => {
+  'use strict';
+  document.querySelector('.workspace-header').insertAdjacentHTML('beforeend', '<div class="wall-brightness-control"><label for="wallBrightness">Wall brightness</label><output id="wallBrightnessValue" for="wallBrightness">Unknown</output><input id="wallBrightness" type="range" min="0" max="255" step="1" value="0" disabled aria-describedby="wallBrightnessStatus"><p id="wallBrightnessStatus" role="status" aria-live="polite">Checking master light level…</p></div>');
+  const control = document.querySelector('#wallBrightness');
+  const value = document.querySelector('#wallBrightnessValue');
+  const status = document.querySelector('#wallBrightnessStatus');
+  let observation = null, busy = true, pending = null, editing = false, message = '';
+  const fresh = (item) => item?.freshness === 'fresh' && Boolean(item.controller_session_id)
+    && Number.isInteger(item.brightness) && item.brightness >= 0 && item.brightness <= 255;
+  const label = (brightness) => `${Math.round(brightness / 255 * 100)}% · ${brightness}/255`;
+  function render(next = observation, blocked = busy) {
+    observation = next; busy = blocked;
+    const known = fresh(observation);
+    control.disabled = busy || !known || Boolean(pending);
+    if (!pending && !editing) {
+      if (known) control.value = String(observation.brightness);
+      value.textContent = known && !busy ? label(observation.brightness) : 'Unknown';
+    }
+    status.textContent = pending ? 'Applying brightness…' : message || (!known ? 'Controller unavailable.'
+      : observation.brightness === 0 ? 'Wall is dark at 0 brightness.' : 'Master light level for all scenes.');
+  }
+  async function request(url, options, signal) {
+    const response = await fetch(url, {cache: 'no-store', ...options, signal});
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || 'Brightness request failed.');
+    return body;
+  }
+  async function apply(brightness) {
+    const signal = AbortSignal.timeout(5000);
+    const url = '/api/v1/composer/settings/observed';
+    const before = await request(url, {}, signal);
+    if (!fresh(before)) throw new Error('Controller unavailable; brightness was not changed.');
+    const accepted = await request('/api/config/brightness', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({brightness, expected_controller_session_id: before.controller_session_id,
+        expected_controller_state_revision: before.controller_state_revision, expires_at: Date.now() / 1000 + 5}),
+    }, signal);
+    while (!signal.aborted) {
+      observation = await request(url, {}, signal);
+      if (observation.controller_session_id !== before.controller_session_id) throw new Error('Controller restarted; check brightness and try again.');
+      if (observation.command_result?.command_id === accepted.command_id && observation.command_result.state === 'failed') {
+        throw new Error(observation.command_result.error || 'Controller rejected brightness.');
+      }
+      if (fresh(observation) && observation.controller_state_revision > before.controller_state_revision
+          && observation.last_applied_command_id === accepted.command_id && observation.brightness === brightness) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error('Brightness was not confirmed. Check the current level and try again.');
+  }
+  control.addEventListener('input', () => { editing = true; message = ''; value.textContent = label(Number(control.value)); });
+  control.addEventListener('change', () => {
+    const brightness = Number(control.value);
+    editing = false;
+    if (control.disabled || pending || !Number.isInteger(brightness) || brightness < 0 || brightness > 255) { render(); return; }
+    pending = apply(brightness).then(() => { message = 'Brightness applied.'; })
+      .catch((error) => { message = `Brightness change failed: ${error.message}`; })
+      .finally(() => { pending = null; render(); });
+    render();
+  });
+  control.addEventListener('blur', () => { if (!pending) { editing = false; render(); } });
+  globalThis.ComposerWallBrightness = Object.freeze({render, get settled() { return pending; }});
+})();
+
 (() => {
   'use strict';
   const root = document.querySelector('.composer');
@@ -1089,6 +1153,7 @@
     $('#wallActionMessage').textContent = state.wall.activationError || '';
     $('#retryWallAction').textContent = state.wall.actionKind === 'stop' ? 'Retry stop' : 'Retry once';
     $('#retryWallAction').disabled = pending;
+    globalThis.ComposerWallBrightness?.render(observation, !known || pending);
     $('#operationMessage').textContent = state.authoredValidationError || state.wall.activationError || status.last_error || (!known ? 'Playback is unknown.' : status.running ? 'Valid edits apply automatically.' : 'Output stopped. Resume sends the edited scene.');
   }
   function updateHistoryActions() {
@@ -1117,10 +1182,12 @@
     // Save also writes recovery. Later authored edits must reach the server
     // after that snapshot, so a slow save cannot erase their recoverable draft.
     if (sceneSaveBarrier && state.publication.queued?.kind !== 'stop') await sceneSaveBarrier;
+    await globalThis.ComposerWallBrightness?.settled;
     if (state.publication.inFlight || !state.publication.queued) return;
     const entry = state.publication.queued;
     state.publication.queued = null;
     state.publication.inFlight = entry;
+    globalThis.ComposerWallBrightness?.render(state.wall.observation, true);
     let finishAuthored;
     entry.authoredSettled = new Promise((resolve) => { finishAuthored = resolve; });
     state.submitting = true;
