@@ -21,7 +21,7 @@ from drivers.wall_roles import SpiLeaderboardSource
 
 def _document(**changes):
     document = {
-        "type": "state", "protocol": 4, "started": True, "turn": 2,
+        "type": "state", "protocol": 5, "started": True, "turn": 2,
         "scores": [8, 15, 4, 21], "connected": 15, "roster": 15,
         "term": 3, "version": 9,
     }
@@ -111,7 +111,7 @@ def test_equal_revisions_replace_connection_and_status_fields(reader):
     ],
     json.dumps(_document(term=True)).encode(),
     json.dumps(_document(version=1.5)).encode(),
-    b'{"type":"state","protocol":4}',
+    b'{"type":"state","protocol":5}',
 ])
 def test_malformed_input_cannot_establish_or_replace_state(reader, raw):
     source, ingest, _ = reader

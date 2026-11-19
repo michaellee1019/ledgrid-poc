@@ -325,7 +325,7 @@ class CribbageLeaderboardAnimation(AnimationBase):
             self._feedback, getattr(self._source, "feedback", ""),
             getattr(self._source, "pending", False), getattr(self._source, "error", ""),
             getattr(getattr(self._source, "transport", None), "error", ""),
-            None if state is None else (state.local, state.enabled, state.sleeping),
+            None if state is None else (state.local, state.enabled, state.sleeping, state.pairing),
             strips,
             leds,
             params["glow"],
@@ -383,11 +383,13 @@ class CribbageLeaderboardAnimation(AnimationBase):
                 draft = mantissa + "E" + str(int(exponent))
             status = "ERROR" if error else "SAVING" if getattr(self._source, "pending", False) else feedback
             lines = ["A EDIT" if not self._control else "DRAFT", draft, status, self._feedback[:8].upper()]
+            if state is not None and state.pairing >= 0 and not self._control:
+                lines = ["PAIR " + str(state.pairing), draft, status, "A EDIT"]
             if state is not None and len(str(state.scores[self._selection])) > 8:
                 exact = str(state.scores[self._selection])
                 lines = ["D " + draft, status, "EXACT", exact[:8], exact[8:]]
             if self._control and state is not None and not state.started:
-                lines = ["LOBBY", "LR MODE", "A START", status]
+                lines = ["PAIR " + str(state.pairing), "LR MODE", "A START", status]
             if self._page:
                 lines = ["RESUME" if not self._choice else "NEW GAME", "A SELECT"]
                 if self._page != "options":

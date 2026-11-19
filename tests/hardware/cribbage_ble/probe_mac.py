@@ -12,7 +12,7 @@ from bleak import BleakClient, BleakScanner
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from drivers.cribbage_session import CribbageSession, Library  # noqa: E402
-from drivers.cribbage_ble import IDENTITY, PROTOCOL, UPLINK, DOWNLINK  # noqa: E402
+from drivers.cribbage_ble import IDENTITY, PROTOCOL, UPLINK, DOWNLINK, PAIRING  # noqa: E402
 
 
 async def probe(args):
@@ -38,6 +38,16 @@ async def probe(args):
                 break
         if public is None:
             raise RuntimeError("No verified public radio identity from the USB-identified board")
+        handle.write(b"P " + session.discovery().hex().encode() + b"\n")
+        deadline = time.monotonic() + 5
+        paired = False
+        while time.monotonic() < deadline:
+            line = (await asyncio.to_thread(handle.readline)).decode(errors="replace").strip()
+            transcript.append({"serial": line})
+            if line == "PAIRED":
+                paired = True
+                break
+        assert paired
         devices = await BleakScanner.discover(timeout=6, return_adv=True, cb={"use_bdaddr": True})
         target = next((device for device, _adv in devices.values() if device.address.upper() == args.address.upper()), None)
         if target is None:
@@ -51,7 +61,8 @@ async def probe(args):
             assert int.from_bytes(node, "little") == int(ready_node)
             # Address is supplied by CoreBluetooth's radio metadata, never game JSON.
             token = session.admit(int.from_bytes(node, "little"), int.from_bytes(protocol, "little"),
-                                  public, int(target.address.replace(":", ""), 16))
+                                  public, int(target.address.replace(":", ""), 16),
+                                  bytes(await client.read_gatt_char(PAIRING)))
             assert token is not None
             await client.start_notify(UPLINK, lambda _char, data: transcript.append({"uplink": bytes(data).decode()}))
             if session.latest().started:

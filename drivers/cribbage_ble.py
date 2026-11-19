@@ -1,19 +1,44 @@
-"""Scorebot v4 central over BlueZ D-Bus; no score retries or hardware in render."""
+"""Scorebot v5 central over BlueZ D-Bus; no score retries or hardware in render."""
 import asyncio
 import json
 import threading
 import time
 
 SERVICE = "c6a8619e-2f9d-46bc-9a23-bb9c89a519be"
-IDENTITY, UPLINK, DOWNLINK, PROTOCOL = [
-    f"c6a861{value}-2f9d-46bc-9a23-bb9c89a519be" for value in ("9f", "a0", "a1", "a2")
+IDENTITY, UPLINK, DOWNLINK, PROTOCOL, PAIRING = [
+    f"c6a861{value}-2f9d-46bc-9a23-bb9c89a519be" for value in ("9f", "a0", "a1", "a2", "a3")
 ]
 DEVICE = "org.bluez.Device1"
 CHARACTERISTIC = "org.bluez.GattCharacteristic1"
 PROPERTIES = "org.freedesktop.DBus.Properties"
 MANAGER = "org.freedesktop.DBus.ObjectManager"
 HEARTBEAT = 1.5
-MAX_MESSAGE = 352
+MAX_MESSAGE = 512
+AD_MANAGER = "org.bluez.LEAdvertisingManager1"
+
+
+def advertisement(packet):
+    from dbus_next import PropertyAccess, Variant
+    from dbus_next.service import ServiceInterface, dbus_property, method
+
+    class DiscoveryAdvertisement(ServiceInterface):
+        def __init__(self):
+            super().__init__("org.bluez.LEAdvertisement1")
+            self.packet, self.active = packet, False
+
+        @dbus_property(access=PropertyAccess.READ)
+        def Type(self) -> "s":  # noqa: F821
+            return "broadcast"
+
+        @dbus_property(access=PropertyAccess.READ)
+        def ManufacturerData(self) -> "a{qv}":  # noqa: F722
+            return {0xFFFF: Variant("ay", self.packet[2:])}
+
+        @method()
+        def Release(self):
+            self.active = False
+
+    return DiscoveryAdvertisement()
 
 
 def decode_message(raw, protocol):
@@ -29,18 +54,24 @@ def decode_message(raw, protocol):
         raise ValueError("Invalid Scorebot protocol")
     kind = data.get("type")
     fields = {"player": {"score", "turnPassed", "operationId", "game"},
-              "activity": {"game"}, "status": {"state"}}
-    if type(kind) is not str or kind not in fields or set(data) != fields[kind] | {"type", "protocol", "fromNodeId"}:
+              "activity": {"game"}, "status": {"state"},
+              "control": {"game", "term", "op", "command", "player", "value", "pass"}}
+    identity = "from" if kind == "control" else "fromNodeId"
+    if type(kind) is not str or kind not in fields or set(data) != fields[kind] | {"type", "protocol", identity}:
         raise ValueError("Invalid Scorebot fields")
     bounds = {"fromNodeId": (1, 0xFFFFFFFF), "game": (0, 0xFFFFFFFF),
-              "operationId": (1, 0xFFFFFFFF), "score": (-0x80000000, 0x7FFFFFFF)}
+              "operationId": (1, 0xFFFFFFFF), "score": (-0x80000000, 0x7FFFFFFF),
+              "term": (0, 0xFFFFFFFF), "command": (0, 2), "player": (0, 3), "value": (-0x80000000, 0x7FFFFFFF),
+              "from": (1, 0xFFFFFFFF), "op": (1, 0xFFFFFFFF)}
     for key, (low, high) in bounds.items():
         if key in data and (type(data[key]) is not int or not low <= data[key] <= high):
             raise ValueError("Invalid Scorebot integer")
-    if kind == "player" and type(data["turnPassed"]) is not bool:
+    if kind in ("player", "control") and type(data["pass" if kind == "control" else "turnPassed"]) is not bool:
         raise ValueError("turnPassed must be boolean")
     if kind == "status" and data["state"] != "sleep":
         raise ValueError("Invalid sleep notice")
+    if kind == "control" and data["command"] == 2 and not 0 <= data["value"] <= 2:
+        raise ValueError("Invalid controller lobby mode")
     return data
 
 
@@ -109,10 +140,13 @@ class BlueZCentral:
         tasks = {}
         retry = {}
         scanning = False
+        advert = advertisement(self.session.discovery())
+        advert_path = "/org/scorebot/discovery"
         try:
             props = await self.properties(adapter, "org.bluez.Adapter1")
-            if props["AddressType"] != "public" or props["Address"].upper() != self.identity["mac"]:
-                raise ValueError("BLE adapter differs from the configured public Pi identity")
+            if not props.get("Powered"):
+                raise ValueError("Scorebot BLE adapter is powered off")
+            self.bus.export(advert_path, advert)
             self.owner, = await self.call("/org/freedesktop/DBus", "org.freedesktop.DBus",
                                           "GetNameOwner", "s", ["org.bluez"],
                                           destination="org.freedesktop.DBus")
@@ -121,10 +155,17 @@ class BlueZCentral:
                             ["type='signal',sender='org.bluez',interface='" + PROPERTIES + "'"],
                             destination="org.freedesktop.DBus")
             await self.call(adapter, "org.bluez.Adapter1", "SetDiscoveryFilter", "a{sv}",
-                            [{"UUIDs": Variant("as", [SERVICE]), "Transport": Variant("s", "le")}])
+                            [{"Transport": Variant("s", "le")}])
             await self.call(adapter, "org.bluez.Adapter1", "StartDiscovery")
             scanning = True
             while not self._stop.is_set() and not self.session.error:
+                packet = self.session.discovery()
+                if not advert.active or advert.packet != packet:
+                    if advert.active:
+                        await self.call(adapter, AD_MANAGER, "UnregisterAdvertisement", "o", [advert_path])
+                    advert.packet = packet
+                    await self.call(adapter, AD_MANAGER, "RegisterAdvertisement", "oa{sv}", [advert_path, {}])
+                    advert.active = True
                 for path, task in list(tasks.items()):
                     if task.done():
                         task.result()
@@ -133,17 +174,24 @@ class BlueZCentral:
                 objects = await self.objects()
                 for path, interfaces in objects.items():
                     device = interfaces.get(DEVICE, {})
-                    if (path.startswith(adapter + "/") and SERVICE in device.get("UUIDs", [])
-                            and path not in tasks and time.monotonic() >= retry.get(path, 0) and len(tasks) < 8):
+                    data = device.get("ManufacturerData", {}).get(0xFFFF)
+                    offered = b"" if data is None else b"\xff\xff" + bytes(data.value)
+                    if (path.startswith(adapter + "/") and len(offered) == 22 and offered[:5] == packet[:5]
+                            and offered[9:17] == packet[9:17] and path not in tasks
+                            and time.monotonic() >= retry.get(path, 0) and len(tasks) < 9):
                         tasks[path] = asyncio.create_task(self.peer(path))
                 await asyncio.sleep(0.5)
         finally:
             for task in tasks.values():
                 task.cancel()
             await asyncio.gather(*tasks.values(), return_exceptions=True)
-            if scanning:
-                await self.call(adapter, "org.bluez.Adapter1", "StopDiscovery")
-            self.bus.disconnect()
+            try:
+                if scanning:
+                    await self.call(adapter, "org.bluez.Adapter1", "StopDiscovery")
+                if advert.active:
+                    await self.call(adapter, AD_MANAGER, "UnregisterAdvertisement", "o", [advert_path])
+            finally:
+                self.bus.disconnect()
 
     async def peer(self, path):
         from dbus_next import Variant
@@ -165,12 +213,15 @@ class BlueZCentral:
                      if (props := interfaces.get(CHARACTERISTIC, {})).get("Service") in services}
             node, = await self.call(chars[IDENTITY], CHARACTERISTIC, "ReadValue", "a{sv}", [{}])
             protocol, = await self.call(chars[PROTOCOL], CHARACTERISTIC, "ReadValue", "a{sv}", [{}])
+            packet, = await self.call(chars[PAIRING], CHARACTERISTIC, "ReadValue", "a{sv}", [{}])
             if len(node) != 4 or len(protocol) != 2:
                 raise ValueError("Invalid Scorebot GATT identity size")
             device = await self.properties(path, DEVICE)
+            if device["AddressType"] not in ("public", "random"):
+                raise ValueError("Unknown Scorebot transport address type")
             token = self.session.admit(int.from_bytes(node, "little"), int.from_bytes(protocol, "little"),
                                        int(device["AddressType"] == "public"),
-                                       int(device["Address"].replace(":", ""), 16))
+                                       int(device["Address"].replace(":", ""), 16), bytes(packet))
             if token is None:
                 raise ValueError("Scorebot peer rejected by identity or frozen roster")
             link["uplink"] = chars[UPLINK]

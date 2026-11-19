@@ -17,7 +17,7 @@ from bleak import BleakClient, BleakScanner
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-from drivers.cribbage_ble import DOWNLINK, IDENTITY, PROTOCOL, UPLINK, HEARTBEAT  # noqa: E402
+from drivers.cribbage_ble import DOWNLINK, IDENTITY, PROTOCOL, UPLINK, PAIRING, HEARTBEAT  # noqa: E402
 from drivers.cribbage_session import Library, Result  # noqa: E402
 from scripts.start_server import handle_command  # noqa: E402
 from tests.unit.test_cribbage_play_sessions import HANDS, PlaySession  # noqa: E402
@@ -50,7 +50,10 @@ class Radio:
                 _, node, address, public = line.split()
                 assert address.upper() == self.args.address.upper() and public == "1"
                 self.node, self.public = int(node), int(public)
-                return
+                self.serial.write(b"P " + self.play.session.discovery().hex().encode() + b"\n")
+                while time.monotonic() < deadline:
+                    if await self.line() == "PAIRED":
+                        return
         raise RuntimeError("USB board did not verify its actual public radio identity")
 
     async def line(self):
@@ -77,9 +80,10 @@ class Radio:
         node = bytes(await self.client.read_gatt_char(IDENTITY))
         protocol = bytes(await self.client.read_gatt_char(PROTOCOL))
         assert len(node) == 4 and int.from_bytes(node, "little") == self.node
-        assert len(protocol) == 2 and int.from_bytes(protocol, "little") == 4
-        self.token = self.play.session.admit(self.node, 4, self.public,
-                                            int(target.address.replace(":", ""), 16))
+        assert len(protocol) == 2 and int.from_bytes(protocol, "little") == 5
+        pairing = bytes(await self.client.read_gatt_char(PAIRING))
+        self.token = self.play.session.admit(self.node, 5, self.public,
+                                            int(target.address.replace(":", ""), 16), pairing)
         assert self.token is not None
         await self.client.start_notify(UPLINK, lambda _char, raw: self.notifications.put_nowait(bytes(raw)))
         high_water = json.loads(self.play.session.wire())["operations"][0]
@@ -89,7 +93,7 @@ class Radio:
 
     async def publish(self):
         wire = self.play.session.wire()
-        assert len(wire) <= 352
+        assert len(wire) <= 512
         await self.client.write_gatt_char(DOWNLINK, wire, response=True)
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline:
@@ -99,7 +103,7 @@ class Radio:
         raise RuntimeError("No exact full snapshot received over BLE")
 
     async def raw(self, payload, expected):
-        assert self.notifications.empty() and len(payload) <= 352
+        assert self.notifications.empty() and len(payload) <= 512
         self.serial.write(b"N " + payload + b"\n")
         observed = await asyncio.wait_for(self.notifications.get(), 4)
         assert observed == payload, "RF notification was changed or truncated"
@@ -111,7 +115,7 @@ class Radio:
 
     async def score(self, delta, passes=False, duplicate=False):
         self.operation += 1
-        self.last_packet = json.dumps({"type": "player", "protocol": 4, "fromNodeId": self.node,
+        self.last_packet = json.dumps({"type": "player", "protocol": 5, "fromNodeId": self.node,
                                        "game": self.play.state()["game_id"], "score": delta,
                                        "turnPassed": passes, "operationId": self.operation},
                                       separators=(",", ":")).encode()
@@ -129,7 +133,7 @@ class Radio:
         if sleeping:
             self.serial.write(b"S\n")
             observed = await asyncio.wait_for(self.notifications.get(), 3)
-            assert json.loads(observed) == {"type": "status", "protocol": 4,
+            assert json.loads(observed) == {"type": "status", "protocol": 5,
                                              "fromNodeId": self.node, "state": "sleep"}
             assert self.play.session.receive(self.token, observed) == Result.OK
             assert self.play.state()["sleeping_mask"] == 1
@@ -171,13 +175,13 @@ async def exercise(args):
         await radio.connect()
         play.configure(physical=(0,))
         await radio.publish()
-        malformed = {"type": "player", "protocol": 4, "fromNodeId": radio.node,
+        malformed = {"type": "player", "protocol": 5, "fromNodeId": radio.node,
                      "game": play.state()["game_id"], "score": True, "turnPassed": False, "operationId": 1}
         before = play.state()
         await radio.raw(json.dumps(malformed).encode(), (Result.INVALID_ARGUMENT,))
         malformed.update(score=1, fromNodeId=radio.node + 1)
         await radio.raw(json.dumps(malformed).encode(), (Result.INVALID_ARGUMENT,))
-        await radio.raw(b'{"type":"player","protocol":4,"protocol":4}', (Result.INVALID_ARGUMENT,))
+        await radio.raw(b'{"type":"player","protocol":5,"protocol":5}', (Result.INVALID_ARGUMENT,))
         assert play.state() == before
         for round_index, hands in enumerate(HANDS):
             assert play.state()["turn"] == 0

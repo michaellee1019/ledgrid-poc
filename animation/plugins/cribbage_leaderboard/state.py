@@ -13,7 +13,7 @@ from typing import Optional
 
 
 # scorebot::kWireProtocolVersion
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 ROLE_RED = 2
 ROLE_BLUE = 3
@@ -43,6 +43,7 @@ class LeaderboardState:
     local: int = 0
     enabled: int = 0
     sleeping: int = 0
+    pairing: int = -1
 
     def revision(self) -> tuple[int, int]:
         return (self.term, self.version)

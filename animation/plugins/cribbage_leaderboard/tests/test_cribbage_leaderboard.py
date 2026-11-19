@@ -52,7 +52,7 @@ def _pixel(pixels: np.ndarray, logical_y: int) -> np.ndarray:
 class CribbageLeaderboardTests(unittest.TestCase):
     def test_state_line_accepts_the_leaderboard_snapshot(self) -> None:
         line = (
-            'STATE {"type":"state","protocol":4,"game":1,"term":2,"version":5,'
+            'STATE {"type":"state","protocol":5,"game":1,"term":2,"version":5,'
             '"leader":2934577084,"started":true,"turn":3,"scores":[1,2,3,4],'
             '"operations":[1,1,1,1],"connected":15,"local":0,"enabled":15,'
             '"explicit":15,"roster":15}'
@@ -67,7 +67,7 @@ class CribbageLeaderboardTests(unittest.TestCase):
     def test_state_line_rejects_other_protocol_and_boot_noise(self) -> None:
         self.assertIsNone(parse_state_line("STATE-WAIT id=00000001 advertising=1"))
         self.assertIsNone(parse_state_line('STATE {"type":"state","protocol":3,"started":true,"turn":2,"scores":[0,0,0,0],"term":1,"version":1,"connected":0,"roster":0}'))
-        self.assertIsNone(parse_state_line('{"type":"player","protocol":4}'))
+        self.assertIsNone(parse_state_line('{"type":"player","protocol":5}'))
 
     def test_protocol_constant_matches_the_cribbage_header(self) -> None:
         header = Path(__file__).resolve().parents[4] / "vendor" / "scorebot" / "lib" / "scorebot" / "src" / "Protocol.hpp"

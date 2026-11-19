@@ -4,6 +4,7 @@
 #include <BleService.hpp>
 #include <BoardIdentity.hpp>
 #include <Protocol.hpp>
+#include <PairingRules.hpp>
 #include <esp_sleep.h>
 #include <atomic>
 
@@ -27,56 +28,10 @@ void emit(const char* prefix, const uint8_t* bytes, size_t length) {
     (void)prefix;
 }
 
-#if defined(TEST_CENTRAL)
-NimBLEClient* client;
-NimBLERemoteCharacteristic* downlink;
-uint32_t nextConnect;
-bool linked;
-
-void setupRadio() {
-    NimBLEDevice::init("Scorebot bench radio");
-    NimBLEDevice::setMTU(185);
-    client = NimBLEDevice::createClient();
-    client->setConnectTimeout(5000);
-}
-
-void serviceRadio() {
-    if (client->isConnected()) return;
-    if (linked) { linked = false; downlink = nullptr; Serial.println("LOST"); }
-    if (millis() < nextConnect) return;
-    nextConnect = millis() + 5000;
-    // Only the USB-identified four-screen board, never a discovered neighbour.
-    NimBLEAddress address("98:3d:ae:ea:17:bd", BLE_ADDR_PUBLIC);
-    if (!client->connect(address)) return;
-    auto service = client->getService(kGameServiceUuid);
-    if (!service) { client->disconnect(); return; }
-    auto identity = service->getCharacteristic(kIdentityUuid);
-    auto protocol = service->getCharacteristic(kProtocolUuid);
-    auto uplink = service->getCharacteristic(kUplinkUuid);
-    downlink = service->getCharacteristic(kDownlinkUuid);
-    if (!identity || !protocol || !uplink || !downlink) { client->disconnect(); return; }
-    const auto peer = client->getPeerAddress();
-    Serial.printf("ADMIT %lu %u %s %u\n", identity->readValue<uint32_t>(),
-                  protocol->readValue<uint16_t>(), peer.toString().c_str(), peer.isPublic());
-    if (!uplink->subscribe(true, [](NimBLERemoteCharacteristic*, uint8_t* data, size_t length, bool) {
-        emit("UP", data, length);
-    })) { client->disconnect(); return; }
-    linked = true;
-}
-
-void command(const String& line) {
-    if (line.startsWith("W ") && linked) {
-        const String wire = line.substring(2);
-        const bool ok = wire.length() <= kMaxWireMessageSize && downlink->writeValue(
-            reinterpret_cast<const uint8_t*>(wire.c_str()), wire.length(), true);
-        Serial.println(ok ? "WRITE_OK" : "FAULT write");
-    } else if (line == "D") {
-        client->disconnect();
-    }
-}
-#else
 NimBLEServer* server;
 NimBLECharacteristic* uplink;
+NimBLECharacteristic* pairing;
+scorebot::Discovery selected;
 std::atomic<uint16_t> connection{BLE_HS_CONN_HANDLE_NONE};
 std::atomic<uint32_t> lastState{0};
 std::atomic<bool> accepted{false};
@@ -108,6 +63,20 @@ class DownlinkCallbacks : public NimBLECharacteristicCallbacks {
     }
 } downlinkCallbacks;
 
+void refreshAdvertising() {
+    const auto bytes = scorebot::encodeDiscovery(selected);
+    pairing->setValue(bytes.data(), bytes.size());
+    auto advertising = NimBLEDevice::getAdvertising();
+    advertising->stop();
+    NimBLEAdvertisementData primary;
+    primary.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+    primary.setManufacturerData(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    advertising->enableScanResponse(true);
+    if (!advertising->setAdvertisementData(primary) || !advertising->start()) {
+        Serial.println("FAULT advertising-start");
+    }
+}
+
 void setupRadio() {
     const String name = String("Scorebot-Bench-") + String(node, HEX);
     NimBLEDevice::init(name.c_str());
@@ -116,6 +85,9 @@ void setupRadio() {
     server->setCallbacks(&serverCallbacks);
     server->advertiseOnDisconnect(true);
     auto service = server->createService(kGameServiceUuid);
+    pairing = service->createCharacteristic(kPairingUuid, NIMBLE_PROPERTY::READ, 22);
+    selected.node = node;
+    selected.role = BoardRole::Player_Red;
     service->createCharacteristic(kIdentityUuid, NIMBLE_PROPERTY::READ, 4)->setValue(node);
     service->createCharacteristic(kProtocolUuid, NIMBLE_PROPERTY::READ, 2)->setValue(kWireProtocolVersion);
     uplink = service->createCharacteristic(kUplinkUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY,
@@ -123,16 +95,40 @@ void setupRadio() {
     auto downlink = service->createCharacteristic(kDownlinkUuid, NIMBLE_PROPERTY::WRITE, kMaxWireMessageSize);
     downlink->setCallbacks(&downlinkCallbacks);
     if (!service->start()) { Serial.println("FAULT service-start"); return; }
-    auto advertising = NimBLEDevice::getAdvertising();
-    advertising->enableScanResponse(true);
-    advertising->addServiceUUID(kGameServiceUuid);
-    advertising->setName(name.c_str());
-    if (!advertising->start()) Serial.println("FAULT advertising-start");
+    refreshAdvertising();
 }
 
 void serviceRadio() {}
 void command(const String& line) {
-    if (line.startsWith("N ")) {
+    if (line.startsWith("P ")) {
+        if (line.length() != 46 || connection != BLE_HS_CONN_HANDLE_NONE) {
+            Serial.println("FAULT pairing-command");
+            return;
+        }
+        scorebot::DiscoveryPacket bytes{};
+        for (size_t i = 0; i < bytes.size(); ++i) {
+            const String hex = line.substring(2 + 2 * i, 4 + 2 * i);
+            if (!isxdigit(hex[0]) || !isxdigit(hex[1])) {
+                Serial.println("FAULT pairing-hex");
+                return;
+            }
+            bytes[i] = strtoul(hex.c_str(), nullptr, 16);
+        }
+        scorebot::Discovery authority;
+        if (!scorebot::decodeDiscovery(bytes.data(), bytes.size(), authority) || !authority.authority()) {
+            Serial.println("FAULT pairing-authority");
+            return;
+        }
+        selected = authority;
+        selected.node = node;
+        selected.kind = scorebot::DeviceKind::Player;
+        selected.role = BoardRole::Player_Red;
+        selected.flags = scorebot::Selected;
+        selected.occupied = 0;
+        accepted = false;
+        refreshAdvertising();
+        Serial.println("PAIRED");
+    } else if (line.startsWith("N ")) {
         const String wire = line.substring(2);
         if (!accepted || millis() - lastState > 15000 || wire.length() > kMaxWireMessageSize) {
             Serial.println("FAULT no-current-authority");
@@ -143,7 +139,7 @@ void command(const String& line) {
     } else if (line == "D" && connection != BLE_HS_CONN_HANDLE_NONE) {
         server->disconnect(connection);
     } else if (line == "S") {
-        const String sleep = String("{\"type\":\"status\",\"protocol\":4,\"fromNodeId\":") + node + ",\"state\":\"sleep\"}";
+        const String sleep = String("{\"type\":\"status\",\"protocol\":5,\"fromNodeId\":") + node + ",\"state\":\"sleep\"}";
         uplink->setValue(sleep.c_str());
         uplink->notify();
         delay(400);
@@ -151,7 +147,6 @@ void command(const String& line) {
         esp_deep_sleep_start();
     }
 }
-#endif
 
 void setup() {
 #if ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
@@ -185,11 +180,7 @@ void loop() {
     }
     Note note{};
     while (notes && xQueueReceive(notes, &note, 0) == pdTRUE) {
-#if defined(TEST_CENTRAL)
-        String line = String("UP ") + note.bytes + "\n";
-#else
         String line = String("RX ") + note.bytes + "\n";
-#endif
         size_t written = 0;
         const uint32_t deadline = millis() + 1000;
         while (written < line.length() && static_cast<int32_t>(deadline - millis()) > 0) {

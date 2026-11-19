@@ -28,8 +28,10 @@ class ScorebotHost:
         self.transport = None
         try:
             from drivers.cribbage_session import CribbageSession
-            identity = json.loads((data_root / "config/scorebot_identity.json").read_text())
-            self.session = CribbageSession(data_root / "run_state/cribbage.json", identity=identity)
+            path = data_root / "config/scorebot_identity.json"
+            identity = (json.loads(path.read_text()) if os.environ.get("SCOREBOT_BLE", "1") != "0"
+                        and path.exists() else {"adapter": "hci0"})
+            self.session = CribbageSession(data_root / "run_state/cribbage.json")
         except Exception as error:
             self.session = UnavailableSession(error)
             return
@@ -44,6 +46,7 @@ class ScorebotHost:
                 "ble_enabled": self.transport is not None,
                 "ble_error": self.transport.error if self.transport else "",
                 "scores": list(state.scores) if state else None,
+                "pairing": state.pairing if state else None,
                 "turn": state.turn if state else None,
                 "revision": state.revision() if state else None}
 

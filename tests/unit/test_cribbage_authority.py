@@ -1,7 +1,6 @@
 """Real Scorebot ABI1 authority integration; test identities never ship as config."""
 import concurrent.futures
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +10,7 @@ import time
 import pytest
 
 from drivers import cribbage_session as authority
+from tests.unit.cribbage_pairing import admit as pair_peer
 from drivers.cribbage_session import CribbageSession, Library, Result, State
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,10 +21,8 @@ RED_MAC, BLUE_MAC, GREEN_MAC = 0x983DAEEA0F41, 0x64E83350C4B9, 0x983DAEEA0E55
 @pytest.fixture(scope="session")
 def native(tmp_path_factory):
     build = tmp_path_factory.mktemp("native")
-    environment = {**os.environ, "SCOREBOT_LEADER_NODE_ID": "0x10203040u",
-                   "SCOREBOT_LEADER_BLUETOOTH_MAC": "0x123456789abcULL"}
     subprocess.run(["make", "-C", str(ROOT / "vendor/scorebot/native"),
-                    "BUILD=" + str(build), "all"], env=environment, check=True, capture_output=True)
+                    "BUILD=" + str(build), "all"], check=True, capture_output=True)
     suffix = "dylib" if sys.platform == "darwin" else "so"
     return Library(build / ("libscorebot." + suffix))
 
@@ -37,7 +35,7 @@ def session(tmp_path, native):
 
 
 def saved(session):
-    return json.loads(session.path.read_text())
+    return json.loads(session.path.read_text())["state"]
 
 
 def start_local(session, players=(0, 1)):
@@ -47,7 +45,7 @@ def start_local(session, players=(0, 1)):
 
 
 def player_message(node=RED, **changes):
-    data = {"type": "player", "protocol": 4, "fromNodeId": node, "game": 0,
+    data = {"type": "player", "protocol": 5, "fromNodeId": node, "game": 0,
             "score": 3, "turnPassed": False, "operationId": 1}
     data.update(changes)
     return json.dumps(data).encode()
@@ -79,7 +77,7 @@ def test_zero_board_local_game_and_native_persistence(session):
 
 
 def test_mixed_play_duplicates_sleep_disconnect_takeover_and_rejoin(session):
-    token = session.admit(RED, 4, 1, RED_MAC)
+    token = pair_peer(session, RED, 5, 1, RED_MAC)
     assert token is not None
     assert session.request("set_lobby_mode", 1, 0)
     assert session.request("start")
@@ -88,7 +86,7 @@ def test_mixed_play_duplicates_sleep_disconnect_takeover_and_rejoin(session):
     assert session.receive(token, player_message(turnPassed=True)) == Result.DUPLICATE
     assert saved(session) == before
     assert session.latest().turn == 3
-    notice = json.dumps({"type": "status", "protocol": 4, "fromNodeId": RED, "state": "sleep"}).encode()
+    notice = json.dumps({"type": "status", "protocol": 5, "fromNodeId": RED, "state": "sleep"}).encode()
     assert session.receive(token, notice) == Result.OK
     assert saved(session)["sleeping_mask"] == 1
     session.disconnect(token)
@@ -96,17 +94,17 @@ def test_mixed_play_duplicates_sleep_disconnect_takeover_and_rejoin(session):
     assert session.request("local_action", 1, 1, 1)
     assert session.latest().turn == 2  # Sleeping red remains turn-eligible.
     assert session.request("local_action", 0, -1, 0)  # Nimbus takeover.
-    rejoined = session.admit(RED, 4, 1, RED_MAC)
+    rejoined = pair_peer(session, RED, 5, 1, RED_MAC)
     assert rejoined is not None and rejoined is not token
     assert session.latest().sleeping == 0
     assert session.receive(token, player_message(operationId=2)) == Result.WRONG_AUTHORITY
     assert session.receive(rejoined, player_message(operationId=2)) == Result.OK
     assert session.latest().scores == (5, 1, 0, 0)
-    assert session.admit(GREEN, 4, 1, GREEN_MAC) is None  # Frozen roster.
+    assert pair_peer(session, GREEN, 5, 1, GREEN_MAC) is None  # Frozen roster.
 
 
 def test_unexpected_disconnect_keeps_roster_and_turn(session):
-    token = session.admit(RED, 4, 1, RED_MAC)
+    token = pair_peer(session, RED, 5, 1, RED_MAC)
     start_local(session, (1,))
     turn = session.latest().turn
     session.disconnect(token)
@@ -116,7 +114,7 @@ def test_unexpected_disconnect_keeps_roster_and_turn(session):
 
 
 def test_consumed_physical_overflow_is_durable_but_local_overflow_is_unchanged(session):
-    token = session.admit(RED, 4, 1, RED_MAC)
+    token = pair_peer(session, RED, 5, 1, RED_MAC)
     assert session.request("start")
     assert session.request("local_action", 0, 0x7FFFFFFF, 0)
     before = saved(session)
@@ -132,7 +130,7 @@ def test_consumed_physical_overflow_is_durable_but_local_overflow_is_unchanged(s
 
 
 def test_new_game_changes_epoch_and_revision_even_in_lobby(session):
-    token = session.admit(RED, 4, 1, RED_MAC)
+    token = pair_peer(session, RED, 5, 1, RED_MAC)
     assert session.request("start")
     assert session.receive(token, player_message(operationId=8)) == Result.OK
     before = saved(session)
@@ -142,7 +140,7 @@ def test_new_game_changes_epoch_and_revision_even_in_lobby(session):
     assert after["version"] > before["version"] and after["term"] == before["term"]
     assert after["last_operation"] == before["last_operation"]
     assert after["started"] == 0 and after["scores"] == [0] * 4
-    assert session.admit(BLUE, 4, 1, BLUE_MAC) is not None  # Admission reopened.
+    assert pair_peer(session, BLUE, 5, 1, BLUE_MAC) is not None  # Admission reopened.
     assert session.new_game()  # reset() returns NO_CHANGE in a lobby.
     assert saved(session)["version"] > after["version"]
     assert session.request("start")
@@ -163,7 +161,7 @@ def test_new_game_refuses_counter_exhaustion(session, field):
 
 
 def test_resume_persists_new_term_and_drops_links(session, native):
-    token = session.admit(RED, 4, 1, RED_MAC)
+    token = pair_peer(session, RED, 5, 1, RED_MAC)
     start_local(session, (1,))
     session.receive(token, player_message())
     before = saved(session)
@@ -263,7 +261,7 @@ def test_all_native_calls_serialized_including_read_admit_and_close(session, mon
         if index % 3:
             session.request("local_action", 0, 1, 0)
         else:
-            session.disconnect(session.admit(RED, 4, 1, RED_MAC))
+            session.disconnect(pair_peer(session, RED, 5, 1, RED_MAC))
         session.wire()
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(act, range(30)))
@@ -279,7 +277,7 @@ def test_all_native_calls_serialized_including_read_admit_and_close(session, mon
     {"type": "state"}, {"fromNodeId": BLUE}, {"extra": "unsupported"},
 ])
 def test_malformed_or_spoofed_messages_cannot_score(session, changes):
-    token = session.admit(RED, 4, 1, RED_MAC)
+    token = pair_peer(session, RED, 5, 1, RED_MAC)
     session.request("start")
     before = saved(session)
     assert session.receive(token, player_message(**changes)) == Result.INVALID_ARGUMENT
@@ -288,25 +286,26 @@ def test_malformed_or_spoofed_messages_cannot_score(session, changes):
 
 
 @pytest.mark.parametrize("raw", [b"", b"[1]", b"null", b"{", b"\xff", b"x" * 353,
-    b'{"type":"player","protocol":4,"protocol":4,"fromNodeId":1}',
+    b'{"type":"player","protocol":5,"protocol":5,"fromNodeId":1}',
 ])
 def test_bad_json_is_rejected_without_crashing(session, raw):
-    token = session.admit(RED, 4, 1, RED_MAC)
+    token = pair_peer(session, RED, 5, 1, RED_MAC)
     assert session.receive(token, raw) == Result.INVALID_ARGUMENT
 
 
 @pytest.mark.parametrize("node,protocol,public,address", [
-    (RED, 3, 1, RED_MAC), (RED, 4, 0, RED_MAC), (BLUE, 4, 1, RED_MAC),
-    (RED, 4, 1, RED_MAC ^ (1 << 40)), (0, 4, 1, RED_MAC),
+    (RED, 4, 1, RED_MAC), (RED, 5, 0, RED_MAC), (BLUE, 5, 1, RED_MAC),
+    (RED, 5, 1, RED_MAC ^ (1 << 40)), (0, 5, 1, RED_MAC),
 ])
-def test_admission_checks_full_public_address_and_characteristic_identity(session, node, protocol, public, address):
-    assert session.admit(node, protocol, public, address) is None
+def test_admission_retains_full_transport_binding_and_checks_identity(session, node, protocol, public, address):
+    session.disconnect(pair_peer(session, RED, 5, 1, RED_MAC))
+    assert pair_peer(session, node, protocol, public, address) is None
     assert session.latest().connected == 0
 
 
 def test_display_is_read_only_and_never_rostered(session):
     address = 0x1234AABBCCDE
-    token = session.admit((address - 1) & 0xFFFFFFFF, 4, 1, address)
+    token = pair_peer(session, (address - 1) & 0xFFFFFFFF, 5, 1, address, kind=3)
     assert token is not None
     start_local(session)
     before = saved(session)
@@ -316,19 +315,20 @@ def test_display_is_read_only_and_never_rostered(session):
 
 
 def test_sleep_notice_requires_admitted_matching_player(session):
-    token = session.admit(RED, 4, 1, RED_MAC)
+    token = pair_peer(session, RED, 5, 1, RED_MAC)
     session.request("start")
     before = saved(session)
-    raw = json.dumps({"type": "status", "protocol": 4, "fromNodeId": BLUE, "state": "sleep"}).encode()
+    raw = json.dumps({"type": "status", "protocol": 5, "fromNodeId": BLUE, "state": "sleep"}).encode()
     assert session.receive(token, raw) == Result.INVALID_ARGUMENT
     assert saved(session) == before
 
 
-def test_wrong_configured_authority_is_visible_and_does_not_create_saved_game(tmp_path, native):
+def test_invalid_runtime_pairing_is_visible_and_does_not_replace_saved_game(tmp_path, native):
     path = tmp_path / "game.json"
-    with pytest.raises(ValueError, match="identity"):
-        CribbageSession(path, library=native, identity={"node": 123, "mac": "12:34:56:78:9A:BC"})
-    assert not path.exists()
+    path.write_text('{"pairing":{"node_id":0}}')
+    with pytest.raises(ValueError, match="pairing"):
+        CribbageSession(path, library=native)
+    assert path.read_text() == '{"pairing":{"node_id":0}}'
 
 
 def test_failed_new_game_restore_stops_publication(session, monkeypatch):
@@ -377,7 +377,7 @@ def test_nimbus_lobby_review_scoring_selection_clear_resume_and_new_game(session
 def test_failed_nimbus_action_keeps_draft_and_physical_inputs_do_not_clear_it(session):
     from animation.core.manager import PreviewLEDController
     from animation.plugins.cribbage_leaderboard import CribbageLeaderboardAnimation
-    token = session.admit(RED, 4, 1, RED_MAC)
+    token = pair_peer(session, RED, 5, 1, RED_MAC)
     session.request("start")
     session.request("local_action", 0, 0x7FFFFFFF, 0)
     game = CribbageLeaderboardAnimation(PreviewLEDController(33, 138), source=session)
@@ -418,14 +418,14 @@ def test_render_reads_only_cached_host_snapshots_and_handles_int32_scores(sessio
 
 def test_blue_z_peer_real_native_updates_acks_heartbeats_and_disconnects(session):
     import asyncio
-    from drivers.cribbage_ble import BlueZCentral, CHARACTERISTIC, DEVICE, DOWNLINK, IDENTITY, PROTOCOL, SERVICE, UPLINK
+    from drivers.cribbage_ble import BlueZCentral, CHARACTERISTIC, DEVICE, DOWNLINK, IDENTITY, PROTOCOL, PAIRING, SERVICE, UPLINK
     central = BlueZCentral.__new__(BlueZCentral)
     central.session = session
     central.links, central.error = {}, ""
     central._stop = threading.Event()
     path = "/org/bluez/hci0/dev_test"
     service_path = path + "/service"
-    chars = {uuid: service_path + "/char" + str(index) for index, uuid in enumerate((IDENTITY, PROTOCOL, UPLINK, DOWNLINK))}
+    chars = {uuid: service_path + "/char" + str(index) for index, uuid in enumerate((IDENTITY, PROTOCOL, UPLINK, DOWNLINK, PAIRING))}
     writes, calls = [], []
     async def properties(_path, _interface):
         return {"ServicesResolved": True, "AddressType": "public", "Address": "98:3D:AE:EA:0F:41"}
@@ -435,7 +435,10 @@ def test_blue_z_peer_real_native_updates_acks_heartbeats_and_disconnects(session
     async def call(target, interface, member, signature="", body=None, **kwargs):
         calls.append((target, interface, member))
         if member == "ReadValue":
-            return [(RED if target == chars[IDENTITY] else 4).to_bytes(4 if target == chars[IDENTITY] else 2, "little")]
+            if target == chars[PAIRING]:
+                from tests.unit.cribbage_pairing import packet
+                return [packet(session, RED)]
+            return [(RED if target == chars[IDENTITY] else 5).to_bytes(4 if target == chars[IDENTITY] else 2, "little")]
         if member == "WriteValue":
             from dbus_next import Message
             Message(destination="org.bluez", path=target, interface=interface, member=member,
@@ -543,7 +546,8 @@ def test_deployment_packages_pinned_source_and_checks_pi_build_before_start(tmp_
                 Path("vendor/scorebot/test/native/test_c_api.c"), Path("vendor/scorebot/platformio.pi.ini")}
     assert required <= set(paths)
     assert not any("build" in path.parts and path.parts[0] == "vendor" for path in paths)
-    assert (ROOT / "vendor/scorebot/REVISION").read_text().strip() == "af383b408234fb17d4078d93dd23e28c10fcf20f"
+    from tools.build_scorebot import PIN
+    assert (ROOT / "vendor/scorebot/REVISION").read_text().strip() == PIN
     calls = []
     app = tmp_path / "app"
     app.mkdir()
@@ -561,45 +565,29 @@ def test_deployment_packages_pinned_source_and_checks_pi_build_before_start(tmp_
     assert check < start and "--configure" in calls[check]
 
 
-def test_build_uses_the_same_verified_identity_for_native_and_player_profile(tmp_path, monkeypatch, capsys):
+def test_build_checks_pinned_core_without_compiled_hardware_identity(tmp_path, monkeypatch, capsys):
     from tools import build_scorebot
     identity_path = tmp_path / "identity.json"
-    monkeypatch.setattr(build_scorebot, "public_adapter", lambda _adapter: "12:34:56:78:9A:BC")
+    source = tmp_path / "vendor/scorebot"
+    source.mkdir(parents=True)
+    (source / "REVISION").write_text(build_scorebot.PIN)
+    monkeypatch.setattr(build_scorebot, "ROOT", tmp_path)
     calls = []
     monkeypatch.setattr(build_scorebot.subprocess, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
     build_scorebot.build(identity_path, configure=True)
-    identity = json.loads(identity_path.read_text())
-    assert identity == {"node": 0x56789ABC, "mac": "12:34:56:78:9A:BC", "adapter": "hci0"}
-    args, kwargs = calls[0]
-    assert args[0][-1] == "check"
-    assert kwargs["env"]["SCOREBOT_LEADER_NODE_ID"] == str(identity["node"])
-    assert kwargs["env"]["SCOREBOT_LEADER_BLUETOOTH_MAC"] == "0x123456789ABCULL"
-    output = capsys.readouterr().out
-    assert "SCOREBOT_LEADER_NODE_ID=" + str(identity["node"]) in output
-    assert "SCOREBOT_LEADER_BLUETOOTH_MAC=0x123456789ABCULL" in output
-    assert "platformio.pi.ini" in output and "pi_players" in output
-    monkeypatch.setattr(build_scorebot, "public_adapter", lambda _adapter: "12:34:56:78:9A:BD")
-    with pytest.raises(ValueError, match="differs"):
+    assert json.loads(identity_path.read_text()) == {"adapter": "hci0"}
+    assert calls[0][0][0][-1] == "check" and "env" not in calls[0][1]
+    assert "no compiled authority identity" in capsys.readouterr().out
+    (source / "REVISION").write_text("unexpected")
+    with pytest.raises(ValueError, match="revision"):
         build_scorebot.build(identity_path)
     assert len(calls) == 1
 
 
-def test_build_refuses_missing_identity_or_nonpublic_adapter(tmp_path, monkeypatch):
-    from tools import build_scorebot
-    with pytest.raises(ValueError, match="Configure"):
-        build_scorebot.build(tmp_path / "identity.json")
-    monkeypatch.setattr(build_scorebot.subprocess, "check_output", lambda *args, **kwargs: 's "random"')
-    with pytest.raises(ValueError, match="public"):
-        build_scorebot.public_adapter("hci0")
-
-
-def test_all_local_host_can_disable_ble_and_missing_identity_is_visible(tmp_path, native, monkeypatch):
+def test_all_local_host_needs_no_identity_file_and_can_disable_ble(tmp_path, native, monkeypatch):
     from drivers import cribbage_runtime
-    (tmp_path / "config").mkdir()
-    identity_path = tmp_path / "config/scorebot_identity.json"
-    identity_path.write_text(json.dumps({"node": 0x10203040, "mac": "12:34:56:78:9A:BC", "adapter": "hci0"}))
     real_session = CribbageSession
-    monkeypatch.setattr(authority, "CribbageSession", lambda path, identity: real_session(path, library=native, identity=identity))
+    monkeypatch.setattr(authority, "CribbageSession", lambda path: real_session(path, library=native))
     monkeypatch.setenv("SCOREBOT_BLE", "0")
     host = cribbage_runtime.ScorebotHost(tmp_path)
     try:
@@ -609,11 +597,9 @@ def test_all_local_host_can_disable_ble_and_missing_identity_is_visible(tmp_path
         assert host.status()["scores"] == [9, 0, 0, 0]
     finally:
         host.close()
-    identity_path.unlink()
-    unavailable = cribbage_runtime.ScorebotHost(tmp_path)
-    assert "unavailable" in unavailable.status()["error"]
-    assert json.loads((tmp_path / "run_state/cribbage.json").read_text())["scores"][0] == 9
-    unavailable.close()
+    host = cribbage_runtime.ScorebotHost(tmp_path)
+    assert host.status()["scores"][0] == 9
+    host.close()
 
 
 def test_first_deployment_relative_control_path_uses_personal_data_root(tmp_path, native, monkeypatch):
@@ -625,16 +611,13 @@ def test_first_deployment_relative_control_path_uses_personal_data_root(tmp_path
     for name in DATA_DIRECTORIES:
         (data / name).mkdir(parents=True)
     link_data(tmp_path, app, data)
-    identity = {"node": 0x10203040, "mac": "12:34:56:78:9A:BC", "adapter": "hci0"}
-    (data / "config/scorebot_identity.json").write_text(json.dumps(identity))
-    assert not (app / "config/scorebot_identity.json").exists()
     monkeypatch.chdir(app)
     monkeypatch.delenv("LEDGRID_DATA_DIR", raising=False)
     assert scorebot_data_root("run_state/control.json") == data
     monkeypatch.setenv("LEDGRID_DATA_DIR", str(data))
     assert scorebot_data_root("unrelated/control.json") == data
     real_session = CribbageSession
-    monkeypatch.setattr(authority, "CribbageSession", lambda path, identity: real_session(path, library=native, identity=identity))
+    monkeypatch.setattr(authority, "CribbageSession", lambda path: real_session(path, library=native))
     monkeypatch.setenv("SCOREBOT_BLE", "0")
     host = ScorebotHost(scorebot_data_root("run_state/control.json"))
     try:

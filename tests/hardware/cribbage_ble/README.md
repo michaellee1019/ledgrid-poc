@@ -4,6 +4,9 @@ This opt-in fixture exercises actual Mac CoreBluetooth and ESP32 GATT traffic
 against the production native session, Nimbus routing and renderer. It does not
 run as part of pytest and does not add a production macOS BLE backend.
 
+The fixture targets wire protocol 5. `P` selects the native runtime session over
+USB, and live GATT reads must confirm that selection before admission.
+
 `radio.cpp` temporarily makes the USB-identified four-screen board a player
 peripheral. Serial `N` injects a gesture, which must arrive at the Mac as a GATT
 notification. The board prints each complete downlink snapshot after checking
@@ -13,7 +16,7 @@ It never retries a score notification. `S` performs real timed deep sleep;
 `D` drops the physical BLE connection. No game rules are implemented in the
 fixture. Screens and physical buttons are outside this fixture's acceptance.
 
-Before flashing, obtain full flash backups with esptool `read_flash`, retain its
+After every hardware ownership or firmware change, obtain fresh full flash backups with esptool `read_flash`, retain its
 successful transfer digest verification, hash each file, inspect the partition
 table and OTA selection, and write a private manifest. Never stage backups,
 manifests, logs or generated evidence. `lab.py` requires both inspected backups
@@ -38,12 +41,12 @@ SCOREBOT_TEST_LEADER_MAC=0xACTUAL_PUBLIC_MAC_WITHOUT_COLONS pio run \
   -d tests/hardware/cribbage_ble -e peripheral
 ```
 
-`build_native.py` copies the pinned dependency to an ignored test build and
-changes only RED's identity table entry to the physically identified bench
-board. All game policy stays unchanged. Its native leader profile and the radio
-fixture must use the same actual public Mac address. This profile must never be
-deployed to the Pi. The `central` firmware environment is an unused USB/UART
-radio fallback for the CH343-connected e-paper board, not e-paper display support.
+`build_native.py` copies the pinned dependency to an ignored test build without
+changing identity tables or policies. Native identities and pairing are runtime
+data. The optional `--leader-mac` records bench filter metadata only; the radio
+fixture's `SCOREBOT_TEST_LEADER_MAC` is an explicit safety filter for the actual
+Mac central, separate from production pairing. Neither test identity nor a
+patched core is deployed to the Pi.
 
 Run the explicit test under the restoration owner:
 

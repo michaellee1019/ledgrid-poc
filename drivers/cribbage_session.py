@@ -45,13 +45,14 @@ class Peer:
 
 
 class CribbageSession:
-    def __init__(self, path, library=None, identity=None):
+    def __init__(self, path, library=None):
         self.path = Path(path)
         self.lock = threading.RLock()
         self.error = ""
         self.feedback = ""
         self.pending = False
         self.peers = {}
+        self.bindings = {}
         self._view = None
         self._wire = None
         self._game = None
@@ -61,20 +62,44 @@ class CribbageSession:
             try:
                 fcntl.flock(self._lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 self.library = library or Library()
-                if self.library.protocol_version != 4:
+                if self.library.protocol_version != 5:
                     raise ValueError("Scorebot wire protocol mismatch")
-                if identity is not None and not self.library.is_leader(
-                    identity["node"], 4, 1, int(identity["mac"].replace(":", ""), 16)
-                ):
-                    raise ValueError("Native build does not match the configured Pi identity")
-                self._game = self.library.game()
-                if self.path.exists():
-                    values = json.loads(self.path.read_text())
-                    scalars = [item for value in values.values() for item in
+                values = json.loads(self.path.read_text()) if self.path.exists() else None
+                if self.path.exists() and type(values) is not dict:
+                    raise ValueError("Invalid saved game record")
+                pairing = values["pairing"] if values and "pairing" in values else {}
+                if values and "pairing" in values and (set(pairing) != {"node_id", "session_id", "pairing_id"}
+                        or set(values) != {"pairing", "state", "controllers", "bindings"}
+                        or any(type(value) is not int for value in pairing.values())):
+                    raise ValueError("Incomplete saved pairing")
+                if values and "pairing" not in values:
+                    pairing = {"node_id": State.from_dict(values).leader_id}  # Trusted v4 migration.
+                self._game = self.library.game(**pairing)
+                if values is not None:
+                    controllers = set()
+                    for packet, address, public in values.get("bindings", []):
+                        if type(address) is not int or type(public) is not int:
+                            raise ValueError("Invalid saved transport types")
+                        raw = bytes.fromhex(packet)
+                        node = int.from_bytes(raw[5:9], "little")
+                        kind, _ = self._game.admit_peer(raw, address, public)
+                        if kind == PeerKind.REJECTED or node in self.bindings:
+                            raise ValueError("Invalid saved peer binding")
+                        self.bindings[node] = [packet, address, public]
+                        if kind == PeerKind.CONTROLLER:
+                            controllers.add(node)
+                    state = values["state"] if "pairing" in values else values
+                    scalars = [item for value in state.values() for item in
                                (value if isinstance(value, list) else [value])]
                     if any(type(item) is not int for item in scalars):
                         raise ValueError("Invalid saved native state types")
-                    self._require(self._game.restore(State.from_dict(values)))
+                    self._require(self._game.restore(State.from_dict(state)))
+                    if "pairing" in values:
+                        if any(type(item) is not int for array in values["controllers"] for item in array):
+                            raise ValueError("Invalid saved controller types")
+                        if any(node and node not in controllers for node in values["controllers"][0]):
+                            raise ValueError("Missing saved controller binding")
+                        self._game.controller_marks(values["controllers"])
                 self._require(self._game.resume_authority())
                 self._commit(self._game.read())
             except Exception:
@@ -93,7 +118,9 @@ class CribbageSession:
     def _commit(self, state):
         self.pending = True
         try:
-            durable_save(self.path, state.to_dict())
+            durable_save(self.path, {"pairing": self._game.pairing, "state": state.to_dict(),
+                                     "controllers": self._game.controller_marks(),
+                                     "bindings": list(self.bindings.values())})
         except Exception as error:
             self.error = "Scorebot save failed; restart after repair: " + str(error)
             self._wire = None
@@ -101,10 +128,11 @@ class CribbageSession:
             raise RuntimeError(self.error) from error
         wire = state.to_wire(self.library.protocol_version)
         self._wire = json.dumps(wire, separators=(",", ":")).encode()
+        self._discovery = self._game.pairing_packet()
         self._view = LeaderboardState(
             bool(state.started), wire["turn"], tuple(state.scores), state.connected_mask,
             state.roster_mask, state.term, state.version, state.local_control_mask,
-            state.lobby_enabled_mask, state.sleeping_mask,
+            state.lobby_enabled_mask, state.sleeping_mask, self._game.pairing["pairing_id"],
         )
         self.pending = False
 
@@ -115,6 +143,11 @@ class CribbageSession:
         with self.lock:
             self._ready()
             return self._wire
+
+    def discovery(self):
+        with self.lock:
+            self._ready()
+            return self._discovery
 
     def _apply(self, method, *args):
         self._ready()
@@ -163,15 +196,18 @@ class CribbageSession:
             self.feedback = "NEW GAME"
             return True
 
-    def admit(self, node, protocol, public, address):
+    def admit(self, node, protocol, public, address, packet):
         with self.lock:
             self._ready()
-            kind, player = self.library.admit_peer(node, protocol, public, address)
-            state = self._game.read()
-            if kind == PeerKind.REJECTED or any(peer.node == node for peer in self.peers.values()):
+            if (protocol != self.library.protocol_version or len(packet) != 22
+                    or int.from_bytes(packet[5:9], "little") != node
+                    or any(peer.node == node for peer in self.peers.values())):
                 return None
-            if kind == PeerKind.PLAYER and state.started and not state.roster_mask & (1 << player):
+            kind, player = self._game.admit_peer(packet, address, public)
+            if kind == PeerKind.REJECTED:
                 return None
+            self.bindings[node] = [packet.hex(), address, public]
+            self._commit(self._game.read())  # Bindings are durable before admitting input.
             token = object()
             if kind == PeerKind.PLAYER:
                 self._apply("set_connected", player, 1)
@@ -191,12 +227,17 @@ class CribbageSession:
         with self.lock:
             self._ready()
             peer = self.peers.get(token)
-            if peer is None or peer.kind != PeerKind.PLAYER:
+            if peer is None or peer.kind == PeerKind.DISPLAY:
                 return Result.WRONG_AUTHORITY
             try:
                 data = decode_message(message, self.library.protocol_version)
-                if data["fromNodeId"] != peer.node:
+                if data.get("from", data.get("fromNodeId")) != peer.node:
                     raise ValueError("Spoofed node")
+                if data["type"] == "control" and peer.kind == PeerKind.CONTROLLER:
+                    return self._apply("controller_action", peer.node, data["op"], data["command"],
+                                       data["player"], data["value"], int(data["pass"]), data["game"], data["term"])
+                if peer.kind != PeerKind.PLAYER or data["type"] == "control":
+                    return Result.WRONG_AUTHORITY
                 if data["type"] == "player":
                     return self._apply("player_action", peer.node, data["fromNodeId"], data["game"],
                                        data["score"], int(data["turnPassed"]), data["operationId"])

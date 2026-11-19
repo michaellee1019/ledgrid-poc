@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from tests.unit.cribbage_pairing import admit as pair_peer
 from drivers.cribbage_session import Result
 from scripts.simulate_wall_composer import create_simulator
 from scripts.start_server import handle_command
@@ -46,7 +47,7 @@ class PlaySession:
         self.session.close()
 
     def state(self):
-        return json.loads((self.root / "cribbage.json").read_text())
+        return json.loads((self.root / "cribbage.json").read_text())["state"]
 
     def game(self):
         return self.manager.nimbus_game()[0]._runtime._animation.instance
@@ -159,7 +160,7 @@ class SimulatedBoard:
         self.rejoin()
 
     def rejoin(self):
-        self.token = self.play.session.admit(self.node, 4, 1, self.mac)
+        self.token = pair_peer(self.play.session, self.node, 5, 1, self.mac)
         assert self.token is not None
         wire = json.loads(self.play.session.wire())
         self.operation = self.play.library.reconcile_operation(self.operation, wire["operations"][self.player])
@@ -167,7 +168,7 @@ class SimulatedBoard:
 
     def score(self, delta, *, passes=False, duplicate=False):
         self.operation += 1
-        payload = json.dumps({"type": "player", "protocol": 4, "fromNodeId": self.node,
+        payload = json.dumps({"type": "player", "protocol": 5, "fromNodeId": self.node,
                               "game": self.play.state()["game_id"], "score": delta,
                               "turnPassed": passes, "operationId": self.operation}).encode()
         self.last_packet = payload
@@ -186,7 +187,7 @@ class SimulatedBoard:
 
     def disconnect(self, sleeping=False):
         if sleeping:
-            payload = json.dumps({"type": "status", "protocol": 4, "fromNodeId": self.node, "state": "sleep"}).encode()
+            payload = json.dumps({"type": "status", "protocol": 5, "fromNodeId": self.node, "state": "sleep"}).encode()
             assert self.play.session.receive(self.token, payload) == Result.OK
         before = self.play.state()
         self.play.session.disconnect(self.token)
