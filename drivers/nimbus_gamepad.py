@@ -17,7 +17,7 @@ FAST_REPEAT_SECONDS = 0.75
 
 # The unnumbered GC-00004 input report has pressure bytes for the D-pad
 # and face buttons, followed by a Menu bit in byte 12.
-PRESSURE_BUTTONS = ("up", "right", "down", "left", "a", "b", "y")
+PRESSURE_BUTTONS = ("up", "right", "down", "left", "a", "b", "y", "x")
 MENU_REPEAT = frozenset({"up", "right", "down", "left"})
 GAME_REPEAT = MENU_REPEAT - {"up"}
 logger = logging.getLogger(__name__)

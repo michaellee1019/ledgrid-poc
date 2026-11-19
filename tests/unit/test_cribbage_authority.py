@@ -416,7 +416,8 @@ def test_render_reads_only_cached_host_snapshots_and_handles_int32_scores(sessio
     assert not game.generate_frame(0.5, 2).changed
 
 
-def test_blue_z_peer_real_native_updates_acks_heartbeats_and_disconnects(session):
+@pytest.mark.parametrize("failed_path", (None, "dev_test", "dev_other", "queue_full", "slow_write"))
+def test_blue_z_peer_real_native_updates_acks_heartbeats_and_disconnects(session, failed_path):
     import asyncio
     from drivers.cribbage_ble import BlueZCentral, CHARACTERISTIC, DEVICE, DOWNLINK, IDENTITY, PROTOCOL, PAIRING, SERVICE, UPLINK
     central = BlueZCentral.__new__(BlueZCentral)
@@ -424,6 +425,7 @@ def test_blue_z_peer_real_native_updates_acks_heartbeats_and_disconnects(session
     central.links, central.error = {}, ""
     central._stop = threading.Event()
     path = "/org/bluez/hci0/dev_test"
+    central._peer_errors = {} if failed_path in (None, "queue_full", "slow_write") else {"/org/bluez/hci0/" + failed_path: "old peer failure"}
     service_path = path + "/service"
     chars = {uuid: service_path + "/char" + str(index) for index, uuid in enumerate((IDENTITY, PROTOCOL, UPLINK, DOWNLINK, PAIRING))}
     writes, calls = [], []
@@ -440,15 +442,30 @@ def test_blue_z_peer_real_native_updates_acks_heartbeats_and_disconnects(session
                 return [packet(session, RED)]
             return [(RED if target == chars[IDENTITY] else 5).to_bytes(4 if target == chars[IDENTITY] else 2, "little")]
         if member == "WriteValue":
+            if not writes and failed_path == "dev_test":
+                assert central.error == "old peer failure", "Subscription alone is not recovery"
+            if not writes and failed_path == "queue_full":
+                central.links[path]["connected"] = False
+                central._peer_errors[path] = "queue full during write"
             from dbus_next import Message
             Message(destination="org.bluez", path=target, interface=interface, member=member,
                     signature=signature, body=body)._marshall()  # Real D-Bus representation.
             writes.append((time.monotonic(), json.loads(body[0])))
+            if failed_path == "slow_write":
+                await asyncio.sleep(.35)
         return []
     central.call, central.properties, central.objects = call, properties, objects
     async def exercise():
         task = asyncio.create_task(central.peer(path))
         await asyncio.sleep(0.1)
+        if failed_path == "slow_write":
+            await asyncio.sleep(4.2)
+            central._stop.set()
+            await task
+            return
+        if failed_path == "queue_full":
+            await task
+            return
         assert session.latest().connected == 1
         session.request("set_lobby_mode", 1, 0)
         session.request("start")
@@ -463,7 +480,17 @@ def test_blue_z_peer_real_native_updates_acks_heartbeats_and_disconnects(session
         central._stop.set()
         await task
     asyncio.run(exercise())
-    assert not central.error and len(writes) >= 6
+    if failed_path == "slow_write":
+        assert len(writes) >= 3
+        assert all(1.4 <= later[0] - earlier[0] < 1.8 for earlier, later in zip(writes, writes[1:]))
+        assert session.latest().connected == 0 and calls[-1] == (path, DEVICE, "Disconnect")
+        return
+    if failed_path == "queue_full":
+        assert central.error == "queue full during write" and len(writes) == 1
+        assert session.latest().connected == 0 and calls[-1] == (path, DEVICE, "Disconnect")
+        return
+    assert central.error == ("old peer failure" if failed_path == "dev_other" else "")
+    assert path not in central._peer_errors and len(writes) >= 6
     assert any(wire["scores"][0] == 5 and wire["turn"] == 3 for _, wire in writes)
     assert writes[-1][1] == writes[-2][1]
     assert 1.4 <= writes[-1][0] - writes[-2][0] < 1.8

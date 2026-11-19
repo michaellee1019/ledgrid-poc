@@ -177,7 +177,7 @@ def test_discovery_advertisement_is_compact_and_updates_from_native_occupied_mas
     values = []
     before(advert, lambda _interface, properties, _user_data, error: values.append((properties, error)))
     props, error = values[0]
-    assert error is None and props["Type"].value == "broadcast"
+    assert error is None and props["Type"].value == "peripheral"
     assert props["ManufacturerData"].value[0xFFFF].value == session.discovery()[2:]
     assert len(session.discovery()) + 2 + 3 <= 31
     assert admit(session, 101, 5, 1, 0x123456789ABC) is not None
@@ -220,6 +220,7 @@ def test_blue_z_finds_fresh_manufacturer_only_peer_and_refreshes_advertisement(s
     central = BlueZCentral.__new__(BlueZCentral)
     central.session, central.identity = session, {"adapter": "hci0"}
     central.links, central.error, central._stop = {}, "", threading.Event()
+    central._peer_errors = {}
     path = "/org/bluez/hci0/dev_fresh"
     offered = packet(session, 101)
     advertisements, filters, peers = [], [], []
@@ -231,6 +232,8 @@ def test_blue_z_finds_fresh_manufacturer_only_peer_and_refreshes_advertisement(s
         if member == "SetDiscoveryFilter":
             filters.append(body[0])
         if interface == AD_MANAGER and member == "RegisterAdvertisement":
+            if bus.advert.Type != "peripheral":
+                raise RuntimeError("Pi rejects random-address changes while scanning")
             advertisements.append(bus.advert.packet)
         return []
 

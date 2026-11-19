@@ -28,7 +28,7 @@ def advertisement(packet):
 
         @dbus_property(access=PropertyAccess.READ)
         def Type(self) -> "s":  # noqa: F821
-            return "broadcast"
+            return "peripheral"  # Keep the initiator's identity; broadcast switches NRPA during scanning.
 
         @dbus_property(access=PropertyAccess.READ)
         def ManufacturerData(self) -> "a{qv}":  # noqa: F722
@@ -80,10 +80,19 @@ class BlueZCentral:
         self.session = session
         self.identity = identity
         self.error = ""
+        self._peer_errors = {}
         self.links = {}
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="scorebot-ble", daemon=True)
         self._thread.start()
+
+    @property
+    def error(self):
+        return self._fatal_error or "; ".join(self._peer_errors.values())
+
+    @error.setter
+    def error(self, value):
+        self._fatal_error = value
 
     def close(self):
         self._stop.set()
@@ -130,7 +139,7 @@ class BlueZCentral:
                     link["queue"].put_nowait(bytes(changed["Value"].value))
                 except asyncio.QueueFull:
                     link["connected"] = False
-                    self.error = "Scorebot input queue full; reconnect to resynchronize"
+                    self._peer_errors[path] = "Scorebot input queue full; reconnect to resynchronize"
 
     async def run(self):
         from dbus_next import BusType, Variant
@@ -240,15 +249,18 @@ class BlueZCentral:
                 if acknowledge or wire != last or time.monotonic() >= heartbeat:
                     if len(wire) > MAX_MESSAGE:
                         raise ValueError("Scorebot snapshot exceeds wire limit")
+                    # Include GATT round-trip time within the heartbeat period.
+                    heartbeat = time.monotonic() + HEARTBEAT
                     await self.call(chars[DOWNLINK], CHARACTERISTIC, "WriteValue", "aya{sv}",
                                     [wire, {"type": Variant("s", "request")}])
+                    if last is None and link["connected"]:
+                        self._peer_errors.pop(path, None)
                     last = wire
-                    heartbeat = time.monotonic() + HEARTBEAT
                 await asyncio.sleep(0.05)
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            self.error = "Scorebot peer: " + str(error)
+            self._peer_errors[path] = "Scorebot " + path.split("/")[-1] + ": " + str(error)
         finally:
             self.links.pop(path, None)
             try:

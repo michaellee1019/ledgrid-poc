@@ -230,7 +230,7 @@ scorebot_result scorebot_v1_pair_peer(scorebot_game* game, const uint8_t* packet
     }
     *outKind = static_cast<uint32_t>(admission.kind);
     *outPlayer = admission.kind == scorebot::PeerKind::Player
-        ? static_cast<uint32_t>(remote.role) - static_cast<uint32_t>(BoardRole::Player_Red) : SCOREBOT_NO_PLAYER;
+        ? static_cast<uint32_t>(remote.role) - static_cast<uint32_t>(BoardRole::Player_Red) : static_cast<uint32_t>(SCOREBOT_NO_PLAYER);
     return SCOREBOT_OK;
 }
 scorebot_result scorebot_v1_controller_action(scorebot_game* game, uint32_t node, uint32_t operation,

@@ -82,6 +82,18 @@ def test_buttons_emit_press_edges_and_only_movement_repeats(controller):
     assert reader.poll(game) == ()
 
 
+def test_final_face_pressure_channel_emits_x_once_and_preserves_y(controller):
+    reader, reports, clock = controller
+    game = object()
+    reader.poll(game)
+    reports.extend((report(7), report(7)))
+    assert reader.poll(game) == ("x",)
+    clock[0] = 1.0
+    assert reader.poll(game) == ()
+    reports.extend((report(), report(6), report()))
+    assert reader.poll(game) == ("y",)
+
+
 def test_nimbus_controls_the_live_game_and_releases_it_on_disconnect(controller, wall_composer):
     reader, reports, clock = controller
     manager, menu = wall_composer

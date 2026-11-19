@@ -100,7 +100,7 @@ void setupRadio() {
 
 void serviceRadio() {}
 void command(const String& line) {
-    if (line.startsWith("P ")) {
+    if (line.startsWith("P ") || line.startsWith("C ")) {
         if (line.length() != 46 || connection != BLE_HS_CONN_HANDLE_NONE) {
             Serial.println("FAULT pairing-command");
             return;
@@ -123,6 +123,10 @@ void command(const String& line) {
         selected.node = node;
         selected.kind = scorebot::DeviceKind::Player;
         selected.role = BoardRole::Player_Red;
+        if (line[0] == 'C') {
+            selected.kind = scorebot::DeviceKind::Leaderboard;
+            selected.role = BoardRole::Leader;
+        }
         selected.flags = scorebot::Selected;
         selected.occupied = 0;
         accepted = false;

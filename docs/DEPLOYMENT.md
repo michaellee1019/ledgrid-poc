@@ -308,6 +308,8 @@ runs its native C/Python checks on **the target Pi**, before starting the
 service. It never uses a sibling checkout or a Mac binary. The five LED
 receivers and their firmware are unchanged. Wire-v4 boards are incompatible;
 update participating Scorebot firmware together.
+The documented one-line GCC correction in `vendor/scorebot/LOCAL_PATCHES.md`
+is included in target builds; macOS checks alone do not validate the Linux library.
 
 On the Pi, run `venv/bin/python app/tools/build_scorebot.py --identity
  data/config/scorebot_identity.json --configure` as one command. This builds and
@@ -335,6 +337,8 @@ player boards. With BLE enabled, the central advertises native pairing
 manufacturer data and discovers selected peripherals without requiring a service
 UUID in their advertisements. It reads live GATT identity, protocol and pairing
 metadata, then admits the actual connection address through the native core.
+BlueZ uses peripheral advertising concurrently with central scanning so its
+advertisement retains the adapter identity instead of requesting an NRPA switch.
 Displays cannot score; admitted mirrored controllers use their separate native
 command/receipt API. Compact snapshots acknowledge changes, duplicates and
 rejections and provide 1.5-second heartbeats, within the 512-byte wire limit.

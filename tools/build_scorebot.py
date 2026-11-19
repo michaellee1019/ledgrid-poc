@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN = "f2fe25cdb7a891ef1f2c0ae6aeb8a9a5ffb09a5d"
+PIN = "078bb6b079bdfcbbabd34e312634c4235c789374"
 
 
 def build(identity_path, configure=False):
