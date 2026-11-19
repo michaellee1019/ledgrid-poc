@@ -23,7 +23,7 @@
   <canvas width="33" height="138" aria-label="Simulated wall with 33 by 138 LEDs"></canvas>
   <section>
     <h1>Nimbus Composer</h1>
-    <p>Press M for Menu and use the arrow keys to navigate. A selects or plays the current game; B goes back. M pauses a game and opens the HUD. Close the HUD and press A to resume.</p>
+    <p>Press M for Menu and use the arrow keys to navigate. A selects or plays the current game; B goes back. M opens Composer; cribbage continues playing. X submits a cribbage draft. Close the HUD and press A to resume.</p>
     <output aria-live="polite">Connecting to the simulator</output>
     <div class="keys" aria-label="Nimbus controls">
       <button id="up" data-button="up" aria-label="Up">↑</button>
@@ -33,6 +33,7 @@
       <button id="menu" data-button="menu">Menu</button>
       <button data-button="a">A</button>
       <button data-button="b">B</button>
+      <button data-button="x">X</button>
       <button data-button="y">Y</button>
     </div>
     <label><input type="checkbox" id="mask" checked> Show plant coverage</label>
@@ -47,7 +48,7 @@
   const pending = [];
   let plantCoverage;
   const keys = {m: 'menu', Escape: 'menu', ArrowUp: 'up', ArrowDown: 'down',
-                ArrowLeft: 'left', ArrowRight: 'right', a: 'a', Enter: 'a', b: 'b', y: 'y'};
+                ArrowLeft: 'left', ArrowRight: 'right', a: 'a', Enter: 'a', b: 'b', x: 'x', y: 'y'};
   const directionButtons = ['up', 'down', 'left', 'right'];
   const keyPressedAt = new Map();
   let menuOpen = false;

@@ -299,3 +299,60 @@ affected file or run-state directory with `sudo chown`, then rerun deployment.
 If an interrupted old installation left `app/` directories read-only, use
 `chmod -R u+w ~/ledgrid-pod/app` before retrying. Do not delete personal data to
 bypass a migration failure.
+
+## Scorebot cribbage authority
+
+The application vendors unchanged Scorebot source at
+`vendor/scorebot/REVISION` (`af383b408234fb17d4078d93dd23e28c10fcf20f`, ABI 1,
+wire 4). Deployment copies that source and runs its native C/Python checks on
+**the target Pi**, before starting the service. It never uses a sibling checkout
+or a Mac binary. The five LED receivers and their firmware are unchanged.
+
+On the Pi, `venv/bin/python app/tools/build_scorebot.py --identity
+ data/config/scorebot_identity.json --configure` verifies BlueZ's public adapter
+address and builds/checks the library. The command is one line. The first run
+records the actual adapter address and a stable node ID derived from it; the
+native compiler rejects identity collisions. Later builds refuse an adapter
+change. This personal configuration and `data/run_state/cribbage.json` remain
+outside replaceable application files. Never replace them with test identities
+or wire JSON. Invalid saved games and save failures remain visible and block
+input/publication until repaired and restarted; existing scores are retained.
+
+The build prints the exact environment assignments for participating firmware.
+Run that printed command from `vendor/scorebot` to build `pi_players` using the
+**same** `SCOREBOT_LEADER_NODE_ID` and `SCOREBOT_LEADER_BLUETOOTH_MAC`. Flash only
+identified player hardware with the matching profile before peer acceptance;
+normal/default Scorebot firmware trusts its original hardware leaderboard.
+No actual Pi identity is shipped as a default. Verify the public address across
+a Pi restart, then verify Nimbus and Scorebot connections together. Passive
+manufacturer advertisements for the e-paper-only display are outside this
+increment; connecting its USB cable does not make it a GATT player.
+
+One controller process owns the session independently of Scene lifetime. Set
+`SCOREBOT_BLE=0` in the service environment to play entirely LOCAL without
+opening D-Bus or connecting player boards; deployment preserves this override.
+With BLE enabled, the central uses the existing GATT service, validates each
+full public transport address and identity/protocol, and publishes compact
+snapshots on changes, rejected/duplicate input, and 1.5-second heartbeats.
+Displays receive snapshots but cannot score. Connection loss retains the
+frozen roster and permits Nimbus takeover; rejoin clears sleep and resynchronizes
+without replaying uncertain scores. The authority never restores network state.
+
+Choose Cribbage Leaderboard in Composer, then press A to enter controls.
+Up/Down selects a color; Left/Right chooses LOCAL, BOARD (physical), or OFF in
+the lobby. A reviews Start; a second A confirms. In play, Left/Right edits the
+selected draft, X submits ADD, and A submits OK. Selection does not change turn.
+B clears drafts, then returns; Y offers Resume or a separately confirmed New
+Game. Menu and Scene changes discard drafts and leave the session running.
+The pulsing rim marks the turn; the white left edge marks selection. Right-edge
+dots show LOCAL green, connected cyan, sleeping amber, or absent red. SAVING,
+SAVED and errors are separate from scores. Long scores use a bounded exponential
+row label; EXACT below shows the complete selected int32 score on two lines.
+The controller's `cribbage` status reports errors and BLE status separately.
+
+For a Mac-only, radio-free LOCAL demonstration, build the native library on the
+Mac, then run `scripts/simulate_wall_composer.py --cribbage-library
+/path/to/libscorebot.dylib --data-dir /tmp/cribbage-demo` with the project Python.
+Join the two command lines when running. The simulator's X/A/B/Y and arrow
+buttons exercise the real session through the shared Nimbus routing. This is
+software evidence, not Pi, public-identity, physical BLE, or wall acceptance.

@@ -1,0 +1,41 @@
+#ifndef BUTTONGRID_H
+#define BUTTONGRID_H
+
+#include <Adafruit_MCP23X17.h>
+
+class ButtonGrid {
+    class Coordinator* coordinator;
+public:
+    struct Interrupt {
+        uint8_t pin;
+        uint16_t captured;
+        uint16_t pressed;
+    };
+    Adafruit_MCP23X17 buttonGpio;
+    static constexpr u32_t okPin = 4;
+    static constexpr u32_t plusone = 3;
+    static constexpr u32_t plusfive = 2;
+    static constexpr u32_t negone = 1;
+    static constexpr u32_t add = 0;
+
+private:
+
+    static constexpr u32_t interruptPin = 8;
+
+
+    static constexpr auto pins = {okPin, plusone, plusfive, negone, add};
+
+    friend void buttonISR(void*);
+
+public:
+    explicit ButtonGrid(class Coordinator* coordinator);
+    void setup();
+    void prepareForSleep();
+    void resumeAfterSleepAbort();
+    bool interruptAsserted() const;
+    Interrupt consumeInterrupt();
+    uint16_t pressedMask();
+};
+
+
+#endif

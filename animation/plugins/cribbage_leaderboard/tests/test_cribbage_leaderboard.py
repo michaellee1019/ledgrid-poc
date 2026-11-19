@@ -70,9 +70,8 @@ class CribbageLeaderboardTests(unittest.TestCase):
         self.assertIsNone(parse_state_line('{"type":"player","protocol":4}'))
 
     def test_protocol_constant_matches_the_cribbage_header(self) -> None:
-        header = Path(__file__).resolve().parents[5] / "cribbage_board_robot" / "lib" / "scorebot" / "src" / "Protocol.hpp"
-        if not header.is_file():
-            self.skipTest("the separate cribbage firmware checkout is unavailable")
+        header = Path(__file__).resolve().parents[4] / "vendor" / "scorebot" / "lib" / "scorebot" / "src" / "Protocol.hpp"
+        self.assertTrue(header.is_file(), "pinned Scorebot source is missing")
         self.assertIn(f"kWireProtocolVersion = {PROTOCOL_VERSION}", header.read_text(encoding="utf-8"))
 
     def test_current_player_is_brighter_and_the_score_is_drawn(self) -> None:
@@ -109,8 +108,7 @@ class CribbageLeaderboardTests(unittest.TestCase):
             PreviewLEDController(33, 138), {"glow": 0.5, "serial_port": "preview"}
         )
         frame = animation.generate_frame(0.5, 0)
-        self.assertIsNone(animation._serial)
-        self.assertIsNone(animation._spi)
+        self.assertTrue(animation._preview)
         self.assertEqual(tuple(int(channel) for channel in _pixel(frame.pixels, 4)), (255, 0, 0))
         self.assertTrue(np.any(np.all(_row(frame.pixels, 0) == (255, 255, 255), axis=2)))
         self.assertEqual(tuple(int(channel) for channel in _pixel(frame.pixels, 40)), (0, 0, 0))

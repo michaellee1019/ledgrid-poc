@@ -1,0 +1,15 @@
+.pio
+.idea/
+.claude/settings.local.json
+.vscode/.browse.c_cpp.db*
+.vscode/settings.json
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+.DS_Store
+secret.h
+# Local printer credentials are generated into a build-only header by
+# tools/printer_wifi.py. Commit only .printer-wifi.example.json.
+.printer-wifi.json
+native/build*/
+__pycache__/

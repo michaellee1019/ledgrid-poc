@@ -7,7 +7,6 @@ from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 from threading import RLock
-import time
 from uuid import uuid4
 from types import SimpleNamespace
 
@@ -42,10 +41,15 @@ class SimulatedWall(PreviewLEDController):
         self.pixels = np.zeros_like(self.pixels)
 
 
-def create_simulator(data_dir):
+def create_simulator(data_dir, cribbage_library=None):
     app = Flask(__name__, template_folder=str(ROOT / "web" / "templates"))
     wall = SimulatedWall()
+    if cribbage_library:
+        from drivers.cribbage_session import CribbageSession, Library
+        wall.cribbage_session = CribbageSession(Path(data_dir) / "cribbage.json", library=Library(cribbage_library))
+        app.extensions["cribbage"] = wall.cribbage_session
     manager = AnimationManager(wall, auto_start=False)
+    app.extensions["wall_manager"] = manager
     manager.set_output_brightness(80)
     manager.set_target_fps(30)
     owner = controller_activation_coordinator(manager)
@@ -58,13 +62,19 @@ def create_simulator(data_dir):
     renderer = WallMenuFrame()
     lock = RLock()
     starter = get_starter("aurora")["scene"]
+    if cribbage_library:
+        from web.composer_content import gallery_entries
+        item = next(item for item in gallery_entries(menu.catalog, menu.presets)
+                    if item["component_id"] == "cribbage_leaderboard")
+        starter = menu._with_animation(item, None)
     command("start_scene", {"scene": starter})
-    menu.looks.save_as("Boreal Hush", normalize_composer_scene({"origin": "composer", "scene": starter}, menu.catalog))
-    menu.playlists.save({"name": "Evening", "entries": [
-        {"entry_id": str(uuid4()), "label": name, "duration_seconds": 30,
-         "scene": get_starter(key)["scene"]}
-        for key, name in (("aurora", "Boreal Hush"), ("aurora_clock", "Firefly Timekeeper"))
-    ]})
+    if not cribbage_library:
+        menu.looks.save_as("Boreal Hush", normalize_composer_scene({"origin": "composer", "scene": starter}, menu.catalog))
+        menu.playlists.save({"name": "Evening", "entries": [
+            {"entry_id": str(uuid4()), "label": name, "duration_seconds": 30,
+             "scene": get_starter(key)["scene"]}
+            for key, name in (("aurora", "Boreal Hush"), ("aurora_clock", "Firefly Timekeeper"))
+        ]})
 
     @app.get("/")
     def index():
@@ -81,7 +91,7 @@ def create_simulator(data_dir):
                 menu.refresh_scene()
             if request.method == "POST":
                 button = (request.get_json(silent=True) or {}).get("button")
-                if button not in ("menu", "up", "down", "left", "right", "a", "b", "y",
+                if button not in ("menu", "up", "down", "left", "right", "a", "b", "x", "y",
                                   "release-left", "release-right", "disconnect",
                                   "repeat-left", "repeat-right", "fast-left", "fast-right"):
                     return jsonify(error="Unknown Nimbus button"), 400
@@ -114,6 +124,14 @@ def create_simulator(data_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--cribbage-library", type=Path, help="Explicit Mac/test native library; BLE stays disabled")
+    parser.add_argument("--data-dir", type=Path, help="Optional persistent simulator data")
     args = parser.parse_args()
     with TemporaryDirectory(prefix="ledgrid-wall-simulator-") as directory:
-        create_simulator(directory).run(host="127.0.0.1", port=args.port, threaded=True)
+        app = create_simulator(args.data_dir or directory, args.cribbage_library)
+        try:
+            app.run(host="127.0.0.1", port=args.port, threaded=True)
+        finally:
+            app.extensions["wall_manager"].stop_animation(clear_leds=False)
+            if "cribbage" in app.extensions:
+                app.extensions["cribbage"].close()

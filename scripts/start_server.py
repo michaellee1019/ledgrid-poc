@@ -252,17 +252,17 @@ def reconcile_wall_menu(manager, gamepad, menu, prior_revision, *, scheduled=Fal
 def run_controller_mode(args):
     from drivers.multi_device import MultiDeviceLEDController
     from drivers.nimbus_gamepad import NimbusGamepad
-    from drivers.wall_roles import assign_score_bridge
+    from drivers.cribbage_runtime import ScorebotHost
     from animation.core.wall_menu_frame import WallMenuFrame
     from web.wall_composer import WallComposer
     from functools import partial
     num_devices = hardware_receiver_count(args.strips, args.leds_per_strip)
-    if num_devices == 5:
-        assign_score_bridge()
     saved=load_saved_state(state_path=Path(args.saved_state_file),presets_dir=Path(args.presets_dir))
     controller=MultiDeviceLEDController(num_devices=num_devices,strip_count=args.strips,
         leds_per_strip=args.leds_per_strip,device_map=hardware_device_map(num_devices),
         debug=args.controller_debug,speed=args.spi_speed)
+    cribbage = ScorebotHost(Path(args.control_file).parent.parent)
+    controller.cribbage_session = cribbage.session
     controller.configure()
     apply_production_stagger(controller)
     manager=AnimationManager(controller,plugins_dir=args.animations_dir,
@@ -368,6 +368,7 @@ def run_controller_mode(args):
                         refresh()
                     last_idle_probe=time.monotonic()
                 payload=controller_status_payload(manager)
+                payload['cribbage'] = cribbage.status()
                 payload['nimbus'] = {
                     'connected': gamepad.connected, 'menu_open': menu.is_open,
                     'error': menu.error, 'scene_revision': nimbus_scene_revision,
@@ -382,6 +383,7 @@ def run_controller_mode(args):
     finally:
         gamepad.close()
         manager.stop_animation(clear_leds=False)
+        cribbage.close()
         controller.close()
 
 def run_web_mode(args):

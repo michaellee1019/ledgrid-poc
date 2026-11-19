@@ -105,8 +105,8 @@ def test_equal_revisions_replace_connection_and_status_fields(reader):
         for changes in [
             {"type": "player"}, {"protocol": 3}, {"started": 1},
             {"turn": True}, {"turn": 6}, {"scores": [1, 2, 3]},
-            {"scores": [True, 2, 3, 4]}, {"scores": [-1000, 2, 3, 4]},
-            {"scores": [10000, 2, 3, 4]}, {"connected": 16}, {"roster": -1},
+            {"scores": [True, 2, 3, 4]}, {"scores": [-2147483649, 2, 3, 4]},
+            {"scores": [2147483648, 2, 3, 4]}, {"connected": 16}, {"roster": -1},
         ]
     ],
     json.dumps(_document(term=True)).encode(),
@@ -182,21 +182,21 @@ from types import SimpleNamespace
 
 class NoHardware:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname in {{'serial', 'spidev'}}:
+        if fullname in {{'serial', 'spidev', 'scorebot', 'dbus_next'}}:
             raise AssertionError('hardware import: ' + fullname)
 
 sys.meta_path.insert(0, NoHardware())
 importlib.import_module({first_import!r})
 from animation.plugins.cribbage_leaderboard import CribbageLeaderboardAnimation
 
-for port in ('', 'preview', '/dev/unused-test-port'):
+for port in ('', 'preview'):
     animation = CribbageLeaderboardAnimation(
         SimpleNamespace(strip_count=33, leds_per_strip=138), {{'serial_port': port}}
     )
     animation.generate_frame(0.5, 0)
-    assert animation._serial is None and animation._spi is None
+    assert animation._preview
     animation.cleanup()
-assert 'serial' not in sys.modules and 'spidev' not in sys.modules
+assert not {{'serial', 'spidev', 'scorebot', 'dbus_next'}} & sys.modules.keys()
 """
     completed = subprocess.run(
         [sys.executable, "-c", script],

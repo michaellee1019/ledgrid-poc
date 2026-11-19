@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Host and receiver software for the LED plant wall"
 requires-python = ">=3.10"
 dependencies = [
+    "dbus-next==0.2.3 ; sys_platform == 'linux'",
     "flask>=3.1.2,<4",
     "numpy>=2.2.6,<3",
     "pillow>=10,<13",
@@ -16,6 +17,7 @@ dependencies = [
 
 [dependency-groups]
 test = [
+    "dbus-next==0.2.3",
     "pytest>=8.4.2,<10",
     "pyyaml>=6,<7",
 ]

@@ -236,7 +236,8 @@ class CanonicalSceneRuntime:
                             if not item.position and item.button == button), None)
             if binding is None or (release and not binding.release):
                 return False
-            game.handle_player_button(action)
+            if game.handle_player_button(action) == "leave":
+                self._player_state = "ready"
         else:
             return False
         return True

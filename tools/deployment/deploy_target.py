@@ -119,7 +119,7 @@ def write_service(root: Path, app: Path) -> dict[str, str]:
     existing = subprocess.run(["systemctl", "show", "ledgrid.service", "--property=Environment", "--value"], capture_output=True, text=True, check=False)
     import shlex
     values = dict(item.split("=", 1) for item in shlex.split(existing.stdout) if "=" in item)
-    preserved = {key: value for key, value in values.items() if key in {"TARGET_FPS", "ANIMATION_SPEED_SCALE", "SPI_SPEED", "HOST", "PORT", "BRIGHTNESS"}}
+    preserved = {key: value for key, value in values.items() if key in {"TARGET_FPS", "ANIMATION_SPEED_SCALE", "SPI_SPEED", "HOST", "PORT", "BRIGHTNESS", "SCOREBOT_BLE"}}
     # systemd accepts quoted entire assignments; reject controls before writing.
     for key, value in preserved.items():
         if any(ord(char) < 32 for char in value):
@@ -230,6 +230,8 @@ def deploy(root: Path, mode: str, timeout: float) -> None:
         command("python3", "-m", "venv", root / "venv")
         command(root / "venv/bin/python", "-m", "pip", "install", "--upgrade", "pip")
     command(root / "venv/bin/python", "-m", "pip", "install", "-r", requirements_file(app))
+    command(root / "venv/bin/python", app / "tools/build_scorebot.py",
+            "--identity", root / "data/config/scorebot_identity.json", "--configure")
     environment = write_service(root, app)
     flash_firmware(app, root, mode)
     command("sudo", "-n", "systemctl", "enable", "ledgrid.service")
