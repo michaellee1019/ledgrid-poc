@@ -643,3 +643,23 @@ def test_first_deployment_relative_control_path_uses_personal_data_root(tmp_path
         assert (data / "run_state/cribbage.json").is_file()
     finally:
         host.close()
+
+
+def test_scores_and_controls_avoid_installed_foliage_and_globes(session):
+    import numpy as np
+    from animation.core.manager import PreviewLEDController
+    from animation.plugins.cribbage_leaderboard import CribbageLeaderboardAnimation
+    from web.composer_final_preview import installed_plant_geometry
+    geometry = installed_plant_geometry(ROOT)
+    mask = (geometry.foliage | geometry.globes)[:, ::-1]
+    game = CribbageLeaderboardAnimation(PreviewLEDController(33, 138), source=session)
+    game.set_player_control(True)
+    for started in (False, True):
+        if started:
+            start_local(session, (0, 1, 2, 3))
+            session.request("local_action", 0, -0x80000000, 0)
+        for page in ("", "options", "new-confirm", "start-confirm"):
+            game._page = page
+            frame = game.generate_frame(1.1, 1)
+            canvas = frame.pixels.reshape(33, 138, 3)[:, ::-1]
+            assert not np.any(canvas[mask]), "committed score or control text is behind an obstruction"

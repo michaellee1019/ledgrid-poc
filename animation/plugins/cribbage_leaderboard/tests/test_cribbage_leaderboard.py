@@ -41,8 +41,8 @@ def _animation(state: LeaderboardState | None, **params: object) -> CribbageLead
 
 def _row(pixels: np.ndarray, index: int) -> np.ndarray:
     view = pixels.reshape(33, 138, 3)[:, ::-1, :]
-    start = index * 9
-    return view[:, start : start + 9]
+    start = index * 7
+    return view[:, start : start + 7]
 
 
 def _pixel(pixels: np.ndarray, logical_y: int) -> np.ndarray:
@@ -120,7 +120,7 @@ class CribbageLeaderboardTests(unittest.TestCase):
         frame = animation.generate_frame(0.0, 0)
         self.assertGreater(int(_pixel(frame.pixels, 4)[0]), 0)
         self.assertGreater(int(_pixel(frame.pixels, 13)[2]), 0)
-        self.assertGreater(int(_pixel(frame.pixels, 22)[1]), 0)
+        self.assertGreater(int(_pixel(frame.pixels, 18)[1]), 0)
         self.assertEqual(tuple(int(channel) for channel in _pixel(frame.pixels, 80)), (0, 0, 0))
         waiting = _row(frame.pixels, 0)
         self.assertTrue(np.any(np.all(waiting == (255, 255, 255), axis=2)))

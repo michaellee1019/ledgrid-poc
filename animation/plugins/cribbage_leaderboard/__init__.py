@@ -22,7 +22,7 @@ from animation.plugins.cribbage_leaderboard.state import (
 
 _FONT = {**ClockFaceRenderer.FONT, "B": (6, 5, 6, 5, 6), "X": (5, 5, 2, 5, 5),
          "Y": (5, 5, 2, 2, 2), "V": (5, 5, 5, 5, 2), "+": (0, 2, 7, 2, 0)}
-_ROW_PAD = 2
+_ROW_PAD = 1
 _GLYPH_HEIGHT = 5
 _ROW_HEIGHT = _ROW_PAD + _GLYPH_HEIGHT + _ROW_PAD
 
@@ -377,20 +377,23 @@ class CribbageLeaderboardAnimation(AnimationBase):
                         "WRONG_GAME": "OLD GAME", "INVALID_ARGUMENT": "BAD MSG",
                         "NO_CHANGE": "NO EDIT"}.get(result, result.replace("_", " ")[:8])
             draft = str(self._drafts[self._selection])
-            lines = ["A EDIT" if not self._control else "DRAFT", draft[:8], draft[8:],
-                     self._feedback[:8].upper(), feedback,
-                     "ERROR" if error else "SAVING" if getattr(self._source, "pending", False) else ""]
+            if len(draft) > 6:
+                mantissa, exponent = format(self._drafts[self._selection], ".1e").split("e")
+                draft = mantissa + "E" + str(int(exponent))
+            status = "ERROR" if error else "SAVING" if getattr(self._source, "pending", False) else feedback
+            lines = ["A EDIT" if not self._control else "DRAFT", draft, status, self._feedback[:8].upper()]
+            if state is not None and len(str(state.scores[self._selection])) > 8:
+                exact = str(state.scores[self._selection])
+                lines = ["D " + draft, status, "EXACT", exact[:8], exact[8:]]
             if self._control and state is not None and not state.started:
-                lines = ["LOBBY", "LR MODE", "A START", feedback, "ERROR" if error else ""]
+                lines = ["LOBBY", "LR MODE", "A START", status]
             if self._page:
                 lines = ["RESUME" if not self._choice else "NEW GAME", "A SELECT"]
                 if self._page != "options":
                     lines = ["NEW GAME" if self._page == "new-confirm" else "START", "A YES", "B BACK"]
-            if state is not None:
-                exact = str(state.scores[self._selection])
-                lines += ["EXACT", exact[:8], exact[8:]]
             for index, text in enumerate(lines):
-                _blit(view, _centered(strips, text), 42 + index * 7, text, (255, 80, 60) if error else (230, 230, 230))
+                _blit(view, _centered(strips, text), max(30, leds - len(lines) * 6 + 1) + index * 6, text,
+                      (255, 80, 60) if error else (230, 230, 230))
 
     def get_runtime_stats(self) -> dict[str, Any]:
         state = self._source.latest() if self._source is not None else None
