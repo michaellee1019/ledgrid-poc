@@ -102,6 +102,24 @@ def parse_state_line(line: str) -> Optional[LeaderboardState]:
         return None
 
 
+class LatestLeaderboardState:
+    """Thread-safe storage for validated snapshots, including equal revisions."""
+
+    def __init__(self) -> None:
+        self._state: Optional[LeaderboardState] = None
+        self._lock = threading.Lock()
+
+    def latest(self) -> Optional[LeaderboardState]:
+        with self._lock:
+            return self._state
+
+    def remember(self, state: LeaderboardState) -> None:
+        with self._lock:
+            if self._state is not None and state.revision() < self._state.revision():
+                return
+            self._state = state
+
+
 class MemoryLeaderboardSource:
     """Test double that serves one snapshot."""
 
@@ -120,8 +138,7 @@ class SerialLeaderboardSource:
 
     def __init__(self, port: str) -> None:
         self._port = port
-        self._state: Optional[LeaderboardState] = None
-        self._lock = threading.Lock()
+        self._snapshots = LatestLeaderboardState()
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, name="cribbage-leaderboard", daemon=True
@@ -129,18 +146,14 @@ class SerialLeaderboardSource:
         self._thread.start()
 
     def latest(self) -> Optional[LeaderboardState]:
-        with self._lock:
-            return self._state
+        return self._snapshots.latest()
 
     def close(self) -> None:
         self._stop.set()
         self._thread.join(timeout=0.6)
 
     def _remember(self, state: LeaderboardState) -> None:
-        with self._lock:
-            if self._state is not None and state.revision() < self._state.revision():
-                return
-            self._state = state
+        self._snapshots.remember(state)
 
     def _run(self) -> None:
         while not self._stop.is_set():

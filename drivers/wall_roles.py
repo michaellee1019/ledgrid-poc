@@ -112,9 +112,11 @@ class SpiLeaderboardSource:
     """Poll SPI0 CE2 for cribbage snapshots."""
 
     def __init__(self, opener: Optional[Callable[[], object]] = None) -> None:
+        # The plugin package also imports this source; defer to avoid a cycle.
+        from animation.plugins.cribbage_leaderboard.state import LatestLeaderboardState
+
         self._opener = opener
-        self._state = None
-        self._lock = threading.Lock()
+        self._snapshots = LatestLeaderboardState()
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, name="cribbage-score-bridge", daemon=True
@@ -122,8 +124,7 @@ class SpiLeaderboardSource:
         self._thread.start()
 
     def latest(self):
-        with self._lock:
-            return self._state
+        return self._snapshots.latest()
 
     def close(self) -> None:
         self._stop.set()
@@ -138,10 +139,7 @@ class SpiLeaderboardSource:
             state = parse_state_document(json.loads(payload))
         except (ValueError, json.JSONDecodeError, UnicodeError):
             return
-        with self._lock:
-            if self._state is not None and state.revision() < self._state.revision():
-                return
-            self._state = state
+        self._snapshots.remember(state)
 
     def _run(self) -> None:
         while not self._stop.is_set():
