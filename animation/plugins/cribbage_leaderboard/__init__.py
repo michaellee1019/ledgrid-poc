@@ -21,6 +21,7 @@ from animation.plugins.cribbage_leaderboard.state import (
 
 
 _FONT = {**ClockFaceRenderer.FONT, "B": (6, 5, 6, 5, 6), "X": (5, 5, 2, 5, 5),
+         "K": (5, 5, 6, 5, 5),
          "Y": (5, 5, 2, 2, 2), "V": (5, 5, 5, 5, 2), "+": (0, 2, 7, 2, 0)}
 _ROW_PAD = 1
 _GLYPH_HEIGHT = 5
