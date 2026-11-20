@@ -299,3 +299,69 @@ affected file or run-state directory with `sudo chown`, then rerun deployment.
 If an interrupted old installation left `app/` directories read-only, use
 `chmod -R u+w ~/ledgrid-pod/app` before retrying. Do not delete personal data to
 bypass a migration failure.
+
+## Scorebot cribbage authority
+
+The application vendors Scorebot source at the exact commit recorded in
+`vendor/scorebot/REVISION` (ABI 1, wire 5). Deployment copies that source and
+runs its native C/Python checks on **the target Pi**, before starting the
+service. It never uses a sibling checkout or a Mac binary. The five LED
+receivers and their firmware are unchanged. Wire-v4 boards are incompatible;
+update participating Scorebot firmware together.
+The documented one-line GCC correction in `vendor/scorebot/LOCAL_PATCHES.md`
+is included in target builds; macOS checks alone do not validate the Linux library.
+
+On the Pi, run `venv/bin/python app/tools/build_scorebot.py --identity
+ data/config/scorebot_identity.json --configure` as one command. This builds and
+checks the native library and retains only the chosen BlueZ adapter (`hci0` by
+default). Authority identity is runtime data; no node or Bluetooth address is
+compiled into the library or participating player firmware. Use the normal
+Scorebot firmware environments. A public or stable random peer address is
+bound to its selected session during admission; changing that transport identity
+does not bypass the saved binding.
+
+The controller owns one authority independently of Scene lifetime and displays
+its 0–20 pairing number. This wall remains the authority for its own session;
+selected hardware leaderboards can join as mirrored controllers. It does not
+promote a replica when another authority disconnects. Pairing, native
+`State.to_dict()` data, controller operation marks and validated transport
+bindings are persisted together in `data/run_state/cribbage.json`. Existing
+trusted v4 native dictionaries migrate while retaining scores, game ID, roster
+and operation marks. Resume restores metadata and persists the increased term
+before input or publication. Invalid saved records and save failures remain
+visible and block input/publication until repaired; never replace a saved record
+with wire JSON or a test session.
+
+Set `SCOREBOT_BLE=0` to play entirely LOCAL without an identity file, D-Bus or
+player boards. With BLE enabled, the central advertises native pairing
+manufacturer data and discovers selected peripherals without requiring a service
+UUID in their advertisements. It reads live GATT identity, protocol and pairing
+metadata, then admits the actual connection address through the native core.
+BlueZ uses peripheral advertising concurrently with central scanning so its
+advertisement retains the adapter identity instead of requesting an NRPA switch.
+Displays cannot score; admitted mirrored controllers use their separate native
+command/receipt API. Compact snapshots acknowledge changes, duplicates and
+rejections and provide 1.5-second heartbeats, within the 512-byte wire limit.
+Disconnect retains roster and color reservations; Nimbus takeover and rejoin
+resynchronize without replaying uncertain scores. The authority never restores
+network snapshots. Passive e-paper score broadcasts are outside this increment;
+discovery advertisements alone do not provide e-paper score reception.
+
+Choose Cribbage Leaderboard in Composer, then press A to enter controls.
+Up/Down selects a color; Left/Right chooses LOCAL, BOARD (physical), or OFF in
+the lobby. A reviews Start; a second A confirms. In play, Left/Right edits the
+selected draft, X submits ADD, and A submits OK. Selection does not change turn.
+B clears drafts, then returns; Y offers Resume or a separately confirmed New
+Game. Menu and Scene changes discard drafts and leave the session running.
+The pulsing rim marks the turn; the white left edge marks selection. Right-edge
+dots show LOCAL green, connected cyan, sleeping amber, or absent red. SAVING,
+SAVED and errors are separate from scores. Long scores use a bounded exponential
+row label; EXACT below shows the complete selected int32 score on two lines.
+The controller's `cribbage` status reports errors and BLE status separately.
+
+For a Mac-only, radio-free LOCAL demonstration, build the native library on the
+Mac, then run `scripts/simulate_wall_composer.py --cribbage-library
+/path/to/libscorebot.dylib --data-dir /tmp/cribbage-demo` with the project Python.
+Join the two command lines when running. The simulator's X/A/B/Y and arrow
+buttons exercise the real session through the shared Nimbus routing. This is
+software evidence, not Pi, physical BLE or installed-wall acceptance.

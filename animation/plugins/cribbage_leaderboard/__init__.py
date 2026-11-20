@@ -1,10 +1,4 @@
-"""Cribbage scores for the LED wall.
-
-The sixth ESP32 is SPI0 CE2. The host sends it SetRole, and that board's
-MISO replies carry the score snapshot. Each player is one short row: two
-pixels of that player's color, the score in one-pixel strokes, then two more
-pixels of color. The next player starts on the next row.
-"""
+"""Scorebot leaderboard view and Nimbus controls; authority lives on the host."""
 
 from __future__ import annotations
 
@@ -23,13 +17,13 @@ from animation.plugins.cribbage_leaderboard.state import (
     PLAYER_ROLES,
     LeaderboardState,
     MemoryLeaderboardSource,
-    SerialLeaderboardSource,
 )
-from drivers.wall_roles import SpiLeaderboardSource
 
 
-_FONT = ClockFaceRenderer.FONT
-_ROW_PAD = 2
+_FONT = {**ClockFaceRenderer.FONT, "B": (6, 5, 6, 5, 6), "X": (5, 5, 2, 5, 5),
+         "K": (5, 5, 6, 5, 5),
+         "Y": (5, 5, 2, 2, 2), "V": (5, 5, 5, 5, 2), "+": (0, 2, 7, 2, 0)}
+_ROW_PAD = 1
 _GLYPH_HEIGHT = 5
 _ROW_HEIGHT = _ROW_PAD + _GLYPH_HEIGHT + _ROW_PAD
 
@@ -91,7 +85,11 @@ def _score_text(state: Optional[LeaderboardState], index: int) -> str:
     bit = 1 << index
     if state.started and (state.roster & bit) == 0:
         return ""
-    return str(state.scores[index])
+    text = str(state.scores[index])
+    if len(text) > 8:
+        mantissa, exponent = format(state.scores[index], ".1e").split("e")
+        return mantissa.upper() + "E" + str(int(exponent))
+    return text
 
 
 def _sample_game(elapsed: float) -> LeaderboardState:
@@ -115,8 +113,14 @@ def _sample_game(elapsed: float) -> LeaderboardState:
 class CribbageLeaderboardAnimation(AnimationBase):
     """Stacked player rows. The current turn breathes brighter."""
 
+    PLAYER_BUTTONS = {
+        "up": ("Select player", False), "down": ("Select player", False),
+        "left": ("Draft -1 / lobby mode", True), "right": ("Draft +1 / lobby mode", True),
+        "x": ("ADD draft", False), "a": ("OK / confirm", False),
+        "b": ("Clear then return", False), "y": ("Resume / New Game", False),
+    }
     ANIMATION_NAME = "Cribbage Leaderboard"
-    ANIMATION_DESCRIPTION = "Player colors and scores from the cribbage boards. The current turn glows."
+    ANIMATION_DESCRIPTION = "Pi-authoritative cribbage scores. Nimbus controls any player; the turn glows."
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
     COMPONENT_ID = "cribbage_leaderboard"
@@ -155,18 +159,21 @@ class CribbageLeaderboardAnimation(AnimationBase):
         super().__init__(controller, authored)
         self.default_params = dict(self.DEFAULTS)
         self.params = self._normalized_parameters(authored)
-        self._owns_source = source is None
-        self._source = source if source is not None else MemoryLeaderboardSource(None)
-        self._serial: Optional[SerialLeaderboardSource] = None
-        self._spi: Optional[SpiLeaderboardSource] = None
-        self._bound_port: Optional[str] = None
+        self._source = source if source is not None else getattr(controller, "cribbage_session", None)
+        self._has_source = self._source is not None
+        self._preview = not self._has_source or self.params["serial_port"] == "preview"
+        self._source = self._source or MemoryLeaderboardSource(None)
+        self._control = False
+        self._selection = 0
+        self._drafts = [0] * 4
+        self._page = ""
+        self._choice = 0
+        self._feedback = ""
         self._context: ResolvedScene | None = None
         strips = int(self.controller.strip_count)
         leds = int(self.controller.leds_per_strip)
         self._pixels = np.zeros((strips * leds, 3), dtype=np.uint8)
         self._last_key: tuple[Any, ...] | None = None
-        if self._owns_source:
-            self._bind_port(self._hardware_port(self.params))
 
     @classmethod
     def component_descriptor(cls) -> ComponentDescriptor:
@@ -187,6 +194,8 @@ class CribbageLeaderboardAnimation(AnimationBase):
         port = result["serial_port"]
         if not isinstance(port, str) or "\n" in port or "\x00" in port or len(port) > 160:
             raise ValueError("serial_port must be a short single-line path")
+        if port.strip() not in ("", "preview"):
+            raise ValueError("Serial score bridges are unsupported; use the host Scorebot session")
         result["serial_port"] = port.strip()
         return result
 
@@ -194,14 +203,14 @@ class CribbageLeaderboardAnimation(AnimationBase):
     def get_parameter_schema(cls) -> dict[str, dict[str, Any]]:
         return {
             "glow": {"type": "float", "min": 0.0, "max": 3.0, "default": 0.7, "description": "How fast the current player's color breathes"},
-            "serial_port": {"type": "str", "default": "", "description": "Blank reads the score board on SPI0 CE2. 'preview' shows a sample game."},
+            "serial_port": {"type": "str", "default": "", "description": "Blank uses the host session; preview shows a sample without hardware."},
         }
 
     def update_parameters(self, values: Mapping[str, Any]) -> None:
         self.params = self._normalized_parameters({**self.params, **dict(values)})
         self._last_key = None
-        if self._owns_source:
-            self._bind_port(self._hardware_port(self.params))
+        self._preview = not self._has_source or self.params["serial_port"] == "preview"
+        self._discard_drafts()
 
     def on_presentation_context_changed(self, old: ResolvedScene | None, new: ResolvedScene) -> None:
         del old
@@ -216,50 +225,91 @@ class CribbageLeaderboardAnimation(AnimationBase):
         self.set_presentation_context(context)
         return self.generate_frame(context.phase_time, self.frame_count)
 
-    def _configured_port(self, params: Mapping[str, Any]) -> str:
-        return str(params.get("serial_port") or "").strip()
+    def set_player_control(self, enabled):
+        self._control = bool(enabled)
+        self._discard_drafts()
 
-    def _hardware_port(self, params: Mapping[str, Any]) -> Optional[str]:
-        port = self._configured_port(params)
-        if port == "preview" or not hasattr(self.controller, "device_map"):
-            return None
-        return port
+    def set_player_paused(self, paused):
+        self._control = not paused
+        self._discard_drafts()
 
-    def _close_sources(self) -> None:
-        if self._serial is not None:
-            self._serial.close()
-            self._serial = None
-        if self._spi is not None:
-            self._spi.close()
-            self._spi = None
+    def _discard_drafts(self):
+        self._feedback = "CLEARED" if any(self._drafts) else ""
+        self._drafts = [0] * 4
+        self._page = ""
 
-    def cleanup(self) -> None:
-        self._close_sources()
-        self._bound_port = None
+    def cleanup(self):
+        self._discard_drafts()
         super().cleanup()
 
-    def _bind_port(self, port: Optional[str]) -> None:
-        if port == self._bound_port:
+    def handle_player_button(self, button):
+        if self._preview or not hasattr(self._source, "request"):
+            self._feedback = "HOST ONLY"
             return
-        self._close_sources()
-        self._bound_port = port
-        if port is None:
-            self._source = MemoryLeaderboardSource(None)
-        elif port:
-            self._serial = SerialLeaderboardSource(port)
-            self._source = self._serial
-        else:
-            self._spi = SpiLeaderboardSource()
-            self._source = self._spi
+        try:
+            self._button(button)
+        except (OSError, RuntimeError, ValueError) as error:
+            self._feedback = str(error)
+        if not self._control:
+            return "leave"
+
+    def _button(self, button):
+        state = self._source.latest()
+        if state is None:
+            self._feedback = "UNAVAILABLE"
+            return
+        if button == "y":
+            self._discard_drafts()
+            self._page = "options"
+            self._choice = 0
+        elif self._page:
+            if button == "b":
+                self._page = ""
+            elif self._page == "options":
+                if button in ("up", "down", "left", "right"):
+                    self._choice = 1 - self._choice
+                elif button == "a":
+                    self._page = "new-confirm" if self._choice else ""
+            elif button == "a":
+                success = (self._source.new_game() if self._page == "new-confirm"
+                           else self._source.request("start"))
+                self._feedback = self._source.feedback
+                if success:
+                    self._page = ""
+        elif button in ("up", "down"):
+            choices = [index for index in range(4) if not state.started or state.roster & (1 << index)]
+            offset = 1 if button == "down" else -1
+            current = choices.index(self._selection) if self._selection in choices else 0
+            self._selection = choices[(current + offset) % len(choices)]
+        elif button in ("left", "right"):
+            direction = 1 if button == "right" else -1
+            if state.started:
+                self._drafts[self._selection] = max(-0x80000000, min(0x7FFFFFFF,
+                    self._drafts[self._selection] + direction))
+            else:
+                bit = 1 << self._selection
+                mode = 0 if state.local & bit else 1 if state.enabled & bit else 2
+                self._source.request("set_lobby_mode", self._selection, (mode + direction) % 3)
+                self._feedback = self._source.feedback
+        elif button == "b":
+            if any(self._drafts):
+                self._discard_drafts()
+            else:
+                self._control = False
+        elif button == "a" and not state.started:
+            self._page = "start-confirm"
+        elif button in ("a", "x") and state.started:
+            if self._source.request("local_action", self._selection, self._drafts[self._selection],
+                                    1 if button == "a" else 0):
+                self._drafts[self._selection] = 0
+            self._feedback = self._source.feedback
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> RenderedFrame:
         del frame_count
         context = self._context
         params = self._normalized_parameters(context.parameters if context else self.params)
         self.params = params
-        preview = self._owns_source and self._hardware_port(params) is None
-        if self._owns_source:
-            self._bind_port(None if preview else self._hardware_port(params))
+        preview = self._preview or params["serial_port"] == "preview"
         elapsed = max(0.0, float(context.phase_time if context else time_elapsed))
         if preview:
             state = _sample_game(elapsed)
@@ -271,6 +321,11 @@ class CribbageLeaderboardAnimation(AnimationBase):
         key = (
             None if state is None else (state.started, state.turn, state.scores, state.connected, state.roster),
             round(pulse, 3),
+            self._control, self._selection, tuple(self._drafts), self._page, self._choice,
+            self._feedback, getattr(self._source, "feedback", ""),
+            getattr(self._source, "pending", False), getattr(self._source, "error", ""),
+            getattr(getattr(self._source, "transport", None), "error", ""),
+            None if state is None else (state.local, state.enabled, state.sleeping, state.pairing),
             strips,
             leds,
             params["glow"],
@@ -302,9 +357,46 @@ class CribbageLeaderboardAnimation(AnimationBase):
                 ).astype(np.uint8)
                 view[:, y0:y0 + _ROW_PAD, :] = rim
                 view[:, y1 - _ROW_PAD:y1, :] = rim
+            if not self._preview and state is not None:
+                status = ((0, 255, 0) if state.local & (1 << index) else
+                          (0, 255, 255) if state.connected & (1 << index) else
+                          (255, 160, 0) if state.sleeping & (1 << index) else (255, 0, 0))
+                view[-1, y0 + 4] = status
+                if self._control and index == self._selection:
+                    view[0, y0:y1] = (255, 255, 255)
             score = _score_text(state, index)
+            if state is not None and not state.started and not self._preview:
+                bit = 1 << index
+                score = "LOCAL" if state.local & bit else "BOARD" if state.enabled & bit else "OFF"
             if score and _text_width(score) <= strips:
                 _blit(view, _centered(strips, score), y0 + _ROW_PAD, score, _ink(color, level))
+
+        if not self._preview:
+            error = getattr(self._source, "error", "") or getattr(getattr(self._source, "transport", None), "error", "")
+            result = getattr(self._source, "feedback", "")
+            feedback = {"OK": "SAVED", "SCORE_OUT_OF_RANGE": "RANGE", "DUPLICATE": "DUP",
+                        "WRONG_GAME": "OLD GAME", "INVALID_ARGUMENT": "BAD MSG",
+                        "NO_CHANGE": "NO EDIT"}.get(result, result.replace("_", " ")[:8])
+            draft = str(self._drafts[self._selection])
+            if len(draft) > 6:
+                mantissa, exponent = format(self._drafts[self._selection], ".1e").split("e")
+                draft = mantissa + "E" + str(int(exponent))
+            status = "ERROR" if error else "SAVING" if getattr(self._source, "pending", False) else feedback
+            lines = ["A EDIT" if not self._control else "DRAFT", draft, status, self._feedback[:8].upper()]
+            if state is not None and state.pairing >= 0 and not self._control:
+                lines = ["PAIR " + str(state.pairing), draft, status, "A EDIT"]
+            if state is not None and len(str(state.scores[self._selection])) > 8:
+                exact = str(state.scores[self._selection])
+                lines = ["D " + draft, status, "EXACT", exact[:8], exact[8:]]
+            if self._control and state is not None and not state.started:
+                lines = ["PAIR " + str(state.pairing), "LR MODE", "A START", status]
+            if self._page:
+                lines = ["RESUME" if not self._choice else "NEW GAME", "A SELECT"]
+                if self._page != "options":
+                    lines = ["NEW GAME" if self._page == "new-confirm" else "START", "A YES", "B BACK"]
+            for index, text in enumerate(lines):
+                _blit(view, _centered(strips, text), max(30, leds - len(lines) * 6 + 1) + index * 6, text,
+                      (255, 80, 60) if error else (230, 230, 230))
 
     def get_runtime_stats(self) -> dict[str, Any]:
         state = self._source.latest() if self._source is not None else None

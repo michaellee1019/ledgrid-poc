@@ -369,6 +369,7 @@ def test_hud_scene_launch_discards_stick_input_from_previous_scene(instrument):
     assert handle_command(manager, "start_scene", {"scene": starter("aurora_conway")})
     menu.open()
     menu._starters()
+    focus(menu, "Boreal Hush")
     discarded = []
     gamepad.discard_pending = lambda: discarded.append(True)
     inputs(manager, gamepad, menu, "a", StickMotion(0, 2, 2))
@@ -1392,6 +1393,53 @@ def test_high_pace_survives_numbered_and_playlist_storage(instrument):
     scene["look"].update(pace=10, presentation_brightness=2.01)
     with pytest.raises(ValueError, match="presentation_brightness"):
         normalize_composer_scene({"origin": "composer", "scene": scene}, menu.catalog)
+
+
+def test_browse_alphabetical_navigation_keeps_current_animation_and_selects_cribbage(instrument):
+    manager, _owner, _runner, gamepad, menu = instrument
+    assert handle_command(manager, "start_scene", {"scene": starter()})
+    inputs(manager, gamepad, menu, "menu")
+    focus(menu, "Browse")
+    inputs(manager, gamepad, menu, "a")
+    assert [row.name for row in menu._row()[1]] == ["Animate", "Looks", "Starters"]
+    focus(menu, "Starters")
+    inputs(manager, gamepad, menu, "a")
+    names = [row.name for row in menu._row()[1]]
+    assert names == sorted(names, key=str.casefold)
+    inputs(manager, gamepad, menu, "b")
+    focus(menu, "Animate")
+    inputs(manager, gamepad, menu, "a")
+    names = [row.name for row in menu._row()[1]]
+    assert names == sorted(names, key=str.casefold)
+    assert menu.card().label == "Aurora Curtains"
+    focus(menu, "Cribbage Leaderboard")
+    inputs(manager, gamepad, menu, "a", "a")
+    assert manager.get_scene_state()["animation"]["component_id"] == "cribbage_leaderboard"
+
+
+def test_alphabetical_browse_preserves_saved_looks_and_preset_callbacks(instrument, monkeypatch):
+    manager, _owner, _runner, _gamepad, menu = instrument
+    for name, starter_id in (("zulu", "aurora"), ("alpha", "aurora_clock"), ("Bravo", "aurora_conway")):
+        canonical = normalize_composer_scene({"origin": "composer", "scene": starter(starter_id)}, menu.catalog)
+        menu.looks.save_as(name, canonical)
+    saved = menu.looks.path.read_bytes()
+    menu.open()
+    menu._looks()
+    assert [row.name for row in menu._row()[1]] == ["alpha", "Bravo", "zulu"]
+    focus(menu, "Bravo")
+    menu.press("a")
+    assert manager.get_scene_state()["animation"]["component_id"] == "fireworks"
+    assert menu.looks.path.read_bytes() == saved
+
+    item = next(item for item in menu._animation_gallery() if item["component_id"] == "fireworks")
+    choices = [{"name": name, "parameters": {**item["parameters"], "seed": seed}}
+               for name, seed in (("zulu", 101), ("Alpha", 102), ("bravo", 103))]
+    monkeypatch.setattr(menu.presets, "operator_choices", lambda *_args: choices)
+    menu._animation_presets(item)
+    assert [row.name for row in menu._row()[1]] == ["Alpha", "bravo", "Default", "zulu"]
+    focus(menu, "bravo")
+    menu.press("a")
+    assert manager.get_scene_state()["animation"]["parameters"]["seed"] == 103
 
 
 def test_browse_defaults_and_authored_presentation(instrument):

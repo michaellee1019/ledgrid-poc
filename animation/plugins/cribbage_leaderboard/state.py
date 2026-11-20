@@ -1,4 +1,4 @@
-"""Parse cribbage leaderboard snapshots forwarded by the wall bridge.
+"""Immutable leaderboard views and legacy snapshot-source adapters.
 
 The wire object is the leaderboard's ``state`` JSON. Its field names and
 protocol number live in ``cribbage_board_robot/lib/scorebot/src``.
@@ -13,7 +13,7 @@ from typing import Optional
 
 
 # scorebot::kWireProtocolVersion
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 ROLE_RED = 2
 ROLE_BLUE = 3
@@ -40,6 +40,10 @@ class LeaderboardState:
     roster: int
     term: int
     version: int
+    local: int = 0
+    enabled: int = 0
+    sleeping: int = 0
+    pairing: int = -1
 
     def revision(self) -> tuple[int, int]:
         return (self.term, self.version)
@@ -66,9 +70,9 @@ def parse_state_document(payload: object) -> LeaderboardState:
     if (
         not isinstance(scores, list)
         or len(scores) != 4
-        or any(not _exact_int(score) or score < -999 or score > 9999 for score in scores)
+        or any(not _exact_int(score) or score < -0x80000000 or score > 0x7FFFFFFF for score in scores)
     ):
-        raise ValueError("scores must be four small integers")
+        raise ValueError("scores must be four int32 integers")
     turn = payload.get("turn")
     if not _exact_int(turn) or turn not in {0, 1, *PLAYER_ROLES}:
         raise ValueError("turn is not a known role")

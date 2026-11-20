@@ -41,8 +41,8 @@ def _animation(state: LeaderboardState | None, **params: object) -> CribbageLead
 
 def _row(pixels: np.ndarray, index: int) -> np.ndarray:
     view = pixels.reshape(33, 138, 3)[:, ::-1, :]
-    start = index * 9
-    return view[:, start : start + 9]
+    start = index * 7
+    return view[:, start : start + 7]
 
 
 def _pixel(pixels: np.ndarray, logical_y: int) -> np.ndarray:
@@ -52,7 +52,7 @@ def _pixel(pixels: np.ndarray, logical_y: int) -> np.ndarray:
 class CribbageLeaderboardTests(unittest.TestCase):
     def test_state_line_accepts_the_leaderboard_snapshot(self) -> None:
         line = (
-            'STATE {"type":"state","protocol":4,"game":1,"term":2,"version":5,'
+            'STATE {"type":"state","protocol":5,"game":1,"term":2,"version":5,'
             '"leader":2934577084,"started":true,"turn":3,"scores":[1,2,3,4],'
             '"operations":[1,1,1,1],"connected":15,"local":0,"enabled":15,'
             '"explicit":15,"roster":15}'
@@ -67,12 +67,11 @@ class CribbageLeaderboardTests(unittest.TestCase):
     def test_state_line_rejects_other_protocol_and_boot_noise(self) -> None:
         self.assertIsNone(parse_state_line("STATE-WAIT id=00000001 advertising=1"))
         self.assertIsNone(parse_state_line('STATE {"type":"state","protocol":3,"started":true,"turn":2,"scores":[0,0,0,0],"term":1,"version":1,"connected":0,"roster":0}'))
-        self.assertIsNone(parse_state_line('{"type":"player","protocol":4}'))
+        self.assertIsNone(parse_state_line('{"type":"player","protocol":5}'))
 
     def test_protocol_constant_matches_the_cribbage_header(self) -> None:
-        header = Path(__file__).resolve().parents[5] / "cribbage_board_robot" / "lib" / "scorebot" / "src" / "Protocol.hpp"
-        if not header.is_file():
-            self.skipTest("the separate cribbage firmware checkout is unavailable")
+        header = Path(__file__).resolve().parents[4] / "vendor" / "scorebot" / "lib" / "scorebot" / "src" / "Protocol.hpp"
+        self.assertTrue(header.is_file(), "pinned Scorebot source is missing")
         self.assertIn(f"kWireProtocolVersion = {PROTOCOL_VERSION}", header.read_text(encoding="utf-8"))
 
     def test_current_player_is_brighter_and_the_score_is_drawn(self) -> None:
@@ -109,8 +108,7 @@ class CribbageLeaderboardTests(unittest.TestCase):
             PreviewLEDController(33, 138), {"glow": 0.5, "serial_port": "preview"}
         )
         frame = animation.generate_frame(0.5, 0)
-        self.assertIsNone(animation._serial)
-        self.assertIsNone(animation._spi)
+        self.assertTrue(animation._preview)
         self.assertEqual(tuple(int(channel) for channel in _pixel(frame.pixels, 4)), (255, 0, 0))
         self.assertTrue(np.any(np.all(_row(frame.pixels, 0) == (255, 255, 255), axis=2)))
         self.assertEqual(tuple(int(channel) for channel in _pixel(frame.pixels, 40)), (0, 0, 0))
@@ -122,7 +120,7 @@ class CribbageLeaderboardTests(unittest.TestCase):
         frame = animation.generate_frame(0.0, 0)
         self.assertGreater(int(_pixel(frame.pixels, 4)[0]), 0)
         self.assertGreater(int(_pixel(frame.pixels, 13)[2]), 0)
-        self.assertGreater(int(_pixel(frame.pixels, 22)[1]), 0)
+        self.assertGreater(int(_pixel(frame.pixels, 18)[1]), 0)
         self.assertEqual(tuple(int(channel) for channel in _pixel(frame.pixels, 80)), (0, 0, 0))
         waiting = _row(frame.pixels, 0)
         self.assertTrue(np.any(np.all(waiting == (255, 255, 255), axis=2)))

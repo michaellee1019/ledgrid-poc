@@ -21,7 +21,7 @@ from drivers.wall_roles import SpiLeaderboardSource
 
 def _document(**changes):
     document = {
-        "type": "state", "protocol": 4, "started": True, "turn": 2,
+        "type": "state", "protocol": 5, "started": True, "turn": 2,
         "scores": [8, 15, 4, 21], "connected": 15, "roster": 15,
         "term": 3, "version": 9,
     }
@@ -105,13 +105,13 @@ def test_equal_revisions_replace_connection_and_status_fields(reader):
         for changes in [
             {"type": "player"}, {"protocol": 3}, {"started": 1},
             {"turn": True}, {"turn": 6}, {"scores": [1, 2, 3]},
-            {"scores": [True, 2, 3, 4]}, {"scores": [-1000, 2, 3, 4]},
-            {"scores": [10000, 2, 3, 4]}, {"connected": 16}, {"roster": -1},
+            {"scores": [True, 2, 3, 4]}, {"scores": [-2147483649, 2, 3, 4]},
+            {"scores": [2147483648, 2, 3, 4]}, {"connected": 16}, {"roster": -1},
         ]
     ],
     json.dumps(_document(term=True)).encode(),
     json.dumps(_document(version=1.5)).encode(),
-    b'{"type":"state","protocol":4}',
+    b'{"type":"state","protocol":5}',
 ])
 def test_malformed_input_cannot_establish_or_replace_state(reader, raw):
     source, ingest, _ = reader
@@ -182,21 +182,21 @@ from types import SimpleNamespace
 
 class NoHardware:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname in {{'serial', 'spidev'}}:
+        if fullname in {{'serial', 'spidev', 'scorebot', 'dbus_next'}}:
             raise AssertionError('hardware import: ' + fullname)
 
 sys.meta_path.insert(0, NoHardware())
 importlib.import_module({first_import!r})
 from animation.plugins.cribbage_leaderboard import CribbageLeaderboardAnimation
 
-for port in ('', 'preview', '/dev/unused-test-port'):
+for port in ('', 'preview'):
     animation = CribbageLeaderboardAnimation(
         SimpleNamespace(strip_count=33, leds_per_strip=138), {{'serial_port': port}}
     )
     animation.generate_frame(0.5, 0)
-    assert animation._serial is None and animation._spi is None
+    assert animation._preview
     animation.cleanup()
-assert 'serial' not in sys.modules and 'spidev' not in sys.modules
+assert not {{'serial', 'spidev', 'scorebot', 'dbus_next'}} & sys.modules.keys()
 """
     completed = subprocess.run(
         [sys.executable, "-c", script],

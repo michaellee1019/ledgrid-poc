@@ -26,7 +26,7 @@ def resolve_deploy_target(explicit: str | None) -> str:
     return (explicit or os.environ.get("PI_HOST") or "").strip() or DEFAULT_TARGET
 
 
-SOURCE_ROOTS = {"animation", "config", "drivers", "ipc", "scripts", "tools", "web", "firmware"}
+SOURCE_ROOTS = {"animation", "config", "drivers", "ipc", "scripts", "tools", "web", "firmware", "vendor"}
 SOURCE_FILES = {
     "pyproject.toml",
     "uv.lock",

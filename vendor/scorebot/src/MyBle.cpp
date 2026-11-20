@@ -1,0 +1,1311 @@
+#include <MyBle.hpp>
+
+#include <BoardRole.hpp>
+#include <BoardIdentity.hpp>
+#include <BleService.hpp>
+#include <Coordinator.hpp>
+#include <ErrorHandler.hpp>
+#include <Messages.hpp>
+#include <MessageAuthorityRules.hpp>
+#include <PeerAdmissionRules.hpp>
+#include <Protocol.hpp>
+#include <utils.hpp>
+
+#include <array>
+
+using scorebot::kDownlinkUuid;
+using scorebot::kIdentityUuid;
+using scorebot::kProtocolUuid;
+using scorebot::kUplinkUuid;
+using scorebot::roleMask;
+constexpr const char* kServiceUuid = scorebot::kGameServiceUuid;
+constexpr uint32_t kLeaderTimeoutMs = 15000;
+constexpr uint32_t kScanDurationMs = 5000;
+constexpr uint32_t kScanBackoffMs = 1000;
+constexpr uint32_t kMaintenanceScanDurationMs = 2000;
+constexpr uint32_t kMaintenanceScanBackoffMs = 5000;
+constexpr uint32_t kConnectionSettleMs = 500;
+constexpr uint32_t kRejectedPeerBackoffMs = 15000;
+constexpr uint32_t kConnectionFailureBackoffMs = 2000;
+constexpr uint32_t kConnectionWatchdogMs = 10000;
+constexpr uint32_t kLeaderboardPublishIntervalMs = 250;
+constexpr uint16_t kJoinMinInterval = 12;
+constexpr uint16_t kJoinMaxInterval = 24;
+constexpr uint16_t kJoinLatency = 0;
+constexpr uint16_t kJoinTimeout = 400;
+// Score and turn traffic is interactive. Keep established links at 15-30 ms
+// with no skipped connection events; deep sleep, rather than a 100-625 ms BLE
+// response envelope, provides the system's battery savings.
+constexpr uint16_t kSteadyMinInterval = 12;
+constexpr uint16_t kSteadyMaxInterval = 24;
+constexpr uint16_t kSteadyLatency = 0;
+constexpr uint16_t kSteadyTimeout = 400;
+constexpr size_t kPlayerCount = 4;
+// Four scoring boards plus one passive LED-wall display.
+constexpr size_t kMaxConnectedBoards = kPlayerCount + 4;
+static_assert(CONFIG_BT_NIMBLE_MAX_CONNECTIONS <= 8,
+    "ESP32-S3 permits ten BLE activities; discovery uses two alongside connections");
+constexpr size_t kTxQueueDepth = 8;
+constexpr uint16_t kNoConnection = BLE_HS_CONN_HANDLE_NONE;
+constexpr uint8_t kSleepMessageCount = 3;
+// Leave substantially more than the 30 ms steady connection interval after
+// interval after every notification, including the last one, gives the radio
+// time to put each queued packet on air before it is deinitialized.
+constexpr uint32_t kSleepMessageGapMs = 150;
+
+class ScopedSemaphore final {
+public:
+    explicit ScopedSemaphore(SemaphoreHandle_t semaphore) : semaphore(semaphore) {
+        xSemaphoreTake(semaphore, portMAX_DELAY);
+    }
+    ~ScopedSemaphore() { xSemaphoreGive(semaphore); }
+    ScopedSemaphore(const ScopedSemaphore&) = delete;
+    ScopedSemaphore& operator=(const ScopedSemaphore&) = delete;
+
+private:
+    SemaphoreHandle_t semaphore;
+};
+
+class BleDownlinkCallbacks final : public NimBLECharacteristicCallbacks {
+public:
+    explicit BleDownlinkCallbacks(MyBle& owner) : owner(owner) {}
+
+    void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& connection) override {
+        const NimBLEAttValue value = characteristic->getValue();
+        const uint32_t sender = owner.senderForConnection(connection);
+        if (sender != 0) owner.receive(sender, value.data(), value.length(), connection.getConnHandle());
+    }
+
+private:
+    MyBle& owner;
+};
+
+class BleServerCallbacks final : public NimBLEServerCallbacks {
+public:
+    explicit BleServerCallbacks(MyBle& owner) : owner(owner) {}
+
+    void onConnect(NimBLEServer*, NimBLEConnInfo& connection) override {
+        DEBUG_PRINTF("BLE: inbound connection from %s handle=%u core=%d\n",
+                     connection.getAddress().toString().c_str(),
+                     static_cast<unsigned>(connection.getConnHandle()), xPortGetCoreID());
+    }
+
+    void onDisconnect(NimBLEServer*, NimBLEConnInfo& connection, int reason) override {
+        DEBUG_PRINTF("BLE: inbound disconnect from %s handle=%u reason=%d\n",
+                     connection.getAddress().toString().c_str(),
+                     static_cast<unsigned>(connection.getConnHandle()), reason);
+        owner.ota.onDisconnected(connection.getConnHandle());
+        if (!owner.isAuthority() &&
+            owner.leaderConnectionHandle.load() == connection.getConnHandle()) {
+            owner.recordLinkLoss();
+            owner.leaderConnectionHandle.store(kNoConnection);
+            owner.leaderConnected.store(false);
+            owner.leaderLostPending.store(true);
+        }
+    }
+
+private:
+    MyBle& owner;
+};
+
+class BleClientCallbacks final : public NimBLEClientCallbacks {
+public:
+    explicit BleClientCallbacks(MyBle& owner) : owner(owner) {}
+
+    void onConnect(NimBLEClient* client) override {
+        // Keep connectionPending asserted until reconcilePeers has completed
+        // service discovery and subscription. Releasing it here can start a
+        // second scan while NimBLE is still finalizing this connection.
+        DEBUG_PRINTF("BLE: connected to %s core=%d\n",
+                     client->getPeerAddress().toString().c_str(), xPortGetCoreID());
+    }
+
+    void onConnectFail(NimBLEClient* client, int reason) override {
+        owner.connectionSettledMs.store(millis());
+        owner.recordLinkLoss();
+        owner.backOffPeer(client->getPeerAddress(), kConnectionFailureBackoffMs);
+        owner.finishPendingConnection(client);
+        DEBUG_PRINTF("BLE: connect failed to %s reason=%d\n",
+                     client->getPeerAddress().toString().c_str(), reason);
+    }
+
+    void onDisconnect(NimBLEClient* client, int reason) override {
+        owner.connectionSettledMs.store(millis());
+        owner.recordLinkLoss(client);
+        // A different established peer can disconnect while this client is
+        // connecting. Only the client that owns the in-flight attempt may
+        // release the scan/connect gate.
+        owner.finishPendingConnection(client);
+        DEBUG_PRINTF("BLE: disconnected from %s reason=%d\n",
+                     client->getPeerAddress().toString().c_str(), reason);
+    }
+
+private:
+    MyBle& owner;
+};
+
+class BleScanCallbacks final : public NimBLEScanCallbacks {
+public:
+    explicit BleScanCallbacks(MyBle& owner) : owner(owner) {}
+
+    void onResult(const NimBLEAdvertisedDevice* device) override {
+        owner.observe(device);
+    }
+
+private:
+    MyBle& owner;
+};
+MyBle::MyBle(Coordinator* coordinator)
+    : coordinator(coordinator),
+      peerId(0),
+      server(nullptr),
+      uplink(nullptr),
+      downlink(nullptr),
+      downlinkCallbacks(),
+      scanCallbacks(),
+      clientCallbacks(),
+      ota(),
+      peers(),
+      rejectedPeers(),
+      nextRejectedPeer(0),
+      pendingLostPeers(),
+      pendingLostPeerCount(0),
+      intentionalDisconnects(),
+      peersMutex(nullptr),
+      eventAdmissionMutex(nullptr),
+      txQueue(nullptr),
+      outstandingTransmissions(0),
+      nextTransmissionGeneration(0),
+      trackedCompletedGeneration(0),
+      trackedSuccessfulGeneration(0),
+      trackedCompletedAtMs(0),
+      transportQuiescing(false),
+      lastLeaderActivityMs(0),
+      leaderConnectionHandle(kNoConnection),
+      leaderConnected(false),
+      leaderLostPending(false),
+      otaArmRequested(false),
+      otaTransportActive(false),
+      rosterFrozen(false),
+      rosterMask(0),
+      connectionPending(false),
+      pendingConnectionClient(nullptr),
+      pendingConnectionAddress(),
+      connectionRequested(false),
+      connectionAttemptStartedMs(0),
+      connectionSettledMs(0),
+      disconnectWindow(),
+      powerIncreaseRequested(false),
+      connectionPowerDbm(scorebot::ble_power::kInitialConnectionPowerDbm),
+      lastScanStartedMs(0),
+      lastAdvertisingCheckMs(0) {}
+
+MyBle::~MyBle() {
+    if (peersMutex != nullptr) {
+        vSemaphoreDelete(peersMutex);
+    }
+    if (eventAdmissionMutex != nullptr) {
+        vSemaphoreDelete(eventAdmissionMutex);
+    }
+    if (txQueue != nullptr) {
+        vQueueDelete(txQueue);
+    }
+    if (discoveryQueue != nullptr) vQueueDelete(discoveryQueue);
+}
+
+uint32_t MyBle::getMyPeerId() const {
+    return peerId;
+}
+
+bool MyBle::hasLeader() const {
+    return isAuthority() || leaderConnected.load();
+}
+
+void MyBle::freezeRoster(uint8_t allowedRosterMask) {
+    rosterMask.store(allowedRosterMask);
+    rosterFrozen.store(true);
+    // The BLE-owner loop performs any disconnects. GameState runs on a
+    // separate task and must not issue NimBLE client operations concurrently.
+}
+
+void MyBle::openRoster() {
+    rosterMask.store(0);
+    rosterFrozen.store(false);
+}
+
+void MyBle::confirmLeader(uint16_t connectionHandle) {
+    if (isAuthority() || connectionHandle == kNoConnection) {
+        return;
+    }
+    leaderConnectionHandle.store(connectionHandle);
+    lastLeaderActivityMs.store(millis());
+    if (!leaderConnected.exchange(true)) {
+        DEBUG_PRINTF("BLE: authoritative leaderboard ready handle=%u\n",
+                     static_cast<unsigned>(connectionHandle));
+    }
+}
+
+void MyBle::armOta() {
+    // The BLE-owner loop changes the OTA characteristic and advertising state.
+    // This method is called from the UI dispatcher and only publishes intent.
+    otaArmRequested.store(true);
+}
+
+bool MyBle::otaActive() const {
+    return otaArmRequested.load() || ota.isActive();
+}
+
+bool MyBle::otaWriting() const {
+    return ota.isWriting();
+}
+
+bool MyBle::sleepAllowed() const {
+    return !otaActive();
+}
+
+bool MyBle::transmissionsPending() const {
+    return outstandingTransmissions.load(std::memory_order_acquire) != 0;
+}
+
+void MyBle::beginTransportQuiesce() {
+    ota.setTransportQuiescing(true);
+    bool alreadyQuiescing = false;
+    {
+        // Wait for a host callback that already passed admission to finish
+        // enqueueing. Its accepted event cancels Coordinator's Quiescing phase
+        // before this method returns; later callbacks observe the closed gate.
+        ScopedSemaphore admission(eventAdmissionMutex);
+        alreadyQuiescing = transportQuiescing.exchange(
+            true, std::memory_order_acq_rel);
+    }
+    if (alreadyQuiescing) {
+        return;
+    }
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    if (scan->isScanning()) {
+        scan->stop();
+    }
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    if (advertising->isAdvertising()) {
+        advertising->stop();
+    }
+}
+
+void MyBle::beginSleepQuiesce() {
+    beginTransportQuiesce();
+}
+
+void MyBle::beginRestartQuiesce() {
+    beginTransportQuiesce();
+}
+
+void MyBle::cancelSleepQuiesce() {
+    if (!transportQuiescing.exchange(false, std::memory_order_acq_rel)) {
+        return;
+    }
+    ota.setTransportQuiescing(false);
+    updateAdvertising(false);
+    if (isAuthority()) {
+        beginScan();
+    }
+}
+
+void MyBle::enterOtaTransportMode() {
+    otaTransportActive = true;
+    if (txQueue != nullptr) {
+        xQueueReset(txQueue);
+        outstandingTransmissions.store(0, std::memory_order_release);
+    }
+    connectionRequested.store(false);
+    if (pendingConnectionClient.load() == nullptr) {
+        connectionPending.store(false);
+        connectionAttemptStartedMs.store(0);
+    }
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    if (scan->isScanning()) {
+        scan->stop();
+    }
+
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    if (advertising->isAdvertising()) {
+        advertising->stop();
+    }
+    configureAdvertising(true);
+
+    const int8_t maximumPower = scorebot::ble_power::kMaximumConnectionPowerDbm;
+    (void)NimBLEDevice::setPower(maximumPower);
+    (void)NimBLEDevice::setPower(maximumPower, NimBLETxPowerType::Connection);
+    (void)NimBLEDevice::setPower(maximumPower, NimBLETxPowerType::Advertise);
+    (void)NimBLEDevice::setPower(maximumPower, NimBLETxPowerType::Scan);
+    maintainOtaTransportMode();
+    updateAdvertising(true);
+}
+
+void MyBle::maintainOtaTransportMode() {
+    if (!isAuthority()) {
+        const uint16_t connection = leaderConnectionHandle.load();
+        if (server != nullptr && connection != kNoConnection) {
+            (void)server->disconnect(connection);
+        }
+        return;
+    }
+
+    for (NimBLEClient* client : NimBLEDevice::getConnectedClients()) {
+        if (!client->isConnected()) {
+            continue;
+        }
+        {
+            ScopedSemaphore lock(peersMutex);
+            for (NimBLEClient*& intentional : intentionalDisconnects) {
+                if (intentional == client) {
+                    break;
+                }
+                if (intentional == nullptr) {
+                    intentional = client;
+                    break;
+                }
+            }
+        }
+        (void)client->disconnect();
+    }
+}
+
+void MyBle::exitOtaTransportMode() {
+    otaTransportActive = false;
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    if (advertising->isAdvertising()) {
+        advertising->stop();
+    }
+    configureAdvertising(false);
+    (void)NimBLEDevice::setPower(connectionPowerDbm.load());
+    (void)NimBLEDevice::setPower(
+        connectionPowerDbm.load(), NimBLETxPowerType::Connection);
+    updateAdvertising(false);
+}
+
+void MyBle::configureAdvertising(bool otaOnly) {
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    advertising->stop();
+    advertising->clearData();
+    advertising->enableScanResponse(true);
+    advertising->setConnectableMode(otaOnly || !isAuthority() ? BLE_GAP_CONN_MODE_UND : BLE_GAP_CONN_MODE_NON);
+    advertising->setDiscoverableMode(BLE_GAP_DISC_MODE_GEN);
+    advertising->setAdvertisingInterval(400);
+    advertisedDiscovery = {};
+    advertisedLeaderboard = {};
+    if (otaOnly) {
+        advertising->addServiceUUID(scorebot::kOtaServiceUuid);
+        const String deviceName = String("Scorebot-") + String(peerId, HEX);
+        advertising->setName(deviceName.c_str());
+    } else {
+        updatePairingAdvertisement();
+    }
+}
+
+void MyBle::publishLeaderboard(const scorebot::LeaderboardBroadcast& leaderboard) {
+    if (!isAuthority() || otaActive() || otaTransportActive || transportQuiescing.load()) return;
+    const uint32_t now = millis();
+    if (now - lastLeaderboardPublishMs < kLeaderboardPublishIntervalMs) return;
+    lastLeaderboardPublishMs = now;
+    const auto packet = scorebot::encodeLeaderboard(leaderboard);
+    if (packet == advertisedLeaderboard) return;
+    NimBLEAdvertisementData response;
+    response.setServiceData(NimBLEUUID(scorebot::kLeaderboardServiceDataUuid), packet.data(), packet.size());
+    if (NimBLEDevice::getAdvertising()->setScanResponseData(response)) advertisedLeaderboard = packet;
+}
+
+void MyBle::updateAdvertising(bool otaOnly) {
+    if (!server) return;
+    if (!otaOnly) updatePairingAdvertisement();
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    const bool shouldAdvertise = otaOnly || isAuthority() || server->getConnectedCount() == 0;
+    if (shouldAdvertise && !advertising->isAdvertising()) advertising->start();
+    else if (!shouldAdvertise && advertising->isAdvertising()) advertising->stop();
+}
+
+void MyBle::shutdownForSleep() {
+    beginTransportQuiesce();
+    if (!isAuthority() && hasLeader()) {
+        const String message = PlayerSleepMessage(peerId).toJson();
+        // Notifications are unacknowledged, so make the final few packets all
+        // carry the same intent before turning the controller off.
+        for (uint8_t attempt = 0; attempt < kSleepMessageCount; ++attempt) {
+            (void)transmitTo(
+                authorityNodeId(), message.c_str(), message.length());
+            delay(kSleepMessageGapMs);
+        }
+    }
+    // deinit(false) stops the host and controller without running destructors
+    // against application-owned callback objects during the final sleep path.
+    NimBLEDevice::deinit(false);
+}
+
+void MyBle::setup(uint8_t displayCount) {
+    // Preserve the IDs used by the original painlessMesh role table. A raw
+    // uint32_t cast selects the wrong end of ESP.getEfuseMac().
+    peerId = scorebot::boardIdFromEfuseMac(ESP.getEfuseMac());
+    localDiscovery.node = peerId;
+    localDiscovery.kind = scorebot::kindForDisplayCount(displayCount);
+    configuredRole.store(displayCount == 4 ? BoardRole::Leader : BoardRole::Unknown);
+    initializePairing();
+    const String deviceName = String("Scorebot-") + String(peerId, HEX);
+    if (!NimBLEDevice::init(deviceName.c_str())) {
+        FATAL_ERROR(ErrorCode::BLE_INIT_FAILED, "NimBLE initialization");
+    }
+    NimBLEDevice::setMTU(185);
+    NimBLEDevice::setPower(connectionPowerDbm.load());
+    // Use maximum power only for discovery/OTA advertising and connection
+    // initiation. Once connected, the lower default power preserves battery.
+    NimBLEDevice::setPower(9, NimBLETxPowerType::Advertise);
+    NimBLEDevice::setPower(9, NimBLETxPowerType::Scan);
+    peersMutex = xSemaphoreCreateMutex();
+    CHECK_POINTER(peersMutex, ErrorCode::SEMAPHORE_CREATE_FAILED, "BLE peer mutex");
+    eventAdmissionMutex = xSemaphoreCreateMutex();
+    CHECK_POINTER(
+        eventAdmissionMutex, ErrorCode::SEMAPHORE_CREATE_FAILED,
+        "BLE event admission mutex");
+    txQueue = xQueueCreate(kTxQueueDepth, sizeof(TxRequest));
+    CHECK_POINTER(txQueue, ErrorCode::QUEUE_CREATE_FAILED, "BLE transmission queue");
+
+    server = NimBLEDevice::createServer();
+    CHECK_POINTER(server, ErrorCode::MEMORY_ALLOCATION_FAILED, "BLE server");
+    server->setCallbacks(new BleServerCallbacks(*this), true);
+    server->advertiseOnDisconnect(false);
+    NimBLEService* service = server->createService(kServiceUuid);
+    CHECK_POINTER(service, ErrorCode::MEMORY_ALLOCATION_FAILED, "game BLE service");
+
+    NimBLECharacteristic* identity = service->createCharacteristic(
+        kIdentityUuid, NIMBLE_PROPERTY::READ, sizeof(peerId));
+    CHECK_POINTER(identity, ErrorCode::MEMORY_ALLOCATION_FAILED, "BLE identity characteristic");
+    identity->setValue(peerId);
+    NimBLECharacteristic* protocol = service->createCharacteristic(
+        kProtocolUuid, NIMBLE_PROPERTY::READ, sizeof(scorebot::kWireProtocolVersion));
+    CHECK_POINTER(protocol, ErrorCode::MEMORY_ALLOCATION_FAILED, "BLE protocol characteristic");
+    protocol->setValue(scorebot::kWireProtocolVersion);
+    pairingCharacteristic = service->createCharacteristic(
+        scorebot::kPairingUuid, NIMBLE_PROPERTY::READ, scorebot::DiscoveryPacket{}.size());
+    CHECK_POINTER(pairingCharacteristic, ErrorCode::MEMORY_ALLOCATION_FAILED, "BLE pairing characteristic");
+    uplink = service->createCharacteristic(
+        kUplinkUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY,
+        scorebot::kMaxWireMessageSize);
+    downlink = service->createCharacteristic(
+        kDownlinkUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR,
+        scorebot::kMaxWireMessageSize);
+    CHECK_POINTER(uplink, ErrorCode::MEMORY_ALLOCATION_FAILED, "BLE uplink characteristic");
+    CHECK_POINTER(downlink, ErrorCode::MEMORY_ALLOCATION_FAILED, "BLE downlink characteristic");
+    downlinkCallbacks = std::make_unique<BleDownlinkCallbacks>(*this);
+    downlink->setCallbacks(downlinkCallbacks.get());
+    ota.setup(server);
+    // NimBLE starts GATT on first advertisement. Register it before the
+    // leaderboard can establish central links, which make GATT immutable.
+    if (!server->start()) {
+        FATAL_ERROR(ErrorCode::BLE_INIT_FAILED, "start GATT before discovery");
+    }
+    discoveryQueue = xQueueCreate(24, sizeof(SeenBoard));
+    CHECK_POINTER(discoveryQueue, ErrorCode::QUEUE_CREATE_FAILED, "BLE discovery queue");
+    clientCallbacks = std::make_unique<BleClientCallbacks>(*this);
+    scanCallbacks = std::make_unique<BleScanCallbacks>(*this);
+    configureAdvertising(false);
+    updateAdvertising(false);
+    beginScan();
+    finishStartupDiscovery();
+}
+
+void MyBle::beginScan() {
+    if (!startupDiscovery && !isAuthority() && !pairingUiActive() && leaderConnected.load()) {
+        auto* scan = NimBLEDevice::getScan();
+        if (scan->isScanning()) scan->stop();
+        return;
+    }
+    if (connectionPending.load()) {
+        return;
+    }
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    const uint32_t now = millis();
+    const uint32_t settledMs = connectionSettledMs.load();
+    if (settledMs != 0 && now - settledMs < kConnectionSettleMs) {
+        return;
+    }
+    const size_t peers = peerCount();
+    const uint32_t scanBackoffMs = peers == 0 ? kScanBackoffMs : kMaintenanceScanBackoffMs;
+    const uint32_t scanDurationMs = peers == 0 ? kScanDurationMs : kMaintenanceScanDurationMs;
+    // Continue occasional discovery so a mirrored controller can join later.
+    if (scan->isScanning() ||
+        (lastScanStartedMs != 0 && now - lastScanStartedMs < scanBackoffMs)) {
+        return;
+    }
+    // A second player can be reported while an asynchronous connection to the
+    // first is still pending. Keep duplicate reports enabled so that skipped
+    // player gets another callback after the first connection completes.
+    scan->setScanCallbacks(scanCallbacks.get(), true);
+    // Primary advertisements carry discovery; scan responses carry scores.
+    scan->setActiveScan(true);
+    scan->setInterval(100);
+    // A partial maintenance window can phase-lock with the players' one-second
+    // advertisements and miss the same board forever, so keep the window
+    // continuous during each bounded lobby scan.
+    scan->setWindow(100);
+    scan->setMaxResults(0);
+    const bool started = scan->start(scanDurationMs, false, true);
+    DEBUG_PRINTF("BLE: scan peers=%u duration=%lu started=%d\n",
+                 static_cast<unsigned>(peers),
+                 static_cast<unsigned long>(scanDurationMs),
+                 started);
+    lastScanStartedMs = now;
+}
+
+void MyBle::startPendingConnection() {
+    if (!connectionRequested.exchange(false)) {
+        return;
+    }
+
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    if (scan->isScanning()) {
+        scan->stop();
+    }
+
+    NimBLEClient* client = NimBLEDevice::getClientByPeerAddress(pendingConnectionAddress);
+    if (client != nullptr && client->isConnected()) {
+        connectionPending.store(false);
+        connectionAttemptStartedMs.store(0);
+        return;
+    }
+
+    const bool newClient = client == nullptr;
+    if (newClient) {
+        client = NimBLEDevice::createClient(pendingConnectionAddress);
+        if (client == nullptr) {
+            connectionPending.store(false);
+            connectionAttemptStartedMs.store(0);
+            DEBUG_PRINTLN("BLE: could not allocate player client");
+            return;
+        }
+        client->setClientCallbacks(clientCallbacks.get(), false);
+        // Use a responsive interval only while establishing and discovering.
+        // The connection returns to the battery-first parameters as soon as
+        // the player is registered.
+        client->setConnectionParams(
+            kJoinMinInterval, kJoinMaxInterval, kJoinLatency, kJoinTimeout);
+        client->setConnectTimeout(5000);
+        NimBLEClient::Config config = client->getConfig();
+        // A failed peer returns to the scan rotation after a short backoff.
+        // Avoid spending three consecutive attempts on it while other players
+        // are waiting to join.
+        config.connectFailRetries = 0;
+        client->setConfig(config);
+    }
+
+    pendingConnectionClient.store(client);
+    connectionAttemptStartedMs.store(millis());
+    // A previously verified client keeps its attribute cache across a normal
+    // disconnect; a newly allocated client performs full discovery.
+    if (!client->connect(newClient, true, true)) {
+        finishPendingConnection(client);
+        DEBUG_PRINTF("BLE: connect start failed for %s\n",
+                     pendingConnectionAddress.toString().c_str());
+        if (newClient) {
+            NimBLEDevice::deleteClient(client);
+        }
+    }
+}
+
+void MyBle::recoverStalledConnection() {
+    if (!connectionPending.load()) {
+        return;
+    }
+    const uint32_t startedMs = connectionAttemptStartedMs.load();
+    if (startedMs == 0 || millis() - startedMs < kConnectionWatchdogMs) {
+        return;
+    }
+    NimBLEClient* client = pendingConnectionClient.load();
+    if (client != nullptr && client->isConnected()) {
+        // reconcilePeers will discover and register it on this loop.
+        return;
+    }
+
+    DEBUG_PRINTF("BLE: recovering stalled connection to %s\n",
+                 pendingConnectionAddress.toString().c_str());
+    connectionRequested.store(false);
+    pendingConnectionClient.store(nullptr);
+    connectionPending.store(false);
+    connectionAttemptStartedMs.store(0);
+    connectionSettledMs.store(millis());
+    backOffPeer(pendingConnectionAddress, kRejectedPeerBackoffMs);
+    if (client != nullptr) {
+        NimBLEDevice::deleteClient(client);
+    }
+}
+
+void MyBle::addPeer(NimBLEClient* client) {
+    const uint32_t discoveryStartedMs = millis();
+    const bool hadCachedServices = !client->getServices().empty();
+    NimBLERemoteService* service = client->getService(kServiceUuid);
+    DEBUG_PRINTF("BLE: service discovered in %lu ms\n",
+                 static_cast<unsigned long>(millis() - discoveryStartedMs));
+    keepExistingPeersAlive();
+    if (service == nullptr) {
+        DEBUG_PRINTLN("BLE: player service discovery failed");
+        NimBLEDevice::deleteClient(client);
+        return;
+    }
+    const bool attributesCached =
+        hadCachedServices && !service->getCharacteristics().empty();
+    const size_t characteristicCount = attributesCached
+                                           ? service->getCharacteristics().size()
+                                           : service->getCharacteristics(true).size();
+    DEBUG_PRINTF("BLE: %u characteristics ready at %lu ms cached=%d\n",
+                 static_cast<unsigned>(characteristicCount),
+                 static_cast<unsigned long>(millis() - discoveryStartedMs),
+                 attributesCached);
+    keepExistingPeersAlive();
+    NimBLERemoteCharacteristic* identity = service->getCharacteristic(kIdentityUuid);
+    DEBUG_PRINTF("BLE: identity discovered at %lu ms\n",
+                 static_cast<unsigned long>(millis() - discoveryStartedMs));
+    keepExistingPeersAlive();
+    NimBLERemoteCharacteristic* protocol = service->getCharacteristic(kProtocolUuid);
+    DEBUG_PRINTF("BLE: protocol discovered at %lu ms\n",
+                 static_cast<unsigned long>(millis() - discoveryStartedMs));
+    keepExistingPeersAlive();
+    NimBLERemoteCharacteristic* remoteUplink = service->getCharacteristic(kUplinkUuid);
+    DEBUG_PRINTF("BLE: uplink discovered at %lu ms\n",
+                 static_cast<unsigned long>(millis() - discoveryStartedMs));
+    keepExistingPeersAlive();
+    NimBLERemoteCharacteristic* remoteDownlink = service->getCharacteristic(kDownlinkUuid);
+    DEBUG_PRINTF("BLE: downlink discovered at %lu ms\n",
+                 static_cast<unsigned long>(millis() - discoveryStartedMs));
+    keepExistingPeersAlive();
+    if (identity == nullptr || protocol == nullptr || remoteUplink == nullptr || remoteDownlink == nullptr) {
+        DEBUG_PRINTLN("BLE: player service is missing required characteristics");
+        if (client->isConnected() && !attributesCached) {
+            backOffPeer(client->getPeerAddress(), kRejectedPeerBackoffMs);
+        }
+        NimBLEDevice::deleteClient(client);
+        return;
+    }
+
+    const uint32_t nodeId = identity->readValue<uint32_t>();
+    const NimBLEAddress transportAddress = client->getPeerAddress();
+    const uint16_t remoteProtocol = protocol->readValue<uint16_t>();
+    NimBLERemoteCharacteristic* remotePairing = service->getCharacteristic(scorebot::kPairingUuid);
+    scorebot::Discovery remote{};
+    const NimBLEAttValue metadata = remotePairing ? remotePairing->readValue() : NimBLEAttValue{};
+    const bool validMetadata = scorebot::decodeDiscovery(metadata.data(), metadata.size(), remote) && remote.node == nodeId;
+    scorebot::PeerAdmission admission{};
+    if (validMetadata && remoteProtocol == scorebot::kWireProtocolVersion) {
+        ScopedSemaphore lock(peersMutex);
+        admission = scorebot::classifyPeerAdmission(localDiscovery, remote);
+    }
+    const bool displayPeer = admission.kind == scorebot::PeerKind::Display ||
+                             admission.kind == scorebot::PeerKind::Controller;
+    const bool rosterRejected = admission.kind == scorebot::PeerKind::Player &&
+                                rosterFrozen.load() &&
+                                !admission.eligibleForFrozenRoster(rosterMask.load());
+    if (admission.kind == scorebot::PeerKind::Rejected || rosterRejected) {
+        DEBUG_PRINTF(
+            "BLE: rejected peer identity=%08lx protocol=%u expected=%u frozen=%d roster=0x%02x\n",
+            static_cast<unsigned long>(nodeId), static_cast<unsigned>(remoteProtocol),
+            static_cast<unsigned>(scorebot::kWireProtocolVersion), rosterFrozen.load(),
+            static_cast<unsigned>(rosterMask.load()));
+        // A cached handle can become stale after player OTA. Delete it and
+        // allow the next scan to retry with a fresh database immediately.
+        if (!attributesCached || rosterRejected) {
+            backOffPeer(client->getPeerAddress(), kRejectedPeerBackoffMs);
+        }
+        NimBLEDevice::deleteClient(client);
+        return;
+    }
+
+    bool rejectedAfterFreeze = false;
+    bool duplicate = false;
+    {
+        ScopedSemaphore lock(peersMutex);
+        // Re-check under the peer lock: Start may freeze the roster after
+        // service discovery's earlier check but before this insertion.
+        rejectedAfterFreeze = !displayPeer && rosterFrozen.load() &&
+                              !admission.eligibleForFrozenRoster(rosterMask.load());
+        duplicate = peers.count(nodeId) != 0;
+        if (!rejectedAfterFreeze && !duplicate) {
+            const auto bound = directory.admit(localDiscovery, remote,
+                static_cast<uint64_t>(transportAddress), transportAddress.isPublic() ? 0 : 1);
+            rejectedAfterFreeze = bound.kind == scorebot::PeerKind::Rejected;
+        }
+        if (!rejectedAfterFreeze && !duplicate) {
+            // A display is already announced so it never becomes a player.
+            peers.emplace(
+                nodeId, Peer{nodeId, client, remoteDownlink, displayPeer, displayPeer,
+                             admission.kind == scorebot::PeerKind::Controller, remote.role});
+        }
+    }
+    if (rejectedAfterFreeze || duplicate) {
+        static constexpr char rejected[] = "{\"type\":\"pair_busy\",\"protocol\":5}";
+        remoteDownlink->writeValue(reinterpret_cast<const uint8_t*>(rejected), sizeof(rejected) - 1, false);
+        DEBUG_PRINTF("BLE: %s player identity %08lx after discovery\n",
+                     rejectedAfterFreeze ? "roster-rejected" : "duplicate",
+                     static_cast<unsigned long>(nodeId));
+        if (rejectedAfterFreeze) {
+            backOffPeer(client->getPeerAddress(), kRejectedPeerBackoffMs);
+        }
+        NimBLEDevice::deleteClient(client);
+        return;
+    }
+    if (!remoteUplink->subscribe(true,
+        [this, nodeId](NimBLERemoteCharacteristic*, uint8_t* data, size_t length, bool) {
+            receive(nodeId, data, length, kNoConnection);
+        })) {
+        {
+            ScopedSemaphore lock(peersMutex);
+            peers.erase(nodeId);
+        }
+        NimBLEDevice::deleteClient(client);
+        return;
+    }
+    savePairing();
+    if (displayPeer) coordinator->serviceStateHeartbeat();
+    const uint32_t joinMs = millis() - connectionAttemptStartedMs.load();
+    const int rssi = client->getRssi();
+    const bool steadyParamsRequested = client->updateConnParams(
+        kSteadyMinInterval, kSteadyMaxInterval, kSteadyLatency,
+        kSteadyTimeout);
+    connectionSettledMs.store(millis());
+    finishPendingConnection(client);
+    DEBUG_PRINTF(
+        "BLE: registered %s %08lx join=%lu ms rssi=%d dBm steady=%d\n",
+        admission.kind == scorebot::PeerKind::Controller ? "controller" : displayPeer ? "display" : "player",
+        static_cast<unsigned long>(nodeId), static_cast<unsigned long>(joinMs),
+        rssi, steadyParamsRequested);
+}
+
+void MyBle::finishPendingConnection(NimBLEClient* client) {
+    NimBLEClient* expected = client;
+    if (client != nullptr && pendingConnectionClient.compare_exchange_strong(expected, nullptr)) {
+        connectionPending.store(false);
+        connectionAttemptStartedMs.store(0);
+    }
+}
+
+void MyBle::removePeer(NimBLEClient* client) {
+    connectionSettledMs.store(millis());
+    uint32_t nodeId = 0;
+    bool display = false;
+    {
+        ScopedSemaphore lock(peersMutex);
+        for (auto it = peers.begin(); it != peers.end(); ++it) {
+            if (it->second.client == client) {
+                nodeId = it->first;
+                display = it->second.display;
+                peers.erase(it);
+                break;
+            }
+        }
+    }
+    if (nodeId != 0 && !display) {
+        DEBUG_PRINTF("BLE: removed player %08lx\n", static_cast<unsigned long>(nodeId));
+        ScopedSemaphore lock(peersMutex);
+        bool alreadyPending = false;
+        for (size_t index = 0; index < pendingLostPeerCount; ++index) {
+            alreadyPending = alreadyPending || pendingLostPeers[index] == nodeId;
+        }
+        if (!alreadyPending && pendingLostPeerCount < pendingLostPeers.size()) {
+            pendingLostPeers[pendingLostPeerCount++] = nodeId;
+        }
+    }
+    // Preserve the verified player's attribute cache for a fast reconnect.
+    // addPeer validates live identity and protocol values; a stale cache after
+    // OTA is discarded and retried fresh.
+}
+
+bool MyBle::hasPeer(NimBLEClient* client) const {
+    ScopedSemaphore lock(peersMutex);
+    for (const auto& [nodeId, peer] : peers) {
+        if (peer.client == client) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MyBle::peerIsBackedOff(const NimBLEAddress& address) const {
+    const uint32_t now = millis();
+    ScopedSemaphore lock(peersMutex);
+    for (const RejectedPeer& rejected : rejectedPeers) {
+        if (rejected.address == address &&
+            static_cast<int32_t>(rejected.retryAfterMs - now) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void MyBle::backOffPeer(const NimBLEAddress& address, uint32_t durationMs) {
+    ScopedSemaphore lock(peersMutex);
+    rejectedPeers[nextRejectedPeer] = {address, millis() + durationMs};
+    nextRejectedPeer = (nextRejectedPeer + 1) % rejectedPeers.size();
+}
+
+void MyBle::recordLinkLoss(NimBLEClient* client) {
+    if (client != nullptr) {
+        ScopedSemaphore lock(peersMutex);
+        for (NimBLEClient*& intentional : intentionalDisconnects) {
+            if (intentional == client) {
+                intentional = nullptr;
+                return;
+            }
+        }
+    }
+
+    // Server and client disconnect callbacks run on NimBLE's host task, so
+    // this window has a single writer. The application loop consumes only the
+    // atomic request raised when the threshold is reached.
+    const auto result = scorebot::ble_power::recordUnexpectedDisconnect(
+        disconnectWindow, millis());
+    disconnectWindow = result.window;
+    if (result.increasePower &&
+        connectionPowerDbm.load() < scorebot::ble_power::kMaximumConnectionPowerDbm) {
+        powerIncreaseRequested.store(true);
+    }
+}
+
+void MyBle::keepExistingPeersAlive() {
+    if (isAuthority()) {
+        // Service discovery can take long enough to starve replication. Route
+        // this maintenance heartbeat through the same state lock as the UI
+        // dispatcher rather than racing GameState from the BLE loop.
+        coordinator->serviceStateHeartbeat();
+    }
+}
+
+size_t MyBle::peerCount() const {
+    ScopedSemaphore lock(peersMutex);
+    size_t count = 0;
+    if (!rosterFrozen.load()) {
+        for (const auto& [nodeId, peer] : peers) {
+            (void)nodeId;
+            if (!peer.display) {
+                ++count;
+            }
+        }
+        return count;
+    }
+    const uint8_t allowed = rosterMask.load();
+    for (const auto& [nodeId, peer] : peers) {
+        (void)peer;
+        if ((allowed & roleMask(peer.role)) != 0) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+void MyBle::disconnectExcludedPeers() {
+    if (!rosterFrozen.load()) {
+        return;
+    }
+    std::array<NimBLEClient*, kPlayerCount> excluded{};
+    size_t count = 0;
+    const uint8_t allowed = rosterMask.load();
+    {
+        ScopedSemaphore lock(peersMutex);
+        for (const auto& [nodeId, peer] : peers) {
+            if (peer.display) {
+                continue;
+            }
+            if ((allowed & roleMask(peer.role)) == 0 &&
+                count < excluded.size()) {
+                excluded[count++] = peer.client;
+            }
+        }
+        for (size_t index = 0; index < count; ++index) {
+            bool marked = false;
+            for (NimBLEClient* intentional : intentionalDisconnects) {
+                marked = marked || intentional == excluded[index];
+            }
+            if (marked) {
+                continue;
+            }
+            for (NimBLEClient*& intentional : intentionalDisconnects) {
+                if (intentional == nullptr) {
+                    intentional = excluded[index];
+                    break;
+                }
+            }
+        }
+    }
+    for (size_t index = 0; index < count; ++index) {
+        if (excluded[index]->isConnected()) {
+            excluded[index]->disconnect();
+        }
+    }
+}
+
+void MyBle::reconcilePeers() {
+    for (NimBLEClient* client : NimBLEDevice::getConnectedClients()) {
+        if (!hasPeer(client)) {
+            addPeer(client);
+        }
+    }
+
+    std::array<NimBLEClient*, kMaxConnectedBoards> disconnected{};
+    size_t count = 0;
+    {
+        ScopedSemaphore lock(peersMutex);
+        for (const auto& [nodeId, peer] : peers) {
+            if (!peer.client->isConnected() && count < disconnected.size()) {
+                disconnected[count++] = peer.client;
+            }
+        }
+    }
+    for (size_t index = 0; index < count; ++index) {
+        removePeer(disconnected[index]);
+    }
+    flushLifecycleEvents();
+}
+
+void MyBle::flushLifecycleEvents() {
+    std::array<uint32_t, kPlayerCount> newPeers{};
+    std::array<uint32_t, kPlayerCount> lostPeers{};
+    size_t newCount = 0;
+    size_t lostCount = 0;
+    {
+        ScopedSemaphore lock(peersMutex);
+        for (const auto& [nodeId, peer] : peers) {
+            if (!peer.announced && newCount < newPeers.size()) {
+                newPeers[newCount++] = nodeId;
+            }
+        }
+        for (size_t index = 0; index < pendingLostPeerCount; ++index) {
+            lostPeers[lostCount++] = pendingLostPeers[index];
+        }
+    }
+
+    // A queued disconnect must precede a reconnect for the same identity.
+    // Otherwise NewPeer is ignored as already connected and the following
+    // LostPeer leaves the live transport permanently absent from GameState.
+    for (size_t index = 0; index < lostCount; ++index) {
+        if (!emit(EventType::LostPeer, lostPeers[index])) {
+            continue;
+        }
+        ScopedSemaphore lock(peersMutex);
+        for (size_t pending = 0; pending < pendingLostPeerCount; ++pending) {
+            if (pendingLostPeers[pending] != lostPeers[index]) {
+                continue;
+            }
+            for (size_t next = pending + 1; next < pendingLostPeerCount; ++next) {
+                pendingLostPeers[next - 1] = pendingLostPeers[next];
+            }
+            --pendingLostPeerCount;
+            break;
+        }
+    }
+    for (size_t index = 0; index < newCount; ++index) {
+        bool lostStillPending = false;
+        {
+            ScopedSemaphore lock(peersMutex);
+            for (size_t pending = 0; pending < pendingLostPeerCount; ++pending) {
+                lostStillPending = lostStillPending ||
+                                   pendingLostPeers[pending] == newPeers[index];
+            }
+        }
+        if (lostStillPending) {
+            // If the event queue filled while emitting LostPeer, do not let a
+            // newly freed slot accept NewPeer first. Retry both next loop.
+            continue;
+        }
+        if (emit(EventType::NewPeer, newPeers[index])) {
+            ScopedSemaphore lock(peersMutex);
+            const auto peer = peers.find(newPeers[index]);
+            if (peer != peers.end()) {
+                peer->second.announced = true;
+            }
+        }
+    }
+}
+
+bool MyBle::enqueueTransmission(uint32_t nodeId, const String& message, bool broadcast) {
+    return enqueueTransmissionRequest(
+               nodeId, message, broadcast, false, 0) != 0;
+}
+
+uint32_t MyBle::enqueueTrackedTransmission(
+    uint32_t nodeId, const String& message, bool broadcast,
+    uint32_t retryMs) {
+    return enqueueTransmissionRequest(
+        nodeId, message, broadcast, true, retryMs);
+}
+
+uint32_t MyBle::enqueueTransmissionRequest(
+    uint32_t nodeId, const String& message, bool broadcast,
+    bool tracked, uint32_t retryMs) {
+    if (message.length() > scorebot::kMaxWireMessageSize || txQueue == nullptr) {
+        return 0;
+    }
+    TxRequest request{};
+    request.nodeId = nodeId;
+    request.generation = nextTransmissionGeneration.fetch_add(
+                             1, std::memory_order_acq_rel) +
+                         1;
+    request.retryUntilMs = millis() + retryMs;
+    request.nextAttemptMs = 0;
+    request.length = static_cast<uint16_t>(message.length());
+    request.broadcast = broadcast;
+    request.tracked = tracked;
+    memcpy(request.message, message.c_str(), request.length);
+    outstandingTransmissions.fetch_add(1, std::memory_order_acq_rel);
+    if (xQueueSend(txQueue, &request, 0) != pdPASS) {
+        outstandingTransmissions.fetch_sub(1, std::memory_order_acq_rel);
+        return 0;
+    }
+    return request.generation;
+}
+
+bool MyBle::sendTo(uint32_t nodeId, const String& message) {
+    return enqueueTransmission(nodeId, message, false);
+}
+
+bool MyBle::sendBroadcast(const String& message) {
+    return enqueueTransmission(0, message, true);
+}
+
+uint32_t MyBle::sendBroadcastTracked(
+    const String& message, uint32_t retryMs) {
+    return enqueueTrackedTransmission(0, message, true, retryMs);
+}
+
+MyBle::TransmissionCompletion MyBle::transmissionCompletion(
+    uint32_t generation) const {
+    if (generation != 0 &&
+        trackedSuccessfulGeneration.load(std::memory_order_acquire) == generation) {
+        return TransmissionCompletion::Succeeded;
+    }
+    if (generation != 0 &&
+        trackedCompletedGeneration.load(std::memory_order_acquire) == generation) {
+        return TransmissionCompletion::Failed;
+    }
+    return TransmissionCompletion::Pending;
+}
+
+uint32_t MyBle::transmissionCompletedAtMs(uint32_t generation) const {
+    return generation != 0 &&
+                   trackedCompletedGeneration.load(std::memory_order_acquire) ==
+                       generation
+               ? trackedCompletedAtMs.load(std::memory_order_acquire)
+               : 0;
+}
+
+bool MyBle::transmitTo(uint32_t nodeId, const char* message, size_t length) {
+    if (!isAuthority()) {
+        const uint16_t connection = leaderConnectionHandle.load();
+        if (!leaderConnected.load() || connection == kNoConnection || uplink == nullptr) {
+            return false;
+        }
+        uplink->setValue(reinterpret_cast<const uint8_t*>(message), length);
+        return uplink->notify(connection);
+    }
+
+    bool display = false;
+    BoardRole targetRole = BoardRole::Unknown;
+    NimBLEClient* client = nullptr;
+    NimBLERemoteCharacteristic* remoteDownlink = nullptr;
+    {
+        ScopedSemaphore lock(peersMutex);
+        const auto peer = peers.find(nodeId);
+        if (peer != peers.end()) {
+            display = peer->second.display;
+            targetRole = peer->second.role;
+            client = peer->second.client;
+            remoteDownlink = peer->second.downlink;
+        }
+    }
+    if (rosterFrozen.load() && !display &&
+        (rosterMask.load() & roleMask(targetRole)) == 0) {
+        return false;
+    }
+    // BLE writes can synchronously wait on the NimBLE host task (especially
+    // above one ATT packet). Never hold peersMutex across that wait because
+    // host callbacks also use it.
+    return client != nullptr && client->isConnected() && remoteDownlink != nullptr &&
+           remoteDownlink->writeValue(
+               reinterpret_cast<const uint8_t*>(message), length, false);
+}
+
+void MyBle::drainTransmissions() {
+    TxRequest request{};
+    while (xQueueReceive(txQueue, &request, 0) == pdPASS) {
+        const uint32_t now = millis();
+        if (request.tracked && request.nextAttemptMs != 0 &&
+            static_cast<int32_t>(now - request.nextAttemptMs) < 0) {
+            if (xQueueSend(txQueue, &request, 0) != pdPASS) {
+                trackedCompletedAtMs.store(
+                    request.anySucceeded ? request.lastSuccessfulAtMs : 0,
+                    std::memory_order_release);
+                trackedCompletedGeneration.store(
+                    request.generation, std::memory_order_release);
+                outstandingTransmissions.fetch_sub(1, std::memory_order_acq_rel);
+            }
+            break;
+        }
+        bool hadTargets = false;
+        bool succeeded = true;
+        bool anySucceeded = false;
+        if (!request.broadcast || !isAuthority()) {
+            const uint32_t target = request.broadcast
+                                        ? authorityNodeId()
+                                        : request.nodeId;
+            hadTargets = true;
+            succeeded = transmitTo(target, request.message, request.length);
+            anySucceeded = succeeded;
+        } else {
+            std::array<uint32_t, kMaxConnectedBoards> nodeIds{};
+            size_t count = 0;
+            const bool frozen = rosterFrozen.load();
+            const uint8_t allowed = rosterMask.load();
+            {
+                ScopedSemaphore lock(peersMutex);
+                for (const auto& [nodeId, peer] : peers) {
+                    if (frozen && !peer.display &&
+                        (allowed & roleMask(peer.role)) == 0) {
+                        continue;
+                    }
+                    if (count < nodeIds.size()) {
+                        nodeIds[count++] = nodeId;
+                    }
+                }
+            }
+            hadTargets = count != 0;
+            for (size_t index = 0; index < count; ++index) {
+                const bool targetSucceeded = transmitTo(
+                    nodeIds[index], request.message, request.length);
+                anySucceeded = anySucceeded || targetSucceeded;
+                succeeded = targetSucceeded && succeeded;
+            }
+        }
+        if (anySucceeded) {
+            request.anySucceeded = true;
+            request.lastSuccessfulAtMs = millis();
+        }
+        const uint32_t attemptFinishedMs = millis();
+        if (request.tracked && hadTargets && !succeeded &&
+            static_cast<int32_t>(attemptFinishedMs - request.retryUntilMs) < 0) {
+            request.nextAttemptMs =
+                attemptFinishedMs + kSteadyMaxInterval * 5 / 4;
+            if (xQueueSend(txQueue, &request, 0) == pdPASS) {
+                break;
+            }
+        }
+        if (request.tracked) {
+            if (!hadTargets || succeeded) {
+                trackedSuccessfulGeneration.store(
+                    request.generation, std::memory_order_release);
+            }
+            trackedCompletedAtMs.store(
+                !hadTargets || succeeded
+                    ? millis()
+                    : request.anySucceeded ? request.lastSuccessfulAtMs : 0,
+                std::memory_order_release);
+            trackedCompletedGeneration.store(
+                request.generation, std::memory_order_release);
+        }
+        outstandingTransmissions.fetch_sub(1, std::memory_order_acq_rel);
+    }
+}
+
+void MyBle::receive(uint32_t from, const uint8_t* data, size_t length, uint16_t connectionHandle) {
+    ScopedSemaphore admission(eventAdmissionMutex);
+    if (from == 0 || transportQuiescing.load(std::memory_order_acquire) || length == 0 ||
+        length >= sizeof(MessageReceivedEvent::message)) {
+        return;
+    }
+    Event event{};
+    event.type = EventType::MessageReceived;
+    event.messageReceived.peerId = from;
+    event.messageReceived.connectionHandle = connectionHandle;
+    memcpy(event.messageReceived.message, data, length);
+    event.messageReceived.message[length] = '\0';
+    (void)enqueue(event);
+}
+
+bool MyBle::enqueue(const Event& event) {
+    return coordinator->enqueueEvent(event);
+}
+
+bool MyBle::emit(EventType type, uint32_t nodeId) {
+    if (transportQuiescing.load(std::memory_order_acquire)) {
+        return false;
+    }
+    Event event{};
+    event.type = type;
+    if (type == EventType::NewPeer) {
+        event.newPeer.peerId = nodeId;
+    } else if (type == EventType::LostPeer) {
+        event.lostPeer.peerId = nodeId;
+    }
+    return enqueue(event);
+}
+
+void MyBle::loop() {
+    if (otaArmRequested.exchange(false)) {
+        ota.arm();
+    }
+    ota.loop();
+    if (transportQuiescing.load(std::memory_order_acquire)) {
+        // Reset owns this mode until reboot. A tentative sleep handoff does
+        // not call the BLE loop again unless it first resumes normal transport.
+        drainTransmissions();
+        return;
+    }
+    if (ota.isActive()) {
+        if (!otaTransportActive) {
+            enterOtaTransportMode();
+        } else {
+            maintainOtaTransportMode();
+            updateAdvertising(true);
+        }
+        return;
+    }
+    if (otaTransportActive) {
+        // Resume pairing on the following loop. This gives Coordinator one
+        // iteration to restore the normal UI before lifecycle events arrive.
+        exitOtaTransportMode();
+        return;
+    }
+    processDiscoveries();
+    servicePairing();
+    if (isAuthority()) {
+        disconnectExcludedPeers();
+    }
+    drainTransmissions();
+    const uint32_t now = millis();
+    if (powerIncreaseRequested.exchange(false)) {
+        const int8_t nextPower =
+            scorebot::ble_power::nextConnectionPowerDbm(
+                connectionPowerDbm.load());
+        if (NimBLEDevice::setPower(nextPower, NimBLETxPowerType::Connection)) {
+            connectionPowerDbm.store(nextPower);
+            DEBUG_PRINTF(
+                "BLE: raised connection TX power to %d dBm after repeated disconnects\n",
+                connectionPowerDbm.load());
+        }
+    }
+    if (server != nullptr && now - lastAdvertisingCheckMs >= 1000) {
+        lastAdvertisingCheckMs = now;
+        updateAdvertising(false);
+    }
+    if (isAuthority()) {
+        reconcilePeers();
+        recoverStalledConnection();
+        startPendingConnection();
+        beginScan();
+        return;
+    }
+
+    beginScan();
+    if (leaderConnected.load() && now - lastLeaderActivityMs.load() > kLeaderTimeoutMs) {
+        DEBUG_PRINTF("BLE: leaderboard silent for %lu ms\n",
+                     static_cast<unsigned long>(now - lastLeaderActivityMs.load()));
+        leaderConnected.store(false);
+        leaderConnectionHandle.store(kNoConnection);
+        leaderLostPending.store(true);
+    }
+    if (leaderLostPending.load() && emit(EventType::BleLeaderLost)) {
+        leaderLostPending.store(false);
+    }
+}
